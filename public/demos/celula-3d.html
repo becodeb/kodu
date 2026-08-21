@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Célula animal en 3D</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        background: #f4f6fb;
+        color: #10131f;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        padding: 14px 20px 10px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+      .pista {
+        font-size: 13px;
+        color: #6b7185;
+      }
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 240px;
+        gap: 14px;
+        padding: 0 20px 16px;
+        min-height: 0;
+      }
+      .escena {
+        position: relative;
+        background:
+          radial-gradient(120% 90% at 30% 10%, #ffffff, #e9edf7 70%);
+        border: 1px solid #dfe4f0;
+        border-radius: 10px;
+        overflow: hidden;
+        cursor: grab;
+      }
+      .escena:active {
+        cursor: grabbing;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+      }
+      .ficha {
+        background: #fff;
+        border: 1px solid #dfe4f0;
+        border-radius: 10px;
+        padding: 14px;
+        flex: 1;
+        overflow: auto;
+      }
+      .ficha h2 {
+        font-size: 15px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .bolita {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        flex: none;
+      }
+      .ficha p {
+        margin-top: 8px;
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: #444a5c;
+      }
+      .lista {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+      .lista button {
+        font: inherit;
+        font-size: 12.5px;
+        text-align: left;
+        padding: 7px 9px;
+        border: 1px solid #dfe4f0;
+        background: #fff;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #10131f;
+      }
+      .lista button[aria-pressed='true'] {
+        border-color: #4f46e5;
+        background: #f0efff;
+      }
+      .controles {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12.5px;
+        color: #6b7185;
+      }
+      .controles button {
+        font: inherit;
+        border: 1px solid #dfe4f0;
+        background: #fff;
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+        color: #10131f;
+        font-weight: 600;
+      }
+      @media (max-width: 720px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr auto;
+        }
+        .ficha {
+          flex: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Célula animal en 3D</h1>
+      <span class="pista">Arrastrá para girarla · tocá un organelo para ver qué hace</span>
+    </header>
+
+    <main>
+      <div class="escena" id="escena"><canvas id="lienzo"></canvas></div>
+
+      <div class="panel">
+        <div class="lista" id="lista"></div>
+        <div class="ficha">
+          <h2><span class="bolita" id="ficha-color"></span><span id="ficha-nombre">La célula</span></h2>
+          <p id="ficha-texto">
+            Girala para ver dónde está cada parte. Tocá un organelo en la escena o elegilo de la
+            lista de arriba.
+          </p>
+        </div>
+        <div class="controles">
+          <button id="girar">Pausar giro</button>
+          <span id="estado">girando</span>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      const ORGANELOS = [
+        { id: 'nucleo', nombre: 'Núcleo', color: '#4f46e5', r: 34, pos: [0, 0, 0], texto: 'Guarda el ADN y dirige todo lo que hace la célula. Decide qué proteínas se fabrican y cuándo.' },
+        { id: 'mitocondria', nombre: 'Mitocondria', color: '#e0483d', r: 17, pos: [70, -34, 26], texto: 'Es la usina: convierte los nutrientes en la energía que la célula usa para funcionar.' },
+        { id: 'mitocondria2', nombre: 'Mitocondria', color: '#e0483d', r: 15, pos: [-66, 44, -30], texto: 'Es la usina: convierte los nutrientes en la energía que la célula usa para funcionar.' },
+        { id: 'reticulo', nombre: 'Retículo rugoso', color: '#0f9d76', r: 21, pos: [-58, -46, 24], texto: 'Una red de membranas cubierta de ribosomas donde se arman y se pliegan las proteínas.' },
+        { id: 'golgi', nombre: 'Aparato de Golgi', color: '#e8a020', r: 20, pos: [58, 50, -18], texto: 'Empaqueta y despacha lo que fabrica la célula, como un centro de distribución.' },
+        { id: 'lisosoma', nombre: 'Lisosoma', color: '#8b5cf6', r: 12, pos: [24, 70, 40], texto: 'Digiere los restos y lo que ya no sirve. Es el sistema de reciclado.' },
+        { id: 'ribosoma', nombre: 'Ribosoma', color: '#2b7fd4', r: 8, pos: [-30, -70, -44], texto: 'Lee las instrucciones del ADN y arma las proteínas, aminoácido por aminoácido.' },
+        { id: 'vacuola', nombre: 'Vacuola', color: '#39b8c4', r: 16, pos: [-78, 6, 48], texto: 'Almacena agua, nutrientes y desechos hasta que la célula los necesita o los expulsa.' },
+      ];
+
+      const RADIO_CELULA = 118;
+      const lienzo = document.getElementById('lienzo');
+      const ctx = lienzo.getContext('2d');
+      const escena = document.getElementById('escena');
+
+      let anguloY = 0.6;
+      let anguloX = -0.25;
+      let girando = true;
+      let seleccionado = null;
+      let arrastrando = false;
+      let ultimo = null;
+      let proyectados = [];
+
+      function medir() {
+        const dpr = window.devicePixelRatio || 1;
+        const r = escena.getBoundingClientRect();
+        lienzo.width = r.width * dpr;
+        lienzo.height = r.height * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return r;
+      }
+
+      let caja = medir();
+      window.addEventListener('resize', () => (caja = medir()));
+
+      function rotar([x, y, z]) {
+        const cy = Math.cos(anguloY), sy = Math.sin(anguloY);
+        const cx = Math.cos(anguloX), sx = Math.sin(anguloX);
+        const x1 = x * cy - z * sy;
+        const z1 = x * sy + z * cy;
+        const y1 = y * cx - z1 * sx;
+        const z2 = y * sx + z1 * cx;
+        return [x1, y1, z2];
+      }
+
+      function dibujar() {
+        const w = caja.width;
+        const h = caja.height;
+        const cx = w / 2;
+        const cy = h / 2;
+        const escala = Math.min(w, h) / 330;
+
+        ctx.clearRect(0, 0, w, h);
+
+        // Membrana: dos círculos para dar volumen
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(escala, escala);
+
+        const grad = ctx.createRadialGradient(-40, -50, 20, 0, 0, RADIO_CELULA);
+        grad.addColorStop(0, 'rgba(255,255,255,.95)');
+        grad.addColorStop(0.65, 'rgba(219,228,246,.55)');
+        grad.addColorStop(1, 'rgba(160,177,214,.45)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, RADIO_CELULA, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#8ea2ce';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.9)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, RADIO_CELULA - 5, 0, Math.PI * 2);
+        ctx.stroke();
+
+        proyectados = ORGANELOS.map((o) => {
+          const [x, y, z] = rotar(o.pos);
+          const p = 340 / (340 + z); // perspectiva
+          return { ...o, x: x * p, y: y * p, z, radio: o.r * p };
+        }).sort((a, b) => a.z - b.z);
+
+        for (const o of proyectados) {
+          const activo = seleccionado === o.id;
+          const luz = ctx.createRadialGradient(
+            o.x - o.radio * 0.35,
+            o.y - o.radio * 0.4,
+            o.radio * 0.15,
+            o.x,
+            o.y,
+            o.radio,
+          );
+          luz.addColorStop(0, '#ffffff');
+          luz.addColorStop(0.35, o.color);
+          luz.addColorStop(1, sombra(o.color));
+          ctx.beginPath();
+          ctx.arc(o.x, o.y, o.radio, 0, Math.PI * 2);
+          ctx.fillStyle = luz;
+          ctx.globalAlpha = o.z < -60 ? 0.75 : 1;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+
+          if (activo) {
+            ctx.strokeStyle = '#10131f';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(o.x, o.y, o.radio + 5, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.font = '600 13px system-ui, sans-serif';
+            const etiqueta = o.nombre;
+            const ancho = ctx.measureText(etiqueta).width + 14;
+            const ex = o.x + o.radio + 10;
+            const ey = o.y - 10;
+            ctx.fillStyle = '#10131f';
+            ctx.beginPath();
+            ctx.roundRect(ex, ey, ancho, 22, 6);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.fillText(etiqueta, ex + 7, ey + 15);
+          }
+        }
+
+        ctx.restore();
+      }
+
+      function sombra(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        const r = Math.round(((n >> 16) & 255) * 0.55);
+        const g = Math.round(((n >> 8) & 255) * 0.55);
+        const b = Math.round((n & 255) * 0.55);
+        return `rgb(${r},${g},${b})`;
+      }
+
+      function seleccionar(id) {
+        seleccionado = id;
+        const o = ORGANELOS.find((x) => x.id === id);
+        document.getElementById('ficha-nombre').textContent = o ? o.nombre : 'La célula';
+        document.getElementById('ficha-texto').textContent = o
+          ? o.texto
+          : 'Girala para ver dónde está cada parte.';
+        document.getElementById('ficha-color').style.background = o ? o.color : 'transparent';
+        for (const b of document.querySelectorAll('.lista button')) {
+          b.setAttribute('aria-pressed', String(b.dataset.id === id));
+        }
+      }
+
+      // Lista lateral (sin repetir la segunda mitocondria)
+      const vistos = new Set();
+      const lista = document.getElementById('lista');
+      for (const o of ORGANELOS) {
+        if (vistos.has(o.nombre)) continue;
+        vistos.add(o.nombre);
+        const b = document.createElement('button');
+        b.dataset.id = o.id;
+        b.setAttribute('aria-pressed', 'false');
+        b.innerHTML = `<span class="bolita" style="background:${o.color}"></span>${o.nombre}`;
+        b.addEventListener('click', () => seleccionar(o.id));
+        lista.appendChild(b);
+      }
+
+      escena.addEventListener('pointerdown', (e) => {
+        arrastrando = true;
+        ultimo = { x: e.clientX, y: e.clientY };
+        escena.setPointerCapture(e.pointerId);
+      });
+      escena.addEventListener('pointermove', (e) => {
+        if (!arrastrando) return;
+        anguloY += (e.clientX - ultimo.x) * 0.01;
+        anguloX += (e.clientY - ultimo.y) * 0.008;
+        anguloX = Math.max(-1.2, Math.min(1.2, anguloX));
+        ultimo = { x: e.clientX, y: e.clientY };
+      });
+      escena.addEventListener('pointerup', (e) => {
+        arrastrando = false;
+        // Un clic sin arrastre selecciona el organelo de arriba de todo
+        const r = escena.getBoundingClientRect();
+        const escala = Math.min(r.width, r.height) / 330;
+        const px = (e.clientX - r.left - r.width / 2) / escala;
+        const py = (e.clientY - r.top - r.height / 2) / escala;
+        let elegido = null;
+        for (const o of proyectados) {
+          if (Math.hypot(px - o.x, py - o.y) <= o.radio + 3) elegido = o.id;
+        }
+        if (elegido) seleccionar(elegido);
+      });
+
+      document.getElementById('girar').addEventListener('click', (e) => {
+        girando = !girando;
+        e.target.textContent = girando ? 'Pausar giro' : 'Reanudar giro';
+        document.getElementById('estado').textContent = girando ? 'girando' : 'en pausa';
+      });
+
+      (function bucle() {
+        if (girando && !arrastrando) anguloY += 0.004;
+        dibujar();
+        requestAnimationFrame(bucle);
+      })();
+    </script>
+  </body>
+</html>

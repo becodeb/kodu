@@ -1,12 +1,10 @@
 @import 'tailwindcss';
 
-/* Tokens de marca KoduEdu (Tailwind v4: se declaran con @theme y quedan
-   disponibles como utilidades, p.ej. bg-brand-600 / text-ink-500). */
 @theme {
-  /* Archivo (Omnibus-Type) y Piazzolla (Huerta Tipográfica): las dos son
-     fundiciones de Buenos Aires, con acentuación castellana bien resuelta. */
+  /* Archivo (Omnibus-Type, Buenos Aires) para todo, y su corte Black para los
+     titulares: la tipografía es el gesto de la marca, no el color. */
   --font-sans: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-display: 'Piazzolla', 'Iowan Old Style', Georgia, serif;
+  --font-display: 'Archivo Black', 'Archivo', ui-sans-serif, system-ui, sans-serif;
 
   --color-brand-50: oklch(0.97 0.02 264);
   --color-brand-100: oklch(0.93 0.05 264);
@@ -19,22 +17,10 @@
   --color-ink-700: oklch(0.38 0.02 264);
   --color-ink-900: oklch(0.24 0.03 264);
 
-  /* Verde pizarrón: el artefacto más reconocible del aula. Es el único color
-     fuerte del marco; el resto del color lo ponen los recursos generados. */
-  --color-pizarron-950: #0e241c;
-  --color-pizarron-900: #14342a;
-  --color-pizarron-800: #1c4638;
-  --color-pizarron-700: #2b5c4b;
-  --color-pizarron-600: #3d7561;
-
-  /* Tiza (cálida, no blanco puro) y el amarillo del acento. */
-  --color-tiza-50: #f6f4ec;
-  --color-tiza-200: #e2ddcb;
-  --color-tiza-400: #b9b3a0;
-  --color-mostaza-300: #f2d074;
-  --color-mostaza-400: #e9b949;
-
-  --color-papel: #f8f7f4;
+  /* Neutros del sistema: una línea, un fondo tenue y un negro para el cierre. */
+  --color-linea: #e4e4e0;
+  --color-lienzo: #f7f7f5;
+  --color-carbon: #101014;
 }
 
 @layer base {
@@ -43,26 +29,21 @@
   }
 
   body {
-    @apply bg-papel text-ink-900 antialiased;
+    @apply bg-lienzo text-ink-900 antialiased;
     font-family: var(--font-sans);
   }
 
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-brand-500;
   }
-
-  /* Sobre el pizarrón el indigo del foco casi no se ve: ahí manda la tiza. */
-  .bg-pizarron-900 :focus-visible,
-  .bg-pizarron-950 :focus-visible {
-    @apply outline-mostaza-400;
-  }
 }
 
 /* Utilidades compartidas. En Tailwind v4 se declaran con @utility (no dentro de
-   @layer components) para que se puedan componer entre sí vía @apply. */
+   @layer components) para que se puedan componer entre sí vía @apply.
+   El radio queda contenido a propósito: 10px en cajas, 8px en controles. */
 
 @utility kodu-card {
-  @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
+  @apply rounded-[10px] border border-linea bg-white;
 }
 
 @utility kodu-input {
@@ -75,15 +56,6 @@
   @apply mb-1.5 block text-sm font-medium text-ink-700;
 }
 
-/* Botón de tiza: sobre el pizarrón el indigo se empasta, la tiza contrasta. */
-@utility kodu-btn-tiza {
-  @apply kodu-btn bg-tiza-50 text-pizarron-900 hover:bg-white;
-}
-
-@utility kodu-btn-pizarron {
-  @apply kodu-btn border border-pizarron-600 text-tiza-50 hover:bg-pizarron-800;
-}
-
 @utility kodu-btn {
   @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold;
   @apply transition-colors disabled:cursor-not-allowed disabled:opacity-60;
@@ -93,6 +65,10 @@
   @apply kodu-btn bg-brand-600 text-white hover:bg-brand-700;
 }
 
+@utility kodu-btn-carbon {
+  @apply kodu-btn bg-carbon px-5 py-2.5 text-white hover:bg-ink-900;
+}
+
 @utility kodu-btn-ghost {
-  @apply kodu-btn border border-slate-300 bg-white text-ink-700 hover:bg-slate-50;
+  @apply kodu-btn border border-linea bg-white text-ink-700 hover:border-ink-500;
 }

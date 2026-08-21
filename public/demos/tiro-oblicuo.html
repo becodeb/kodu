@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tiro oblicuo</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        background: #0f1424;
+        color: #e9ecf7;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        padding: 14px 20px 10px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+      .pista {
+        font-size: 13px;
+        color: #8d95b2;
+      }
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 240px;
+        gap: 14px;
+        padding: 0 20px 16px;
+        min-height: 0;
+      }
+      .lienzo-caja {
+        background: linear-gradient(#131a30, #1b2440);
+        border: 1px solid #26304f;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow: auto;
+      }
+      .control label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 5px;
+      }
+      .control span {
+        font-family: ui-monospace, Menlo, monospace;
+        color: #ffc857;
+      }
+      input[type='range'] {
+        width: 100%;
+        accent-color: #ffc857;
+      }
+      .planetas {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .planetas button {
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 8px 4px;
+        border: 1px solid #26304f;
+        background: #172038;
+        color: #e9ecf7;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .planetas button[aria-pressed='true'] {
+        background: #ffc857;
+        color: #10131f;
+        border-color: #ffc857;
+      }
+      .lanzar {
+        font: inherit;
+        font-weight: 700;
+        font-size: 14px;
+        padding: 12px;
+        border: 0;
+        border-radius: 8px;
+        background: #4f46e5;
+        color: #fff;
+        cursor: pointer;
+      }
+      .datos {
+        background: #172038;
+        border: 1px solid #26304f;
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 13px;
+        line-height: 1.75;
+        color: #a9b1cc;
+      }
+      .datos b {
+        color: #fff;
+        font-family: ui-monospace, Menlo, monospace;
+      }
+      @media (max-width: 720px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Tiro oblicuo</h1>
+      <span class="pista">Cambiá el ángulo, la velocidad y el planeta. Después lanzá.</span>
+    </header>
+
+    <main>
+      <div class="lienzo-caja"><canvas id="lienzo"></canvas></div>
+
+      <div class="panel">
+        <div class="control">
+          <label>Ángulo <span id="vang">45°</span></label>
+          <input type="range" id="ang" min="10" max="85" step="1" value="45" />
+        </div>
+        <div class="control">
+          <label>Velocidad <span id="vvel">28 m/s</span></label>
+          <input type="range" id="vel" min="10" max="45" step="1" value="28" />
+        </div>
+
+        <div class="planetas" id="planetas">
+          <button data-g="9.8" aria-pressed="true">Tierra</button>
+          <button data-g="1.6" aria-pressed="false">Luna</button>
+          <button data-g="3.7" aria-pressed="false">Marte</button>
+        </div>
+
+        <button class="lanzar" id="lanzar">Lanzar</button>
+        <div class="datos" id="datos"></div>
+      </div>
+    </main>
+
+    <script>
+      const lienzo = document.getElementById('lienzo');
+      const ctx = lienzo.getContext('2d');
+      const caja = lienzo.parentElement;
+
+      const estado = { ang: 45, vel: 28, g: 9.8, planeta: 'Tierra' };
+      let ancho = 0,
+        alto = 0,
+        t = 0,
+        volando = false;
+      let estela = [];
+      const fantasmas = [];
+
+      function medir() {
+        const dpr = window.devicePixelRatio || 1;
+        const r = caja.getBoundingClientRect();
+        ancho = r.width;
+        alto = r.height;
+        lienzo.width = ancho * dpr;
+        lienzo.height = alto * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      const rad = () => (estado.ang * Math.PI) / 180;
+      const alcance = () => (estado.vel ** 2 * Math.sin(2 * rad())) / estado.g;
+      const alturaMax = () => (estado.vel ** 2 * Math.sin(rad()) ** 2) / (2 * estado.g);
+      const vuelo = () => (2 * estado.vel * Math.sin(rad())) / estado.g;
+
+      function escalaActual() {
+        const margen = 40;
+        const ex = (ancho - margen * 2) / Math.max(alcance(), 1);
+        const ey = (alto - margen * 2) / Math.max(alturaMax(), 1);
+        return Math.min(ex, ey);
+      }
+
+      function dibujar() {
+        medir();
+        const e = escalaActual();
+        const piso = alto - 28;
+        const x0 = 30;
+
+        ctx.clearRect(0, 0, ancho, alto);
+
+        // Piso y grilla de distancia
+        ctx.strokeStyle = '#26304f';
+        ctx.lineWidth = 1;
+        ctx.fillStyle = '#6f78a0';
+        ctx.font = '11px system-ui, sans-serif';
+        const pasoM = alcance() > 400 ? 100 : alcance() > 120 ? 40 : alcance() > 60 ? 20 : 10;
+        for (let m = 0; m * e + x0 < ancho; m += pasoM) {
+          const px = x0 + m * e;
+          ctx.beginPath();
+          ctx.moveTo(px, piso);
+          ctx.lineTo(px, piso - 6);
+          ctx.stroke();
+          if (m > 0) ctx.fillText(m + ' m', px - 10, piso + 16);
+        }
+        ctx.strokeStyle = '#414d78';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, piso);
+        ctx.lineTo(ancho, piso);
+        ctx.stroke();
+
+        // Trayectorias anteriores
+        for (const f of fantasmas) {
+          ctx.strokeStyle = 'rgba(255,200,87,.18)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          f.forEach((p, i) => (i ? ctx.lineTo(x0 + p.x * e, piso - p.y * e) : ctx.moveTo(x0 + p.x * e, piso - p.y * e)));
+          ctx.stroke();
+        }
+
+        // Cañón
+        ctx.save();
+        ctx.translate(x0, piso);
+        ctx.rotate(-rad());
+        ctx.fillStyle = '#8d95b2';
+        ctx.beginPath();
+        ctx.roundRect(0, -5, 34, 10, 3);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = '#5b688f';
+        ctx.beginPath();
+        ctx.arc(x0, piso, 9, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Trayectoria en curso
+        if (estela.length) {
+          ctx.strokeStyle = '#ffc857';
+          ctx.lineWidth = 2.5;
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          estela.forEach((p, i) =>
+            i ? ctx.lineTo(x0 + p.x * e, piso - p.y * e) : ctx.moveTo(x0 + p.x * e, piso - p.y * e),
+          );
+          ctx.stroke();
+
+          const ult = estela[estela.length - 1];
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(x0 + ult.x * e, piso - ult.y * e, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Altura máxima marcada
+        if (!volando && estela.length) {
+          const cima = estela.reduce((a, b) => (b.y > a.y ? b : a));
+          ctx.strokeStyle = 'rgba(255,255,255,.25)';
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x0 + cima.x * e, piso - cima.y * e);
+          ctx.lineTo(x0 + cima.x * e, piso);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      function actualizarDatos() {
+        document.getElementById('datos').innerHTML =
+          `Alcance <b>${alcance().toFixed(1)} m</b><br>` +
+          `Altura máxima <b>${alturaMax().toFixed(1)} m</b><br>` +
+          `Tiempo de vuelo <b>${vuelo().toFixed(2)} s</b><br>` +
+          `Gravedad en ${estado.planeta} <b>${estado.g} m/s²</b>`;
+      }
+
+      function animar() {
+        if (volando) {
+          t += vuelo() / 90;
+          const x = estado.vel * Math.cos(rad()) * t;
+          const y = estado.vel * Math.sin(rad()) * t - 0.5 * estado.g * t * t;
+          if (y <= 0) {
+            volando = false;
+            estela.push({ x: alcance(), y: 0 });
+            fantasmas.push([...estela]);
+            if (fantasmas.length > 4) fantasmas.shift();
+          } else {
+            estela.push({ x, y });
+          }
+        }
+        dibujar();
+        requestAnimationFrame(animar);
+      }
+
+      document.getElementById('lanzar').addEventListener('click', () => {
+        t = 0;
+        estela = [];
+        volando = true;
+      });
+
+      for (const clave of ['ang', 'vel']) {
+        const c = document.getElementById(clave);
+        c.addEventListener('input', () => {
+          estado[clave] = parseFloat(c.value);
+          document.getElementById('v' + clave).textContent =
+            clave === 'ang' ? estado.ang + '°' : estado.vel + ' m/s';
+          actualizarDatos();
+        });
+      }
+
+      for (const b of document.querySelectorAll('.planetas button')) {
+        b.addEventListener('click', () => {
+          estado.g = parseFloat(b.dataset.g);
+          estado.planeta = b.textContent;
+          for (const o of document.querySelectorAll('.planetas button')) {
+            o.setAttribute('aria-pressed', String(o === b));
+          }
+          actualizarDatos();
+        });
+      }
+
+      window.addEventListener('resize', dibujar);
+      actualizarDatos();
+      animar();
+      setTimeout(() => document.getElementById('lanzar').click(), 600);
+    </script>
+  </body>
+</html>

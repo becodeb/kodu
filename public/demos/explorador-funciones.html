@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Explorador de funciones</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+        background: #f7f8fc;
+        color: #10131f;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        padding: 14px 20px 10px;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+      .formula {
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 14px;
+        background: #10131f;
+        color: #8ef0c4;
+        padding: 5px 12px;
+        border-radius: 8px;
+      }
+      main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 250px;
+        gap: 14px;
+        padding: 0 20px 16px;
+        min-height: 0;
+      }
+      .lienzo-caja {
+        background: #fff;
+        border: 1px solid #e0e4f0;
+        border-radius: 10px;
+        overflow: hidden;
+        position: relative;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow: auto;
+      }
+      .tipos {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .tipos button {
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 8px 4px;
+        border: 1px solid #e0e4f0;
+        background: #fff;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #10131f;
+      }
+      .tipos button[aria-pressed='true'] {
+        background: #10131f;
+        color: #fff;
+        border-color: #10131f;
+      }
+      .control label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      .control span {
+        font-family: ui-monospace, Menlo, monospace;
+        color: #4f46e5;
+      }
+      input[type='range'] {
+        width: 100%;
+        accent-color: #4f46e5;
+      }
+      .datos {
+        background: #fff;
+        border: 1px solid #e0e4f0;
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: #444a5c;
+      }
+      .datos b {
+        color: #10131f;
+      }
+      .pista {
+        font-size: 12.5px;
+        color: #6b7185;
+      }
+      @media (max-width: 720px) {
+        main {
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Explorador de funciones</h1>
+      <span class="formula" id="formula">y = x²</span>
+    </header>
+
+    <main>
+      <div class="lienzo-caja"><canvas id="lienzo"></canvas></div>
+
+      <div class="panel">
+        <div class="tipos" id="tipos">
+          <button data-tipo="cuadratica" aria-pressed="true">Cuadrática</button>
+          <button data-tipo="seno" aria-pressed="false">Seno</button>
+          <button data-tipo="exponencial" aria-pressed="false">Exponencial</button>
+        </div>
+
+        <div class="control">
+          <label>a <span id="va">1.0</span></label>
+          <input type="range" id="a" min="-3" max="3" step="0.1" value="1" />
+        </div>
+        <div class="control">
+          <label>b <span id="vb">0.0</span></label>
+          <input type="range" id="b" min="-6" max="6" step="0.2" value="0" />
+        </div>
+        <div class="control">
+          <label>c <span id="vc">0.0</span></label>
+          <input type="range" id="c" min="-6" max="6" step="0.2" value="0" />
+        </div>
+        <div class="control">
+          <label>Escala <span id="vescala">1.0×</span></label>
+          <input type="range" id="escala" min="0.3" max="3" step="0.05" value="1" />
+        </div>
+
+        <div class="datos" id="datos"></div>
+        <p class="pista">Movés un control y la curva cambia al instante.</p>
+      </div>
+    </main>
+
+    <script>
+      const lienzo = document.getElementById('lienzo');
+      const ctx = lienzo.getContext('2d');
+      const caja = lienzo.parentElement;
+
+      const estado = { tipo: 'cuadratica', a: 1, b: 0, c: 0, escala: 1 };
+      let ancho = 0;
+      let alto = 0;
+
+      function medir() {
+        const dpr = window.devicePixelRatio || 1;
+        const r = caja.getBoundingClientRect();
+        ancho = r.width;
+        alto = r.height;
+        lienzo.width = ancho * dpr;
+        lienzo.height = alto * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function f(x) {
+        const { tipo, a, b, c } = estado;
+        if (tipo === 'cuadratica') return a * x * x + b * x + c;
+        if (tipo === 'seno') return a * Math.sin(b === 0 ? x : b * x) + c;
+        return a * Math.pow(2, b === 0 ? x : b * x) + c;
+      }
+
+      function formula() {
+        const { tipo, a, b, c } = estado;
+        const n = (v) => (Number.isInteger(v) ? v : v.toFixed(1));
+        const signo = (v) => (v >= 0 ? `+ ${n(Math.abs(v))}` : `− ${n(Math.abs(v))}`);
+        if (tipo === 'cuadratica') return `y = ${n(a)}x² ${signo(b)}x ${signo(c)}`;
+        if (tipo === 'seno') return `y = ${n(a)}·sen(${n(b || 1)}x) ${signo(c)}`;
+        return `y = ${n(a)}·2^(${n(b || 1)}x) ${signo(c)}`;
+      }
+
+      function dibujar() {
+        medir();
+        const u = (Math.min(ancho, alto) / 9) * estado.escala; // píxeles por unidad
+        const cx = ancho / 2;
+        const cy = alto / 2;
+
+        ctx.clearRect(0, 0, ancho, alto);
+
+        // Cuadrícula
+        ctx.strokeStyle = '#eef1f8';
+        ctx.lineWidth = 1;
+        for (let x = cx % u; x < ancho; x += u) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, alto);
+          ctx.stroke();
+        }
+        for (let y = cy % u; y < alto; y += u) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(ancho, y);
+          ctx.stroke();
+        }
+
+        // Ejes
+        ctx.strokeStyle = '#c3c9da';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, cy);
+        ctx.lineTo(ancho, cy);
+        ctx.moveTo(cx, 0);
+        ctx.lineTo(cx, alto);
+        ctx.stroke();
+
+        // Números de los ejes
+        ctx.fillStyle = '#8a90a4';
+        ctx.font = '11px system-ui, sans-serif';
+        const paso = u < 26 ? 5 : u < 50 ? 2 : 1;
+        for (let i = -30; i <= 30; i++) {
+          if (i === 0 || i % paso !== 0) continue;
+          const x = cx + i * u;
+          if (x > 12 && x < ancho - 12) ctx.fillText(String(i), x - 4, cy + 14);
+          const y = cy - i * u;
+          if (y > 12 && y < alto - 12) ctx.fillText(String(i), cx + 6, y + 4);
+        }
+
+        // Curva
+        ctx.strokeStyle = '#4f46e5';
+        ctx.lineWidth = 2.6;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        let primero = true;
+        for (let px = 0; px <= ancho; px++) {
+          const x = (px - cx) / u;
+          const y = f(x);
+          if (!Number.isFinite(y)) {
+            primero = true;
+            continue;
+          }
+          const py = cy - y * u;
+          if (py < -4000 || py > alto + 4000) {
+            primero = true;
+            continue;
+          }
+          if (primero) {
+            ctx.moveTo(px, py);
+            primero = false;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+        ctx.stroke();
+
+        // Raíces marcadas (sólo cuadrática)
+        if (estado.tipo === 'cuadratica' && estado.a !== 0) {
+          const d = estado.b * estado.b - 4 * estado.a * estado.c;
+          if (d >= 0) {
+            for (const s of [1, -1]) {
+              const r = (-estado.b + s * Math.sqrt(d)) / (2 * estado.a);
+              ctx.fillStyle = '#e8a020';
+              ctx.beginPath();
+              ctx.arc(cx + r * u, cy, 5, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = '#fff';
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+          }
+        }
+
+        document.getElementById('formula').textContent = formula();
+        document.getElementById('datos').innerHTML = leer();
+      }
+
+      function leer() {
+        const { tipo, a, b, c } = estado;
+        if (tipo === 'cuadratica') {
+          if (a === 0) return 'Con <b>a = 0</b> deja de ser una parábola: queda una recta.';
+          const xv = -b / (2 * a);
+          const yv = f(xv);
+          const d = b * b - 4 * a * c;
+          const raices =
+            d > 0 ? 'corta el eje x en <b>dos</b> puntos' : d === 0 ? 'toca el eje x en <b>un</b> punto' : '<b>no</b> corta el eje x';
+          return `Vértice en <b>(${xv.toFixed(2)}, ${yv.toFixed(2)})</b>.<br>La parábola ${raices}.<br>Abre hacia <b>${a > 0 ? 'arriba' : 'abajo'}</b>.`;
+        }
+        if (tipo === 'seno') {
+          const periodo = (2 * Math.PI) / (b || 1);
+          return `Amplitud <b>${Math.abs(a).toFixed(1)}</b>.<br>Período <b>${Math.abs(periodo).toFixed(2)}</b>.<br>Desplazada <b>${c.toFixed(1)}</b> en vertical.`;
+        }
+        return `En x = 0 vale <b>${f(0).toFixed(2)}</b>.<br>${b >= 0 ? 'Crece' : 'Decrece'} cada vez más rápido.<br>Se acerca a <b>y = ${c.toFixed(1)}</b> sin tocarlo.`;
+      }
+
+      for (const clave of ['a', 'b', 'c', 'escala']) {
+        const control = document.getElementById(clave);
+        control.addEventListener('input', () => {
+          estado[clave] = parseFloat(control.value);
+          document.getElementById('v' + clave).textContent =
+            clave === 'escala' ? estado.escala.toFixed(1) + '×' : estado[clave].toFixed(1);
+          dibujar();
+        });
+      }
+
+      for (const b of document.querySelectorAll('.tipos button')) {
+        b.addEventListener('click', () => {
+          estado.tipo = b.dataset.tipo;
+          for (const o of document.querySelectorAll('.tipos button')) {
+            o.setAttribute('aria-pressed', String(o === b));
+          }
+          dibujar();
+        });
+      }
+
+      window.addEventListener('resize', dibujar);
+      dibujar();
+    </script>
+  </body>
+</html>
