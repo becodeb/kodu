@@ -123,6 +123,30 @@ export default function Workspace(props: WorkspaceProps) {
     };
   }, []);
 
+  /**
+   * Si el docente cierra la pestaña o navega dentro de la ventana del debounce,
+   * el cambio se perdía. `keepalive` deja que el request sobreviva a la
+   * navegación (tope de 64 KB de body, alcanza de sobra para título y
+   * descripción; el código, si es grande, ya se guardó en el ciclo normal).
+   */
+  useEffect(() => {
+    function flushOnExit() {
+      const payload = pendingSave.current;
+      if (!payload) return;
+
+      pendingSave.current = null;
+      void fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {});
+    }
+
+    window.addEventListener('pagehide', flushOnExit);
+    return () => window.removeEventListener('pagehide', flushOnExit);
+  }, [projectId]);
+
   async function handleSend(message: string) {
     setError(null);
     // Sincroniza cualquier edición manual pendiente antes de que la IA lea el HTML.
