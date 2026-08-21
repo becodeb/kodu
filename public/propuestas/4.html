@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Propuesta 4 · Editorial</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Archivo+Black&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --papel: #fbfbf9;
+        --tinta: #101014;
+        --gris: #6d6d78;
+        --linea: #dfdfd8;
+        --indigo: #4f46e5;
+      }
+      body {
+        background: var(--papel);
+        color: var(--tinta);
+        font-family: Archivo, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .contenedor {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 32px;
+      }
+      nav {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--linea);
+      }
+      nav img {
+        height: 26px;
+        align-self: center;
+      }
+      .nav-links {
+        display: flex;
+        gap: 28px;
+        font-size: 14px;
+        letter-spacing: 0.01em;
+      }
+      .nav-links a {
+        color: var(--tinta);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+        padding-bottom: 2px;
+      }
+      .nav-links a:hover {
+        border-color: var(--tinta);
+      }
+
+      /* Titular como afiche: la tipografía es el gesto */
+      .portada {
+        padding: 72px 0 0;
+      }
+      h1 {
+        font-family: 'Archivo Black', Archivo, sans-serif;
+        font-size: clamp(52px, 11vw, 148px);
+        line-height: 0.88;
+        letter-spacing: -0.045em;
+        text-transform: uppercase;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--indigo);
+      }
+      .bajo-titular {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+        border-top: 1px solid var(--linea);
+        margin-top: 40px;
+        padding-top: 22px;
+      }
+      .bajada {
+        font-size: 19px;
+        line-height: 1.55;
+        max-width: 44ch;
+      }
+      .meta {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        font-size: 14px;
+        color: var(--gris);
+        align-items: flex-start;
+      }
+      .meta div {
+        display: flex;
+        gap: 12px;
+      }
+      .meta b {
+        color: var(--tinta);
+        font-weight: 600;
+        min-width: 3ch;
+      }
+      .boton {
+        display: inline-block;
+        margin-top: 6px;
+        background: var(--tinta);
+        color: var(--papel);
+        text-decoration: none;
+        padding: 14px 26px;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      .pieza {
+        margin-top: 64px;
+        border-top: 1px solid var(--linea);
+        padding-top: 26px;
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        gap: 40px;
+        align-items: start;
+      }
+      .rotulo {
+        font-size: 12.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--gris);
+      }
+      .lista-pedidos {
+        margin-top: 18px;
+        display: flex;
+        flex-direction: column;
+      }
+      .pedido {
+        border: 0;
+        border-top: 1px solid var(--linea);
+        background: none;
+        font-family: inherit;
+        text-align: left;
+        padding: 14px 0;
+        cursor: pointer;
+        font-size: 15px;
+        line-height: 1.4;
+        color: var(--gris);
+        display: flex;
+        gap: 12px;
+      }
+      .pedido:last-child {
+        border-bottom: 1px solid var(--linea);
+      }
+      .pedido b {
+        color: var(--tinta);
+        font-weight: 600;
+        min-width: 2.5ch;
+      }
+      .pedido[aria-pressed='true'] {
+        color: var(--tinta);
+      }
+      .pedido[aria-pressed='true'] b {
+        color: var(--indigo);
+      }
+      iframe {
+        width: 100%;
+        height: 460px;
+        border: 1px solid var(--linea);
+        background: #fff;
+        display: block;
+      }
+      .pie-pieza {
+        margin-top: 10px;
+        font-size: 13px;
+        color: var(--gris);
+        display: flex;
+        justify-content: space-between;
+      }
+
+      section {
+        padding: 88px 0;
+      }
+      h2 {
+        font-family: 'Archivo Black', Archivo, sans-serif;
+        font-size: clamp(28px, 4.4vw, 52px);
+        line-height: 1;
+        letter-spacing: -0.035em;
+        text-transform: uppercase;
+        max-width: 16ch;
+      }
+      .pasos {
+        margin-top: 44px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 32px;
+      }
+      .paso {
+        border-top: 2px solid var(--tinta);
+        padding-top: 16px;
+      }
+      .paso span {
+        font-family: 'Archivo Black', sans-serif;
+        font-size: 30px;
+        letter-spacing: -0.03em;
+      }
+      .paso h3 {
+        margin-top: 6px;
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .paso p {
+        margin-top: 8px;
+        font-size: 15px;
+        line-height: 1.6;
+        color: var(--gris);
+      }
+      .franja {
+        background: var(--tinta);
+        color: var(--papel);
+      }
+      .franja .contenedor {
+        padding-top: 76px;
+        padding-bottom: 76px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 32px;
+        flex-wrap: wrap;
+      }
+      .franja h2 {
+        color: var(--papel);
+      }
+      .franja .boton {
+        background: var(--papel);
+        color: var(--tinta);
+      }
+      footer {
+        padding: 28px 0;
+        font-size: 13.5px;
+        color: var(--gris);
+        border-top: 1px solid var(--linea);
+      }
+      @media (max-width: 900px) {
+        .bajo-titular,
+        .pieza,
+        .pasos {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="contenedor">
+      <nav>
+        <img src="/brand/kodu-logo.webp" alt="Kodu" />
+        <div class="nav-links">
+          <a href="#">Galería</a>
+          <a href="#">Cómo funciona</a>
+          <a href="#">Ingresar</a>
+          <a href="#">Crear cuenta</a>
+        </div>
+      </nav>
+
+      <div class="portada">
+        <h1>Pedilo<br />en una<br /><em>frase</em></h1>
+
+        <div class="bajo-titular">
+          <p class="bajada">
+            Kodu toma la actividad que describís y la devuelve funcionando: un quiz, un simulador, un
+            juego. Listo para proyectar en el aula o compartir por link.
+          </p>
+          <div class="meta">
+            <div><b>01</b> Sin instalar nada, corre en el navegador</div>
+            <div><b>02</b> Los estudiantes no necesitan cuenta</div>
+            <div><b>03</b> Los recursos quedan en el servidor de la red</div>
+            <a class="boton" href="#">Crear cuenta institucional</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="pieza">
+        <div>
+          <p class="rotulo">Hecho por Kodu</p>
+          <div class="lista-pedidos">
+            <button class="pedido" aria-pressed="true" data-src="/demos/quiz-fracciones.html">
+              <b>01</b> Un quiz de fracciones equivalentes para 5.º grado
+            </button>
+            <button class="pedido" aria-pressed="false" data-src="/demos/simulador-circuito.html">
+              <b>02</b> Un simulador de circuito con pila e interruptor
+            </button>
+            <button class="pedido" aria-pressed="false" data-src="/demos/juego-clasificar.html">
+              <b>03</b> Clasificar animales en vertebrados e invertebrados
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <iframe id="visor" src="/demos/quiz-fracciones.html" sandbox="allow-scripts"></iframe>
+          <div class="pie-pieza">
+            <span id="url">kodu.becode.com.ar/p/quiz-fracciones</span>
+            <span>Interactivo — probalo</span>
+          </div>
+        </div>
+      </div>
+
+      <section>
+        <h2>Tres pasos</h2>
+        <div class="pasos">
+          <div class="paso">
+            <span>01</span>
+            <h3>Escribís el pedido</h3>
+            <p>El tema, el año, cuántas preguntas. En castellano, como se lo dirías a un colega.</p>
+          </div>
+          <div class="paso">
+            <span>02</span>
+            <h3>Lo ves armarse</h3>
+            <p>Aparece al lado del chat. Si algo no va, se lo pedís distinto y lo rehace.</p>
+          </div>
+          <div class="paso">
+            <span>03</span>
+            <h3>Lo llevás al aula</h3>
+            <p>Proyectás la vista pública o pasás el link. Sin cuentas para los estudiantes.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="franja">
+      <div class="contenedor">
+        <h2>Con tu correo institucional alcanza</h2>
+        <a class="boton" href="#">Empezar</a>
+      </div>
+    </div>
+
+    <div class="contenedor">
+      <footer>Kodu · Plataforma institucional de la red educativa</footer>
+    </div>
+
+    <script>
+      const visor = document.getElementById('visor');
+      const url = document.getElementById('url');
+      document.querySelectorAll('.pedido').forEach((b) => {
+        b.addEventListener('click', () => {
+          document.querySelectorAll('.pedido').forEach((o) => o.setAttribute('aria-pressed', o === b));
+          visor.src = b.dataset.src;
+          url.textContent = 'kodu.becode.com.ar/p/' + b.dataset.src.split('/').pop().replace('.html', '');
+        });
+      });
+    </script>
+  </body>
+</html>

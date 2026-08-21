@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Propuesta 2 · Aula</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --indigo: #4f46e5;
+        --indigo-suave: #eef0ff;
+        --ambar: #f2a93b;
+        --ambar-suave: #fff5e3;
+        --menta: #d9f2e6;
+        --coral: #ffe4e0;
+        --tinta: #171a2b;
+        --gris: #6b7185;
+      }
+      body {
+        background: #fff;
+        color: var(--tinta);
+        font-family: Archivo, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .contenedor {
+        max-width: 1140px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 0;
+      }
+      nav img {
+        height: 30px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 24px;
+        align-items: center;
+        font-size: 15px;
+      }
+      .nav-links a {
+        color: var(--tinta);
+        text-decoration: none;
+      }
+      .boton {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 12px 24px;
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      .primario {
+        background: var(--indigo);
+        color: #fff;
+      }
+      .secundario {
+        background: #f1f2f7;
+        color: var(--tinta);
+      }
+
+      .hero {
+        text-align: center;
+        padding: 56px 0 0;
+      }
+      .globo {
+        display: inline-block;
+        position: relative;
+        background: var(--indigo-suave);
+        color: var(--indigo);
+        border-radius: 22px 22px 22px 6px;
+        padding: 14px 22px;
+        font-size: 17px;
+        font-weight: 500;
+        max-width: 40ch;
+        text-align: left;
+      }
+      h1 {
+        margin: 22px auto 0;
+        max-width: 17ch;
+        font-size: clamp(38px, 5.6vw, 62px);
+        font-weight: 800;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+      .marcador {
+        white-space: nowrap;
+        background: linear-gradient(transparent 62%, var(--ambar) 62%);
+        padding: 0 2px;
+      }
+      .bajada {
+        margin: 18px auto 0;
+        max-width: 52ch;
+        font-size: 18.5px;
+        line-height: 1.6;
+        color: var(--gris);
+      }
+      .acciones {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin-top: 28px;
+      }
+
+      .visor-caja {
+        margin: 44px auto 0;
+        max-width: 940px;
+        background: #f6f6fa;
+        border-radius: 28px;
+        padding: 18px;
+      }
+      .pestanias {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+      }
+      .pestania {
+        border: 0;
+        border-radius: 999px;
+        padding: 9px 18px;
+        font-size: 14px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        background: #fff;
+        color: var(--gris);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+      }
+      .pestania[aria-pressed='true'] {
+        background: var(--tinta);
+        color: #fff;
+      }
+      iframe {
+        width: 100%;
+        height: 420px;
+        border: 0;
+        border-radius: 18px;
+        background: #fff;
+        display: block;
+      }
+      .pie-visor {
+        margin-top: 12px;
+        font-size: 13.5px;
+        color: var(--gris);
+        text-align: center;
+      }
+
+      section {
+        padding: 84px 0;
+      }
+      h2 {
+        font-size: clamp(28px, 3.6vw, 40px);
+        font-weight: 800;
+        letter-spacing: -0.025em;
+        max-width: 20ch;
+      }
+      .sub {
+        margin-top: 12px;
+        color: var(--gris);
+        font-size: 17px;
+        max-width: 52ch;
+      }
+      .pasos {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        margin-top: 40px;
+      }
+      .paso {
+        border-radius: 24px;
+        padding: 28px;
+      }
+      .paso:nth-child(1) {
+        background: var(--indigo-suave);
+      }
+      .paso:nth-child(2) {
+        background: var(--ambar-suave);
+      }
+      .paso:nth-child(3) {
+        background: var(--menta);
+      }
+      .paso h3 {
+        font-size: 19px;
+        font-weight: 700;
+        margin-top: 14px;
+      }
+      .paso p {
+        margin-top: 8px;
+        font-size: 15.5px;
+        line-height: 1.6;
+        color: #4a5060;
+      }
+      .icono {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: #fff;
+        font-size: 20px;
+      }
+      .ideas {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 36px;
+      }
+      .idea {
+        background: #f6f6fa;
+        border-radius: 18px;
+        padding: 18px 20px;
+      }
+      .area {
+        font-size: 12.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--indigo);
+      }
+      .idea p {
+        margin-top: 6px;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .cierre {
+        background: var(--tinta);
+        color: #fff;
+        border-radius: 32px;
+        padding: 56px 40px;
+        text-align: center;
+      }
+      .cierre h2 {
+        margin: 0 auto;
+      }
+      .cierre p {
+        margin: 14px auto 26px;
+        color: #a9aec2;
+        max-width: 46ch;
+      }
+      footer {
+        padding: 40px 0 60px;
+        color: var(--gris);
+        font-size: 14.5px;
+      }
+      @media (max-width: 900px) {
+        .pasos,
+        .ideas {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="contenedor">
+      <nav>
+        <img src="/brand/kodu-logo.webp" alt="Kodu" />
+        <div class="nav-links">
+          <a href="#">Galería</a>
+          <a href="#">Ingresar</a>
+          <a class="boton primario" href="#">Crear cuenta</a>
+        </div>
+      </nav>
+
+      <div class="hero">
+        <div class="globo">
+          «Un quiz de fracciones equivalentes para 5.º grado, con devolución después de cada
+          respuesta»
+        </div>
+        <h1>Se lo pedís así,<br /><span class="marcador">y te lo arma</span></h1>
+        <p class="bajada">
+          Kodu convierte lo que escribís en un recurso interactivo listo para el aula. Sin instalar
+          nada, sin saber programar, sin cuentas para los estudiantes.
+        </p>
+        <div class="acciones">
+          <a class="boton primario" href="#">Crear cuenta institucional</a>
+          <a class="boton secundario" href="#">Ya tengo cuenta</a>
+        </div>
+
+        <div class="visor-caja">
+          <div class="pestanias">
+            <button class="pestania" aria-pressed="true" data-src="/demos/quiz-fracciones.html">
+              Matemática · 5.º
+            </button>
+            <button class="pestania" aria-pressed="false" data-src="/demos/simulador-circuito.html">
+              Ciencias · 6.º
+            </button>
+            <button class="pestania" aria-pressed="false" data-src="/demos/juego-clasificar.html">
+              Naturales · 4.º
+            </button>
+          </div>
+          <iframe id="visor" src="/demos/quiz-fracciones.html" sandbox="allow-scripts"></iframe>
+          <p class="pie-visor">Los tres los generó Kodu. Están andando: tocalos.</p>
+        </div>
+      </div>
+
+      <section>
+        <h2>Del pedido al aula, en tres pasos</h2>
+        <div class="pasos">
+          <div class="paso">
+            <div class="icono">✍️</div>
+            <h3>Contale qué necesitás</h3>
+            <p>El tema, el año y cuántas preguntas. Como se lo dirías a un colega en la sala.</p>
+          </div>
+          <div class="paso">
+            <div class="icono">👀</div>
+            <h3>Miralo funcionar</h3>
+            <p>Aparece al lado del chat. ¿Muy difícil? Se lo pedís más fácil y lo rehace.</p>
+          </div>
+          <div class="paso">
+            <div class="icono">🔗</div>
+            <h3>Proyectalo o pasá el link</h3>
+            <p>Abre en cualquier compu, tablet o celular. Los estudiantes no crean cuenta.</p>
+          </div>
+        </div>
+      </section>
+
+      <section style="padding-top: 0">
+        <h2>Ideas para arrancar</h2>
+        <p class="sub">No hay fórmula: se pide como se habla.</p>
+        <div class="ideas">
+          <div class="idea">
+            <span class="area">Lengua</span>
+            <p>Flashcards para repasar tipos de sujeto, con ejemplos.</p>
+          </div>
+          <div class="idea">
+            <span class="area">Matemática</span>
+            <p>Una calculadora de porcentajes que muestre el paso a paso.</p>
+          </div>
+          <div class="idea">
+            <span class="area">Historia</span>
+            <p>Una línea de tiempo de la Revolución de Mayo.</p>
+          </div>
+          <div class="idea">
+            <span class="area">Inglés</span>
+            <p>Unir la palabra con la imagen, vocabulario de la casa.</p>
+          </div>
+          <div class="idea">
+            <span class="area">Geografía</span>
+            <p>Un mapa de provincias para practicar capitales.</p>
+          </div>
+          <div class="idea">
+            <span class="area">Biología</span>
+            <p>Un simulador de fotosíntesis con sol y agua regulables.</p>
+          </div>
+        </div>
+      </section>
+
+      <section style="padding-top: 0">
+        <div class="cierre">
+          <h2>Con tu correo institucional alcanza</h2>
+          <p>
+            El registro está habilitado para los dominios de la red. La cuenta se crea en el momento
+            y los recursos quedan en el servidor de la institución.
+          </p>
+          <a class="boton primario" href="#" style="background: #fff; color: var(--tinta)">
+            Crear cuenta
+          </a>
+        </div>
+      </section>
+
+      <footer>Kodu · Plataforma institucional de la red educativa</footer>
+    </div>
+
+    <script>
+      const visor = document.getElementById('visor');
+      document.querySelectorAll('.pestania').forEach((b) => {
+        b.addEventListener('click', () => {
+          document
+            .querySelectorAll('.pestania')
+            .forEach((o) => o.setAttribute('aria-pressed', o === b));
+          visor.src = b.dataset.src;
+        });
+      });
+    </script>
+  </body>
+</html>
