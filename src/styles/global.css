@@ -3,7 +3,10 @@
 /* Tokens de marca KoduEdu (Tailwind v4: se declaran con @theme y quedan
    disponibles como utilidades, p.ej. bg-brand-600 / text-ink-500). */
 @theme {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Archivo (Omnibus-Type) y Piazzolla (Huerta Tipográfica): las dos son
+     fundiciones de Buenos Aires, con acentuación castellana bien resuelta. */
+  --font-sans: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'Piazzolla', 'Iowan Old Style', Georgia, serif;
 
   --color-brand-50: oklch(0.97 0.02 264);
   --color-brand-100: oklch(0.93 0.05 264);
@@ -15,6 +18,23 @@
   --color-ink-500: oklch(0.55 0.02 264);
   --color-ink-700: oklch(0.38 0.02 264);
   --color-ink-900: oklch(0.24 0.03 264);
+
+  /* Verde pizarrón: el artefacto más reconocible del aula. Es el único color
+     fuerte del marco; el resto del color lo ponen los recursos generados. */
+  --color-pizarron-950: #0e241c;
+  --color-pizarron-900: #14342a;
+  --color-pizarron-800: #1c4638;
+  --color-pizarron-700: #2b5c4b;
+  --color-pizarron-600: #3d7561;
+
+  /* Tiza (cálida, no blanco puro) y el amarillo del acento. */
+  --color-tiza-50: #f6f4ec;
+  --color-tiza-200: #e2ddcb;
+  --color-tiza-400: #b9b3a0;
+  --color-mostaza-300: #f2d074;
+  --color-mostaza-400: #e9b949;
+
+  --color-papel: #f8f7f4;
 }
 
 @layer base {
@@ -23,12 +43,18 @@
   }
 
   body {
-    @apply bg-slate-50 text-ink-900 antialiased;
+    @apply bg-papel text-ink-900 antialiased;
     font-family: var(--font-sans);
   }
 
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+
+  /* Sobre el pizarrón el indigo del foco casi no se ve: ahí manda la tiza. */
+  .bg-pizarron-900 :focus-visible,
+  .bg-pizarron-950 :focus-visible {
+    @apply outline-mostaza-400;
   }
 }
 
@@ -47,6 +73,15 @@
 
 @utility kodu-label {
   @apply mb-1.5 block text-sm font-medium text-ink-700;
+}
+
+/* Botón de tiza: sobre el pizarrón el indigo se empasta, la tiza contrasta. */
+@utility kodu-btn-tiza {
+  @apply kodu-btn bg-tiza-50 text-pizarron-900 hover:bg-white;
+}
+
+@utility kodu-btn-pizarron {
+  @apply kodu-btn border border-pizarron-600 text-tiza-50 hover:bg-pizarron-800;
 }
 
 @utility kodu-btn {

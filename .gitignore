@@ -28,3 +28,6 @@ npm-debug.log*
 
 # entorno de produccion (se completa a mano en el servidor)
 .env.production
+
+# scripts temporales de verificacion
+.tmp-*

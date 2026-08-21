@@ -1,39 +1,411 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { prisma } from '../lib/db.ts';
 
 const user = Astro.locals.user;
+
+/**
+ * Los tres recursos del visor los generó esta misma plataforma con DeepSeek y
+ * están guardados en /public/demos. No son maquetas: se pueden usar acá mismo.
+ */
+const demos = [
+  {
+    slug: 'quiz-fracciones',
+    area: 'Matemática',
+    anio: '5.º grado',
+    pedido: 'Un quiz de 3 preguntas sobre fracciones equivalentes, con una devolución después de cada respuesta.',
+  },
+  {
+    slug: 'simulador-circuito',
+    area: 'Ciencias',
+    anio: '6.º grado',
+    pedido: 'Un simulador de circuito con pila, interruptor y lámpara, que se encienda cuando lo cierro.',
+  },
+  {
+    slug: 'juego-clasificar',
+    area: 'Naturales',
+    anio: '4.º grado',
+    pedido: 'Un juego para clasificar animales en vertebrados e invertebrados, con puntaje al final.',
+  },
+];
+
+const pasos = [
+  {
+    titulo: 'Contale qué necesitás',
+    detalle:
+      'En castellano, como se lo explicarías a un colega en la sala: el tema, el año, cuántas preguntas.',
+  },
+  {
+    titulo: 'Miralo funcionar mientras lo armás',
+    detalle:
+      'El recurso aparece al lado del chat. Si algo no va, se lo pedís de nuevo: «que las consignas sean más cortas».',
+  },
+  {
+    titulo: 'Proyectalo o pasá el link',
+    detalle:
+      'Cada recurso tiene una dirección propia que abre en cualquier compu, tablet o celular. Los estudiantes no necesitan cuenta.',
+  },
+];
+
+const pedidos = [
+  { area: 'Lengua', texto: 'Flashcards para repasar tipos de sujeto, con ejemplos de oraciones.' },
+  { area: 'Matemática', texto: 'Una calculadora de porcentajes que muestre el paso a paso.' },
+  { area: 'Historia', texto: 'Una línea de tiempo de la Revolución de Mayo para tocar cada hito.' },
+  { area: 'Inglés', texto: 'Un juego de unir la palabra con la imagen, vocabulario de la casa.' },
+  { area: 'Geografía', texto: 'Un mapa de las provincias para practicar capitales.' },
+  { area: 'Biología', texto: 'Un simulador de la fotosíntesis con sol, agua y CO₂ regulables.' },
+];
+
+const institucional = [
+  {
+    titulo: 'Entran sólo los correos de la red',
+    detalle: 'El registro está atado a la lista de dominios institucionales que define la administración.',
+  },
+  {
+    titulo: 'Reglas que valen para todos',
+    detalle: 'La administración fija criterios pedagógicos y de accesibilidad que se aplican en cada generación.',
+  },
+  {
+    titulo: 'Los recursos quedan en la red',
+    detalle: 'La plataforma corre en el servidor de la institución, con su propia base de datos.',
+  },
+  {
+    titulo: 'Links que no vencen',
+    detalle: 'Un recurso publicado hoy sigue abriendo el año que viene, con la misma dirección.',
+  },
+];
+
+// La galería se llena sola a medida que los docentes publican.
+const publicados = await prisma.project.findMany({
+  where: { isInGallery: true },
+  orderBy: { updatedAt: 'desc' },
+  take: 3,
+  select: {
+    title: true,
+    description: true,
+    slug: true,
+    screenshotUrl: true,
+    user: { select: { name: true } },
+  },
+});
 ---
 
-<BaseLayout title="KoduEdu">
-  <section class="mx-auto max-w-3xl py-12 text-center">
-    <p class="text-sm font-semibold tracking-wide text-brand-600 uppercase">
-      Plataforma institucional
-    </p>
-    <h1 class="mt-3 text-4xl font-bold text-balance text-ink-900 sm:text-5xl">
-      Recursos didácticos interactivos, creados conversando
-    </h1>
-    <p class="mt-4 text-lg text-pretty text-ink-500">
-      Describí la actividad que necesitás y KoduEdu la convierte en un quiz, un simulador o una
-      calculadora lista para proyectar y compartir con tus estudiantes.
-    </p>
+<BaseLayout title="KoduEdu" bleed darkHeader>
+  <!-- ── El pizarrón ─────────────────────────────────────────────────── -->
+  <section class="hero-pizarron relative overflow-hidden bg-pizarron-900 text-tiza-50">
+    <div
+      class="mx-auto grid max-w-6xl gap-10 px-4 py-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:gap-14 lg:py-16"
+    >
+      <div class="flex flex-col justify-center">
+        <h1 class="font-display text-4xl leading-[1.05] font-extrabold tracking-tight sm:text-5xl">
+          Describís la actividad.<br />
+          <span class="text-mostaza-400">KoduEdu la construye.</span>
+        </h1>
 
-    <div class="mt-8 flex flex-wrap justify-center gap-3">
+        <p class="mt-5 max-w-lg text-lg leading-relaxed text-tiza-200">
+          Quizzes, simuladores y juegos que abren en cualquier navegador y se proyectan en el aula.
+          Los armás conversando: no hay que instalar nada ni saber programar.
+        </p>
+
+        <div class="mt-8 flex flex-wrap gap-3">
+          {
+            user ? (
+              <a href="/app" class="kodu-btn-tiza px-5 py-2.5">
+                Ir a mis recursos
+              </a>
+            ) : (
+              <>
+                <a href="/register" class="kodu-btn-tiza px-5 py-2.5">
+                  Crear cuenta institucional
+                </a>
+                <a href="/login" class="kodu-btn-pizarron px-5 py-2.5">
+                  Ya tengo cuenta
+                </a>
+              </>
+            )
+          }
+        </div>
+
+        <dl class="mt-10 grid gap-5 border-t border-pizarron-700 pt-6 sm:grid-cols-3">
+          <div>
+            <dt class="text-sm font-semibold text-tiza-50">Sin instalar nada</dt>
+            <dd class="mt-0.5 text-sm text-tiza-400">Abre en el navegador que ya usás.</dd>
+          </div>
+          <div>
+            <dt class="text-sm font-semibold text-tiza-50">Sin cuentas para el curso</dt>
+            <dd class="mt-0.5 text-sm text-tiza-400">Se comparte con un link.</dd>
+          </div>
+          <div>
+            <dt class="text-sm font-semibold text-tiza-50">Listo para proyectar</dt>
+            <dd class="mt-0.5 text-sm text-tiza-400">Tipografía grande y alto contraste.</dd>
+          </div>
+        </dl>
+      </div>
+
+      <!-- El pedido y su resultado, uno arriba del otro -->
+      <div class="flex flex-col">
+        <p class="text-xs font-semibold tracking-wider text-tiza-400 uppercase">
+          Lo que escribió la docente
+        </p>
+
+        <p
+          id="demo-pedido"
+          class="mt-2 rounded-2xl rounded-tl-sm bg-pizarron-800 px-4 py-3 text-[0.95rem] leading-snug text-tiza-50 transition-opacity duration-200"
+        >
+          {demos[0]!.pedido}
+        </p>
+
+        <div class="my-3 ml-6 flex items-center gap-2 text-tiza-400" aria-hidden="true">
+          <span class="h-6 w-px bg-pizarron-700"></span>
+          <span class="text-xs">se convierte en</span>
+        </div>
+
+        <figure class="overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-black/10">
+          <figcaption
+            class="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-[0.7rem] text-ink-500"
+          >
+            <span class="h-2 w-2 rounded-full bg-mostaza-400"></span>
+            <span id="demo-url" class="truncate font-mono">kodu.becode.com.ar/p/quiz-fracciones</span>
+          </figcaption>
+
+          <iframe
+            id="demo-frame"
+            title="Recurso de ejemplo, interactivo"
+            src="/demos/quiz-fracciones.html"
+            sandbox="allow-scripts"
+            loading="eager"
+            class="h-[340px] w-full border-0 transition-opacity duration-200 sm:h-[380px]"></iframe>
+        </figure>
+
+        <div class="mt-3 grid grid-cols-3 gap-2" aria-label="Recursos de ejemplo">
+          {
+            demos.map((demo, index) => (
+              <button
+                type="button"
+                data-demo={demo.slug}
+                data-pedido={demo.pedido}
+                aria-pressed={index === 0 ? 'true' : 'false'}
+                class="demo-tab rounded-xl border border-pizarron-700 px-3 py-2 text-left text-xs transition-colors hover:border-pizarron-600"
+              >
+                <span class="block font-semibold">{demo.area}</span>
+                <span class="block text-tiza-400">{demo.anio}</span>
+              </button>
+            ))
+          }
+        </div>
+
+        <p class="mt-3 text-xs text-tiza-400">
+          Los tres los generó esta plataforma. No son maquetas: tocalos, funcionan.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Los tres pasos (es una secuencia real, por eso van numerados) ── -->
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <h2 class="font-display text-2xl font-bold text-ink-900 sm:text-3xl">
+      Tres pasos, y está en el aula
+    </h2>
+
+    <ol class="mt-8 grid gap-8 sm:grid-cols-3">
       {
-        user ? (
-          <a href="/app" class="kodu-btn-primary">
-            Ir a mis recursos
-          </a>
-        ) : (
-          <>
-            <a href="/register" class="kodu-btn-primary">
+        pasos.map((paso, index) => (
+          <li class="border-t-2 border-pizarron-900 pt-4">
+            <span class="font-display text-3xl font-extrabold text-pizarron-800">
+              {String(index + 1).padStart(2, '0')}
+            </span>
+            <h3 class="mt-1 font-semibold text-ink-900">{paso.titulo}</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-ink-500">{paso.detalle}</p>
+          </li>
+        ))
+      }
+    </ol>
+  </section>
+
+  <!-- ── Ejemplos de pedidos ──────────────────────────────────────────── -->
+  <section class="border-y border-tiza-200 bg-tiza-50/60">
+    <div class="mx-auto max-w-6xl px-4 py-16">
+      <div class="max-w-2xl">
+        <h2 class="font-display text-2xl font-bold text-ink-900 sm:text-3xl">
+          Cómo suena un pedido
+        </h2>
+        <p class="mt-2 text-ink-500">
+          No hay una fórmula: se pide como se habla. Estos sirven para arrancar.
+        </p>
+      </div>
+
+      <ul class="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {
+          pedidos.map((pedido) => (
+            <li class="rounded-2xl rounded-tl-sm border border-tiza-200 bg-white px-4 py-3.5">
+              <span class="text-[0.7rem] font-semibold tracking-wider text-pizarron-700 uppercase">
+                {pedido.area}
+              </span>
+              <p class="mt-1 text-sm leading-snug text-ink-700">{pedido.texto}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <!-- ── Galería real ─────────────────────────────────────────────────── -->
+  <section class="mx-auto max-w-6xl px-4 py-16">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 class="font-display text-2xl font-bold text-ink-900 sm:text-3xl">
+          Lo que publican los docentes
+        </h2>
+        <p class="mt-2 text-ink-500">
+          Cada recurso de la galería se puede probar entero, o duplicar para adaptarlo.
+        </p>
+      </div>
+      <a href="/gallery" class="kodu-btn-ghost">Ver la galería</a>
+    </div>
+
+    {
+      publicados.length === 0 ? (
+        <p class="mt-8 rounded-2xl border border-dashed border-tiza-200 bg-white px-6 py-10 text-center text-sm text-ink-500">
+          Todavía no hay nada publicado. El primer recurso que compartas aparece acá.
+        </p>
+      ) : (
+        <ul class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {publicados.map((recurso) => (
+            <li class="kodu-card overflow-hidden">
+              <a href={`/p/${recurso.slug}`} target="_blank" rel="noopener noreferrer">
+                {recurso.screenshotUrl ? (
+                  <img
+                    src={recurso.screenshotUrl}
+                    alt={`Captura de ${recurso.title}`}
+                    class="h-40 w-full border-b border-tiza-200 object-cover object-top"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div class="grid h-40 place-items-center border-b border-tiza-200 bg-tiza-50 text-xs text-ink-500">
+                    Sin captura
+                  </div>
+                )}
+              </a>
+              <div class="p-4">
+                <h3 class="font-semibold text-ink-900">{recurso.title}</h3>
+                <p class="mt-0.5 text-xs text-ink-500">por {recurso.user.name}</p>
+                {recurso.description && (
+                  <p class="mt-2 line-clamp-2 text-sm text-ink-700">{recurso.description}</p>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+
+  <!-- ── Cierre institucional ─────────────────────────────────────────── -->
+  <section class="bg-pizarron-950 text-tiza-50">
+    <div class="mx-auto max-w-6xl px-4 py-16">
+      <h2 class="font-display max-w-xl text-2xl font-bold sm:text-3xl">
+        Pensado para una red educativa, no para un usuario suelto
+      </h2>
+
+      <dl class="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        {
+          institucional.map((item) => (
+            <div class="border-t border-pizarron-700 pt-4">
+              <dt class="font-semibold text-tiza-50">{item.titulo}</dt>
+              <dd class="mt-1.5 text-sm leading-relaxed text-tiza-400">{item.detalle}</dd>
+            </div>
+          ))
+        }
+      </dl>
+
+      <div class="mt-12 flex flex-wrap items-center gap-4 border-t border-pizarron-800 pt-8">
+        {
+          user ? (
+            <a href="/app" class="kodu-btn-tiza px-5 py-2.5">
+              Ir a mis recursos
+            </a>
+          ) : (
+            <a href="/register" class="kodu-btn-tiza px-5 py-2.5">
               Crear cuenta institucional
             </a>
-            <a href="/login" class="kodu-btn-ghost">
-              Ya tengo cuenta
-            </a>
-          </>
-        )
-      }
+          )
+        }
+        <p class="text-sm text-tiza-400">
+          Con tu correo institucional alcanza. La cuenta se crea en el momento.
+        </p>
+      </div>
     </div>
   </section>
 </BaseLayout>
+
+<style>
+  /* Un solo gesto de luz sobre el pizarrón, del lado del titular. */
+  .hero-pizarron::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(60rem 32rem at 12% 0%, rgb(255 255 255 / 0.07), transparent 70%);
+    pointer-events: none;
+  }
+
+  .demo-tab[aria-pressed='true'] {
+    background-color: var(--color-pizarron-800);
+    border-color: var(--color-mostaza-400);
+  }
+
+  /* Entrada en dos tiempos: primero el pedido, después el resultado.
+     Es la única animación de la página, y hace lo que dice el titular. */
+  @media (prefers-reduced-motion: no-preference) {
+    #demo-pedido,
+    .hero-pizarron figure {
+      animation: aparecer 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+    }
+
+    #demo-pedido {
+      animation-delay: 0.1s;
+    }
+
+    .hero-pizarron figure {
+      animation-delay: 0.35s;
+    }
+  }
+
+  @keyframes aparecer {
+    from {
+      opacity: 0;
+      transform: translateY(0.75rem);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+</style>
+
+<script>
+  // Cambiar de ejemplo: se actualiza el pedido, la URL y el recurso.
+  const tabs = document.querySelectorAll<HTMLButtonElement>('.demo-tab');
+  const frame = document.querySelector<HTMLIFrameElement>('#demo-frame');
+  const pedido = document.querySelector<HTMLElement>('#demo-pedido');
+  const url = document.querySelector<HTMLElement>('#demo-url');
+
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      const slug = tab.dataset.demo;
+      if (!frame || !pedido || !url || !slug) return;
+
+      for (const otro of tabs) otro.setAttribute('aria-pressed', String(otro === tab));
+
+      frame.style.opacity = '0';
+      pedido.style.opacity = '0';
+
+      window.setTimeout(() => {
+        frame.src = `/demos/${slug}.html`;
+        pedido.textContent = tab.dataset.pedido ?? '';
+        url.textContent = `kodu.becode.com.ar/p/${slug}`;
+        frame.style.opacity = '1';
+        pedido.style.opacity = '1';
+      }, 180);
+    });
+  }
+</script>

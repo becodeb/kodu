@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Circuito eléctrico simple</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { height: 100%; }
+  svg text { font-size: 14px; font-weight: 600; }
+  .cable { stroke: #1e293b; stroke-width: 5; stroke-linecap: round; }
+  #interruptor { cursor: pointer; outline: none; }
+  #interruptor:focus-visible .hit { stroke: #2563eb; }
+  .hit { stroke: transparent; stroke-width: 3; }
+  #palanca { transform-origin: 0 0; transform-box: fill-box; transition: transform 0.25s ease; }
+  #palanca.cerrada { transform: rotate(0deg); }
+  #palanca.abierta { transform: rotate(40deg); }
+  #lampara circle { transition: fill 0.3s ease, stroke 0.3s ease, filter 0.3s ease; }
+  .lampara-apagada circle { fill: #f8fafc; stroke: #334155; }
+  .lampara-encendida circle { fill: #fde047; stroke: #f59e0b; filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.95)); }
+  #corriente { opacity: 0; }
+  #corriente.activa { opacity: 1; animation: flujo 0.9s linear infinite; }
+  @keyframes flujo { to { stroke-dashoffset: -24; } }
+</style>
+</head>
+<body class="min-h-screen w-full bg-slate-100 flex items-center justify-center p-2">
+  <main class="w-full max-w-[560px] bg-white rounded-2xl shadow-lg p-3 flex flex-col gap-2">
+    <h1 class="text-center text-xl md:text-2xl font-extrabold text-slate-800">⚡ Circuito eléctrico simple</h1>
+
+    <svg viewBox="0 0 560 250" class="w-full h-auto" role="group" aria-label="Diagrama del circuito eléctrico">
+      <line class="cable" x1="130" y1="30" x2="260" y2="30"></line>
+      <line class="cable" x1="300" y1="30" x2="430" y2="30"></line>
+      <line class="cable" x1="430" y1="30" x2="430" y2="100"></line>
+      <line class="cable" x1="430" y1="170" x2="430" y2="230"></line>
+      <line class="cable" x1="430" y1="230" x2="130" y2="230"></line>
+      <line class="cable" x1="130" y1="230" x2="130" y2="170"></line>
+      <line class="cable" x1="130" y1="100" x2="130" y2="30"></line>
+
+      <path id="corriente" d="M130,100 L130,30 L430,30 L430,230 L130,230 L130,170" fill="none" stroke="#f59e0b" stroke-width="5" stroke-linecap="round" stroke-dasharray="10 14"></path>
+
+      <line x1="118" y1="100" x2="142" y2="100" stroke="#1e293b" stroke-width="4" stroke-linecap="round"></line>
+      <line x1="123" y1="170" x2="137" y2="170" stroke="#1e293b" stroke-width="7" stroke-linecap="round"></line>
+      <text x="150" y="105" fill="#1e293b">+</text>
+      <text x="150" y="175" fill="#1e293b">−</text>
+      <text x="112" y="138" text-anchor="end" fill="#475569">Pila</text>
+
+      <g id="lampara" class="lampara-apagada">
+        <circle cx="280" cy="30" r="20" stroke-width="4"></circle>
+        <line x1="266" y1="16" x2="294" y2="44" stroke="#334155" stroke-width="3"></line>
+        <line x1="294" y1="16" x2="266" y2="44" stroke="#334155" stroke-width="3"></line>
+      </g>
+      <text x="280" y="60" text-anchor="middle" fill="#475569">Lámpara</text>
+
+      <g id="interruptor" role="button" tabindex="0" aria-pressed="false" aria-label="Interruptor del circuito">
+        <rect class="hit" x="375" y="70" width="115" height="130" rx="14" fill="transparent"></rect>
+        <circle cx="430" cy="100" r="6" fill="#1e293b"></circle>
+        <circle cx="430" cy="170" r="6" fill="#1e293b"></circle>
+        <g transform="translate(430 100)">
+          <line id="palanca" class="abierta" x1="0" y1="0" x2="0" y2="70" stroke="#dc2626" stroke-width="6" stroke-linecap="round"></line>
+        </g>
+      </g>
+      <text x="512" y="138" text-anchor="middle" fill="#475569">Interruptor</text>
+    </svg>
+
+    <div id="explicacion" aria-live="polite" class="rounded-xl px-3 py-2 text-lg font-semibold text-center bg-slate-100 text-slate-700 min-h-[56px] flex items-center justify-center transition-colors duration-300">
+      El circuito está abierto. Tocá el interruptor para cerrarlo.
+    </div>
+  </main>
+
+  <script>
+    const interruptor = document.getElementById('interruptor');
+    const palanca = document.getElementById('palanca');
+    const lampara = document.getElementById('lampara');
+    const corriente = document.getElementById('corriente');
+    const explicacion = document.getElementById('explicacion');
+    let cerrado = false;
+
+    const baseExplicacion = 'rounded-xl px-3 py-2 text-lg font-semibold text-center min-h-[56px] flex items-center justify-center transition-colors duration-300';
+
+    function actualizar() {
+      if (cerrado) {
+        palanca.classList.remove('abierta');
+        palanca.classList.add('cerrada');
+        lampara.classList.remove('lampara-apagada');
+        lampara.classList.add('lampara-encendida');
+        corriente.classList.add('activa');
+        explicacion.textContent = '¡Circuito cerrado! La corriente circula desde la pila por los cables y la lámpara se enciende.';
+        explicacion.className = baseExplicacion + ' bg-amber-100 text-amber-900';
+        interruptor.setAttribute('aria-pressed', 'true');
+      } else {
+        palanca.classList.remove('cerrada');
+        palanca.classList.add('abierta');
+        lampara.classList.remove('lampara-encendida');
+        lampara.classList.add('lampara-apagada');
+        corriente.classList.remove('activa');
+        explicacion.textContent = 'Circuito abierto: la corriente se detiene y la lámpara se apaga.';
+        explicacion.className = baseExplicacion + ' bg-slate-100 text-slate-700';
+        interruptor.setAttribute('aria-pressed', 'false');
+      }
+    }
+
+    function alternar() {
+      cerrado = !cerrado;
+      actualizar();
+    }
+
+    interruptor.addEventListener('click', alternar);
+    interruptor.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        alternar();
+      }
+    });
+  </script>
+</body>
+</html>
