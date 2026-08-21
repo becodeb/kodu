@@ -17,6 +17,10 @@ export default defineConfig({
     port: Number(process.env.PORT ?? 3000),
   },
 
+  // El chequeo de origen lo hace src/lib/csrf.ts: el integrado compara contra
+  // el protocolo del socket y detras de un proxy TLS da 403 en cada formulario.
+  security: { checkOrigin: false },
+
   integrations: [react()],
 
   vite: {

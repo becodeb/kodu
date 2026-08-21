@@ -1,6 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { readSessionFromCookies } from './lib/auth/session.ts';
 import { fail } from './lib/http.ts';
+import { crossOriginForbiddenResponse, isForbiddenCrossOrigin } from './lib/csrf.ts';
 
 /**
  * Resuelve la sesion en cada request y protege las areas privadas.
@@ -19,6 +20,12 @@ function matches(pathname: string, prefixes: string[]): boolean {
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { pathname } = context.url;
+
+  // Reemplaza a security.checkOrigin de Astro, que detras de un proxy TLS
+  // rechaza todo POST de formulario (ver src/lib/csrf.ts).
+  if (isForbiddenCrossOrigin(context)) {
+    return crossOriginForbiddenResponse(context);
+  }
 
   context.locals.user = await readSessionFromCookies(context.cookies);
 
