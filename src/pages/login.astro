@@ -11,7 +11,14 @@ const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//')
 <BaseLayout title="Ingresar">
   <div class="mx-auto max-w-md py-8">
     <div class="kodu-card p-6 sm:p-8">
-      <h1 class="text-2xl font-bold text-ink-900">Ingresar</h1>
+      <img
+        src="/brand/kodu-marca.png"
+        alt=""
+        width="180"
+        height="252"
+        class="mb-5 h-10 w-auto"
+      />
+      <h1 class="font-display text-2xl font-bold text-ink-900">Ingresar</h1>
       <p class="mt-1 mb-6 text-sm text-ink-500">Accedé con tu cuenta institucional.</p>
 
       <AuthForm client:load mode="login" allowedDomains={allowedDomainsLabel()} nextUrl={safeNext} />
