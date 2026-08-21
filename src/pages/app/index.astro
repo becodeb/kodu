@@ -1,0 +1,100 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import NewProjectButton from '../../components/NewProjectButton.tsx';
+import ProjectCardActions from '../../components/ProjectCardActions.tsx';
+import { prisma } from '../../lib/db.ts';
+
+// El middleware ya garantiza sesión en /app/**; esto es sólo para el tipo.
+const user = Astro.locals.user!;
+
+const projects = await prisma.project.findMany({
+  where: { userId: user.id },
+  orderBy: { updatedAt: 'desc' },
+  select: {
+    id: true,
+    title: true,
+    description: true,
+    slug: true,
+    isInGallery: true,
+    screenshotUrl: true,
+    updatedAt: true,
+  },
+});
+---
+
+<BaseLayout title="Mis recursos">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold text-ink-900">Hola, {user.name.split(' ')[0]}</h1>
+      <p class="mt-1 text-sm text-ink-500">
+        {user.role === 'ADMIN' ? 'Administración · ' : ''}{user.email}
+      </p>
+    </div>
+
+    <NewProjectButton client:load />
+  </div>
+
+  {
+    projects.length === 0 ? (
+      <div class="kodu-card mt-6 p-10 text-center">
+        <h2 class="text-lg font-semibold text-ink-900">Todavía no creaste recursos</h2>
+        <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
+          Tocá <strong>Nuevo recurso</strong> y describile a la IA la actividad que necesitás: la vas
+          a ver armarse en vivo en el panel de vista previa.
+        </p>
+      </div>
+    ) : (
+      <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {projects.map((project) => (
+          <li class="kodu-card flex flex-col overflow-hidden">
+            <a href={`/app/project/${project.id}`} class="block">
+              {project.screenshotUrl ? (
+                <img
+                  src={project.screenshotUrl}
+                  alt={`Captura de ${project.title}`}
+                  class="h-36 w-full border-b border-slate-200 object-cover object-top"
+                  loading="lazy"
+                />
+              ) : (
+                <div class="grid h-36 w-full place-items-center border-b border-slate-200 bg-slate-50 text-xs text-ink-500">
+                  Sin captura
+                </div>
+              )}
+            </a>
+
+            <div class="flex flex-1 flex-col p-4">
+              <a href={`/app/project/${project.id}`} class="font-semibold text-ink-900 hover:text-brand-600">
+                {project.title}
+              </a>
+              {project.description && (
+                <p class="mt-1 line-clamp-2 text-xs text-ink-500">{project.description}</p>
+              )}
+
+              <p class="mt-3 text-xs text-ink-500">
+                {project.isInGallery ? '🌐 En la galería' : '🔒 Privado'} ·{' '}
+                {project.updatedAt.toLocaleDateString('es-AR')}
+              </p>
+
+              <div class="mt-3 flex items-center gap-3 border-t border-slate-100 pt-3 text-xs">
+                <a href={`/app/project/${project.id}`} class="font-medium text-brand-600 hover:underline">
+                  Editar
+                </a>
+                <a
+                  href={`/p/${project.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-ink-500 hover:text-brand-600"
+                >
+                  Ver público ↗
+                </a>
+                <span class="ml-auto">
+                  <ProjectCardActions client:visible projectId={project.id} title={project.title} />
+                </span>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</BaseLayout>

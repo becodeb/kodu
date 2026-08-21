@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+
+/* Tokens de marca KoduEdu (Tailwind v4: se declaran con @theme y quedan
+   disponibles como utilidades, p.ej. bg-brand-600 / text-ink-500). */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-brand-50: oklch(0.97 0.02 264);
+  --color-brand-100: oklch(0.93 0.05 264);
+  --color-brand-300: oklch(0.78 0.12 264);
+  --color-brand-500: oklch(0.58 0.19 264);
+  --color-brand-600: oklch(0.51 0.2 264);
+  --color-brand-700: oklch(0.44 0.18 264);
+
+  --color-ink-500: oklch(0.55 0.02 264);
+  --color-ink-700: oklch(0.38 0.02 264);
+  --color-ink-900: oklch(0.24 0.03 264);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-ink-900 antialiased;
+    font-family: var(--font-sans);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+/* Utilidades compartidas. En Tailwind v4 se declaran con @utility (no dentro de
+   @layer components) para que se puedan componer entre sí vía @apply. */
+
+@utility kodu-card {
+  @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
+}
+
+@utility kodu-input {
+  @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-ink-900;
+  @apply placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 focus:outline-none;
+  @apply disabled:cursor-not-allowed disabled:bg-slate-100;
+}
+
+@utility kodu-label {
+  @apply mb-1.5 block text-sm font-medium text-ink-700;
+}
+
+@utility kodu-btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold;
+  @apply transition-colors disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+@utility kodu-btn-primary {
+  @apply kodu-btn bg-brand-600 text-white hover:bg-brand-700;
+}
+
+@utility kodu-btn-ghost {
+  @apply kodu-btn border border-slate-300 bg-white text-ink-700 hover:bg-slate-50;
+}

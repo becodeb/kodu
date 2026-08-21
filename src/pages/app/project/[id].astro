@@ -1,0 +1,72 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import Workspace from '../../../components/workspace/Workspace.tsx';
+import { prisma } from '../../../lib/db.ts';
+import { getEnv } from '../../../lib/env.ts';
+import type { ModelChoice } from '../../../lib/workspace-types.ts';
+
+const user = Astro.locals.user!;
+
+const project = await prisma.project.findFirst({
+  where: { id: Astro.params.id!, userId: user.id },
+  include: {
+    threads: { orderBy: { createdAt: 'asc' }, select: { id: true, title: true } },
+    assets: {
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, filename: true, url: true, fileType: true },
+    },
+  },
+});
+
+if (!project) {
+  return Astro.redirect('/app', 302);
+}
+
+// Un proyecto siempre nace con un hilo, pero si alguien borró todos, creamos uno.
+const activeThread =
+  project.threads[0] ??
+  (await prisma.chatThread.create({
+    data: { projectId: project.id },
+    select: { id: true, title: true },
+  }));
+
+const messages = await prisma.chatMessage.findMany({
+  where: { threadId: activeThread.id },
+  orderBy: { createdAt: 'asc' },
+  select: { id: true, role: true, content: true, attachments: true },
+});
+
+const siteUrl = getEnv().PUBLIC_SITE_URL;
+---
+
+<BaseLayout title={project.title} description={project.description ?? undefined} wide>
+  <div class="mb-3 flex items-center gap-2 text-sm">
+    <a href="/app" class="text-ink-500 hover:text-brand-600">← Mis recursos</a>
+    <span class="text-slate-300">/</span>
+    <span class="font-medium text-ink-900">{project.title}</span>
+  </div>
+
+  <Workspace
+    client:load
+    project={{
+      id: project.id,
+      title: project.title,
+      description: project.description,
+      slug: project.slug,
+      currentHtml: project.currentHtml,
+      selectedModel: project.selectedModel as ModelChoice,
+      isInGallery: project.isInGallery,
+      screenshotUrl: project.screenshotUrl,
+    }}
+    threads={project.threads.length > 0 ? project.threads : [activeThread]}
+    activeThreadId={activeThread.id}
+    messages={messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
+    }))}
+    assets={project.assets}
+    siteUrl={siteUrl}
+  />
+</BaseLayout>

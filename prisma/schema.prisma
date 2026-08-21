@@ -1,0 +1,105 @@
+// KoduEdu — modelo de datos (SPEC.md §3)
+// Prisma 7: el generador es "prisma-client" (ESM, con output explicito) y el
+// cliente se instancia con un driver adapter (ver src/lib/db.ts).
+
+datasource db {
+  // La URL vive en prisma.config.ts (Prisma 7 la saca del schema).
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+enum Role {
+  DOCENTE
+  ADMIN
+}
+
+enum ModelChoice {
+  FLASH
+  PRO
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  role         Role         @default(DOCENTE)
+  createdAt    DateTime     @default(now())
+  projects     Project[]
+  rules        CustomRule[]
+}
+
+model Project {
+  id            String         @id @default(uuid())
+  title         String         @default("Nuevo Recurso")
+  description   String?
+  slug          String         @unique
+  currentHtml   String         @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
+  screenshotUrl String?
+  isInGallery   Boolean        @default(false)
+  selectedModel ModelChoice    @default(FLASH)
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threads       ChatThread[]
+  assets        ProjectAsset[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([isInGallery, updatedAt])
+}
+
+model ChatThread {
+  id        String        @id @default(uuid())
+  title     String        @default("Conversación")
+  projectId String
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+
+  @@index([projectId])
+}
+
+model ChatMessage {
+  id          String     @id @default(uuid())
+  threadId    String
+  thread      ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role        String // "user" | "assistant" | "system"
+  content     String
+  attachments String? // URLs de archivos o PDFs parseados
+  createdAt   DateTime   @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+model CustomRule {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  isGlobal  Boolean  @default(false) // Solo admins crean reglas globales base
+  isActive  Boolean  @default(true)
+  userId    String? // Null si es global
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isActive])
+  @@index([isGlobal, isActive])
+}
+
+model ProjectAsset {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filename  String
+  url       String
+  fileType  String // "image" | "pdf"
+  // Texto extraido de los PDFs para inyectarlo como contexto de la IA (SPEC 4.2).
+  extractedText String?
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}

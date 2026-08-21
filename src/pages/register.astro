@@ -1,0 +1,23 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AuthForm from '../components/AuthForm.tsx';
+import { allowedDomainsLabel } from '../lib/auth/domains.ts';
+---
+
+<BaseLayout title="Crear cuenta">
+  <div class="mx-auto max-w-md py-8">
+    <div class="kodu-card p-6 sm:p-8">
+      <h1 class="text-2xl font-bold text-ink-900">Crear cuenta</h1>
+      <p class="mt-1 mb-6 text-sm text-ink-500">
+        El registro está restringido a docentes de la red educativa.
+      </p>
+
+      <AuthForm client:load mode="register" allowedDomains={allowedDomainsLabel()} />
+
+      <p class="mt-6 text-center text-sm text-ink-500">
+        ¿Ya tenés cuenta?{' '}
+        <a href="/login" class="font-medium text-brand-600 hover:underline">Ingresá</a>
+      </p>
+    </div>
+  </div>
+</BaseLayout>

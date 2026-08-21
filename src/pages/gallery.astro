@@ -1,0 +1,89 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import DuplicateButton from '../components/DuplicateButton.tsx';
+import { prisma } from '../lib/db.ts';
+
+/** Galería comunitaria (SPEC §5.3): sólo los recursos con el switch activo. */
+const user = Astro.locals.user;
+
+const projects = await prisma.project.findMany({
+  where: { isInGallery: true },
+  orderBy: { updatedAt: 'desc' },
+  take: 60,
+  select: {
+    id: true,
+    title: true,
+    description: true,
+    slug: true,
+    screenshotUrl: true,
+    updatedAt: true,
+    user: { select: { name: true } },
+  },
+});
+---
+
+<BaseLayout
+  title="Galería"
+  description="Recursos didácticos interactivos compartidos por docentes de la red."
+>
+  <header class="max-w-2xl">
+    <h1 class="text-2xl font-bold text-ink-900">Galería institucional</h1>
+    <p class="mt-1 text-sm text-ink-500">
+      Recursos publicados por docentes de la red. Podés abrirlos a pantalla completa para
+      proyectarlos, o duplicarlos en tu cuenta para adaptarlos.
+    </p>
+  </header>
+
+  {
+    projects.length === 0 ? (
+      <div class="kodu-card mt-6 p-10 text-center">
+        <h2 class="text-lg font-semibold text-ink-900">La galería todavía está vacía</h2>
+        <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
+          Cuando publiques un recurso desde el editor va a aparecer acá para el resto de la red.
+        </p>
+      </div>
+    ) : (
+      <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {projects.map((project) => (
+          <li class="kodu-card flex flex-col overflow-hidden">
+            <a href={`/p/${project.slug}`} target="_blank" rel="noopener noreferrer">
+              {project.screenshotUrl ? (
+                <img
+                  src={project.screenshotUrl}
+                  alt={`Captura de ${project.title}`}
+                  class="h-40 w-full border-b border-slate-200 object-cover object-top"
+                  loading="lazy"
+                />
+              ) : (
+                <div class="grid h-40 w-full place-items-center border-b border-slate-200 bg-slate-50 text-xs text-ink-500">
+                  Sin captura
+                </div>
+              )}
+            </a>
+
+            <div class="flex flex-1 flex-col p-4">
+              <h2 class="font-semibold text-ink-900">{project.title}</h2>
+              <p class="mt-0.5 text-xs text-ink-500">por {project.user.name}</p>
+
+              {project.description && (
+                <p class="mt-2 line-clamp-3 flex-1 text-sm text-ink-700">{project.description}</p>
+              )}
+
+              <div class="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3">
+                <a
+                  href={`/p/${project.slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="kodu-btn-primary px-2.5 py-1.5 text-xs"
+                >
+                  Probar a pantalla completa
+                </a>
+                <DuplicateButton client:visible projectId={project.id} isLoggedIn={Boolean(user)} />
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    )
+  }
+</BaseLayout>

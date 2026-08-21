@@ -1,0 +1,25 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import AuthForm from '../components/AuthForm.tsx';
+import { allowedDomainsLabel } from '../lib/auth/domains.ts';
+
+const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
+// Solo aceptamos redirecciones internas: evita open redirect via ?next=https://...
+const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
+---
+
+<BaseLayout title="Ingresar">
+  <div class="mx-auto max-w-md py-8">
+    <div class="kodu-card p-6 sm:p-8">
+      <h1 class="text-2xl font-bold text-ink-900">Ingresar</h1>
+      <p class="mt-1 mb-6 text-sm text-ink-500">Accedé con tu cuenta institucional.</p>
+
+      <AuthForm client:load mode="login" allowedDomains={allowedDomainsLabel()} nextUrl={safeNext} />
+
+      <p class="mt-6 text-center text-sm text-ink-500">
+        ¿No tenés cuenta?{' '}
+        <a href="/register" class="font-medium text-brand-600 hover:underline">Registrate</a>
+      </p>
+    </div>
+  </div>
+</BaseLayout>

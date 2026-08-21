@@ -1,0 +1,100 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KoduEdu — PRODUCCIÓN
+# No publica puertos al host: la app se sirve a través de un proxy inverso
+# (Nginx/Traefik) que ya vive en la red externa `reverse_proxy_network`.
+#
+#   cp .env.production.example .env.production   # y completar los valores
+#   docker network create reverse_proxy_network  # una sola vez
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Todas las variables se inyectan desde `.env.production` (no versionado). Si en
+# vez de un archivo usás secretos del orquestador o variables del CI, borrá el
+# bloque `env_file` y pasalas por el entorno del daemon.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: kodu_db
+    restart: always
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB salen de .env.production
+    env_file:
+      - path: .env.production
+        required: false
+    volumes:
+      - kodu_pgdata:/var/lib/postgresql/data
+    networks:
+      - kodu_internal
+    healthcheck:
+      # $$ escapa la interpolación de compose: la expande la shell del contenedor.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Job de un solo uso: aplica migraciones y termina. La app espera a que salga OK.
+  migrate:
+    build:
+      context: .
+      target: build
+    image: koduedu-build:latest
+    container_name: kodu_migrate
+    restart: "no"
+    command: npx prisma migrate deploy
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env.production
+        required: false
+    networks:
+      - kodu_internal
+
+  app:
+    build:
+      context: .
+      target: runner
+    image: koduedu:latest
+    container_name: kodu_app
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+    # `expose` publica el puerto sólo hacia las redes Docker, nunca al host.
+    expose:
+      - "3000"
+    volumes:
+      # Persistencia de imágenes y PDFs subidos por los docentes (SPEC §6).
+      - kodu_uploads:/app/uploads
+    networks:
+      - kodu_internal
+      - reverse_proxy_network
+    # Ejemplo de enrutamiento con Traefik (descomentar y ajustar el dominio):
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.docker.network=reverse_proxy_network"
+    #   - "traefik.http.routers.koduedu.rule=Host(`app.rededucativa.edu.ar`)"
+    #   - "traefik.http.routers.koduedu.entrypoints=websecure"
+    #   - "traefik.http.routers.koduedu.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.koduedu.loadbalancer.server.port=3000"
+
+volumes:
+  kodu_pgdata:
+  kodu_uploads:
+
+networks:
+  # Red privada app <-> base: sin entrada ni salida desde el host.
+  kodu_internal:
+    driver: bridge
+  # Red compartida con el proxy inverso, creada por fuera de este compose.
+  reverse_proxy_network:
+    external: true

@@ -1,0 +1,61 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KoduEdu — ENTORNO DE DESARROLLO
+# Puertos mapeados al host (3000 app / 5432 base) y hot reloading por bind mount.
+#   docker compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: kodu_db_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kodu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kodu}
+      POSTGRES_DB: ${POSTGRES_DB:-koduedu}
+    ports:
+      # Puerto configurable: evita choques con un Postgres ya instalado en el host.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - kodu_pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kodu} -d ${POSTGRES_DB:-koduedu}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      target: dev
+    container_name: kodu_app_dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: development
+      # Dentro de la red de compose la base se resuelve por el nombre del servicio.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kodu}:${POSTGRES_PASSWORD:-kodu}@db:5432/${POSTGRES_DB:-koduedu}?schema=public
+      HOST: 0.0.0.0
+      PORT: "3000"
+      # Los bind mounts de Windows/macOS no emiten eventos inotify.
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      # Puerto configurable por si el 3000 del host ya está tomado.
+      - "${APP_PORT:-3000}:3000"
+    volumes:
+      # Código del host para hot reload…
+      - .:/app
+      # …pero node_modules y el cliente Prisma generado quedan los del contenedor
+      # (volúmenes anónimos: el bind mount no los pisa).
+      - /app/node_modules
+      - /app/src/generated
+      # Uploads visibles desde el host para poder inspeccionarlos.
+      - ./uploads:/app/uploads
+
+volumes:
+  kodu_pgdata_dev:

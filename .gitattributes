@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Los scripts que ejecuta el contenedor de desarrollo se leen desde el bind mount:
+# si git los convierte a CRLF en Windows, la shell falla con "\r: not found".
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf

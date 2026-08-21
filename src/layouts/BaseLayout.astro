@@ -1,0 +1,85 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  /** Oculta el header. */
+  bare?: boolean;
+  /** Layout ancho, para el editor de recursos. */
+  wide?: boolean;
+}
+
+const {
+  title = 'KoduEdu',
+  description = 'Plataforma educativa de creación de recursos didácticos asistida por IA.',
+  bare = false,
+  wide = false,
+} = Astro.props;
+
+const user = Astro.locals.user;
+const pageTitle = title === 'KoduEdu' ? title : `${title} · KoduEdu`;
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>{pageTitle}</title>
+  </head>
+  <body class="min-h-screen">
+    {
+      !bare && (
+        <header class="border-b border-slate-200 bg-white">
+          <nav class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+            <a href="/" class="flex items-center gap-2 font-bold text-ink-900">
+              <span class="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-sm text-white">
+                K
+              </span>
+              KoduEdu
+            </a>
+
+            <div class="flex items-center gap-3 text-sm">
+              <a href="/gallery" class="text-ink-700 hover:text-brand-600">
+                Galería
+              </a>
+
+              {user ? (
+                <>
+                  <a href="/app" class="text-ink-700 hover:text-brand-600">
+                    Mis recursos
+                  </a>
+                  <a href="/app/rules" class="text-ink-700 hover:text-brand-600">
+                    Reglas
+                  </a>
+                  <span class="hidden text-ink-500 sm:inline">{user.name}</span>
+                  <form method="POST" action="/api/auth/logout">
+                    <button type="submit" class="kodu-btn-ghost py-1.5">
+                      Salir
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <a href="/login" class="text-ink-700 hover:text-brand-600">
+                    Ingresar
+                  </a>
+                  <a href="/register" class="kodu-btn-primary py-1.5">
+                    Crear cuenta
+                  </a>
+                </>
+              )}
+            </div>
+          </nav>
+        </header>
+      )
+    }
+
+    <main class={`mx-auto px-4 py-8 ${wide ? 'max-w-[110rem]' : 'max-w-6xl'}`}>
+      <slot />
+    </main>
+  </body>
+</html>

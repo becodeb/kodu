@@ -1,0 +1,30 @@
+# dependencias
+node_modules/
+
+# build
+dist/
+.astro/
+.output/
+
+# entorno
+.env
+.env.local
+.env.*.local
+
+# prisma client generado
+src/generated/
+
+# uploads en runtime (se persisten por volumen, no por git)
+uploads/*
+!uploads/.gitkeep
+!uploads/assets/
+uploads/assets/*
+!uploads/assets/.gitkeep
+
+# varios
+.DS_Store
+*.log
+npm-debug.log*
+
+# entorno de produccion (se completa a mano en el servidor)
+.env.production
