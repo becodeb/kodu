@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import { getEnv } from '../lib/env.ts';
 
 interface Props {
   title?: string;
@@ -32,8 +33,10 @@ const headerClass = darkHeader ? 'bg-pizarron-900 text-tiza-50' : 'border-b bord
 const navLink = darkHeader ? 'text-tiza-200 hover:text-white' : 'text-ink-700 hover:text-brand-600';
 const navCta = darkHeader ? 'kodu-btn-tiza py-1.5' : 'kodu-btn-primary py-1.5';
 const navGhost = darkHeader ? 'kodu-btn-pizarron py-1.5' : 'kodu-btn-ghost py-1.5';
-// Los scrapers de WhatsApp y compañía necesitan la URL absoluta.
-const ogImage = new URL('/brand/og.png', Astro.url).href;
+// Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
+// salir de PUBLIC_SITE_URL: detrás del proxy, Astro.url cree que el sitio es
+// http:// y una imagen http en una página https no la levanta ningún scraper.
+const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
 const userName = darkHeader ? 'hidden text-tiza-400 sm:inline' : 'hidden text-ink-500 sm:inline';
 ---
 
