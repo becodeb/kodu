@@ -10,8 +10,10 @@ FROM node:${NODE_VERSION}-bookworm-slim AS base
 WORKDIR /app
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
     NPM_CONFIG_FUND=false
+# curl va para que el healthcheck del orquestador (Coolify/Compose) pueda
+# consultar la app desde adentro del contenedor.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssl ca-certificates \
+    && apt-get install -y --no-install-recommends openssl ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # ── deps: dependencias completas (dev incluidas: hacen falta para build y CLI)
@@ -51,10 +53,13 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+COPY --from=build /app/docker/prod-entrypoint.sh ./docker/prod-entrypoint.sh
 
 # /app/uploads es punto de montaje de volumen persistente (SPEC §6)
 RUN mkdir -p /app/uploads/assets && chown -R node:node /app/uploads
 
 USER node
 EXPOSE 3000
-CMD ["node", "./dist/server/entry.mjs"]
+# El contenedor aplica sus propias migraciones antes de arrancar, así se puede
+# desplegar solo (Coolify, `docker run`) sin un job de migración aparte.
+CMD ["sh", "docker/prod-entrypoint.sh"]

@@ -32,24 +32,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # Job de un solo uso: aplica migraciones y termina. La app espera a que salga OK.
-  migrate:
-    build:
-      context: .
-      target: build
-    image: koduedu-build:latest
-    container_name: kodu_migrate
-    restart: "no"
-    command: npx prisma migrate deploy
-    depends_on:
-      db:
-        condition: service_healthy
-    env_file:
-      - path: .env.production
-        required: false
-    networks:
-      - kodu_internal
-
   app:
     build:
       context: .
@@ -60,8 +42,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     env_file:
       - path: .env.production
         required: false
