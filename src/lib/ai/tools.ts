@@ -29,17 +29,41 @@ export const RESOURCE_TOOLS = [
   },
 ];
 
-/** Valida el argumento del tool call antes de tocar la base de datos. */
-export function parseUpdateResourceArgs(rawArguments: string): string | null {
+export type ParsedResourceCode =
+  | { ok: true; html: string }
+  /**
+   * `truncated`: el modelo se quedó sin tokens con el HTML a medio escribir.
+   * `invalid`:   el JSON llegó mal formado por otro motivo.
+   * `empty`:     vino un `html` vacío o demasiado corto para ser un documento.
+   */
+  | { ok: false; reason: 'truncated' | 'invalid' | 'empty' };
+
+/**
+ * Valida el argumento del tool call antes de tocar la base de datos.
+ *
+ * Un HTML cortado a la mitad NO se aplica: pisaría el recurso del docente con
+ * un documento roto. Se distingue el corte por longitud del JSON inválido
+ * porque son dos problemas distintos y el mensaje que ve el docente cambia.
+ */
+export function parseUpdateResourceArgs(
+  rawArguments: string,
+  truncated = false,
+): ParsedResourceCode {
+  let parsed: { html?: unknown };
   try {
-    const parsed = JSON.parse(rawArguments) as { html?: unknown };
-    if (typeof parsed.html !== 'string') return null;
-
-    const html = parsed.html.trim();
-    if (html.length < 20) return null;
-
-    return html;
+    parsed = JSON.parse(rawArguments) as { html?: unknown };
   } catch {
-    return null;
+    return { ok: false, reason: truncated ? 'truncated' : 'invalid' };
   }
+
+  if (typeof parsed.html !== 'string') return { ok: false, reason: 'invalid' };
+
+  const html = parsed.html.trim();
+  if (html.length < 20) return { ok: false, reason: 'empty' };
+
+  // El JSON puede cerrar bien y el documento venir cortado igual (el modelo
+  // alcanzó el tope justo después de cerrar la comilla).
+  if (truncated && !/<\/html\s*>\s*$/i.test(html)) return { ok: false, reason: 'truncated' };
+
+  return { ok: true, html };
 }

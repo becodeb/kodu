@@ -3,6 +3,7 @@ import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel from './PreviewPanel.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import type {
+  AiPhase,
   ModelChoice,
   WorkspaceAsset,
   WorkspaceMessage,
@@ -17,6 +18,8 @@ interface WorkspaceProps {
   messages: WorkspaceMessage[];
   assets: WorkspaceAsset[];
   siteUrl: string;
+  /** Nombre del docente, para previsualizar la tarjeta de la galería. */
+  authorName: string;
 }
 
 /**
@@ -46,6 +49,7 @@ export default function Workspace(props: WorkspaceProps) {
 
   const [streamingText, setStreamingText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [aiPhase, setAiPhase] = useState<AiPhase>('idle');
   const [error, setError] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -54,6 +58,14 @@ export default function Workspace(props: WorkspaceProps) {
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
   const publicUrl = `${props.siteUrl.replace(/\/+$/, '')}/p/${props.project.slug}`;
+
+  /**
+   * Marca que el docente escribió o pegó código a mano en la pestaña "Código".
+   * Viaja en el próximo pedido para que el prompt le avise a la IA que ESA
+   * versión manda sobre la que ella generó; se limpia cuando la IA devuelve
+   * código nuevo, que a partir de ahí pasa a ser la versión vigente.
+   */
+  const codeEditedByTeacher = useRef(false);
 
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
@@ -149,10 +161,13 @@ export default function Workspace(props: WorkspaceProps) {
 
   async function handleSend(message: string) {
     setError(null);
-    // Sincroniza cualquier edición manual pendiente antes de que la IA lea el HTML.
-    await flushSave();
     setIsStreaming(true);
+    setAiPhase('thinking');
     setStreamingText('');
+
+    // Sincroniza cualquier edición manual pendiente antes de que la IA lea el
+    // HTML: el prompt se arma en el servidor con `project.currentHtml`.
+    await flushSave();
 
     const attachmentUrls = pendingAssets.map((asset) => asset.url);
 
@@ -171,13 +186,19 @@ export default function Workspace(props: WorkspaceProps) {
         message,
         model,
         attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
+        codeEditedByTeacher: codeEditedByTeacher.current,
       })) {
         if (event.type === 'text') {
           assistantText += event.delta;
           setStreamingText(assistantText);
+          setAiPhase('writing');
         } else if (event.type === 'code') {
           // El código nunca entra al chat: va derecho al visor.
           setHtml(event.html);
+          setAiPhase('coding');
+          // La versión de la IA pasa a ser la vigente: lo que el docente había
+          // escrito a mano ya quedó incorporado en este HTML.
+          codeEditedByTeacher.current = false;
         } else if (event.type === 'error') {
           setError(event.message);
         } else if (event.type === 'done') {
@@ -192,6 +213,7 @@ export default function Workspace(props: WorkspaceProps) {
       setError('Se cortó la conexión con el servidor.');
     } finally {
       setIsStreaming(false);
+      setAiPhase('idle');
       setStreamingText('');
     }
   }
@@ -225,8 +247,10 @@ export default function Workspace(props: WorkspaceProps) {
 
   async function handleAttach(files: File[]) {
     setUploading(true);
+    setAiPhase('uploading');
     const result = await uploadFiles(projectId, files);
     setUploading(false);
+    setAiPhase('idle');
 
     if (!result.ok) {
       setError(result.error);
@@ -271,6 +295,7 @@ export default function Workspace(props: WorkspaceProps) {
         messages={messages}
         streamingText={streamingText}
         isStreaming={isStreaming}
+        aiPhase={aiPhase}
         error={error}
         model={model}
         onModelChange={(value) => {
@@ -295,15 +320,21 @@ export default function Workspace(props: WorkspaceProps) {
         html={html}
         onHtmlChange={(value) => {
           setHtml(value);
+          // Sólo llega acá la edición manual: el HTML que manda la IA se aplica
+          // con setHtml directo, sin pasar por este callback.
+          codeEditedByTeacher.current = true;
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
         title={title}
         description={description}
+        authorName={props.authorName}
         onMetaChange={(meta) => {
           if (meta.title !== undefined) {
             setTitle(meta.title);
-            scheduleSave({ title: meta.title });
+            // El PATCH rechaza el título vacío: si lo mandáramos, borrar para
+            // reescribir tiraría un error que el docente no provocó.
+            if (meta.title.trim()) scheduleSave({ title: meta.title });
           }
           if (meta.description !== undefined) {
             setDescription(meta.description);

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { ThinkingOrb } from 'thinking-orbs';
+import AiStatus from './AiStatus.tsx';
 import type {
+  AiPhase,
   ModelChoice,
   WorkspaceAsset,
   WorkspaceMessage,
@@ -10,6 +13,7 @@ interface ChatPanelProps {
   messages: WorkspaceMessage[];
   streamingText: string;
   isStreaming: boolean;
+  aiPhase: AiPhase;
   error: string | null;
   model: ModelChoice;
   onModelChange: (model: ModelChoice) => void;
@@ -24,6 +28,29 @@ interface ChatPanelProps {
   onRemovePending: (assetId: string) => void;
   onSend: (message: string) => void;
 }
+
+/**
+ * Pedidos de ejemplo del estado vacío. Cada uno es de un tipo de recurso
+ * distinto (evaluar / mostrar / memorizar) y está escrito con el nivel de
+ * detalle que conviene usar: sirven de plantilla, no de inspiración.
+ */
+const STARTERS = [
+  {
+    label: '📝 Un quiz con corrección inmediata',
+    prompt:
+      'Un quiz de 5 preguntas de opción múltiple sobre fracciones equivalentes para 5.º grado. Después de cada respuesta, mostrá si estuvo bien o mal con una explicación breve. Al final, el puntaje.',
+  },
+  {
+    label: '🔬 Un simulador para explicar en clase',
+    prompt:
+      'Un simulador del ciclo del agua para 4.º grado, con un dibujo animado y controles para cambiar la temperatura. Que se vea bien proyectado y muestre qué pasa en cada etapa.',
+  },
+  {
+    label: '🃏 Tarjetas para repasar',
+    prompt:
+      'Tarjetas de vocabulario inglés-español para 1.º año: se ve la palabra, el alumno piensa y toca la tarjeta para darla vuelta. Que se pueda barajar y marcar las que le costaron.',
+  },
+];
 
 /** Panel izquierdo del editor: control, historial y composición (SPEC §5.1). */
 export default function ChatPanel(props: ChatPanelProps) {
@@ -107,11 +134,36 @@ export default function ChatPanel(props: ChatPanelProps) {
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {props.messages.length === 0 && !props.isStreaming && (
-          <p className="rounded-xl bg-slate-50 p-4 text-sm text-ink-500">
-            Contale a la IA qué recurso necesitás. Por ejemplo:{' '}
-            <em>“Un quiz de 5 preguntas sobre fracciones equivalentes para 5.º grado, con
-            retroalimentación después de cada respuesta”.</em>
-          </p>
+          /* El docente que abre esto por primera vez no sabe qué se le puede
+             pedir a la IA ni con cuánto detalle. En vez de explicárselo, se le
+             dan tres pedidos escritos como conviene escribirlos: toca uno, lo
+             ve completo en el campo de abajo y lo edita. */
+          <div className="space-y-4 px-1 py-6 text-center">
+            <div className="flex justify-center">
+              <ThinkingOrb state="breathing" size={64} theme="light" aria-label="" />
+            </div>
+
+            <div>
+              <p className="font-display text-base text-ink-900">¿Qué vas a dar hoy?</p>
+              <p className="mx-auto mt-1 max-w-xs text-sm text-ink-500">
+                Contame el tema y el grado. Cuanto más concreto, mejor sale.
+              </p>
+            </div>
+
+            <ul className="space-y-1.5 text-left">
+              {STARTERS.map((starter) => (
+                <li key={starter.label}>
+                  <button
+                    type="button"
+                    onClick={() => setDraft(starter.prompt)}
+                    className="w-full rounded-xl border border-linea bg-white px-3 py-2.5 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                  >
+                    {starter.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {props.messages.map((message) => (
@@ -136,7 +188,7 @@ export default function ChatPanel(props: ChatPanelProps) {
 
         {props.isStreaming && (
           <article className="mr-6 rounded-xl bg-slate-100 px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
-            {props.streamingText || <span className="text-ink-500">Pensando…</span>}
+            {props.streamingText || <AiStatus phase={props.aiPhase} />}
           </article>
         )}
 
@@ -148,6 +200,15 @@ export default function ChatPanel(props: ChatPanelProps) {
       </div>
 
       <form onSubmit={submit} className="space-y-2 border-t border-slate-200 p-3">
+        {/* Cuando empieza a llegar texto, la burbuja deja de mostrar el orbe y el
+            docente se queda sin saber si el turno sigue vivo: este renglón lo
+            sostiene hasta el final. Sólo aparece cuando la burbuja ya NO lo
+            muestra, para no tener dos orbes girando a la vez. */}
+        {(props.aiPhase === 'uploading' ||
+          (props.isStreaming && props.streamingText.length > 0)) && (
+          <AiStatus phase={props.aiPhase} variant="inline" />
+        )}
+
         {props.assets.length > 0 && (
           <details className="text-xs text-ink-500">
             <summary className="cursor-pointer">

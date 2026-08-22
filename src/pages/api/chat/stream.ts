@@ -7,9 +7,12 @@ import {
   DeepSeekError,
   readCompletionStream,
   requestCompletionStream,
+  supportsVision,
   type ChatMessage,
+  type ContentPart,
 } from '../../../lib/ai/deepseek.ts';
 import { UPDATE_RESOURCE_CODE, parseUpdateResourceArgs } from '../../../lib/ai/tools.ts';
+import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 
 /**
@@ -30,15 +33,66 @@ const schema = z.object({
   message: z.string().trim().min(1, 'Escribí un mensaje').max(8_000),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
   model: z.enum(['FLASH', 'PRO']).optional(),
+  /** El docente tocó el código a mano desde la última respuesta de la IA. */
+  codeEditedByTeacher: z.boolean().optional(),
 });
 
 /** Cuántos mensajes del hilo se reenvían como historial. */
 const HISTORY_LIMIT = 40;
 
+/**
+ * Qué se le dice al docente cuando el tool call no se pudo aplicar. Reemplazan
+ * al viejo "No pude generar una respuesta.", que no explicaba nada y dejaba la
+ * sensación de que la plataforma estaba rota.
+ */
+const CODE_PROBLEMS: Record<'truncated' | 'invalid' | 'empty', string> = {
+  truncated:
+    'El recurso quedó a medio escribir porque superó el largo máximo que el modelo puede devolver de una vez, así que no lo apliqué (tu versión anterior sigue intacta). Pedime el cambio por partes: primero una sección, después la otra.',
+  invalid:
+    'El modelo devolvió el código con un formato que no pude leer, así que no toqué tu recurso. Volvé a mandarme el pedido.',
+  empty: 'El modelo devolvió un recurso vacío, así que no apliqué el cambio. Probá de nuevo.',
+};
+
+const SILENT_TURN =
+  'El motor de IA cortó el turno sin devolver nada. Tu recurso quedó como estaba. Probá de nuevo y, si vuelve a pasar, mandá el pedido en partes más chicas.';
+
 const encoder = new TextEncoder();
 
 function sseFrame(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+/**
+ * Arma el contenido del mensaje del docente.
+ *
+ * Con `AI_VISION` prendido las imágenes de ESTE mensaje viajan como partes
+ * `image_url` en base64. Apagado (default), sólo se nombran: el system prompt
+ * ya le aclara al modelo que no las ve y que tiene que preguntar.
+ */
+async function buildUserContent(
+  message: string,
+  attachmentUrls: string[],
+): Promise<string | ContentPart[]> {
+  if (attachmentUrls.length === 0) return message;
+
+  const names = attachmentUrls.map((url) => url.split('/').pop() ?? url).join(', ');
+
+  if (!supportsVision()) {
+    return `${message}\n\n[El docente adjuntó a este mensaje: ${names}. No podés ver su contenido.]`;
+  }
+
+  const images = (
+    await Promise.all(attachmentUrls.map((url) => readImageAsDataUrl(url)))
+  ).filter((dataUrl): dataUrl is string => dataUrl !== null);
+
+  if (images.length === 0) {
+    return `${message}\n\n[El docente adjuntó: ${names}, pero no se pudieron leer.]`;
+  }
+
+  return [
+    { type: 'text', text: message },
+    ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+  ];
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -49,7 +103,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
 
-  const { projectId, threadId, message, attachmentUrls, model } = parsed.data;
+  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher } = parsed.data;
 
   const project = await findOwnedProject(projectId, user.id);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -105,12 +159,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     assets: assetContexts,
     currentHtml: project.currentHtml,
     projectTitle: project.title,
+    canSeeImages: supportsVision(),
+    htmlEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
-  const attachmentNote =
-    attachmentUrls && attachmentUrls.length > 0
-      ? `\n\n[Archivos adjuntos de este mensaje: ${attachmentUrls.join(', ')}]`
-      : '';
+  const userContent = await buildUserContent(message, attachmentUrls ?? []);
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
   // pierde lo que escribió.
@@ -129,7 +182,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       role: entry.role === 'assistant' ? ('assistant' as const) : ('user' as const),
       content: entry.content,
     })),
-    { role: 'user', content: message + attachmentNote },
+    { role: 'user', content: userContent },
   ];
 
   let upstream: Response;
@@ -148,6 +201,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     async start(controller) {
       let assistantText = '';
       let generatedHtml: string | null = null;
+      // Diagnóstico legible cuando el código no se pudo aplicar. Se guarda en el
+      // hilo junto con la explicación de la IA: si no, el modelo dice "listo,
+      // cambié el fondo", el recurso no cambia y el docente no entiende por qué.
+      let codeProblem: string | null = null;
+      let finishReason = '';
 
       try {
         for await (const event of readCompletionStream(upstream)) {
@@ -157,18 +215,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
             continue;
           }
 
+          if (event.type === 'finish') {
+            finishReason = event.reason;
+            continue;
+          }
+
           if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
-            const html = parseUpdateResourceArgs(event.arguments);
-            if (html) {
-              generatedHtml = html;
-              controller.enqueue(sseFrame({ type: 'code', html }));
+            const result = parseUpdateResourceArgs(event.arguments, event.truncated);
+
+            if (result.ok) {
+              generatedHtml = result.html;
+              codeProblem = null;
+              controller.enqueue(sseFrame({ type: 'code', html: result.html }));
             } else {
-              controller.enqueue(
-                sseFrame({
-                  type: 'error',
-                  message: 'La IA devolvió código con formato inválido; no se aplicó el cambio.',
-                }),
-              );
+              codeProblem = CODE_PROBLEMS[result.reason];
+              controller.enqueue(sseFrame({ type: 'error', message: codeProblem }));
             }
           }
         }
@@ -188,9 +249,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
             });
           }
 
+          // Un turno que se corta por tope de tokens con texto a medias también
+          // merece explicación, aunque el código haya entrado bien.
+          const cutNote =
+            finishReason === 'length' && !codeProblem
+              ? 'La respuesta quedó cortada porque llegué al límite de largo. Pedime lo que falte y sigo.'
+              : null;
+
+          const notes = [assistantText.trim(), codeProblem, cutNote].filter(
+            (part): part is string => Boolean(part),
+          );
+
           const finalText =
-            assistantText.trim() ||
-            (generatedHtml ? 'Actualicé el recurso.' : 'No pude generar una respuesta.');
+            notes.length > 0
+              ? notes.join('\n\n')
+              : generatedHtml
+                ? 'Actualicé el recurso.'
+                : SILENT_TURN;
 
           const saved = await prisma.chatMessage.create({
             data: { threadId: thread.id, role: 'assistant', content: finalText },

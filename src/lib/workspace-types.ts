@@ -31,3 +31,18 @@ export interface WorkspaceAsset {
   url: string;
   fileType: string;
 }
+
+/**
+ * En qué anda la IA. Le da al docente una lectura honesta del turno: no es lo
+ * mismo esperar la primera palabra que verla reescribir el recurso entero.
+ */
+export type AiPhase =
+  | 'idle'
+  /** Se subieron archivos y todavía están viajando. */
+  | 'uploading'
+  /** El pedido salió y todavía no volvió nada. */
+  | 'thinking'
+  /** Está redactando la explicación en el chat. */
+  | 'writing'
+  /** Está escribiendo el código del recurso. */
+  | 'coding';

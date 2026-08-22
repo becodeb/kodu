@@ -41,6 +41,26 @@ const envSchema = z.object({
   DEEPSEEK_BASE_URL: z.string().min(1).default('https://api.deepseek.com'),
   DEEPSEEK_MODEL_FLASH: z.string().min(1).default('deepseek-v4-flash'),
   DEEPSEEK_MODEL_PRO: z.string().min(1).default('deepseek-v4-pro'),
+
+  /**
+   * Tope de tokens de la respuesta. Es CRÍTICO que sea alto: el contrato con la
+   * IA la obliga a devolver el documento HTML completo en cada edición, y un
+   * recurso real ronda los 3.000–10.000 tokens. Con el default de la API (4.096)
+   * el tool call se corta a la mitad, el JSON queda inválido y el turno termina
+   * sin texto ni código.
+   */
+  AI_MAX_TOKENS: z.coerce.number().int().positive().default(16_384),
+
+  /**
+   * Si el modelo configurado acepta imágenes (formato OpenAI `image_url`). En
+   * false, las imágenes adjuntas se le describen por nombre y se le pide que
+   * pregunte en vez de inventar. Ponerlo en true con un modelo de sólo texto
+   * hace que la API devuelva 400.
+   */
+  AI_VISION: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -64,6 +84,8 @@ export function getEnv(): Env {
     DEEPSEEK_BASE_URL: read('DEEPSEEK_BASE_URL'),
     DEEPSEEK_MODEL_FLASH: read('DEEPSEEK_MODEL_FLASH'),
     DEEPSEEK_MODEL_PRO: read('DEEPSEEK_MODEL_PRO'),
+    AI_MAX_TOKENS: read('AI_MAX_TOKENS'),
+    AI_VISION: read('AI_VISION'),
   });
 
   if (!parsed.success) {

@@ -115,6 +115,32 @@ export async function extractPdfText(data: Uint8Array): Promise<string | null> {
   }
 }
 
+/** Tope por imagen que se le manda al modelo, en bytes. */
+const MAX_VISION_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Convierte una URL pública de asset (`/uploads/assets/x.png`) en un data URL
+ * para mandársela a un modelo multimodal.
+ *
+ * Va en base64 y no como link porque el proveedor no puede alcanzar un
+ * `PUBLIC_SITE_URL` que apunta a localhost o a una red interna.
+ */
+export async function readImageAsDataUrl(publicUrl: string): Promise<string | null> {
+  const relative = publicUrl.replace(/^\/uploads\//, '');
+  if (relative === publicUrl) return null; // no es una URL de uploads
+
+  const absolutePath = resolveStoredPath(relative);
+  if (!absolutePath) return null;
+
+  const mime = contentTypeFor(absolutePath);
+  if (!Object.hasOwn(IMAGE_MIMES, mime)) return null;
+
+  const data = await readStoredFile(absolutePath);
+  if (!data || data.byteLength === 0 || data.byteLength > MAX_VISION_BYTES) return null;
+
+  return `data:${mime};base64,${data.toString('base64')}`;
+}
+
 /** Decodifica un data URL de captura (`data:image/webp;base64,…`). */
 export function decodeDataUrl(dataUrl: string): { data: Buffer; extension: string } | null {
   const match = /^data:(image\/(?:png|webp|jpeg));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl.trim());

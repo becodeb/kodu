@@ -12,9 +12,21 @@ import { RESOURCE_TOOLS } from './tools.ts';
 
 export type ModelChoice = 'FLASH' | 'PRO';
 
+/**
+ * Partes de un mensaje multimodal (formato OpenAI). Sólo se usan cuando
+ * `AI_VISION` está prendido: un modelo de sólo texto rechaza el array con 400.
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
+}
+
+export function supportsVision(): boolean {
+  return getEnv().AI_VISION;
 }
 
 export class DeepSeekError extends Error {
@@ -67,6 +79,9 @@ export async function requestCompletionStream(options: {
         tool_choice: 'auto',
         stream: true,
         temperature: 0.6,
+        // Sin esto la API aplica su default (4.096) y todo recurso que pase de
+        // ~200 líneas vuelve cortado por la mitad. Ver AI_MAX_TOKENS en env.ts.
+        max_tokens: env.AI_MAX_TOKENS,
       }),
       signal: options.signal,
     });
@@ -87,7 +102,9 @@ export async function requestCompletionStream(options: {
 
 export type StreamEvent =
   | { type: 'text'; delta: string }
-  | { type: 'tool'; name: string; arguments: string }
+  /** `truncated` avisa que el modelo llegó al tope de tokens con el tool call a
+   *  medio escribir: el JSON de `arguments` está cortado y no se puede parsear. */
+  | { type: 'tool'; name: string; arguments: string; truncated: boolean }
   | { type: 'finish'; reason: string };
 
 interface PendingToolCall {
@@ -102,7 +119,10 @@ interface PendingToolCall {
  *  - los `arguments` del tool call llegan como fragmentos de string JSON
  *    repartidos entre muchos deltas, hay que acumularlos por `index`;
  *  - un chunk TCP puede cortar un evento por la mitad, así que se bufferea
- *    hasta encontrar el separador de eventos (`\n\n`).
+ *    hasta encontrar el separador de eventos (`\n\n`);
+ *  - hay gateways que emiten el SSE con CRLF, y entonces `\n\n` NUNCA aparece
+ *    (la secuencia real es `\r\n\r\n`): sin normalizar, el stream entero queda
+ *    en el buffer y el turno termina mudo. Por eso se normalizan los saltos.
  */
 export async function* readCompletionStream(response: Response): AsyncGenerator<StreamEvent> {
   const reader = response.body!.getReader();
@@ -111,11 +131,13 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
 
   let buffer = '';
   let finished = false;
+  let finishReason = '';
 
   function* flushToolCalls(): Generator<StreamEvent> {
+    const truncated = finishReason === 'length';
     for (const [, call] of [...toolCalls.entries()].sort((a, b) => a[0] - b[0])) {
       if (call.name) {
-        yield { type: 'tool', name: call.name, arguments: call.args };
+        yield { type: 'tool', name: call.name, arguments: call.args, truncated };
       }
     }
     toolCalls.clear();
@@ -126,7 +148,9 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
+      // Se normaliza el buffer completo (y no el chunk suelto) porque un `\r\n`
+      // puede quedar partido justo en el corte entre dos chunks TCP.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
 
       let separator = buffer.indexOf('\n\n');
       while (separator !== -1) {
@@ -178,8 +202,11 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
         }
 
         if (choice.finish_reason) {
+          // Se guarda ANTES de vaciar: `flushToolCalls` lo lee para marcar el
+          // tool call como cortado cuando la razón es "length".
+          finishReason = String(choice.finish_reason);
           yield* flushToolCalls();
-          yield { type: 'finish', reason: choice.finish_reason };
+          yield { type: 'finish', reason: finishReason };
         }
       }
     }

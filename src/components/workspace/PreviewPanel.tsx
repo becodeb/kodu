@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import ResourceSheet from './ResourceSheet.tsx';
 import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument } from '../../lib/preview.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
@@ -10,6 +11,7 @@ interface PreviewPanelProps {
   title: string;
   description: string;
   onMetaChange: (meta: { title?: string; description?: string }) => void;
+  authorName: string;
   isInGallery: boolean;
   onTogglePublish: (value: boolean) => void;
   screenshotUrl: string | null;
@@ -19,9 +21,15 @@ interface PreviewPanelProps {
   notice: string | null;
 }
 
-type Tab = 'preview' | 'code';
+type Tab = 'preview' | 'code' | 'sheet';
 
-/** Panel derecho: visor, editor de código y controles de publicación. */
+const TABS: Array<[Tab, string]> = [
+  ['preview', 'Vista previa'],
+  ['code', 'Código'],
+  ['sheet', 'Ficha'],
+];
+
+/** Panel derecho: visor, editor de código y ficha del recurso. */
 export default function PreviewPanel(props: PreviewPanelProps) {
   const [tab, setTab] = useState<Tab>('preview');
   const [capturing, setCapturing] = useState(false);
@@ -82,12 +90,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
     <section className="flex h-full min-h-0 flex-col bg-slate-100">
       <header className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
         <div className="flex rounded-lg bg-slate-100 p-0.5" role="tablist">
-          {(
-            [
-              ['preview', 'Vista previa'],
-              ['code', 'Código'],
-            ] as const
-          ).map(([value, label]) => (
+          {TABS.map(([value, label]) => (
             <button
               key={value}
               role="tab"
@@ -101,6 +104,16 @@ export default function PreviewPanel(props: PreviewPanelProps) {
             </button>
           ))}
         </div>
+
+        {/* Estado de publicación siempre a la vista: es lo que decide quién más
+            puede entrar, y antes había que ir a buscarlo al pie del panel. */}
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            props.isInGallery ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-ink-500'
+          }`}
+        >
+          {props.isInGallery ? '● En la galería' : '○ Privado'}
+        </span>
 
         <div className="ml-auto flex items-center gap-1.5">
           <code className="hidden max-w-[22rem] truncate rounded bg-slate-100 px-2 py-1 text-xs text-ink-500 lg:block">
@@ -120,106 +133,73 @@ export default function PreviewPanel(props: PreviewPanelProps) {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1">
-        {tab === 'preview' ? (
-          <iframe
-            ref={iframeRef}
-            title="Vista previa del recurso"
-            srcDoc={srcDoc}
-            // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
-            sandbox="allow-scripts allow-popups allow-forms allow-modals"
-            className="h-full w-full border-0 bg-white"
-          />
-        ) : (
-          <Suspense
-            fallback={<p className="p-4 text-sm text-ink-500">Cargando editor de código…</p>}
-          >
-            <div className="h-full overflow-auto">
+      <div className="relative min-h-0 flex-1">
+        {/* El iframe queda SIEMPRE montado y a tamaño completo; las otras
+            pestañas se dibujan ENCIMA, opacas. Dos motivos:
+             - desmontarlo reiniciaba el recurso al cambiar de pestaña (adiós al
+               quiz que el docente estaba probando a medias);
+             - esconderlo con `display:none` le saca el layout, y entonces la
+               captura sale de 0×0. Tapado conserva sus medidas y se puede
+               capturar desde la ficha.
+            `inert` evita que se pueda tabular hacia algo que no se ve. */}
+        <iframe
+          ref={iframeRef}
+          title="Vista previa del recurso"
+          srcDoc={srcDoc}
+          // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
+          sandbox="allow-scripts allow-popups allow-forms allow-modals"
+          className="absolute inset-0 h-full w-full border-0 bg-white"
+          inert={tab !== 'preview'}
+        />
+
+        {tab === 'code' && (
+          <div className="absolute inset-0 z-10 overflow-auto bg-slate-100">
+            <Suspense
+              fallback={<p className="p-4 text-sm text-ink-500">Cargando editor de código…</p>}
+            >
               <CodeEditor value={props.html} onChange={props.onHtmlChange} />
-            </div>
-          </Suspense>
+            </Suspense>
+          </div>
+        )}
+
+        {tab === 'sheet' && (
+          <div className="absolute inset-0 z-10">
+            <ResourceSheet
+              title={props.title}
+              description={props.description}
+              onMetaChange={props.onMetaChange}
+              authorName={props.authorName}
+              isInGallery={props.isInGallery}
+              onTogglePublish={props.onTogglePublish}
+              screenshotUrl={props.screenshotUrl}
+              capturing={capturing}
+              onCapture={requestCapture}
+              onDeleteScreenshot={props.onDeleteScreenshot}
+              captureError={captureError}
+              onDismissCaptureError={() => setCaptureError(null)}
+            />
+          </div>
         )}
       </div>
 
-      <footer className="space-y-3 border-t border-slate-200 bg-white p-3">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <label className="text-xs text-ink-700">
-            Título
-            <input
-              className="kodu-input mt-1 py-1.5 text-sm"
-              value={props.title}
-              onChange={(event) => props.onMetaChange({ title: event.target.value })}
-            />
-          </label>
-          <label className="text-xs text-ink-700">
-            Descripción (se ve en la galería)
-            <input
-              className="kodu-input mt-1 py-1.5 text-sm"
-              value={props.description}
-              placeholder="Ej.: Quiz de fracciones para 5.º grado"
-              onChange={(event) => props.onMetaChange({ description: event.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={requestCapture}
-            disabled={capturing || tab !== 'preview'}
-            className="kodu-btn-ghost text-sm"
-            title={
-              tab === 'preview' ? 'Genera una miniatura del recurso' : 'Volvé a la vista previa para capturar'
-            }
-          >
-            {capturing ? 'Capturando…' : '📸 Tomar captura'}
-          </button>
-
-          {props.screenshotUrl && (
-            <div className="flex items-center gap-2">
-              <img
-                src={props.screenshotUrl}
-                alt="Captura del recurso"
-                className="h-10 w-16 rounded border border-slate-200 object-cover"
-              />
+      <footer className="flex min-h-9 items-center gap-3 border-t border-slate-200 bg-white px-3 py-1.5 text-xs text-ink-500">
+        <span className="truncate">
+          {props.title.trim() || 'Recurso sin título'}
+          {!props.description.trim() && (
+            <>
+              {' · '}
               <button
                 type="button"
-                onClick={props.onDeleteScreenshot}
-                className="text-xs text-ink-500 underline hover:text-red-600"
+                onClick={() => setTab('sheet')}
+                className="underline underline-offset-2 hover:text-brand-600"
               >
-                Borrar
+                agregale una descripción
               </button>
-            </div>
+            </>
           )}
+        </span>
 
-          <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-ink-700">
-            <input
-              type="checkbox"
-              checked={props.isInGallery}
-              onChange={(event) => props.onTogglePublish(event.target.checked)}
-              className="h-4 w-4 accent-brand-600"
-            />
-            Publicar en la galería institucional
-          </label>
-        </div>
-
-        {/* El error de captura y el aviso de guardado son independientes: si se
-            mezclan en un solo renglón, un error viejo tapa el "Guardado". */}
-        {captureError && (
-          <p role="alert" className="text-xs text-red-600">
-            {captureError}{' '}
-            <button
-              type="button"
-              onClick={() => setCaptureError(null)}
-              className="underline hover:text-red-700"
-            >
-              Entendido
-            </button>
-          </p>
-        )}
-        {(props.saving || props.notice) && (
-          <p className="text-xs text-ink-500">{props.saving ? 'Guardando…' : props.notice}</p>
-        )}
+        <span className="ml-auto shrink-0">{props.saving ? 'Guardando…' : props.notice}</span>
       </footer>
     </section>
   );

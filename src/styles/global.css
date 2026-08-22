@@ -6,16 +6,25 @@
   --font-sans: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-display: 'Archivo Black', 'Archivo', ui-sans-serif, system-ui, sans-serif;
 
-  --color-brand-50: oklch(0.97 0.02 264);
-  --color-brand-100: oklch(0.93 0.05 264);
-  --color-brand-300: oklch(0.78 0.12 264);
-  --color-brand-500: oklch(0.58 0.19 264);
-  --color-brand-600: oklch(0.51 0.2 264);
-  --color-brand-700: oklch(0.44 0.18 264);
+  /* Azul de la marca. `brand-600` es EXACTAMENTE el del logo (#3B2CE7); el resto
+     de la escala se deriva en oklch sobre su mismo tono (273.2°) para que
+     aclarar u oscurecer no vire el color. */
+  --color-brand-50: oklch(0.965 0.018 273.2);
+  --color-brand-100: oklch(0.925 0.045 273.2);
+  --color-brand-200: oklch(0.86 0.085 273.2);
+  --color-brand-300: oklch(0.78 0.135 273.2);
+  --color-brand-400: oklch(0.63 0.21 273.2);
+  --color-brand-500: oklch(0.545 0.245 273.2);
+  --color-brand-600: #3b2ce7;
+  --color-brand-700: oklch(0.4 0.225 273.2);
+  --color-brand-800: oklch(0.335 0.185 273.2);
+  --color-brand-900: oklch(0.28 0.145 273.2);
 
-  --color-ink-500: oklch(0.55 0.02 264);
-  --color-ink-700: oklch(0.38 0.02 264);
-  --color-ink-900: oklch(0.24 0.03 264);
+  /* Grises con una pizca del tono de la marca, para que el texto no se lea
+     "sucio" al lado del azul. */
+  --color-ink-500: oklch(0.55 0.02 273.2);
+  --color-ink-700: oklch(0.38 0.02 273.2);
+  --color-ink-900: oklch(0.24 0.03 273.2);
 
   /* Neutros del sistema: una línea, un fondo tenue y un negro para el cierre. */
   --color-linea: #e4e4e0;

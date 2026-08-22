@@ -70,6 +70,8 @@ export async function* streamChat(payload: {
   message: string;
   model?: 'FLASH' | 'PRO';
   attachmentUrls?: string[];
+  /** El docente escribió o pegó código a mano desde la última respuesta. */
+  codeEditedByTeacher?: boolean;
 }): AsyncGenerator<StreamEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',

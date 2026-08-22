@@ -28,6 +28,10 @@ export interface PromptContext {
   assets: AssetContext[];
   currentHtml: string;
   projectTitle: string;
+  /** true si el modelo configurado puede VER las imágenes adjuntas. */
+  canSeeImages: boolean;
+  /** true si el docente tocó el código a mano desde la última respuesta de la IA. */
+  htmlEditedByTeacher: boolean;
 }
 
 /** Tope del HTML que viaja en el prompt, para no reventar la ventana de contexto. */
@@ -41,6 +45,8 @@ const BASE_PROMPT = `Sos el motor de generación de KoduEdu, una plataforma dond
 - NUNCA pegues código en el texto de la conversación. El código va siempre por la función \`update_resource_code\`.
 - Llamá a \`update_resource_code\` cada vez que crees o modifiques el recurso, con el documento HTML COMPLETO (no fragmentos ni diffs).
 - Si el pedido es una duda o un comentario que no cambia el recurso, respondé sólo con texto y no llames a la función.
+- SIEMPRE escribí al menos una oración de texto, aunque el pedido sea confuso, no lo entiendas o no puedas resolverlo. Nunca termines un turno en silencio: si algo no te cierra, preguntá.
+- Si no podés hacer lo que te piden, decilo con claridad y ofrecé la alternativa más cercana.
 
 ## Formato del recurso
 - Un único documento HTML5 autoportante: \`<!DOCTYPE html>\`, \`<head>\` con \`<meta charset="UTF-8">\` y viewport, todo el CSS y el JS embebidos.
@@ -74,7 +80,7 @@ function renderRules(title: string, rules: RuleContext[]): string {
   return `\n\n## ${title}\n${items}`;
 }
 
-function renderAssets(assets: AssetContext[]): string {
+function renderAssets(assets: AssetContext[], canSeeImages: boolean): string {
   if (assets.length === 0) return '';
 
   const images = assets.filter((asset) => asset.fileType === 'image');
@@ -83,8 +89,15 @@ function renderAssets(assets: AssetContext[]): string {
   let section = '\n\n## Archivos que subió el docente';
 
   if (images.length > 0) {
-    section +=
-      '\n\n### Imágenes disponibles\nUsalas con `<img src="URL">` cuando aporten al recurso. Las URLs son públicas y estables:\n';
+    section += '\n\n### Imágenes disponibles\n';
+    section += canSeeImages
+      ? 'Las imágenes adjuntas al mensaje te llegan y las estás viendo. Insertalas en el recurso con `<img src="URL">` usando estas URLs, que son públicas y estables:\n'
+      : // Sin esto el modelo cree que "ve" la imagen porque le llega el nombre, y
+        // termina o inventando o devolviendo un turno vacío.
+        'IMPORTANTE: NO podés ver el contenido de estas imágenes, sólo conocés su nombre y su URL. ' +
+        'Si el docente te pide algo que depende de lo que se ve en la imagen ("que se parezca a esto", ' +
+        '"copiá estos colores"), NO adivines: pedile en el chat que te la describa en dos o tres frases ' +
+        '(colores, estilo, qué elementos tiene). Igual podés insertarlas en el recurso con `<img src="URL">`:\n';
     section += images.map((img) => `- \`${img.url}\` — ${img.filename}`).join('\n');
   }
 
@@ -102,13 +115,33 @@ function renderAssets(assets: AssetContext[]): string {
   return section;
 }
 
-function renderCurrentHtml(currentHtml: string, projectTitle: string): string {
-  const truncated =
-    currentHtml.length > MAX_HTML_CHARS
-      ? `${currentHtml.slice(0, MAX_HTML_CHARS)}\n<!-- …código truncado por longitud -->`
-      : currentHtml;
+function renderCurrentHtml(
+  currentHtml: string,
+  projectTitle: string,
+  htmlEditedByTeacher: boolean,
+): string {
+  const wasCut = currentHtml.length > MAX_HTML_CHARS;
+  const body = wasCut
+    ? `${currentHtml.slice(0, MAX_HTML_CHARS)}\n<!-- …código truncado por longitud -->`
+    : currentHtml;
 
-  return `\n\n## Estado actual del recurso "${projectTitle}"\nEste es el HTML que se está mostrando ahora mismo en el iframe. Modificalo a partir de acá:\n\n\`\`\`html\n${truncated}\n\`\`\``;
+  let section = `\n\n## Estado actual del recurso "${projectTitle}"\n`;
+
+  // El docente puede pegar o escribir HTML en la pestaña "Código". Ese texto ya
+  // está acá abajo, pero hay que decirlo explícitamente: si no, el modelo sigue
+  // razonando sobre la versión que él mismo generó en el turno anterior.
+  section += htmlEditedByTeacher
+    ? 'ATENCIÓN: el docente editó o pegó este código A MANO después de tu última respuesta. Esta versión es la buena y manda sobre cualquier cosa que hayas generado antes. Leela con atención, respetá lo que escribió y construí a partir de ACÁ.\n'
+    : 'Este es el HTML que se está mostrando ahora mismo en el iframe. Modificalo a partir de acá.\n';
+
+  if (wasCut) {
+    // Rehacer un documento a partir de una versión cortada le borra al docente
+    // todo lo que quedó afuera del recorte, casi siempre el <script> del final.
+    section +=
+      '\nEste documento es tan largo que hubo que recortarlo para mostrártelo: lo que sigue NO es el archivo completo. No lo reescribas entero, porque perderías la parte que no ves. Hacé el cambio más acotado posible y, si el pedido toca la zona recortada, decíselo al docente y pedile que te pegue esa parte en el chat.\n';
+  }
+
+  return `${section}\n\`\`\`html\n${body}\n\`\`\``;
 }
 
 export function buildSystemPrompt(context: PromptContext): string {
@@ -116,7 +149,7 @@ export function buildSystemPrompt(context: PromptContext): string {
     BASE_PROMPT,
     renderRules('Reglas institucionales (obligatorias)', context.globalRules),
     renderRules('Preferencias de este docente', context.userRules),
-    renderAssets(context.assets),
-    renderCurrentHtml(context.currentHtml, context.projectTitle),
+    renderAssets(context.assets, context.canSeeImages),
+    renderCurrentHtml(context.currentHtml, context.projectTitle, context.htmlEditedByTeacher),
   ].join('');
 }
