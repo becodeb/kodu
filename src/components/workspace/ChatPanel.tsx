@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import AiStatus from './AiStatus.tsx';
+import StreamedText from './StreamedText.tsx';
+import StarterDialog from './StarterDialog.tsx';
+import { STARTERS, type Starter } from './starters.ts';
 import { MODELOS } from '../../lib/workspace-types.ts';
 import type {
   AiPhase,
@@ -55,32 +58,11 @@ function renderRich(text: string) {
   );
 }
 
-/**
- * Pedidos de ejemplo del estado vacío. Cada uno es de un tipo de recurso
- * distinto (evaluar / mostrar / memorizar) y está escrito con el nivel de
- * detalle que conviene usar: sirven de plantilla, no de inspiración.
- */
-const STARTERS = [
-  {
-    label: 'Un quiz con corrección inmediata',
-    prompt:
-      'Un quiz de 5 preguntas de opción múltiple sobre fracciones equivalentes para 5.º grado. Después de cada respuesta, mostrá si estuvo bien o mal con una explicación breve. Al final, el puntaje.',
-  },
-  {
-    label: 'Un simulador para explicar en clase',
-    prompt:
-      'Un simulador del ciclo del agua para 4.º grado, con un dibujo animado y controles para cambiar la temperatura. Que se vea bien proyectado y muestre qué pasa en cada etapa.',
-  },
-  {
-    label: 'Tarjetas para repasar',
-    prompt:
-      'Tarjetas de vocabulario inglés-español para 1.º año: se ve la palabra, el alumno piensa y toca la tarjeta para darla vuelta. Que se pueda barajar y marcar las que le costaron.',
-  },
-];
 
 /** Panel izquierdo del editor: control, historial y composición (SPEC §5.1). */
 export default function ChatPanel(props: ChatPanelProps) {
   const [draft, setDraft] = useState('');
+  const [starterAbierto, setStarterAbierto] = useState<Starter | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -125,6 +107,14 @@ export default function ChatPanel(props: ChatPanelProps) {
 
   return (
     <section className="flex h-full min-h-0 flex-col border-r border-linea bg-superficie">
+      <StarterDialog
+        starter={starterAbierto}
+        onCerrar={() => setStarterAbierto(null)}
+        onListo={(prompt) => {
+          setStarterAbierto(null);
+          setDraft(prompt);
+        }}
+      />
       <header className="space-y-3 border-b border-linea p-3">
         <div className="flex items-center gap-2">
           <select
@@ -203,7 +193,7 @@ export default function ChatPanel(props: ChatPanelProps) {
                 <li key={starter.label}>
                   <button
                     type="button"
-                    onClick={() => setDraft(starter.prompt)}
+                    onClick={() => setStarterAbierto(starter)}
                     className="w-full rounded-xl border border-linea bg-superficie px-3 py-2.5 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
                   >
                     {starter.label}
@@ -234,9 +224,11 @@ export default function ChatPanel(props: ChatPanelProps) {
           </article>
         ))}
 
-        {props.isStreaming && (
+        {/* La burbuja aparece recién cuando hay algo que leer. Mientras tanto el
+            estado vive abajo, sobre el blanco, y no como una caja gris vacía. */}
+        {props.isStreaming && props.streamingText.length > 0 && (
           <article className="mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
-            {props.streamingText ? renderRich(props.streamingText) : <AiStatus phase={props.aiPhase} />}
+            <StreamedText text={props.streamingText} render={renderRich} />
           </article>
         )}
 
@@ -268,14 +260,8 @@ export default function ChatPanel(props: ChatPanelProps) {
       </div>
 
       <form onSubmit={submit} className="space-y-2 border-t border-linea p-3">
-        {/* Cuando empieza a llegar texto, la burbuja deja de mostrar el orbe y el
-            docente se queda sin saber si el turno sigue vivo: este renglón lo
-            sostiene hasta el final. Sólo aparece cuando la burbuja ya NO lo
-            muestra, para no tener dos orbes girando a la vez. */}
-        {(props.aiPhase === 'uploading' ||
-          (props.isStreaming && props.streamingText.length > 0)) && (
-          <AiStatus phase={props.aiPhase} variant="inline" />
-        )}
+        {/* El estado acompaña todo el turno, al lado de donde se escribe. */}
+        {props.aiPhase !== 'idle' && <AiStatus phase={props.aiPhase} variant="inline" />}
 
         {props.assets.length > 0 && (
           <details className="text-xs text-ink-500">

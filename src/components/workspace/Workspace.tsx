@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel from './PreviewPanel.tsx';
+import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import type {
   AiPhase,
@@ -76,6 +77,15 @@ export default function Workspace(props: WorkspaceProps) {
 
   /** Otro proveedor sugerido cuando el elegido falló. */
   const [fallback, setFallback] = useState<{ model: ModelChoice; label: string } | null>(null);
+
+  /**
+   * La ficha se pide al abrir un recurso recién creado: título y descripción
+   * son lo que lo hace encontrable, y pedírselos al final —cuando el docente ya
+   * consiguió lo que quería— es asegurarse de que queden vacíos.
+   */
+  const [fichaAbierta, setFichaAbierta] = useState(
+    props.messages.length === 0 && props.project.title === 'Nuevo Recurso',
+  );
 
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
@@ -375,6 +385,25 @@ export default function Workspace(props: WorkspaceProps) {
 
   return (
     <div className="grid h-[calc(100vh-8.5rem)] min-h-[32rem] grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[minmax(20rem,26rem)_1fr]">
+      <FichaDialog
+        abierto={fichaAbierta}
+        tituloInicial={props.project.title}
+        onOmitir={() => setFichaAbierta(false)}
+        onGuardar={(datos) => {
+          setFichaAbierta(false);
+          setTitle(datos.title);
+          setDescription(datos.description);
+          setIsInGallery(datos.isInGallery);
+          void patchProject({
+            title: datos.title,
+            description: datos.description || null,
+            isInGallery: datos.isInGallery,
+          }).then((okResult) => {
+            if (okResult) flashNotice('Ficha guardada');
+          });
+        }}
+      />
+
       <ChatPanel
         messages={messages}
         streamingText={streamingText}

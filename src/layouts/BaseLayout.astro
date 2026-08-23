@@ -22,6 +22,8 @@ const {
 } = Astro.props;
 
 const user = Astro.locals.user;
+// Para marcar el enlace de la seccion en la que esta parado el docente.
+const ruta = Astro.url.pathname;
 const pageTitle = title === 'Kodu' ? title : `${title} · Kodu`;
 
 // Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
@@ -82,11 +84,19 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
             </a>
 
             <div class="flex items-center gap-6 text-sm">
-              <a href="/gallery" class="text-ink-700 hover:text-brand-600">
+              <a
+                href="/gallery"
+                class="kodu-nav-link"
+                aria-current={ruta.startsWith('/gallery') ? 'page' : undefined}
+              >
                 Galería
               </a>
               {user && (
-                <a href="/app" class="text-ink-700 hover:text-brand-600">
+                <a
+                  href="/app"
+                  class="kodu-nav-link"
+                  aria-current={ruta.startsWith('/app') ? 'page' : undefined}
+                >
                   Mis recursos
                 </a>
               )}

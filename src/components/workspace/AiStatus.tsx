@@ -3,14 +3,17 @@ import { ThinkingOrb } from 'thinking-orbs';
 import type { AiPhase } from '../../lib/workspace-types.ts';
 
 /**
- * Señal de vida de la IA (thinking-orbs) con el texto animado de transitions.dev.
+ * Señal de vida de la IA: orbe, qué está haciendo, y hace cuánto.
  *
  * Cada fase tiene su propia animación a propósito: el docente ve la diferencia
  * entre "todavía está pensando" y "ya está escribiendo el recurso" sin leer una
  * palabra, que es justo el rato en el que uno duda de si la app se colgó.
  *
- * El orbe es monocromo por diseño de la librería, así que el color de marca lo
- * pone el texto de al lado.
+ * El texto NO entra ni sale con una transición: se escribe una vez y se queda.
+ * El único movimiento es el brillo que lo recorre de izquierda a derecha, que
+ * ya alcanza para que no parezca congelado; hacerlo aparecer y desaparecer en
+ * cada cambio de fase daba sensación de parpadeo. El cronómetro completa la
+ * idea: mientras el número sube, está vivo.
  */
 
 const PHASES: Record<
@@ -23,8 +26,11 @@ const PHASES: Record<
   coding: { state: 'weaving', label: 'Armando el recurso' },
 };
 
-/** Debe coincidir con --text-swap-dur en global.css. */
-const SWAP_MS = 150;
+function formatearTiempo(segundos: number): string {
+  if (segundos < 60) return `${segundos}s`;
+  const minutos = Math.floor(segundos / 60);
+  return `${minutos}:${String(segundos % 60).padStart(2, '0')}`;
+}
 
 interface AiStatusProps {
   phase: AiPhase;
@@ -33,48 +39,34 @@ interface AiStatusProps {
 }
 
 export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
-  const active = phase === 'idle' ? null : PHASES[phase];
+  const activo = phase === 'idle' ? null : PHASES[phase];
 
-  const [shown, setShown] = useState(active?.label ?? '');
-  const textRef = useRef<HTMLSpanElement>(null);
-  const timers = useRef<number[]>([]);
+  const [segundos, setSegundos] = useState(0);
+  // El cronómetro mide el TURNO entero, no cada fase: al docente le importa
+  // hace cuánto está esperando, no hace cuánto lleva escribiendo el código.
+  const arranque = useRef<number | null>(null);
 
-  /**
-   * Secuencia de tres tiempos del swap: sale hacia arriba con blur, se cambia el
-   * texto de golpe abajo (sin transición) y vuelve a su lugar animando.
-   */
   useEffect(() => {
-    const next = active?.label;
-    if (!next || next === shown) return;
-
-    const node = textRef.current;
-    if (!node) {
-      setShown(next);
+    if (phase === 'idle') {
+      arranque.current = null;
+      setSegundos(0);
       return;
     }
 
-    node.classList.add('is-exit');
+    if (arranque.current === null) arranque.current = Date.now();
 
-    const id = window.setTimeout(() => {
-      setShown(next);
-      node.classList.remove('is-exit');
-      node.classList.add('is-enter-start');
-      // Reflow forzado: sin esto el navegador agrupa el quitar/poner en un solo
-      // cambio de estilo y el texto aparece de una, sin animación de entrada.
-      void node.offsetWidth;
-      node.classList.remove('is-enter-start');
-    }, SWAP_MS);
+    const tick = () => {
+      if (arranque.current !== null) {
+        setSegundos(Math.floor((Date.now() - arranque.current) / 1000));
+      }
+    };
 
-    timers.current.push(id);
-    return () => window.clearTimeout(id);
-  }, [active?.label, shown]);
+    tick();
+    const timer = window.setInterval(tick, 1_000);
+    return () => window.clearInterval(timer);
+  }, [phase]);
 
-  useEffect(() => {
-    const pending = timers.current;
-    return () => pending.forEach((id) => window.clearTimeout(id));
-  }, []);
-
-  if (!active) return null;
+  if (!activo) return null;
 
   return (
     <div
@@ -86,9 +78,12 @@ export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
     >
       {/* La librería sólo trae dos tamaños afinados, 20 y 64: acá va siempre el
           de 20, que es el que se lee como parte de un renglón de texto. */}
-      <ThinkingOrb state={active.state} size={20} theme="auto" aria-label={active.label} />
-      <span ref={textRef} className="t-text-swap t-shimmer">
-        {shown}
+      <ThinkingOrb state={activo.state} size={20} theme="auto" aria-label={activo.label} />
+
+      <span className="t-shimmer">{activo.label}</span>
+
+      <span className="tabular-nums text-ink-500 opacity-70" aria-hidden="true">
+        {formatearTiempo(segundos)}
       </span>
     </div>
   );
