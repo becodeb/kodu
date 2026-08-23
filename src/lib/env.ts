@@ -69,6 +69,17 @@ const envSchema = z.object({
   AI_ALPHA_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(0),
   AI_DEEPSEEK_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(300_000),
 
+  /**
+   * Largo máximo de UN mensaje del docente, en caracteres.
+   *
+   * No está para racionar: está para que el pedido entre en la ventana de
+   * contexto del modelo junto con el HTML del recurso y el historial. Alpha
+   * tiene 1M de tokens de contexto, asi que su tope es holgado; DeepSeek es
+   * mucho mas chico y ahi si conviene avisar antes de que la API lo rechace.
+   */
+  AI_ALPHA_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(400_000),
+  AI_DEEPSEEK_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(24_000),
+
   /** Si Alpha recibe las imágenes adjuntas (formato OpenAI `image_url`). */
   AI_VISION: z
     .enum(['true', 'false'])
@@ -105,6 +116,8 @@ export function getEnv(): Env {
     AI_DEEPSEEK_MAX_TOKENS: read('AI_DEEPSEEK_MAX_TOKENS'),
     AI_ALPHA_USER_TOKEN_LIMIT: read('AI_ALPHA_USER_TOKEN_LIMIT'),
     AI_DEEPSEEK_USER_TOKEN_LIMIT: read('AI_DEEPSEEK_USER_TOKEN_LIMIT'),
+    AI_ALPHA_MAX_INPUT_CHARS: read('AI_ALPHA_MAX_INPUT_CHARS'),
+    AI_DEEPSEEK_MAX_INPUT_CHARS: read('AI_DEEPSEEK_MAX_INPUT_CHARS'),
     AI_VISION: read('AI_VISION'),
   });
 

@@ -32,10 +32,23 @@ import { fail, readBody } from '../../../lib/http.ts';
  * El HTML nunca aparece en el flujo de texto: viaja por `update_resource_code`.
  */
 
+/**
+ * Techo absoluto del mensaje, sólo para que un body descomunal no tumbe al
+ * servidor. El límite que le importa al docente es el del proveedor.
+ */
+const MAX_MESSAGE_CHARS = 500_000;
+
 const schema = z.object({
   projectId: z.string().min(1),
   threadId: z.string().min(1),
-  message: z.string().trim().min(1, 'Escribí un mensaje').max(8_000),
+  // El tope real depende del proveedor y se chequea abajo, cuando ya se sabe
+  // cuál eligió el docente. Este es sólo el techo que protege al servidor de un
+  // body absurdo, no una decisión de producto.
+  message: z
+    .string()
+    .trim()
+    .min(1, 'Escribí un mensaje')
+    .max(MAX_MESSAGE_CHARS, 'El mensaje es demasiado largo para procesarlo.'),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
   model: z.enum(['ALPHA', 'DEEPSEEK']).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
@@ -199,6 +212,26 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }));
 
   const provider = resolveProvider(chosenModel);
+
+  // Un pedido larguísimo no entra en la ventana de contexto del modelo junto con
+  // el HTML del recurso y el historial. Se avisa acá, con el número y con la
+  // salida concreta, en vez de dejar que la API lo rechace con su propio error.
+  if (message.length > provider.maxInputChars) {
+    const otro = alternateChoice(chosenModel);
+    const otroProveedor = resolveProvider(otro);
+    const sirveElOtro =
+      isChoiceConfigured(otro) && otroProveedor.maxInputChars >= message.length;
+
+    return fail(
+      `Tu mensaje tiene ${message.length.toLocaleString('es-AR')} caracteres y ${provider.label} ` +
+        `admite hasta ${provider.maxInputChars.toLocaleString('es-AR')}. ` +
+        (sirveElOtro
+          ? `Con ${otroProveedor.label} entra: cambiá el modelo y volvé a mandarlo.`
+          : 'Mandalo en dos partes: primero el contexto, después el pedido.'),
+      413,
+      sirveElOtro ? { fallbackModel: otro, fallbackLabel: otroProveedor.label } : {},
+    );
+  }
 
   // El tope por usuario se chequea ANTES de gastar: avisar después de consumir
   // no sirve de nada. Se ofrece el otro proveedor, que es la salida real.

@@ -27,6 +27,8 @@ export interface ProviderConfig {
   maxTokens: number;
   /** Tope de tokens por usuario. 0 = sin tope. */
   userTokenLimit: number;
+  /** Largo máximo de un mensaje del docente, en caracteres. */
+  maxInputChars: number;
 }
 
 export function resolveProvider(choice: ModelChoice): ProviderConfig {
@@ -41,6 +43,7 @@ export function resolveProvider(choice: ModelChoice): ProviderConfig {
       model: env.AI_DEEPSEEK_MODEL,
       maxTokens: env.AI_DEEPSEEK_MAX_TOKENS,
       userTokenLimit: env.AI_DEEPSEEK_USER_TOKEN_LIMIT,
+      maxInputChars: env.AI_DEEPSEEK_MAX_INPUT_CHARS,
     };
   }
 
@@ -52,6 +55,7 @@ export function resolveProvider(choice: ModelChoice): ProviderConfig {
     model: env.AI_ALPHA_MODEL,
     maxTokens: env.AI_ALPHA_MAX_TOKENS,
     userTokenLimit: env.AI_ALPHA_USER_TOKEN_LIMIT,
+    maxInputChars: env.AI_ALPHA_MAX_INPUT_CHARS,
   };
 }
 

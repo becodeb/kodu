@@ -299,6 +299,16 @@ export default function ChatPanel(props: ChatPanelProps) {
           </ul>
         )}
 
+        {/* Un pedido largo no se rechaza, pero conviene avisar: con mucho texto
+            el modelo tarda bastante mas y el docente no tiene por que atar ese
+            cabo solo cuando la respuesta no llega. */}
+        {draft.length > 4_000 && (
+          <p className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-brand-700">
+            Pedido largo ({draft.length.toLocaleString('es-AR')} caracteres). Entra sin problema,
+            pero la respuesta puede tardar varios minutos.
+          </p>
+        )}
+
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
