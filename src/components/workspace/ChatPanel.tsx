@@ -18,6 +18,9 @@ interface ChatPanelProps {
   streamingText: string;
   isStreaming: boolean;
   aiPhase: AiPhase;
+  /** Epoch ms de arranque del turno, para el cronómetro. */
+  turnoDesde: number | null;
+  onDetener: () => void;
   error: string | null;
   /** Hay un pedido fallido que se puede volver a mandar tal cual. */
   canRetry: boolean;
@@ -106,7 +109,7 @@ export default function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col border-r border-linea bg-superficie">
+    <section className="flex h-full min-h-0 w-full flex-col border-linea bg-superficie lg:border-r">
       <StarterDialog
         starter={starterAbierto}
         onCerrar={() => setStarterAbierto(null)}
@@ -261,7 +264,14 @@ export default function ChatPanel(props: ChatPanelProps) {
 
       <form onSubmit={submit} className="space-y-2 border-t border-linea p-3">
         {/* El estado acompaña todo el turno, al lado de donde se escribe. */}
-        {props.aiPhase !== 'idle' && <AiStatus phase={props.aiPhase} variant="inline" />}
+        {props.aiPhase !== 'idle' && (
+          <AiStatus
+            phase={props.aiPhase}
+            variant="inline"
+            desde={props.turnoDesde}
+            onDetener={props.onDetener}
+          />
+        )}
 
         {props.assets.length > 0 && (
           <details className="text-xs text-ink-500">

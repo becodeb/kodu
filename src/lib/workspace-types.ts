@@ -45,6 +45,8 @@ export interface WorkspaceMessage {
   role: string;
   content: string;
   attachments: string[];
+  /** Epoch ms. Permite mostrar hace cuánto espera un turno que sigue corriendo. */
+  createdAt?: number;
 }
 
 export interface WorkspaceAsset {

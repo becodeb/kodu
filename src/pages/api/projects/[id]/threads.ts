@@ -64,7 +64,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   const messages = await prisma.chatMessage.findMany({
     where: { threadId: thread.id },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, role: true, content: true, attachments: true },
+    select: { id: true, role: true, content: true, attachments: true, createdAt: true },
   });
 
   // Se devuelve tambien el HTML porque el editor usa este endpoint para
@@ -78,6 +78,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
       role: message.role,
       content: message.content,
       attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
+      createdAt: message.createdAt.getTime(),
     })),
   });
 };

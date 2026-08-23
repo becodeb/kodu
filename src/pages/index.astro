@@ -174,7 +174,7 @@ const publicados = await prisma.project.findMany({
           <div
             class="flex items-center justify-between border-b border-linea px-4 py-2.5 text-xs text-ink-500"
           >
-            <span>Conversación</span><span>Flash</span>
+            <span>Conversación</span><span>Alpha</span>
           </div>
           <div id="mensajes" class="flex flex-1 flex-col gap-3 overflow-auto p-4"></div>
           <div class="flex items-center gap-2 border-t border-linea p-3">
@@ -470,18 +470,43 @@ const publicados = await prisma.project.findMany({
   for (const tab of tabs) tab.addEventListener('click', () => void reproducir(tab));
 
   // Arranca sola cuando la sección entra en pantalla.
+  //
+  // Con red de seguridad a propósito: si por lo que sea el observador no llega a
+  // dispararse, la demo se queda en un cartel vacío para siempre y la sección
+  // más importante de la home no muestra nada. Cualquiera de las tres vías la
+  // arranca, y `corriendo` se encarga de que no se pisen entre sí.
   const primera = tabs[0];
   if (primera) {
+    let arrancada = false;
+    const arrancar = () => {
+      if (arrancada) return;
+      arrancada = true;
+      void reproducir(primera);
+    };
+
     const seccion = primera.closest('section');
-    const observador = new IntersectionObserver(
-      (entradas) => {
-        if (entradas.some((e) => e.isIntersecting)) {
-          observador.disconnect();
-          void reproducir(primera);
-        }
-      },
-      { threshold: 0.2 },
-    );
-    if (seccion) observador.observe(seccion);
+    if (seccion) {
+      const observador = new IntersectionObserver(
+        (entradas) => {
+          if (entradas.some((e) => e.isIntersecting)) {
+            observador.disconnect();
+            arrancar();
+          }
+        },
+        // Un umbral en píxeles y no en porcentaje: en un celular esta sección
+        // mide casi el doble que la pantalla, y pedir un porcentaje de algo más
+        // grande que el viewport es pedir algo que puede no pasar nunca.
+        { rootMargin: '0px 0px -120px 0px', threshold: 0 },
+      );
+      observador.observe(seccion);
+
+      // Si ya estaba a la vista al cargar (alguien entra con el ancla puesta o
+      // recarga a mitad de página), el observador puede no emitir nada nuevo.
+      const caja = seccion.getBoundingClientRect();
+      if (caja.top < window.innerHeight && caja.bottom > 0) arrancar();
+    }
+
+    // Último recurso: pase lo que pase, a los 5 segundos se muestra.
+    window.setTimeout(arrancar, 5_000);
   }
 </script>

@@ -33,7 +33,7 @@ const activeThread =
 const messages = await prisma.chatMessage.findMany({
   where: { threadId: activeThread.id },
   orderBy: { createdAt: 'asc' },
-  select: { id: true, role: true, content: true, attachments: true },
+  select: { id: true, role: true, content: true, attachments: true, createdAt: true },
 });
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
@@ -91,6 +91,7 @@ const siteUrl = getEnv().PUBLIC_SITE_URL;
       role: message.role,
       content: message.content,
       attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
+      createdAt: message.createdAt.getTime(),
     }))}
     assets={project.assets}
     siteUrl={siteUrl}

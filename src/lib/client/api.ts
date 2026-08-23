@@ -77,11 +77,12 @@ export async function* streamChat(payload: {
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
-}): AsyncGenerator<StreamEvent> {
+}, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok || !response.body) {

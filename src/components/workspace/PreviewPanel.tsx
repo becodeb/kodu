@@ -1,5 +1,4 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import ResourceSheet from './ResourceSheet.tsx';
 import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument } from '../../lib/preview.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
@@ -11,7 +10,6 @@ interface PreviewPanelProps {
   title: string;
   description: string;
   onMetaChange: (meta: { title?: string; description?: string }) => void;
-  authorName: string;
   isInGallery: boolean;
   onTogglePublish: (value: boolean) => void;
   screenshotUrl: string | null;
@@ -21,12 +19,11 @@ interface PreviewPanelProps {
   notice: string | null;
 }
 
-type Tab = 'preview' | 'code' | 'sheet';
+type Tab = 'preview' | 'code';
 
 const TABS: Array<[Tab, string]> = [
   ['preview', 'Vista previa'],
   ['code', 'Código'],
-  ['sheet', 'Ficha'],
 ];
 
 /** Panel derecho: visor, editor de código y ficha del recurso. */
@@ -87,7 +84,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-sutil">
+    <section className="flex h-full min-h-0 w-full flex-col bg-sutil">
       <header className="flex flex-wrap items-center gap-2 border-b border-linea bg-superficie px-3 py-2">
         <div className="flex rounded-lg bg-sutil p-0.5" role="tablist">
           {TABS.map(([value, label]) => (
@@ -106,10 +103,55 @@ export default function PreviewPanel(props: PreviewPanelProps) {
         </div>
 
 
-        <div className="ml-auto flex items-center gap-1.5">
-          <code className="hidden max-w-[22rem] truncate rounded bg-sutil px-2 py-1 text-xs text-ink-500 lg:block">
-            {props.publicUrl}
-          </code>
+        {/* Portada y publicación viven acá arriba, al alcance de la mano y no
+            escondidas en otra pestaña: son las dos cosas que uno toca justo
+            cuando termina de mirar el recurso. */}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={requestCapture}
+            disabled={capturing}
+            className="kodu-btn-ghost px-2.5 py-1.5 text-xs"
+            title="Guarda una foto de la vista previa como portada de la galería"
+          >
+            {capturing ? 'Capturando…' : props.screenshotUrl ? 'Cambiar portada' : 'Sacar portada'}
+          </button>
+
+          {props.screenshotUrl && (
+            <button
+              type="button"
+              onClick={props.onDeleteScreenshot}
+              className="px-1 text-xs text-ink-500 underline underline-offset-2 hover:text-red-600"
+            >
+              Quitar
+            </button>
+          )}
+
+          <label
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-linea px-2.5 py-1.5 text-xs text-ink-700"
+            title="Publicar en la galería institucional"
+          >
+            <input
+              type="checkbox"
+              checked={props.isInGallery}
+              onChange={(event) => props.onTogglePublish(event.target.checked)}
+              className="sr-only"
+            />
+            <span
+              aria-hidden="true"
+              className={`flex h-4 w-7 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+                props.isInGallery ? 'bg-brand-600' : 'bg-linea'
+              }`}
+            >
+              <span
+                className={`h-3 w-3 rounded-full bg-superficie shadow-sm transition-transform ${
+                  props.isInGallery ? 'translate-x-3' : 'translate-x-0'
+                }`}
+              />
+            </span>
+            <span className="hidden sm:inline">Publicar</span>
+          </label>
+
           <button type="button" onClick={copyUrl} className="kodu-btn-ghost px-2.5 py-1.5 text-xs">
             {copied ? '¡Copiada!' : 'Copiar URL'}
           </button>
@@ -119,7 +161,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
             rel="noopener noreferrer"
             className="kodu-btn-ghost px-2.5 py-1.5 text-xs"
           >
-            Abrir ↗
+            Abrir
           </a>
         </div>
       </header>
@@ -153,45 +195,49 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           </div>
         )}
 
-        {tab === 'sheet' && (
-          <div className="absolute inset-0 z-10">
-            <ResourceSheet
-              title={props.title}
-              description={props.description}
-              onMetaChange={props.onMetaChange}
-              authorName={props.authorName}
-              isInGallery={props.isInGallery}
-              onTogglePublish={props.onTogglePublish}
-              screenshotUrl={props.screenshotUrl}
-              capturing={capturing}
-              onCapture={requestCapture}
-              onDeleteScreenshot={props.onDeleteScreenshot}
-              captureError={captureError}
-              onDismissCaptureError={() => setCaptureError(null)}
-            />
-          </div>
-        )}
       </div>
 
-      <footer className="flex min-h-9 items-center gap-3 border-t border-linea bg-superficie px-3 py-1.5 text-xs text-ink-500">
-        <span className="truncate">
-          {props.title.trim() || 'Recurso sin título'}
-          {!props.description.trim() && (
-            <>
-              {' · '}
-              <button
-                type="button"
-                onClick={() => setTab('sheet')}
-                className="underline underline-offset-2 hover:text-brand-600"
-              >
-                agregale una descripción
-              </button>
-            </>
-          )}
-        </span>
+      {/* Nombre y descripcion se editan acá, a la vista, en vez de vivir en una
+          pestaña aparte: son dos campos, no una pantalla. */}
+      <footer className="border-t border-linea bg-superficie px-3 py-2">
+        {captureError && (
+          <p role="alert" className="mb-2 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-700">
+            {captureError}{' '}
+            <button
+              type="button"
+              onClick={() => setCaptureError(null)}
+              className="underline hover:text-red-800"
+            >
+              Entendido
+            </button>
+          </p>
+        )}
 
-        <span className="ml-auto shrink-0">{props.saving ? 'Guardando…' : props.notice}</span>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input
+            value={props.title}
+            maxLength={120}
+            aria-label="Título del recurso"
+            placeholder="Nombre del recurso"
+            onChange={(event) => props.onMetaChange({ title: event.target.value })}
+            className="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold text-ink-900 transition-colors hover:border-linea focus:border-brand-500 focus:bg-superficie focus:outline-none sm:w-56"
+          />
+
+          <input
+            value={props.description}
+            maxLength={400}
+            aria-label="Descripción del recurso"
+            placeholder="Descripción: qué enseña y para qué grado"
+            onChange={(event) => props.onMetaChange({ description: event.target.value })}
+            className="w-full flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-ink-700 transition-colors hover:border-linea focus:border-brand-500 focus:bg-superficie focus:outline-none"
+          />
+
+          <span className="shrink-0 text-xs text-ink-500">
+            {props.saving ? 'Guardando…' : props.notice}
+          </span>
+        </div>
       </footer>
+
     </section>
   );
 }

@@ -68,6 +68,22 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const codeEditedByTeacher = useRef(false);
 
+  /** Para poder cortar el turno desde el botón "Detener". */
+  const abortador = useRef<AbortController | null>(null);
+  const resumeTimer = useRef<number | null>(null);
+
+  /** Cuándo arrancó el turno en curso (epoch ms), para el cronómetro. */
+  const [turnoDesde, setTurnoDesde] = useState<number | null>(null);
+
+  /**
+   * Qué panel se ve en pantallas chicas.
+   *
+   * Apilados no entran: en un celular el visor quedaba con 77 px de alto, o sea
+   * el recurso no se veía. Abajo de `lg` se muestra uno u otro a pantalla
+   * completa y se conmuta; de `lg` para arriba conviven como siempre.
+   */
+  const [vistaMovil, setVistaMovil] = useState<'chat' | 'recurso'>('chat');
+
   /**
    * Último pedido, para el botón de reintentar. La conexión con el motor de IA
    * se corta cada tanto por motivos ajenos al docente (proxy, red, límite del
@@ -201,14 +217,19 @@ export default function Workspace(props: WorkspaceProps) {
 
     setAiPhase('thinking');
     setIsStreaming(true);
+    // El turno arrancó cuando se guardó el mensaje del docente, no ahora: si no,
+    // al recargar el cronómetro volvía a cero y mentía sobre la espera real.
+    setTurnoDesde(ultimo.createdAt ?? Date.now());
 
     const timer = window.setInterval(() => {
       if (cancelado) return;
 
       if (++intentos > MAX_INTENTOS) {
         window.clearInterval(timer);
+        resumeTimer.current = null;
         setIsStreaming(false);
         setAiPhase('idle');
+        setTurnoDesde(null);
         // No se ofrece reenviar: el turno puede seguir corriendo en el servidor
         // y mandarlo de nuevo duplicaría el trabajo. Recargar es lo correcto.
         setError(
@@ -226,13 +247,16 @@ export default function Workspace(props: WorkspaceProps) {
         if (!llegoRespuesta) return;
 
         window.clearInterval(timer);
+        resumeTimer.current = null;
         setMessages(result.data.messages);
         setHtml(result.data.currentHtml);
         setIsStreaming(false);
         setAiPhase('idle');
+        setTurnoDesde(null);
         flashNotice('Llegó la respuesta que había quedado en camino');
       });
     }, 4_000);
+    resumeTimer.current = timer;
 
     return () => {
       cancelado = true;
@@ -246,6 +270,7 @@ export default function Workspace(props: WorkspaceProps) {
     setError(null);
     setFailedMessage(null);
     setFallback(null);
+    setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
     setStreamingText('');
@@ -269,14 +294,19 @@ export default function Workspace(props: WorkspaceProps) {
     let assistantText = '';
 
     try {
-      for await (const event of streamChat({
-        projectId,
-        threadId: activeThreadId,
-        message,
-        model,
-        attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
-        codeEditedByTeacher: codeEditedByTeacher.current,
-      })) {
+      abortador.current = new AbortController();
+
+      for await (const event of streamChat(
+        {
+          projectId,
+          threadId: activeThreadId,
+          message,
+          model,
+          attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
+          codeEditedByTeacher: codeEditedByTeacher.current,
+        },
+        abortador.current.signal,
+      )) {
         if (event.type === 'text') {
           assistantText += event.delta;
           setStreamingText(assistantText);
@@ -310,13 +340,53 @@ export default function Workspace(props: WorkspaceProps) {
           if (event.codeUpdated) flashNotice('Recurso actualizado');
         }
       }
-    } catch {
-      setError('Se cortó la conexión con el servidor.');
-      setFailedMessage(message);
+    } catch (error) {
+      // Un abort es el docente tocando "Detener": no es una falla que reportar.
+      if ((error as Error)?.name !== 'AbortError') {
+        setError('Se cortó la conexión con el servidor.');
+        setFailedMessage(message);
+      }
     } finally {
+      abortador.current = null;
       setIsStreaming(false);
       setAiPhase('idle');
       setStreamingText('');
+      setTurnoDesde(null);
+    }
+  }
+
+  /**
+   * Corta el turno en curso.
+   *
+   * Además de abortar el pedido, deja constancia en el hilo: si el último
+   * mensaje sigue siendo el del docente, cada recarga vuelve a ponerse a
+   * esperar la misma respuesta que ya no va a llegar, y no hay forma de salir.
+   */
+  async function handleStop() {
+    abortador.current?.abort();
+    abortador.current = null;
+
+    if (resumeTimer.current) {
+      window.clearInterval(resumeTimer.current);
+      resumeTimer.current = null;
+    }
+
+    setIsStreaming(false);
+    setAiPhase('idle');
+    setStreamingText('');
+    setTurnoDesde(null);
+
+    const result = await apiRequest<{ messageId?: string; content?: string }>(
+      '/api/chat/cancel',
+      'POST',
+      { projectId, threadId: activeThreadId },
+    );
+
+    if (result.ok && result.data.messageId && result.data.content) {
+      setMessages((current) => [
+        ...current,
+        { id: result.data.messageId!, role: 'assistant', content: result.data.content!, attachments: [] },
+      ]);
     }
   }
 
@@ -392,7 +462,31 @@ export default function Workspace(props: WorkspaceProps) {
   }
 
   return (
-    <div className="grid h-[calc(100vh-8.5rem)] min-h-[32rem] grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[minmax(20rem,26rem)_1fr]">
+    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[28rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
+      {/* Conmutador de pantallas chicas. */}
+      <div className="mb-2 flex rounded-lg bg-sutil p-0.5 lg:hidden" role="tablist">
+        {(
+          [
+            ['chat', 'Chat'],
+            ['recurso', 'Recurso'],
+          ] as const
+        ).map(([valor, etiqueta]) => (
+          <button
+            key={valor}
+            type="button"
+            role="tab"
+            aria-selected={vistaMovil === valor}
+            onClick={() => setVistaMovil(valor)}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              vistaMovil === valor ? 'bg-superficie text-ink-900 shadow-sm' : 'text-ink-500'
+            }`}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[minmax(18rem,24rem)_1fr]">
       <FichaDialog
         abierto={fichaAbierta}
         tituloInicial={props.project.title}
@@ -412,11 +506,14 @@ export default function Workspace(props: WorkspaceProps) {
         }}
       />
 
+      <div className={`min-h-0 ${vistaMovil === 'chat' ? 'flex' : 'hidden'} lg:flex`}>
       <ChatPanel
         messages={messages}
         streamingText={streamingText}
         isStreaming={isStreaming}
         aiPhase={aiPhase}
+        turnoDesde={turnoDesde}
+        onDetener={() => void handleStop()}
         error={error}
         canRetry={failedMessage !== null && !isStreaming}
         onRetry={() => {
@@ -451,6 +548,9 @@ export default function Workspace(props: WorkspaceProps) {
         }
         onSend={(message) => void handleSend(message)}
       />
+      </div>
+
+      <div className={`min-h-0 ${vistaMovil === 'recurso' ? 'flex' : 'hidden'} lg:flex`}>
 
       <PreviewPanel
         html={html}
@@ -464,7 +564,6 @@ export default function Workspace(props: WorkspaceProps) {
         publicUrl={publicUrl}
         title={title}
         description={description}
-        authorName={props.authorName}
         onMetaChange={(meta) => {
           if (meta.title !== undefined) {
             setTitle(meta.title);
@@ -490,6 +589,8 @@ export default function Workspace(props: WorkspaceProps) {
         saving={saving}
         notice={notice}
       />
+      </div>
+      </div>
     </div>
   );
 }

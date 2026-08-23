@@ -36,9 +36,16 @@ interface AiStatusProps {
   phase: AiPhase;
   /** `inline` para el renglón de estado; `bubble` para la burbuja del chat. */
   variant?: 'inline' | 'bubble';
+  /**
+   * Cuándo arrancó el turno, en epoch ms. Lo pone quien lo sabe de verdad: al
+   * recargar la página, el turno puede llevar veinte minutos corriendo y contar
+   * desde cero mostraría un tiempo que no es.
+   */
+  desde?: number | null;
+  onDetener?: () => void;
 }
 
-export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
+export default function AiStatus({ phase, variant = 'bubble', desde, onDetener }: AiStatusProps) {
   const activo = phase === 'idle' ? null : PHASES[phase];
 
   const [segundos, setSegundos] = useState(0);
@@ -53,7 +60,8 @@ export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
       return;
     }
 
-    if (arranque.current === null) arranque.current = Date.now();
+    if (desde) arranque.current = desde;
+    else if (arranque.current === null) arranque.current = Date.now();
 
     const tick = () => {
       if (arranque.current !== null) {
@@ -64,7 +72,7 @@ export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
     tick();
     const timer = window.setInterval(tick, 1_000);
     return () => window.clearInterval(timer);
-  }, [phase]);
+  }, [phase, desde]);
 
   if (!activo) return null;
 
@@ -85,6 +93,16 @@ export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
       <span className="tabular-nums text-ink-500 opacity-70" aria-hidden="true">
         {formatearTiempo(segundos)}
       </span>
+
+      {onDetener && (
+        <button
+          type="button"
+          onClick={onDetener}
+          className="ml-auto shrink-0 rounded-md border border-linea px-2 py-0.5 text-xs font-medium text-ink-700 transition-colors hover:border-red-300 hover:text-red-600"
+        >
+          Detener
+        </button>
+      )}
     </div>
   );
 }
