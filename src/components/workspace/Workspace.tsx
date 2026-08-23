@@ -74,6 +74,9 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
 
+  /** Otro proveedor sugerido cuando el elegido falló. */
+  const [fallback, setFallback] = useState<{ model: ModelChoice; label: string } | null>(null);
+
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice(null), 2_500);
@@ -166,9 +169,68 @@ export default function Workspace(props: WorkspaceProps) {
     return () => window.removeEventListener('pagehide', flushOnExit);
   }, [projectId]);
 
+  /**
+   * Retoma un turno que quedó corriendo en el servidor.
+   *
+   * El turno NO se cancela al recargar: el servidor lo termina y guarda igual
+   * (ver el `finally` de /api/chat/stream). Lo que se perdía era el aviso, y el
+   * docente quedaba mirando una pantalla que parecía muerta sin saber que en dos
+   * minutos iba a estar la respuesta. Acá se detecta que el último mensaje del
+   * hilo es suyo y se espera la respuesta, consultando cada tanto.
+   */
+  useEffect(() => {
+    const ultimo = props.messages[props.messages.length - 1];
+    if (!ultimo || ultimo.role !== 'user') return;
+
+    let cancelado = false;
+    let intentos = 0;
+    // 90 intentos × 4 s ≈ 6 minutos: más que el turno más lento que vimos.
+    const MAX_INTENTOS = 90;
+
+    setAiPhase('thinking');
+    setIsStreaming(true);
+
+    const timer = window.setInterval(() => {
+      if (cancelado) return;
+
+      if (++intentos > MAX_INTENTOS) {
+        window.clearInterval(timer);
+        setIsStreaming(false);
+        setAiPhase('idle');
+        setError('El turno anterior tardó demasiado. Podés volver a mandarlo.');
+        setFailedMessage(ultimo.content);
+        return;
+      }
+
+      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string }>(
+        `/api/projects/${projectId}/threads?threadId=${encodeURIComponent(activeThreadId)}`,
+      ).then((result) => {
+        if (cancelado || !result.ok) return;
+
+        const llegoRespuesta = result.data.messages.at(-1)?.role === 'assistant';
+        if (!llegoRespuesta) return;
+
+        window.clearInterval(timer);
+        setMessages(result.data.messages);
+        setHtml(result.data.currentHtml);
+        setIsStreaming(false);
+        setAiPhase('idle');
+        flashNotice('Llegó la respuesta que había quedado en camino');
+      });
+    }, 4_000);
+
+    return () => {
+      cancelado = true;
+      window.clearInterval(timer);
+    };
+    // Sólo al montar: es la reanudación después de recargar la página.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleSend(message: string, isRetry = false) {
     setError(null);
     setFailedMessage(null);
+    setFallback(null);
     setIsStreaming(true);
     setAiPhase('thinking');
     setStreamingText('');
@@ -219,6 +281,9 @@ export default function Workspace(props: WorkspaceProps) {
         } else if (event.type === 'error') {
           setError(event.message);
           setFailedMessage(message);
+          if (event.fallbackModel && event.fallbackLabel) {
+            setFallback({ model: event.fallbackModel, label: event.fallbackLabel });
+          }
         } else if (event.type === 'done') {
           setMessages((current) => [
             ...current,
@@ -319,6 +384,17 @@ export default function Workspace(props: WorkspaceProps) {
         canRetry={failedMessage !== null && !isStreaming}
         onRetry={() => {
           if (failedMessage) void handleSend(failedMessage, true);
+        }}
+        fallbackLabel={fallback && !isStreaming ? fallback.label : null}
+        onUseFallback={() => {
+          if (!fallback || !failedMessage) return;
+          // Se cambia el modelo del proyecto Y se reintenta: si sólo se cambiara
+          // el selector, el docente tendría que volver a mandar el mensaje.
+          setModel(fallback.model);
+          void patchProject({ selectedModel: fallback.model }, true);
+          const pedido = failedMessage;
+          setFallback(null);
+          void handleSend(pedido, true);
         }}
         model={model}
         onModelChange={(value) => {

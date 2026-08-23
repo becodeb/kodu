@@ -1,6 +1,28 @@
 /** Tipos que comparten la página Astro del editor y las islas de React. */
 
-export type ModelChoice = 'FLASH' | 'PRO';
+export type ModelChoice = 'ALPHA' | 'DEEPSEEK';
+
+/** Lo que el docente ve de cada modelo al elegirlo. */
+export const MODELOS: Array<{
+  value: ModelChoice;
+  nombre: string;
+  detalle: string;
+  /** Consume cupo pago: hay que avisarlo antes de que lo elija. */
+  conCupo: boolean;
+}> = [
+  {
+    value: 'ALPHA',
+    nombre: 'Alpha',
+    detalle: 'Gratis y sin límite. Entiende las imágenes que subas.',
+    conCupo: false,
+  },
+  {
+    value: 'DEEPSEEK',
+    nombre: 'DeepSeek',
+    detalle: 'Se paga por uso, así que tenés un cupo de tokens. No lee imágenes.',
+    conCupo: true,
+  },
+];
 
 export interface WorkspaceProject {
   id: string;

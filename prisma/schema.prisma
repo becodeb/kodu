@@ -18,8 +18,10 @@ enum Role {
 }
 
 enum ModelChoice {
-  FLASH
-  PRO
+  /// Gratuito y multimodal: el de todos los dias.
+  ALPHA
+  /// Se paga por token, por eso tiene tope por usuario.
+  DEEPSEEK
 }
 
 model User {
@@ -31,6 +33,23 @@ model User {
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
+  tokenUsage   TokenUsage[]
+}
+
+/// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
+/// por usuario del proveedor pago, y poder ver quien gasta cuanto.
+model TokenUsage {
+  id               String      @id @default(uuid())
+  userId           String
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider         ModelChoice
+  model            String
+  promptTokens     Int         @default(0)
+  completionTokens Int         @default(0)
+  createdAt        DateTime    @default(now())
+
+  @@index([userId, provider])
+  @@index([createdAt])
 }
 
 model Project {
@@ -41,7 +60,7 @@ model Project {
   currentHtml   String         @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
   screenshotUrl String?
   isInGallery   Boolean        @default(false)
-  selectedModel ModelChoice    @default(FLASH)
+  selectedModel ModelChoice    @default(ALPHA)
   userId        String
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   threads       ChatThread[]

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import AiStatus from './AiStatus.tsx';
+import { MODELOS } from '../../lib/workspace-types.ts';
 import type {
   AiPhase,
   ModelChoice,
@@ -18,6 +19,9 @@ interface ChatPanelProps {
   /** Hay un pedido fallido que se puede volver a mandar tal cual. */
   canRetry: boolean;
   onRetry: () => void;
+  /** Nombre del otro proveedor cuando el elegido falló y se puede redirigir. */
+  fallbackLabel: string | null;
+  onUseFallback: () => void;
   model: ModelChoice;
   onModelChange: (model: ModelChoice) => void;
   threads: WorkspaceThread[];
@@ -99,6 +103,17 @@ export default function ChatPanel(props: ChatPanelProps) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       submit(event as unknown as FormEvent);
+      return;
+    }
+
+    // Flecha arriba con el campo vacío: trae el último pedido, como en una
+    // terminal. Sólo con el campo vacío, para no pisar lo que se está tipeando.
+    if (event.key === 'ArrowUp' && draft.length === 0) {
+      const ultimo = [...props.messages].reverse().find((m) => m.role === 'user');
+      if (ultimo) {
+        event.preventDefault();
+        setDraft(ultimo.content);
+      }
     }
   }
 
@@ -135,22 +150,33 @@ export default function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
 
-        <fieldset className="flex items-center gap-3 text-xs">
+        {/* Toggle de proveedor. El aviso del cupo va a la vista y no escondido
+            en un tooltip: elegir el modelo pago sin saber que se gasta plata es
+            justo la clase de sorpresa que no queremos darle a nadie. */}
+        <fieldset className="space-y-1.5">
           <legend className="sr-only">Modelo de IA</legend>
-          <span className="font-medium text-ink-700">Modelo:</span>
-          {(['FLASH', 'PRO'] as const).map((option) => (
-            <label key={option} className="flex cursor-pointer items-center gap-1.5 text-ink-700">
-              <input
-                type="radio"
-                name="model"
-                value={option}
-                checked={props.model === option}
-                onChange={() => props.onModelChange(option)}
-                className="accent-brand-600"
-              />
-              {option === 'FLASH' ? 'Flash (rápido)' : 'Pro (razonamiento)'}
-            </label>
-          ))}
+
+          <div className="flex rounded-lg bg-sutil p-0.5">
+            {MODELOS.map((opcion) => (
+              <button
+                key={opcion.value}
+                type="button"
+                aria-pressed={props.model === opcion.value}
+                onClick={() => props.onModelChange(opcion.value)}
+                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                  props.model === opcion.value
+                    ? 'bg-superficie text-ink-900 shadow-sm'
+                    : 'text-ink-500 hover:text-ink-700'
+                }`}
+              >
+                {opcion.nombre}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-[0.7rem] leading-snug text-ink-500">
+            {MODELOS.find((opcion) => opcion.value === props.model)?.detalle}
+          </p>
         </fieldset>
       </header>
 
@@ -162,7 +188,7 @@ export default function ChatPanel(props: ChatPanelProps) {
              ve completo en el campo de abajo y lo edita. */
           <div className="space-y-4 px-1 py-6 text-center">
             <div className="flex justify-center">
-              <ThinkingOrb state="breathing" size={64} theme="light" aria-label="" />
+              <ThinkingOrb state="breathing" size={64} theme="auto" aria-label="" />
             </div>
 
             <div>
@@ -217,15 +243,26 @@ export default function ChatPanel(props: ChatPanelProps) {
         {props.error && (
           <div role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
             <p>{props.error}</p>
-            {props.canRetry && (
-              <button
-                type="button"
-                onClick={props.onRetry}
-                className="mt-2 rounded-lg border border-red-200 bg-superficie px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
-              >
-                Reintentar
-              </button>
-            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {props.canRetry && (
+                <button
+                  type="button"
+                  onClick={props.onRetry}
+                  className="rounded-lg border border-red-200 bg-superficie px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+                >
+                  Reintentar
+                </button>
+              )}
+              {props.fallbackLabel && (
+                <button
+                  type="button"
+                  onClick={props.onUseFallback}
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
+                >
+                  Probar con {props.fallbackLabel}
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -282,7 +319,7 @@ export default function ChatPanel(props: ChatPanelProps) {
           onKeyDown={onKeyDown}
           rows={3}
           disabled={props.isStreaming}
-          placeholder="Escribí un cambio…  (Enter envía, Shift+Enter salta de línea)"
+          placeholder="Preguntale a Kodu…"
           className="kodu-input resize-none"
         />
 

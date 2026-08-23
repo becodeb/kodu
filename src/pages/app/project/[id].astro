@@ -40,10 +40,36 @@ const siteUrl = getEnv().PUBLIC_SITE_URL;
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide>
-  <div class="mb-3 flex items-center gap-2 text-sm">
-    <a href="/app" class="text-ink-500 hover:text-brand-600">← Mis recursos</a>
-    <span class="text-ink-500">/</span>
-    <span class="font-medium text-ink-900">{project.title}</span>
+  {/* La miga de pan generica (flechita, barra, titulo) no decia nada. Ahora el
+      volver es una pieza tactil —la flecha se corre sola al pasar por encima— y
+      el titulo se escribe en la tipografia de la marca, que es lo unico que
+      identifica de verdad a este recurso. */}
+  <div class="mb-3 flex items-center gap-3">
+    <a
+      href="/app"
+      class="group inline-flex items-center gap-2 rounded-full border border-linea bg-superficie py-1 pr-3.5 pl-1 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:text-brand-600"
+    >
+      <span
+        class="grid h-6 w-6 place-items-center rounded-full bg-sutil transition-all group-hover:-translate-x-0.5 group-hover:bg-brand-50"
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+          <path
+            d="M7.5 2.5 4 6l3.5 3.5"
+            stroke="currentColor"
+            stroke-width="1.75"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </span>
+      Mis recursos
+    </a>
+
+    <span class="h-4 w-px shrink-0 bg-linea" aria-hidden="true"></span>
+
+    <h1 class="font-display truncate text-sm tracking-tight text-ink-900 uppercase">
+      {project.title}
+    </h1>
   </div>
 
   <Workspace

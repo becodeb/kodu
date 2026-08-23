@@ -67,7 +67,12 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
     select: { id: true, role: true, content: true, attachments: true },
   });
 
+  // Se devuelve tambien el HTML porque el editor usa este endpoint para
+  // retomar un turno que quedo corriendo en el servidor: sin el codigo, el
+  // docente veria la respuesta nueva pero el visor seguiria con la version
+  // vieja hasta recargar de nuevo.
   return ok({
+    currentHtml: project.currentHtml,
     messages: messages.map((message) => ({
       id: message.id,
       role: message.role,

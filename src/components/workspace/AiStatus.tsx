@@ -17,10 +17,10 @@ const PHASES: Record<
   Exclude<AiPhase, 'idle'>,
   { state: 'connecting' | 'solving' | 'composing' | 'weaving'; label: string }
 > = {
-  uploading: { state: 'connecting', label: 'Subiendo tus archivos…' },
-  thinking: { state: 'solving', label: 'Pensando cómo resolverlo…' },
-  writing: { state: 'composing', label: 'Escribiéndote la respuesta…' },
-  coding: { state: 'weaving', label: 'Armando el recurso…' },
+  uploading: { state: 'connecting', label: 'Subiendo tus archivos' },
+  thinking: { state: 'solving', label: 'Pensando cómo resolverlo' },
+  writing: { state: 'composing', label: 'Escribiéndote la respuesta' },
+  coding: { state: 'weaving', label: 'Armando el recurso' },
 };
 
 /** Debe coincidir con --text-swap-dur en global.css. */
@@ -86,8 +86,8 @@ export default function AiStatus({ phase, variant = 'bubble' }: AiStatusProps) {
     >
       {/* La librería sólo trae dos tamaños afinados, 20 y 64: acá va siempre el
           de 20, que es el que se lee como parte de un renglón de texto. */}
-      <ThinkingOrb state={active.state} size={20} theme="light" aria-label={active.label} />
-      <span ref={textRef} className="t-text-swap">
+      <ThinkingOrb state={active.state} size={20} theme="auto" aria-label={active.label} />
+      <span ref={textRef} className="t-text-swap t-shimmer">
         {shown}
       </span>
     </div>

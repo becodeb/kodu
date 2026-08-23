@@ -4,13 +4,18 @@ import { prisma } from '../../../lib/db.ts';
 import { findOwnedProject } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import {
-  DeepSeekError,
+  ProviderError,
+  alternateChoice,
+  isChoiceConfigured,
   readCompletionStream,
   requestCompletionStream,
+  resolveProvider,
   supportsVision,
   type ChatMessage,
   type ContentPart,
-} from '../../../lib/ai/deepseek.ts';
+  type ModelChoice,
+} from '../../../lib/ai/provider.ts';
+import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { UPDATE_RESOURCE_CODE, parseUpdateResourceArgs } from '../../../lib/ai/tools.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
@@ -32,7 +37,7 @@ const schema = z.object({
   threadId: z.string().min(1),
   message: z.string().trim().min(1, 'Escribí un mensaje').max(8_000),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
-  model: z.enum(['FLASH', 'PRO']).optional(),
+  model: z.enum(['ALPHA', 'DEEPSEEK']).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
 });
@@ -94,6 +99,7 @@ async function buildUserContent(
   message: string,
   attachmentUrls: string[],
   projectImageUrls: string[],
+  choice: ModelChoice,
 ): Promise<string | ContentPart[]> {
   const own = attachmentUrls.length > 0;
   // Las del mensaje mandan; si no hay, las del proyecto (las últimas, acotadas
@@ -104,7 +110,7 @@ async function buildUserContent(
 
   const names = candidates.map((url) => url.split('/').pop() ?? url).join(', ');
 
-  if (!supportsVision()) {
+  if (!supportsVision(choice)) {
     return own
       ? `${message}
 
@@ -192,13 +198,29 @@ export const POST: APIRoute = async ({ request, locals }) => {
     extractedText: asset.extractedText,
   }));
 
+  const provider = resolveProvider(chosenModel);
+
+  // El tope por usuario se chequea ANTES de gastar: avisar después de consumir
+  // no sirve de nada. Se ofrece el otro proveedor, que es la salida real.
+  if (provider.userTokenLimit > 0) {
+    const usados = await consumedTokens(user.id, chosenModel);
+    if (usados >= provider.userTokenLimit) {
+      const otro = alternateChoice(chosenModel);
+      return fail(
+        `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}. ` +
+          `Cambiá el modelo a ${resolveProvider(otro).label}, que no tiene tope, o pedile más cupo a la administración.`,
+        429,
+      );
+    }
+  }
+
   const systemPrompt = buildSystemPrompt({
     globalRules,
     userRules,
     assets: assetContexts,
     currentHtml: project.currentHtml,
     projectTitle: project.title,
-    canSeeImages: supportsVision(),
+    canSeeImages: supportsVision(chosenModel),
     htmlEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
@@ -206,6 +228,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     message,
     attachmentUrls ?? [],
     assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
+    chosenModel,
   );
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
@@ -230,14 +253,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   let upstream: Response;
   try {
-    upstream = await requestCompletionStream({
-      messages,
-      model: chosenModel,
-      signal: request.signal,
-    });
+    upstream = await requestCompletionStream({ messages, provider, signal: request.signal });
   } catch (error) {
-    const status = error instanceof DeepSeekError ? error.status : 502;
-    return fail((error as Error).message, status);
+    const status = error instanceof ProviderError ? error.status : 502;
+    const otro = alternateChoice(chosenModel);
+
+    // Si el proveedor elegido está caído, el docente no tiene por qué quedarse
+    // sin poder trabajar: se le ofrece el otro y decide él.
+    const puedeCambiar =
+      (!(error instanceof ProviderError) || error.canFallback) && isChoiceConfigured(otro);
+
+    return fail((error as Error).message, status, {
+      fallbackModel: puedeCambiar ? otro : undefined,
+      fallbackLabel: puedeCambiar ? resolveProvider(otro).label : undefined,
+    });
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -271,6 +300,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // cambié el fondo", el recurso no cambia y el docente no entiende por qué.
       let codeProblem: string | null = null;
       let finishReason = '';
+      let usage: { promptTokens: number; completionTokens: number } | null = null;
 
       try {
         for await (const event of readCompletionStream(upstream)) {
@@ -284,6 +314,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
             // El tool call puede tardar un rato largo en completarse; avisamos
             // apenas arranca para que el chat deje de decir que está escribiendo.
             send({ type: 'code_start' });
+            continue;
+          }
+
+          if (event.type === 'usage') {
+            usage = event.usage;
             continue;
           }
 
@@ -309,6 +344,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
         console.error('[chat/stream]', error);
         send({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' });
       } finally {
+        // El consumo se registra aunque el turno se haya cortado: los tokens ya
+        // se gastaron igual.
+        if (usage) {
+          await recordUsage({
+            userId: user.id,
+            provider: chosenModel,
+            model: provider.model,
+            ...usage,
+          }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
+        }
+
         // Persistir pase lo que pase: si el docente cierra la pestaña a mitad de
         // camino, lo generado hasta ahí queda guardado.
         try {

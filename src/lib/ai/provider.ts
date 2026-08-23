@@ -2,15 +2,67 @@ import { getEnv } from '../env.ts';
 import { RESOURCE_TOOLS } from './tools.ts';
 
 /**
- * Cliente de DeepSeek. El backend actúa de proxy seguro: la API key vive sólo
- * acá (SPEC §1) y el navegador nunca la ve.
+ * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
+ * viven sólo acá (SPEC §1) y el navegador nunca las ve.
  *
- * El protocolo es el estándar OpenAI-compatible (`/chat/completions` con
- * `stream: true`), así que el parser de abajo sirve igual para cualquier
- * proveedor que hable ese dialecto.
+ * Hay DOS proveedores configurados y el docente elige cuál usa:
+ *  - ALPHA    — el de todos los días, gratuito, sin cupo por usuario.
+ *  - DEEPSEEK — se paga por token, así que tiene tope por usuario.
+ *
+ * Los dos hablan el dialecto OpenAI (`/chat/completions` con `stream: true`),
+ * así que el parser de abajo sirve para cualquiera de los dos y para el que
+ * venga después.
  */
 
-export type ModelChoice = 'FLASH' | 'PRO';
+export type ModelChoice = 'ALPHA' | 'DEEPSEEK';
+
+export const MODEL_CHOICES: ModelChoice[] = ['ALPHA', 'DEEPSEEK'];
+
+export interface ProviderConfig {
+  choice: ModelChoice;
+  label: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  maxTokens: number;
+  /** Tope de tokens por usuario. 0 = sin tope. */
+  userTokenLimit: number;
+}
+
+export function resolveProvider(choice: ModelChoice): ProviderConfig {
+  const env = getEnv();
+
+  if (choice === 'DEEPSEEK') {
+    return {
+      choice,
+      label: 'DeepSeek',
+      apiKey: env.AI_DEEPSEEK_API_KEY,
+      baseUrl: env.AI_DEEPSEEK_BASE_URL,
+      model: env.AI_DEEPSEEK_MODEL,
+      maxTokens: env.AI_DEEPSEEK_MAX_TOKENS,
+      userTokenLimit: env.AI_DEEPSEEK_USER_TOKEN_LIMIT,
+    };
+  }
+
+  return {
+    choice: 'ALPHA',
+    label: 'Alpha',
+    apiKey: env.AI_ALPHA_API_KEY,
+    baseUrl: env.AI_ALPHA_BASE_URL,
+    model: env.AI_ALPHA_MODEL,
+    maxTokens: env.AI_ALPHA_MAX_TOKENS,
+    userTokenLimit: env.AI_ALPHA_USER_TOKEN_LIMIT,
+  };
+}
+
+/** El otro proveedor, para ofrecerlo cuando el elegido falla. */
+export function alternateChoice(choice: ModelChoice): ModelChoice {
+  return choice === 'ALPHA' ? 'DEEPSEEK' : 'ALPHA';
+}
+
+export function isChoiceConfigured(choice: ModelChoice): boolean {
+  return resolveProvider(choice).apiKey.length > 0;
+}
 
 /**
  * Partes de un mensaje multimodal (formato OpenAI). Sólo se usan cuando
@@ -25,44 +77,40 @@ export interface ChatMessage {
   content: string | ContentPart[];
 }
 
-export function supportsVision(): boolean {
-  return getEnv().AI_VISION;
+export function supportsVision(choice: ModelChoice): boolean {
+  // Sólo Alpha es multimodal; mandarle partes `image_url` a un modelo de texto
+  // hace que la API conteste 400 y se caiga el turno entero.
+  return choice === 'ALPHA' && getEnv().AI_VISION;
 }
 
-export class DeepSeekError extends Error {
+export class ProviderError extends Error {
   readonly status: number;
+  /** true si conviene ofrecerle al docente reintentar con el otro proveedor. */
+  readonly canFallback: boolean;
 
-  constructor(message: string, status = 502) {
+  constructor(message: string, status = 502, canFallback = true) {
     super(message);
-    this.name = 'DeepSeekError';
+    this.name = 'ProviderError';
     this.status = status;
+    this.canFallback = canFallback;
   }
-}
-
-export function resolveModel(choice: ModelChoice): string {
-  const env = getEnv();
-  return choice === 'PRO' ? env.DEEPSEEK_MODEL_PRO : env.DEEPSEEK_MODEL_FLASH;
-}
-
-export function isConfigured(): boolean {
-  return getEnv().DEEPSEEK_API_KEY.length > 0;
 }
 
 export async function requestCompletionStream(options: {
   messages: ChatMessage[];
-  model: ModelChoice;
+  provider: ProviderConfig;
   signal?: AbortSignal;
 }): Promise<Response> {
-  const env = getEnv();
+  const { provider } = options;
 
-  if (!env.DEEPSEEK_API_KEY) {
-    throw new DeepSeekError(
-      'El servidor no tiene configurada la clave de DeepSeek (DEEPSEEK_API_KEY).',
+  if (!provider.apiKey) {
+    throw new ProviderError(
+      `El servidor no tiene configurada la clave de ${provider.label}.`,
       503,
     );
   }
 
-  const endpoint = `${env.DEEPSEEK_BASE_URL.replace(/\/+$/, '')}/v1/chat/completions`;
+  const endpoint = `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
 
   let response: Response;
   try {
@@ -70,34 +118,44 @@ export async function requestCompletionStream(options: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.DEEPSEEK_API_KEY}`,
+        Authorization: `Bearer ${provider.apiKey}`,
       },
       body: JSON.stringify({
-        model: resolveModel(options.model),
+        model: provider.model,
         messages: options.messages,
         tools: RESOURCE_TOOLS,
         tool_choice: 'auto',
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de
-        // ~200 líneas vuelve cortado por la mitad. Ver AI_MAX_TOKENS en env.ts.
-        max_tokens: env.AI_MAX_TOKENS,
+        // ~200 líneas vuelve cortado por la mitad.
+        max_tokens: provider.maxTokens,
+        // Pide el conteo de tokens en el último chunk: es de dónde sale el
+        // consumo que se registra por usuario.
+        stream_options: { include_usage: true },
       }),
       signal: options.signal,
     });
   } catch (error) {
-    throw new DeepSeekError(`No se pudo contactar a DeepSeek: ${(error as Error).message}`);
+    throw new ProviderError(
+      `No se pudo contactar a ${provider.label}: ${(error as Error).message}`,
+    );
   }
 
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
-    throw new DeepSeekError(
-      `DeepSeek respondió ${response.status}. ${detail.slice(0, 300)}`.trim(),
-      response.status === 401 ? 502 : 502,
+    throw new ProviderError(
+      `${provider.label} respondió ${response.status}. ${detail.slice(0, 300)}`.trim(),
+      502,
     );
   }
 
   return response;
+}
+
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export type StreamEvent =
@@ -109,6 +167,7 @@ export type StreamEvent =
   /** `truncated` avisa que el modelo llegó al tope de tokens con el tool call a
    *  medio escribir: el JSON de `arguments` está cortado y no se puede parsear. */
   | { type: 'tool'; name: string; arguments: string; truncated: boolean }
+  | { type: 'usage'; usage: TokenUsage }
   | { type: 'finish'; reason: string };
 
 interface PendingToolCall {
@@ -117,9 +176,9 @@ interface PendingToolCall {
 }
 
 /**
- * Convierte el SSE de OpenAI/DeepSeek en eventos ya digeridos.
+ * Convierte el SSE del proveedor en eventos ya digeridos.
  *
- * Dos detalles que rompen las implementaciones ingenuas:
+ * Tres detalles que rompen las implementaciones ingenuas:
  *  - los `arguments` del tool call llegan como fragmentos de string JSON
  *    repartidos entre muchos deltas, hay que acumularlos por `index`;
  *  - un chunk TCP puede cortar un evento por la mitad, así que se bufferea
@@ -181,6 +240,18 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
           chunk = JSON.parse(payload);
         } catch {
           continue; // fragmento inválido: lo ignoramos en vez de cortar el stream
+        }
+
+        // El chunk del consumo viene sin `choices`, así que se lee antes de
+        // descartar los chunks vacíos.
+        if (chunk?.usage) {
+          yield {
+            type: 'usage',
+            usage: {
+              promptTokens: Number(chunk.usage.prompt_tokens ?? 0),
+              completionTokens: Number(chunk.usage.completion_tokens ?? 0),
+            },
+          };
         }
 
         const choice = chunk?.choices?.[0];

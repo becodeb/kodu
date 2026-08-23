@@ -119,6 +119,15 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
                       Reglas de la IA
                     </a>
 
+                    {user.role === 'ADMIN' && (
+                      <a
+                        href="/app/consumo"
+                        class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil"
+                      >
+                        Consumo de tokens
+                      </a>
+                    )}
+
                     <button
                       type="button"
                       data-toggle-tema

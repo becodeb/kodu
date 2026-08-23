@@ -35,31 +35,44 @@ const envSchema = z.object({
   UPLOADS_DIR: z.string().min(1).default('./uploads'),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
 
-  // Motor de IA. La API key no es obligatoria para arrancar (la plataforma
-  // sirve la galería y el editor igual): se valida al invocar el chat.
-  DEEPSEEK_API_KEY: z.string().default(''),
-  DEEPSEEK_BASE_URL: z.string().min(1).default('https://api.deepseek.com'),
-  DEEPSEEK_MODEL_FLASH: z.string().min(1).default('deepseek-v4-flash'),
-  DEEPSEEK_MODEL_PRO: z.string().min(1).default('deepseek-v4-pro'),
+  /**
+   * Motor de IA. Hay dos proveedores y el docente elige cuál usa.
+   *
+   * ALPHA es el de todos los días: gratuito, multimodal y sin cupo. DEEPSEEK se
+   * paga por token, así que trae tope por usuario — sin ese tope, un docente
+   * solo puede vaciar la cuenta en una tarde.
+   *
+   * Las claves NO son obligatorias para arrancar (la galería y el editor andan
+   * igual): se validan recién al invocar el chat.
+   */
+  AI_ALPHA_API_KEY: z.string().default(''),
+  AI_ALPHA_BASE_URL: z.string().min(1).default('https://openrouter.ai/api'),
+  AI_ALPHA_MODEL: z.string().min(1).default('stealth/ox-alpha'),
+
+  AI_DEEPSEEK_API_KEY: z.string().default(''),
+  AI_DEEPSEEK_BASE_URL: z.string().min(1).default('https://api.deepseek.com'),
+  AI_DEEPSEEK_MODEL: z.string().min(1).default('deepseek-v4-flash'),
 
   /**
-   * Tope de tokens de la respuesta. Es CRÍTICO que sea alto: el contrato con la
-   * IA la obliga a devolver el documento HTML completo en cada edición, y un
-   * recurso real ronda los 3.000–10.000 tokens. Con el default de la API (4.096)
-   * el tool call se corta a la mitad, el JSON queda inválido y el turno termina
-   * sin texto ni código.
+   * Tope de tokens de UNA respuesta. Alto a propósito: el contrato obliga a la
+   * IA a devolver el documento HTML completo en cada edición, y si se queda
+   * corta el recurso vuelve cortado por la mitad. El tope existe para que una
+   * respuesta desbocada no coma la memoria del servidor, no para ahorrar.
    */
-  AI_MAX_TOKENS: z.coerce.number().int().positive().default(16_384),
+  AI_ALPHA_MAX_TOKENS: z.coerce.number().int().positive().default(65_536),
+  AI_DEEPSEEK_MAX_TOKENS: z.coerce.number().int().positive().default(8_192),
 
   /**
-   * Si el modelo configurado acepta imágenes (formato OpenAI `image_url`). En
-   * false, las imágenes adjuntas se le describen por nombre y se le pide que
-   * pregunte en vez de inventar. Ponerlo en true con un modelo de sólo texto
-   * hace que la API devuelva 400.
+   * Tope ACUMULADO por usuario, en tokens. 0 = sin tope.
+   * Alpha es gratis, así que no lleva; DeepSeek sí.
    */
+  AI_ALPHA_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(0),
+  AI_DEEPSEEK_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(300_000),
+
+  /** Si Alpha recibe las imágenes adjuntas (formato OpenAI `image_url`). */
   AI_VISION: z
     .enum(['true', 'false'])
-    .default('false')
+    .default('true')
     .transform((value) => value === 'true'),
 });
 
@@ -80,11 +93,18 @@ export function getEnv(): Env {
     PUBLIC_SITE_URL: read('PUBLIC_SITE_URL'),
     UPLOADS_DIR: read('UPLOADS_DIR'),
     MAX_UPLOAD_MB: read('MAX_UPLOAD_MB'),
-    DEEPSEEK_API_KEY: read('DEEPSEEK_API_KEY'),
-    DEEPSEEK_BASE_URL: read('DEEPSEEK_BASE_URL'),
-    DEEPSEEK_MODEL_FLASH: read('DEEPSEEK_MODEL_FLASH'),
-    DEEPSEEK_MODEL_PRO: read('DEEPSEEK_MODEL_PRO'),
-    AI_MAX_TOKENS: read('AI_MAX_TOKENS'),
+    // Los nombres viejos (DEEPSEEK_*) siguen valiendo de respaldo para que un
+    // entorno sin actualizar no se quede sin motor al desplegar.
+    AI_ALPHA_API_KEY: read('AI_ALPHA_API_KEY') ?? read('DEEPSEEK_API_KEY'),
+    AI_ALPHA_BASE_URL: read('AI_ALPHA_BASE_URL') ?? read('DEEPSEEK_BASE_URL'),
+    AI_ALPHA_MODEL: read('AI_ALPHA_MODEL') ?? read('DEEPSEEK_MODEL_FLASH'),
+    AI_DEEPSEEK_API_KEY: read('AI_DEEPSEEK_API_KEY') ?? read('DEEPSEEK_API_KEY_OLD_DEEPSEEK'),
+    AI_DEEPSEEK_BASE_URL: read('AI_DEEPSEEK_BASE_URL'),
+    AI_DEEPSEEK_MODEL: read('AI_DEEPSEEK_MODEL'),
+    AI_ALPHA_MAX_TOKENS: read('AI_ALPHA_MAX_TOKENS') ?? read('AI_MAX_TOKENS'),
+    AI_DEEPSEEK_MAX_TOKENS: read('AI_DEEPSEEK_MAX_TOKENS'),
+    AI_ALPHA_USER_TOKEN_LIMIT: read('AI_ALPHA_USER_TOKEN_LIMIT'),
+    AI_DEEPSEEK_USER_TOKEN_LIMIT: read('AI_DEEPSEEK_USER_TOKEN_LIMIT'),
     AI_VISION: read('AI_VISION'),
   });
 

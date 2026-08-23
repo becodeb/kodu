@@ -58,7 +58,8 @@ export type StreamEvent =
   /** La IA empezó a escribir el recurso; el HTML todavía no llegó. */
   | { type: 'code_start' }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
-  | { type: 'error'; message: string };
+  /** `fallbackModel` llega cuando el proveedor elegido falló pero el otro sirve. */
+  | { type: 'error'; message: string; fallbackModel?: 'ALPHA' | 'DEEPSEEK'; fallbackLabel?: string };
 
 /**
  * Consume el SSE de /api/chat/stream.
@@ -70,7 +71,7 @@ export async function* streamChat(payload: {
   projectId: string;
   threadId: string;
   message: string;
-  model?: 'FLASH' | 'PRO';
+  model?: 'ALPHA' | 'DEEPSEEK';
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
@@ -84,7 +85,11 @@ export async function* streamChat(payload: {
   if (!response.ok || !response.body) {
     // Cuando el que corta es un proxy, el cuerpo no es JSON y el `.catch` dejaba
     // un mensaje genérico que no ayudaba a nadie a entender qué pasó.
-    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    const error = (await response.json().catch(() => null)) as {
+      error?: string;
+      fallbackModel?: 'ALPHA' | 'DEEPSEEK';
+      fallbackLabel?: string;
+    } | null;
     const detalle =
       error?.error ??
       (response.status === 401
@@ -92,7 +97,12 @@ export async function* streamChat(payload: {
         : response.status >= 500
           ? `El servidor no pudo completar el pedido (error ${response.status}).`
           : `El servidor rechazó el pedido (error ${response.status}).`);
-    yield { type: 'error', message: detalle };
+    yield {
+      type: 'error',
+      message: detalle,
+      fallbackModel: error?.fallbackModel,
+      fallbackLabel: error?.fallbackLabel,
+    };
     return;
   }
 

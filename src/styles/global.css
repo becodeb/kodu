@@ -156,3 +156,40 @@
     transition: none !important;
   }
 }
+
+/* Brillo que recorre el texto de estado mientras la IA trabaja.
+   Es la señal de "sigue vivo": el orbe gira, pero el texto quedaba clavado y
+   parecía colgado. Se pinta con background-clip sobre el propio texto, así que
+   no necesita ningún elemento extra encima. */
+.t-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-ink-500) 0%,
+    var(--color-ink-500) 38%,
+    var(--color-ink-900) 50%,
+    var(--color-ink-500) 62%,
+    var(--color-ink-500) 100%
+  );
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: kodu-shimmer 1.5s linear infinite;
+}
+
+@keyframes kodu-shimmer {
+  from {
+    background-position: 140% 0;
+  }
+  to {
+    background-position: -40% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-shimmer {
+    animation: none;
+    color: var(--color-ink-700);
+  }
+}

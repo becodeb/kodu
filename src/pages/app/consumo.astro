@@ -1,0 +1,122 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { usageByUser } from '../../lib/ai/usage.ts';
+import { getEnv } from '../../lib/env.ts';
+import { MODELOS } from '../../lib/workspace-types.ts';
+
+/**
+ * Consumo de tokens por docente (SPEC: agregado en agosto de 2026).
+ *
+ * Es una pantalla para nosotros, no para los docentes: sirve para ver quién
+ * gasta cuánto en el proveedor pago antes de que llegue la factura. Por eso es
+ * sólo para ADMIN.
+ */
+const user = Astro.locals.user!;
+
+if (user.role !== 'ADMIN') {
+  return Astro.redirect('/app', 302);
+}
+
+const env = getEnv();
+const filas = await usageByUser();
+
+const topes: Record<string, number> = {
+  ALPHA: env.AI_ALPHA_USER_TOKEN_LIMIT,
+  DEEPSEEK: env.AI_DEEPSEEK_USER_TOKEN_LIMIT,
+};
+
+const nombreProveedor = (valor: string) =>
+  MODELOS.find((modelo) => modelo.value === valor)?.nombre ?? valor;
+
+const miles = (n: number) => n.toLocaleString('es-AR');
+
+const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila) => {
+  acumulado[fila.provider] = (acumulado[fila.provider] ?? 0) + fila.total;
+  return acumulado;
+}, {});
+---
+
+<BaseLayout title="Consumo de tokens">
+  <header class="mb-6 max-w-2xl">
+    <h1 class="text-2xl font-bold text-ink-900">Consumo de tokens</h1>
+    <p class="mt-1 text-sm text-ink-500">
+      Cuánto gastó cada docente en cada motor. Alpha es gratuito; lo que importa mirar acá es
+      DeepSeek, que se paga por token.
+    </p>
+  </header>
+
+  <div class="mb-6 grid gap-3 sm:grid-cols-2">
+    {
+      MODELOS.map((modelo) => (
+        <div class="kodu-card p-4">
+          <p class="text-xs font-medium tracking-wide text-ink-500 uppercase">{modelo.nombre}</p>
+          <p class="font-display mt-1 text-2xl text-ink-900">
+            {miles(totalPorProveedor[modelo.value] ?? 0)}
+          </p>
+          <p class="mt-1 text-xs text-ink-500">
+            {topes[modelo.value]
+              ? `Tope por docente: ${miles(topes[modelo.value]!)} tokens`
+              : 'Sin tope por docente'}
+          </p>
+        </div>
+      ))
+    }
+  </div>
+
+  {
+    filas.length === 0 ? (
+      <div class="kodu-card p-10 text-center">
+        <h2 class="text-lg font-semibold text-ink-900">Todavía no hay consumo registrado</h2>
+        <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
+          Se empieza a contar desde el primer mensaje que se mande después de esta actualización.
+        </p>
+      </div>
+    ) : (
+      <div class="kodu-card overflow-x-auto">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-linea text-xs text-ink-500 uppercase">
+            <tr>
+              <th class="px-4 py-3 font-medium">Docente</th>
+              <th class="px-4 py-3 font-medium">Motor</th>
+              <th class="px-4 py-3 text-right font-medium">Pedido</th>
+              <th class="px-4 py-3 text-right font-medium">Respuesta</th>
+              <th class="px-4 py-3 text-right font-medium">Total</th>
+              <th class="px-4 py-3 text-right font-medium">Turnos</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((fila) => {
+              const tope = topes[fila.provider] ?? 0;
+              const pasado = tope > 0 && fila.total >= tope;
+
+              return (
+                <tr class="border-b border-linea last:border-0">
+                  <td class="px-4 py-3">
+                    <span class="block font-medium text-ink-900">{fila.name}</span>
+                    <span class="block text-xs text-ink-500">{fila.email}</span>
+                  </td>
+                  <td class="px-4 py-3 text-ink-700">{nombreProveedor(fila.provider)}</td>
+                  <td class="px-4 py-3 text-right tabular-nums text-ink-500">
+                    {miles(fila.promptTokens)}
+                  </td>
+                  <td class="px-4 py-3 text-right tabular-nums text-ink-500">
+                    {miles(fila.completionTokens)}
+                  </td>
+                  <td
+                    class={`px-4 py-3 text-right font-semibold tabular-nums ${
+                      pasado ? 'text-red-600' : 'text-ink-900'
+                    }`}
+                  >
+                    {miles(fila.total)}
+                    {pasado && <span class="block text-xs font-normal">tope alcanzado</span>}
+                  </td>
+                  <td class="px-4 py-3 text-right tabular-nums text-ink-500">{fila.turnos}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+</BaseLayout>
