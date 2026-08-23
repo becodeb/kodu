@@ -92,8 +92,8 @@ export default function ResourceSheet(props: ResourceSheetProps) {
                 {props.capturing
                   ? 'Capturando…'
                   : props.screenshotUrl
-                    ? '📸 Sacar otra'
-                    : '📸 Tomar captura'}
+                    ? 'Sacar otra'
+                    : 'Tomar captura'}
               </button>
 
               {props.screenshotUrl && (
@@ -125,7 +125,7 @@ export default function ResourceSheet(props: ResourceSheetProps) {
               acción de esta pantalla que cambia quién puede ver el recurso. */}
           <div
             className={`rounded-[10px] border p-4 transition-colors ${
-              props.isInGallery ? 'border-brand-300 bg-brand-50' : 'border-linea bg-white'
+              props.isInGallery ? 'border-brand-300 bg-brand-50' : 'border-linea bg-superficie'
             }`}
           >
             {/* El riel y el círculo se pintan desde el estado de React y no con
@@ -146,7 +146,7 @@ export default function ResourceSheet(props: ResourceSheetProps) {
                 }`}
               >
                 <span
-                  className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                  className={`h-5 w-5 rounded-full bg-superficie shadow-sm transition-transform ${
                     props.isInGallery ? 'translate-x-5' : 'translate-x-0'
                   }`}
                 />
@@ -177,10 +177,10 @@ export default function ResourceSheet(props: ResourceSheetProps) {
               <img
                 src={props.screenshotUrl}
                 alt="Portada del recurso"
-                className="h-32 w-full border-b border-slate-200 object-cover object-top"
+                className="h-32 w-full border-b border-linea object-cover object-top"
               />
             ) : (
-              <div className="grid h-32 w-full place-items-center border-b border-slate-200 bg-slate-50 px-4 text-center text-xs text-ink-500">
+              <div className="grid h-32 w-full place-items-center border-b border-linea bg-sutil px-4 text-center text-xs text-ink-500">
                 Sin portada todavía
               </div>
             )}
@@ -194,7 +194,7 @@ export default function ResourceSheet(props: ResourceSheetProps) {
               {props.description.trim() ? (
                 <p className="mt-2 line-clamp-3 text-sm text-ink-700">{props.description}</p>
               ) : (
-                <p className="mt-2 text-sm text-slate-400 italic">Sin descripción</p>
+                <p className="mt-2 text-sm text-ink-500 italic">Sin descripción</p>
               )}
             </div>
           </div>

@@ -26,10 +26,44 @@
   --color-ink-700: oklch(0.38 0.02 273.2);
   --color-ink-900: oklch(0.24 0.03 273.2);
 
-  /* Neutros del sistema: una línea, un fondo tenue y un negro para el cierre. */
+  /* Neutros del sistema. Son TOKENS, no colores sueltos: en modo oscuro se
+     redefinen más abajo y toda la app sigue el cambio sin tocar un componente.
+     Por eso en el código no debería aparecer `bg-white` ni `bg-slate-*`. */
   --color-linea: #e4e4e0;
   --color-lienzo: #f7f7f5;
   --color-carbon: #101014;
+  /* Superficie de paneles y tarjetas (lo que antes era `bg-white`). */
+  --color-superficie: #ffffff;
+  /* Relleno tenue: barras de pestañas, burbujas de la IA, vacíos. */
+  --color-sutil: #f1f5f9;
+}
+
+/* El modo oscuro se activa con data-theme="dark" en <html>, que lo pone el
+   script del BaseLayout antes de pintar. Al redefinir acá las mismas variables
+   que genera @theme, todas las utilidades (bg-superficie, text-ink-900, …)
+   cambian solas. */
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-linea: #2b2b35;
+  --color-lienzo: #0f0f14;
+  --color-superficie: #17171e;
+  --color-sutil: #20202a;
+  /* El carbón se invierte: es el fondo del botón de mayor peso, y el texto que
+     va encima usa `text-lienzo`, que también se invirtió. */
+  --color-carbon: #f2f2f7;
+
+  --color-ink-500: oklch(0.68 0.02 273.2);
+  --color-ink-700: oklch(0.82 0.02 273.2);
+  --color-ink-900: oklch(0.95 0.01 273.2);
+
+  /* Sobre fondo oscuro el azul del logo pierde legibilidad, así que la escala
+     se corre: los tonos "claros" pasan a ser fondos tenues y no papel. */
+  --color-brand-50: oklch(0.28 0.09 273.2);
+  --color-brand-100: oklch(0.34 0.12 273.2);
+  --color-brand-300: oklch(0.62 0.19 273.2);
+  --color-brand-600: oklch(0.62 0.21 273.2);
+  --color-brand-700: oklch(0.72 0.16 273.2);
 }
 
 @layer base {
@@ -52,13 +86,13 @@
    El radio queda contenido a propósito: 10px en cajas, 8px en controles. */
 
 @utility kodu-card {
-  @apply rounded-[10px] border border-linea bg-white;
+  @apply rounded-[10px] border border-linea bg-superficie;
 }
 
 @utility kodu-input {
-  @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-ink-900;
-  @apply placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 focus:outline-none;
-  @apply disabled:cursor-not-allowed disabled:bg-slate-100;
+  @apply w-full rounded-lg border border-linea bg-superficie px-3 py-2 text-sm text-ink-900;
+  @apply placeholder:text-ink-500 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 focus:outline-none;
+  @apply disabled:cursor-not-allowed disabled:bg-sutil;
 }
 
 @utility kodu-label {
@@ -75,9 +109,50 @@
 }
 
 @utility kodu-btn-carbon {
-  @apply kodu-btn bg-carbon px-5 py-2.5 text-white hover:bg-ink-900;
+  @apply kodu-btn bg-carbon px-5 py-2.5 text-lienzo hover:opacity-90;
 }
 
 @utility kodu-btn-ghost {
-  @apply kodu-btn border border-linea bg-white text-ink-700 hover:border-ink-500;
+  @apply kodu-btn border border-linea bg-superficie text-ink-700 hover:border-ink-500;
+}
+
+/* Transitions.dev — intercambio de texto (estado de la IA).
+   Tres tiempos manejados desde AiStatus.tsx: sale hacia arriba con blur, se
+   cambia el contenido abajo sin transición, y vuelve animando a su lugar. */
+:root {
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
+}
+
+.t-text-swap {
+  display: inline-block;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--text-swap-dur) var(--text-swap-ease),
+    filter var(--text-swap-dur) var(--text-swap-ease),
+    opacity var(--text-swap-dur) var(--text-swap-ease);
+  will-change: transform, filter, opacity;
+}
+
+.t-text-swap.is-exit {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+}
+
+.t-text-swap.is-enter-start {
+  transform: translateY(var(--text-swap-translate-y));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-text-swap {
+    transition: none !important;
+  }
 }

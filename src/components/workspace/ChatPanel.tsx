@@ -15,6 +15,9 @@ interface ChatPanelProps {
   isStreaming: boolean;
   aiPhase: AiPhase;
   error: string | null;
+  /** Hay un pedido fallido que se puede volver a mandar tal cual. */
+  canRetry: boolean;
+  onRetry: () => void;
   model: ModelChoice;
   onModelChange: (model: ModelChoice) => void;
   threads: WorkspaceThread[];
@@ -30,23 +33,42 @@ interface ChatPanelProps {
 }
 
 /**
+ * Convierte los `**...**` que escribe el modelo en negritas de verdad.
+ *
+ * No es un parser de Markdown: es lo mínimo para que el docente no vea
+ * asteriscos sueltos, que era lo único que se colaba en la práctica. El resto
+ * del texto se respeta tal cual, con sus saltos de línea.
+ */
+function renderRich(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((chunk, index) =>
+    chunk.startsWith('**') && chunk.endsWith('**') && chunk.length > 4 ? (
+      <strong key={index} className="font-semibold">
+        {chunk.slice(2, -2)}
+      </strong>
+    ) : (
+      chunk
+    ),
+  );
+}
+
+/**
  * Pedidos de ejemplo del estado vacío. Cada uno es de un tipo de recurso
  * distinto (evaluar / mostrar / memorizar) y está escrito con el nivel de
  * detalle que conviene usar: sirven de plantilla, no de inspiración.
  */
 const STARTERS = [
   {
-    label: '📝 Un quiz con corrección inmediata',
+    label: 'Un quiz con corrección inmediata',
     prompt:
       'Un quiz de 5 preguntas de opción múltiple sobre fracciones equivalentes para 5.º grado. Después de cada respuesta, mostrá si estuvo bien o mal con una explicación breve. Al final, el puntaje.',
   },
   {
-    label: '🔬 Un simulador para explicar en clase',
+    label: 'Un simulador para explicar en clase',
     prompt:
       'Un simulador del ciclo del agua para 4.º grado, con un dibujo animado y controles para cambiar la temperatura. Que se vea bien proyectado y muestre qué pasa en cada etapa.',
   },
   {
-    label: '🃏 Tarjetas para repasar',
+    label: 'Tarjetas para repasar',
     prompt:
       'Tarjetas de vocabulario inglés-español para 1.º año: se ve la palabra, el alumno piensa y toca la tarjeta para darla vuelta. Que se pueda barajar y marcar las que le costaron.',
   },
@@ -87,8 +109,8 @@ export default function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col border-r border-slate-200 bg-white">
-      <header className="space-y-3 border-b border-slate-200 p-3">
+    <section className="flex h-full min-h-0 flex-col border-r border-linea bg-superficie">
+      <header className="space-y-3 border-b border-linea p-3">
         <div className="flex items-center gap-2">
           <select
             value={props.activeThreadId}
@@ -156,7 +178,7 @@ export default function ChatPanel(props: ChatPanelProps) {
                   <button
                     type="button"
                     onClick={() => setDraft(starter.prompt)}
-                    className="w-full rounded-xl border border-linea bg-white px-3 py-2.5 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
+                    className="w-full rounded-xl border border-linea bg-superficie px-3 py-2.5 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-700"
                   >
                     {starter.label}
                   </button>
@@ -172,14 +194,14 @@ export default function ChatPanel(props: ChatPanelProps) {
             className={
               message.role === 'user'
                 ? 'ml-6 rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                : 'mr-6 rounded-xl bg-slate-100 px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
+                : 'mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
             }
           >
-            {message.content}
+            {renderRich(message.content)}
             {message.attachments.length > 0 && (
               <ul className="mt-2 space-y-1 text-xs opacity-80">
                 {message.attachments.map((url) => (
-                  <li key={url}>📎 {url.split('/').pop()}</li>
+                  <li key={url}>{url.split('/').pop()}</li>
                 ))}
               </ul>
             )}
@@ -187,19 +209,28 @@ export default function ChatPanel(props: ChatPanelProps) {
         ))}
 
         {props.isStreaming && (
-          <article className="mr-6 rounded-xl bg-slate-100 px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
-            {props.streamingText || <AiStatus phase={props.aiPhase} />}
+          <article className="mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
+            {props.streamingText ? renderRich(props.streamingText) : <AiStatus phase={props.aiPhase} />}
           </article>
         )}
 
         {props.error && (
-          <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
-            {props.error}
-          </p>
+          <div role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p>{props.error}</p>
+            {props.canRetry && (
+              <button
+                type="button"
+                onClick={props.onRetry}
+                className="mt-2 rounded-lg border border-red-200 bg-superficie px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+              >
+                Reintentar
+              </button>
+            )}
+          </div>
         )}
       </div>
 
-      <form onSubmit={submit} className="space-y-2 border-t border-slate-200 p-3">
+      <form onSubmit={submit} className="space-y-2 border-t border-linea p-3">
         {/* Cuando empieza a llegar texto, la burbuja deja de mostrar el orbe y el
             docente se queda sin saber si el turno sigue vivo: este renglón lo
             sostiene hasta el final. Sólo aparece cuando la burbuja ya NO lo
@@ -217,7 +248,7 @@ export default function ChatPanel(props: ChatPanelProps) {
             <ul className="mt-1 space-y-0.5">
               {props.assets.map((asset) => (
                 <li key={asset.id}>
-                  {asset.fileType === 'pdf' ? '📄' : '🖼️'} {asset.filename}
+                  {asset.filename}
                 </li>
               ))}
             </ul>
@@ -231,7 +262,7 @@ export default function ChatPanel(props: ChatPanelProps) {
                 key={asset.id}
                 className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-1 text-xs text-brand-700"
               >
-                {asset.fileType === 'pdf' ? '📄' : '🖼️'} {asset.filename}
+                {asset.filename}
                 <button
                   type="button"
                   onClick={() => props.onRemovePending(asset.id)}
@@ -271,7 +302,7 @@ export default function ChatPanel(props: ChatPanelProps) {
             className="kodu-btn-ghost px-3 py-2 text-sm"
             title="Adjuntar imágenes o PDFs"
           >
-            {props.uploading ? 'Subiendo…' : '📎 Adjuntar'}
+            {props.uploading ? 'Subiendo…' : 'Adjuntar'}
           </button>
 
           <button

@@ -55,6 +55,8 @@ export async function uploadFiles(
 export type StreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'code'; html: string }
+  /** La IA empezó a escribir el recurso; el HTML todavía no llegó. */
+  | { type: 'code_start' }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
   | { type: 'error'; message: string };
 
@@ -80,8 +82,17 @@ export async function* streamChat(payload: {
   });
 
   if (!response.ok || !response.body) {
-    const error = (await response.json().catch(() => ({}))) as { error?: string };
-    yield { type: 'error', message: error.error ?? 'El servidor rechazó el pedido.' };
+    // Cuando el que corta es un proxy, el cuerpo no es JSON y el `.catch` dejaba
+    // un mensaje genérico que no ayudaba a nadie a entender qué pasó.
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    const detalle =
+      error?.error ??
+      (response.status === 401
+        ? 'Se venció tu sesión. Volvé a entrar y probá de nuevo.'
+        : response.status >= 500
+          ? `El servidor no pudo completar el pedido (error ${response.status}).`
+          : `El servidor rechazó el pedido (error ${response.status}).`);
+    yield { type: 'error', message: detalle };
     return;
   }
 

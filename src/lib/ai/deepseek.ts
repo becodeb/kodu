@@ -102,6 +102,10 @@ export async function requestCompletionStream(options: {
 
 export type StreamEvent =
   | { type: 'text'; delta: string }
+  /** Primer indicio de que empezó a escribir código. Llega MUCHO antes que el
+   *  tool call completo (que puede tardar minutos en un recurso grande), así que
+   *  es lo único que permite avisarle al docente qué está pasando mientras tanto. */
+  | { type: 'tool_start'; name: string }
   /** `truncated` avisa que el modelo llegó al tope de tokens con el tool call a
    *  medio escribir: el JSON de `arguments` está cortado y no se puede parsear. */
   | { type: 'tool'; name: string; arguments: string; truncated: boolean }
@@ -132,6 +136,7 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
   let buffer = '';
   let finished = false;
   let finishReason = '';
+  let announcedTool = false;
 
   function* flushToolCalls(): Generator<StreamEvent> {
     const truncated = finishReason === 'length';
@@ -193,6 +198,11 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
             const pending = toolCalls.get(index) ?? { name: '', args: '' };
 
             if (toolCall.function?.name) pending.name = toolCall.function.name;
+
+            if (!announcedTool && pending.name) {
+              announcedTool = true;
+              yield { type: 'tool_start', name: pending.name };
+            }
             if (typeof toolCall.function?.arguments === 'string') {
               pending.args += toolCall.function.arguments;
             }

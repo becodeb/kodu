@@ -56,6 +56,22 @@ const CODE_PROBLEMS: Record<'truncated' | 'invalid' | 'empty', string> = {
 const SILENT_TURN =
   'El motor de IA cortó el turno sin devolver nada. Tu recurso quedó como estaba. Probá de nuevo y, si vuelve a pasar, mandá el pedido en partes más chicas.';
 
+/** Cuántas imágenes del proyecto se reenvían cuando el mensaje no trae adjuntos. */
+const MAX_CONTEXT_IMAGES = 4;
+
+/**
+ * Cada cuánto se manda una señal de vida por el SSE.
+ *
+ * Mientras la IA escribe el recurso, el servidor recibe datos del proveedor pero
+ * no le manda NADA al navegador: el HTML recién sale cuando el tool call está
+ * completo, y eso puede tardar minutos. Para el proxy que hay en el medio esa
+ * conexión parece muerta y la corta, y se pierde el turno entero (AbortError
+ * del lado del servidor, "El servidor rechazó el pedido" del lado del docente).
+ * El comentario SSE `:` la mantiene viva sin ensuciar el flujo: el cliente lo
+ * ignora solo.
+ */
+const HEARTBEAT_MS = 10_000;
+
 const encoder = new TextEncoder();
 
 function sseFrame(payload: Record<string, unknown>): Uint8Array {
@@ -65,32 +81,55 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
 /**
  * Arma el contenido del mensaje del docente.
  *
- * Con `AI_VISION` prendido las imágenes de ESTE mensaje viajan como partes
- * `image_url` en base64. Apagado (default), sólo se nombran: el system prompt
- * ya le aclara al modelo que no las ve y que tiene que preguntar.
+ * Con `AI_VISION` prendido las imágenes viajan como partes `image_url` en
+ * base64. Detalle que importa: si este mensaje no trae adjuntos, igual se le
+ * mandan las imágenes del proyecto. Sin eso, la imagen sólo existía para el
+ * modelo en el turno exacto en que se subía, y al pedirle "leé la imagen" en el
+ * mensaje siguiente contestaba, con razón, que no la veía.
+ *
+ * Apagado (default), sólo se nombran: el system prompt ya le aclara que no las
+ * ve y que tiene que preguntar.
  */
 async function buildUserContent(
   message: string,
   attachmentUrls: string[],
+  projectImageUrls: string[],
 ): Promise<string | ContentPart[]> {
-  if (attachmentUrls.length === 0) return message;
+  const own = attachmentUrls.length > 0;
+  // Las del mensaje mandan; si no hay, las del proyecto (las últimas, acotadas
+  // para no inflar el pedido sin necesidad).
+  const candidates = own ? attachmentUrls : projectImageUrls.slice(-MAX_CONTEXT_IMAGES);
 
-  const names = attachmentUrls.map((url) => url.split('/').pop() ?? url).join(', ');
+  if (candidates.length === 0) return message;
+
+  const names = candidates.map((url) => url.split('/').pop() ?? url).join(', ');
 
   if (!supportsVision()) {
-    return `${message}\n\n[El docente adjuntó a este mensaje: ${names}. No podés ver su contenido.]`;
+    return own
+      ? `${message}
+
+[El docente adjuntó a este mensaje: ${names}. No podés ver su contenido.]`
+      : message;
   }
 
   const images = (
-    await Promise.all(attachmentUrls.map((url) => readImageAsDataUrl(url)))
+    await Promise.all(candidates.map((url) => readImageAsDataUrl(url)))
   ).filter((dataUrl): dataUrl is string => dataUrl !== null);
 
   if (images.length === 0) {
-    return `${message}\n\n[El docente adjuntó: ${names}, pero no se pudieron leer.]`;
+    return own ? `${message}
+
+[El docente adjuntó: ${names}, pero no se pudieron leer.]` : message;
   }
 
+  const preface = own
+    ? message
+    : `${message}
+
+[Adjunto de nuevo las imágenes que el docente ya había subido a este recurso: ${names}.]`;
+
   return [
-    { type: 'text', text: message },
+    { type: 'text', text: preface },
     ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
   ];
 }
@@ -163,7 +202,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
     htmlEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
-  const userContent = await buildUserContent(message, attachmentUrls ?? []);
+  const userContent = await buildUserContent(
+    message,
+    attachmentUrls ?? [],
+    assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
+  );
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
   // pierde lo que escribió.
@@ -199,6 +242,28 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // Una vez que el navegador se va, el controller queda cerrado y cualquier
+      // enqueue tira ERR_INVALID_STATE. Envolverlo evita que un cliente que se
+      // desconecta rompa el guardado del turno.
+      let closed = false;
+      const send = (payload: Record<string, unknown>) => {
+        if (closed) return;
+        try {
+          controller.enqueue(sseFrame(payload));
+        } catch {
+          closed = true;
+        }
+      };
+
+      const heartbeat = setInterval(() => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          closed = true;
+        }
+      }, HEARTBEAT_MS);
+
       let assistantText = '';
       let generatedHtml: string | null = null;
       // Diagnóstico legible cuando el código no se pudo aplicar. Se guarda en el
@@ -211,7 +276,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
         for await (const event of readCompletionStream(upstream)) {
           if (event.type === 'text') {
             assistantText += event.delta;
-            controller.enqueue(sseFrame({ type: 'text', delta: event.delta }));
+            send({ type: 'text', delta: event.delta });
+            continue;
+          }
+
+          if (event.type === 'tool_start') {
+            // El tool call puede tardar un rato largo en completarse; avisamos
+            // apenas arranca para que el chat deje de decir que está escribiendo.
+            send({ type: 'code_start' });
             continue;
           }
 
@@ -226,18 +298,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
             if (result.ok) {
               generatedHtml = result.html;
               codeProblem = null;
-              controller.enqueue(sseFrame({ type: 'code', html: result.html }));
+              send({ type: 'code', html: result.html });
             } else {
               codeProblem = CODE_PROBLEMS[result.reason];
-              controller.enqueue(sseFrame({ type: 'error', message: codeProblem }));
+              send({ type: 'error', message: codeProblem });
             }
           }
         }
       } catch (error) {
         console.error('[chat/stream]', error);
-        controller.enqueue(
-          sseFrame({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' }),
-        );
+        send({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' });
       } finally {
         // Persistir pase lo que pase: si el docente cierra la pestaña a mitad de
         // camino, lo generado hasta ahí queda guardado.
@@ -272,19 +342,25 @@ export const POST: APIRoute = async ({ request, locals }) => {
             select: { id: true },
           });
 
-          controller.enqueue(
-            sseFrame({
-              type: 'done',
-              messageId: saved.id,
-              codeUpdated: Boolean(generatedHtml),
-              content: finalText,
-            }),
-          );
+          send({
+            type: 'done',
+            messageId: saved.id,
+            codeUpdated: Boolean(generatedHtml),
+            content: finalText,
+          });
         } catch (error) {
           console.error('[chat/stream] no se pudo persistir el turno:', error);
         }
 
-        controller.close();
+        clearInterval(heartbeat);
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* el navegador ya se había ido */
+          }
+        }
       }
     },
   });

@@ -50,13 +50,28 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
       href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&display=swap"
     />
     <title>{pageTitle}</title>
+    <script is:inline>
+      // Va inline y en el <head> a proposito: si el tema se aplicara despues de
+      // pintar, el docente veria un fogonazo blanco en cada navegacion.
+      (function () {
+        try {
+          var saved = localStorage.getItem('kodu-tema');
+          var dark = saved ? saved === 'dark'
+            : window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (dark) document.documentElement.setAttribute('data-theme', 'dark');
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="min-h-screen">
     {
       !bare && (
-        <header class="border-b border-linea bg-white">
-          <nav class="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-            <a href="/" class="flex items-center" aria-label="Kodu, ir al inicio">
+        <header class="border-b border-linea bg-superficie">
+          {/* Tres columnas de igual ancho: asi los enlaces del medio quedan
+              centrados respecto de la pagina y no respecto del hueco que dejan
+              el logo y los botones, que es lo que los corria a la derecha. */}
+          <nav class="mx-auto grid max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3">
+            <a href="/" class="flex items-center justify-self-start" aria-label="Kodu, ir al inicio">
               <img
                 src="/brand/kodu-logo.webp"
                 alt="Kodu"
@@ -66,26 +81,74 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
               />
             </a>
 
-            <div class="flex items-center gap-3 text-sm">
+            <div class="flex items-center gap-6 text-sm">
               <a href="/gallery" class="text-ink-700 hover:text-brand-600">
                 Galería
               </a>
+              {user && (
+                <a href="/app" class="text-ink-700 hover:text-brand-600">
+                  Mis recursos
+                </a>
+              )}
+            </div>
 
+            <div class="flex items-center gap-2 justify-self-end text-sm">
               {user ? (
-                <>
-                  <a href="/app" class="text-ink-700 hover:text-brand-600">
-                    Mis recursos
-                  </a>
-                  <a href="/app/rules" class="text-ink-700 hover:text-brand-600">
-                    Reglas
-                  </a>
-                  <span class="hidden text-ink-500 sm:inline">{user.name}</span>
-                  <form method="POST" action="/api/auth/logout">
-                    <button type="submit" class="kodu-btn-ghost py-1.5">
-                      Salir
+                /* Reglas y el tema viven acá adentro: son ajustes, no destinos.
+                   La barra se queda solo con los dos lugares a los que uno va. */
+                <details class="relative" data-menu-perfil>
+                  <summary
+                    class="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-linea px-2.5 py-1.5 text-ink-700 hover:border-ink-500"
+                  >
+                    <span
+                      class="grid h-6 w-6 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white"
+                      aria-hidden="true"
+                    >
+                      {user.name.trim().charAt(0).toUpperCase()}
+                    </span>
+                    <span class="hidden sm:inline">{user.name}</span>
+                  </summary>
+
+                  <div
+                    class="kodu-card absolute right-0 z-50 mt-2 w-60 overflow-hidden p-1 shadow-lg"
+                  >
+                    <a
+                      href="/app/rules"
+                      class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil"
+                    >
+                      Reglas de la IA
+                    </a>
+
+                    <button
+                      type="button"
+                      data-toggle-tema
+                      class="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil"
+                    >
+                      Modo oscuro
+                      <span
+                        aria-hidden="true"
+                        class="flex h-5 w-9 shrink-0 items-center rounded-full bg-linea p-0.5 transition-colors"
+                        data-riel
+                      >
+                        <span
+                          class="h-4 w-4 rounded-full bg-superficie shadow-sm transition-transform"
+                          data-perilla
+                        />
+                      </span>
                     </button>
-                  </form>
-                </>
+
+                    <div class="my-1 h-px bg-linea" />
+
+                    <form method="POST" action="/api/auth/logout">
+                      <button
+                        type="submit"
+                        class="w-full rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil"
+                      >
+                        Salir
+                      </button>
+                    </form>
+                  </div>
+                </details>
               ) : (
                 <>
                   <a href="/login" class="text-ink-700 hover:text-brand-600">
@@ -105,5 +168,43 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
     <main class={bleed ? '' : `mx-auto px-4 py-8 ${wide ? 'max-w-[110rem]' : 'max-w-6xl'}`}>
       <slot />
     </main>
+
+    <script is:inline>
+      (function () {
+        var root = document.documentElement;
+        var menu = document.querySelector('[data-menu-perfil]');
+        var boton = document.querySelector('[data-toggle-tema]');
+        if (!boton) return;
+
+        var riel = boton.querySelector('[data-riel]');
+        var perilla = boton.querySelector('[data-perilla]');
+
+        function pintar() {
+          var oscuro = root.getAttribute('data-theme') === 'dark';
+          riel.classList.toggle('bg-brand-600', oscuro);
+          riel.classList.toggle('bg-linea', !oscuro);
+          perilla.style.transform = oscuro ? 'translateX(1rem)' : 'translateX(0)';
+          boton.setAttribute('aria-pressed', String(oscuro));
+        }
+
+        boton.addEventListener('click', function () {
+          var oscuro = root.getAttribute('data-theme') === 'dark';
+          if (oscuro) root.removeAttribute('data-theme');
+          else root.setAttribute('data-theme', 'dark');
+          try { localStorage.setItem('kodu-tema', oscuro ? 'light' : 'dark'); } catch (e) {}
+          pintar();
+        });
+
+        // El <details> no se cierra solo al hacer clic afuera.
+        document.addEventListener('click', function (event) {
+          if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
+        });
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && menu) menu.open = false;
+        });
+
+        pintar();
+      })();
+    </script>
   </body>
 </html>

@@ -67,6 +67,13 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const codeEditedByTeacher = useRef(false);
 
+  /**
+   * Último pedido, para el botón de reintentar. La conexión con el motor de IA
+   * se corta cada tanto por motivos ajenos al docente (proxy, red, límite del
+   * proveedor); obligarlo a reescribir el mensaje era castigarlo por eso.
+   */
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
+
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice(null), 2_500);
@@ -159,8 +166,9 @@ export default function Workspace(props: WorkspaceProps) {
     return () => window.removeEventListener('pagehide', flushOnExit);
   }, [projectId]);
 
-  async function handleSend(message: string) {
+  async function handleSend(message: string, isRetry = false) {
     setError(null);
+    setFailedMessage(null);
     setIsStreaming(true);
     setAiPhase('thinking');
     setStreamingText('');
@@ -171,10 +179,14 @@ export default function Workspace(props: WorkspaceProps) {
 
     const attachmentUrls = pendingAssets.map((asset) => asset.url);
 
-    setMessages((current) => [
-      ...current,
-      { id: `local-${Date.now()}`, role: 'user', content: message, attachments: attachmentUrls },
-    ]);
+    // En un reintento el mensaje ya está en la lista: repetirlo haría creer que
+    // se mandó dos veces.
+    if (!isRetry) {
+      setMessages((current) => [
+        ...current,
+        { id: `local-${Date.now()}`, role: 'user', content: message, attachments: attachmentUrls },
+      ]);
+    }
     setPendingAssets([]);
 
     let assistantText = '';
@@ -192,6 +204,11 @@ export default function Workspace(props: WorkspaceProps) {
           assistantText += event.delta;
           setStreamingText(assistantText);
           setAiPhase('writing');
+        } else if (event.type === 'code_start') {
+          // Llega apenas arranca el tool call. Sin esto el chat seguía diciendo
+          // "escribiéndote la respuesta" durante todo el rato en que en realidad
+          // ya estaba armando el código.
+          setAiPhase('coding');
         } else if (event.type === 'code') {
           // El código nunca entra al chat: va derecho al visor.
           setHtml(event.html);
@@ -201,6 +218,7 @@ export default function Workspace(props: WorkspaceProps) {
           codeEditedByTeacher.current = false;
         } else if (event.type === 'error') {
           setError(event.message);
+          setFailedMessage(message);
         } else if (event.type === 'done') {
           setMessages((current) => [
             ...current,
@@ -211,6 +229,7 @@ export default function Workspace(props: WorkspaceProps) {
       }
     } catch {
       setError('Se cortó la conexión con el servidor.');
+      setFailedMessage(message);
     } finally {
       setIsStreaming(false);
       setAiPhase('idle');
@@ -290,13 +309,17 @@ export default function Workspace(props: WorkspaceProps) {
   }
 
   return (
-    <div className="grid h-[calc(100vh-8.5rem)] min-h-[32rem] grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[minmax(20rem,26rem)_1fr]">
+    <div className="grid h-[calc(100vh-8.5rem)] min-h-[32rem] grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[minmax(20rem,26rem)_1fr]">
       <ChatPanel
         messages={messages}
         streamingText={streamingText}
         isStreaming={isStreaming}
         aiPhase={aiPhase}
         error={error}
+        canRetry={failedMessage !== null && !isStreaming}
+        onRetry={() => {
+          if (failedMessage) void handleSend(failedMessage, true);
+        }}
         model={model}
         onModelChange={(value) => {
           setModel(value);

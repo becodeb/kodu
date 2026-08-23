@@ -86,7 +86,23 @@ const publicados = await prisma.project.findMany({
 
 <BaseLayout title="Kodu" bleed>
   <!-- ── Portada ──────────────────────────────────────────────────────── -->
-  <section class="bg-white"><div class="mx-auto max-w-6xl px-6 pt-16 pb-14 sm:pt-24">
+  <section class="relative overflow-hidden bg-superficie">
+    {/* La chispa del logo, en el angulo. El titular ocupa la mitad izquierda y
+        dejaba todo este lado vacio; la marca lo llena sin competirle, porque es
+        la unica pieza de la identidad que no es tipografia. */}
+    <svg
+      class="pointer-events-none absolute -top-6 -right-6 h-40 w-40 select-none sm:-top-10 sm:-right-10 sm:h-64 sm:w-64 lg:h-80 lg:w-80"
+      viewBox="0 0 100 100"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M50 0 C52 30 70 48 100 50 C70 52 52 70 50 100 C48 70 30 52 0 50 C30 48 48 30 50 0 Z"
+        fill="#fcb547"
+      />
+    </svg>
+
+    <div class="relative mx-auto max-w-6xl px-6 pt-16 pb-14 sm:pt-24">
     <h1
       class="font-display text-[clamp(3rem,10vw,8.5rem)] leading-[0.86] tracking-[-0.045em] uppercase"
     >
@@ -153,7 +169,7 @@ const publicados = await prisma.project.findMany({
 
       <div class="mt-7 grid gap-3 lg:grid-cols-[22rem_1fr]">
         <div
-          class="flex h-[26rem] flex-col overflow-hidden rounded-[10px] border border-linea bg-white lg:h-[34rem]"
+          class="flex h-[26rem] flex-col overflow-hidden rounded-[10px] border border-linea bg-superficie lg:h-[34rem]"
         >
           <div
             class="flex items-center justify-between border-b border-linea px-4 py-2.5 text-xs text-ink-500"
@@ -174,7 +190,7 @@ const publicados = await prisma.project.findMany({
         </div>
 
         <div
-          class="flex h-[26rem] flex-col overflow-hidden rounded-[10px] border border-linea bg-white lg:h-[34rem]"
+          class="flex h-[26rem] flex-col overflow-hidden rounded-[10px] border border-linea bg-superficie lg:h-[34rem]"
         >
           <div
             class="flex items-center justify-between border-b border-linea px-4 py-2.5 text-xs text-ink-500"
@@ -201,7 +217,7 @@ const publicados = await prisma.project.findMany({
           demos.map((demo, i) => (
             <button
               type="button"
-              class="demo-tab rounded-[10px] border border-linea bg-white p-3.5 text-left transition-colors hover:border-ink-500"
+              class="demo-tab rounded-[10px] border border-linea bg-superficie p-3.5 text-left transition-colors hover:border-ink-500"
               data-slug={demo.slug}
               data-pedido={demo.pedido}
               data-respuesta={demo.respuesta}
@@ -219,7 +235,7 @@ const publicados = await prisma.project.findMany({
   </section>
 
   <!-- ── Cómo funciona ────────────────────────────────────────────────── -->
-  <section class="bg-white"><div class="mx-auto max-w-6xl px-6 py-20">
+  <section class="bg-superficie"><div class="mx-auto max-w-6xl px-6 py-20">
     <h2 class="font-display text-3xl leading-none tracking-[-0.03em] uppercase sm:text-4xl">
       Tres pasos
     </h2>
@@ -254,7 +270,7 @@ const publicados = await prisma.project.findMany({
       <ul class="mt-8 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {
           ideas.map((idea) => (
-            <li class="rounded-[10px] border border-linea bg-white px-4 py-3.5">
+            <li class="rounded-[10px] border border-linea bg-superficie px-4 py-3.5">
               <span class="text-[0.7rem] font-semibold tracking-[0.1em] text-brand-600 uppercase">
                 {idea.area}
               </span>
@@ -267,7 +283,7 @@ const publicados = await prisma.project.findMany({
   </section>
 
   <!-- ── Galería ──────────────────────────────────────────────────────── -->
-  <section class="bg-white"><div class="mx-auto max-w-6xl px-6 py-20">
+  <section class="bg-superficie"><div class="mx-auto max-w-6xl px-6 py-20">
     <div class="flex flex-wrap items-end justify-between gap-4">
       <h2 class="font-display text-3xl leading-none tracking-[-0.03em] uppercase sm:text-4xl">
         Lo que publican los docentes
@@ -277,13 +293,13 @@ const publicados = await prisma.project.findMany({
 
     {
       publicados.length === 0 ? (
-        <p class="mt-8 rounded-[10px] border border-dashed border-linea bg-white px-6 py-12 text-center text-sm text-ink-500">
+        <p class="mt-8 rounded-[10px] border border-dashed border-linea bg-superficie px-6 py-12 text-center text-sm text-ink-500">
           Todavía no hay nada publicado. El primer recurso que compartas aparece acá.
         </p>
       ) : (
         <ul class="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {publicados.map((recurso) => (
-            <li class="overflow-hidden rounded-[10px] border border-linea bg-white">
+            <li class="overflow-hidden rounded-[10px] border border-linea bg-superficie">
               <a href={`/p/${recurso.slug}`} target="_blank" rel="noopener noreferrer">
                 {recurso.screenshotUrl ? (
                   <img
@@ -345,7 +361,7 @@ const publicados = await prisma.project.findMany({
 
         <a
           href={user ? '/app' : '/register'}
-          class="text-carbon inline-flex items-center justify-center rounded-lg bg-white px-6 py-3 text-sm font-semibold"
+          class="text-carbon inline-flex items-center justify-center rounded-lg bg-superficie px-6 py-3 text-sm font-semibold"
         >
           {user ? 'Ir a mis recursos' : 'Crear cuenta'}
         </a>

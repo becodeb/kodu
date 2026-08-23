@@ -87,9 +87,9 @@ export default function PreviewPanel(props: PreviewPanelProps) {
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-slate-100">
-      <header className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2">
-        <div className="flex rounded-lg bg-slate-100 p-0.5" role="tablist">
+    <section className="flex h-full min-h-0 flex-col bg-sutil">
+      <header className="flex flex-wrap items-center gap-2 border-b border-linea bg-superficie px-3 py-2">
+        <div className="flex rounded-lg bg-sutil p-0.5" role="tablist">
           {TABS.map(([value, label]) => (
             <button
               key={value}
@@ -97,7 +97,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
               aria-selected={tab === value}
               onClick={() => setTab(value)}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                tab === value ? 'bg-white text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
+                tab === value ? 'bg-superficie text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
               }`}
             >
               {label}
@@ -105,18 +105,9 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           ))}
         </div>
 
-        {/* Estado de publicación siempre a la vista: es lo que decide quién más
-            puede entrar, y antes había que ir a buscarlo al pie del panel. */}
-        <span
-          className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-            props.isInGallery ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-ink-500'
-          }`}
-        >
-          {props.isInGallery ? '● En la galería' : '○ Privado'}
-        </span>
 
         <div className="ml-auto flex items-center gap-1.5">
-          <code className="hidden max-w-[22rem] truncate rounded bg-slate-100 px-2 py-1 text-xs text-ink-500 lg:block">
+          <code className="hidden max-w-[22rem] truncate rounded bg-sutil px-2 py-1 text-xs text-ink-500 lg:block">
             {props.publicUrl}
           </code>
           <button type="button" onClick={copyUrl} className="kodu-btn-ghost px-2.5 py-1.5 text-xs">
@@ -148,12 +139,12 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           srcDoc={srcDoc}
           // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
           sandbox="allow-scripts allow-popups allow-forms allow-modals"
-          className="absolute inset-0 h-full w-full border-0 bg-white"
+          className="absolute inset-0 h-full w-full border-0 bg-superficie"
           inert={tab !== 'preview'}
         />
 
         {tab === 'code' && (
-          <div className="absolute inset-0 z-10 overflow-auto bg-slate-100">
+          <div className="absolute inset-0 z-10 overflow-auto bg-sutil">
             <Suspense
               fallback={<p className="p-4 text-sm text-ink-500">Cargando editor de código…</p>}
             >
@@ -182,7 +173,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
         )}
       </div>
 
-      <footer className="flex min-h-9 items-center gap-3 border-t border-slate-200 bg-white px-3 py-1.5 text-xs text-ink-500">
+      <footer className="flex min-h-9 items-center gap-3 border-t border-linea bg-superficie px-3 py-1.5 text-xs text-ink-500">
         <span className="truncate">
           {props.title.trim() || 'Recurso sin título'}
           {!props.description.trim() && (

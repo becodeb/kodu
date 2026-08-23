@@ -115,8 +115,15 @@ export async function extractPdfText(data: Uint8Array): Promise<string | null> {
   }
 }
 
-/** Tope por imagen que se le manda al modelo, en bytes. */
-const MAX_VISION_BYTES = 4 * 1024 * 1024;
+/**
+ * Tope por imagen que se le manda al modelo. Es el MISMO que el de subida a
+ * propósito: si tenía un tope propio más bajo, una foto que la plataforma
+ * aceptaba se descartaba después en silencio y el modelo contestaba que no
+ * podía ver la imagen, sin que nadie supiera por qué.
+ */
+function maxVisionBytes(): number {
+  return maxUploadBytes();
+}
 
 /**
  * Convierte una URL pública de asset (`/uploads/assets/x.png`) en un data URL
@@ -136,7 +143,7 @@ export async function readImageAsDataUrl(publicUrl: string): Promise<string | nu
   if (!Object.hasOwn(IMAGE_MIMES, mime)) return null;
 
   const data = await readStoredFile(absolutePath);
-  if (!data || data.byteLength === 0 || data.byteLength > MAX_VISION_BYTES) return null;
+  if (!data || data.byteLength === 0 || data.byteLength > maxVisionBytes()) return null;
 
   return `data:${mime};base64,${data.toString('base64')}`;
 }

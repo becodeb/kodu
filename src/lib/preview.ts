@@ -56,9 +56,22 @@ const BRIDGE = `<script data-kodu-bridge>
       var width = document.documentElement.clientWidth || document.body.scrollWidth;
       var height = Math.max(document.documentElement.clientHeight || 0, 1);
 
+      // El fondo real del recurso, NO blanco fijo. Forzar blanco daba capturas
+      // con los colores cambiados en todo recurso de fondo oscuro: el body suele
+      // ser transparente y el color lo pone <html>, asi que el blanco se colaba
+      // por detras y lavaba la imagen entera.
+      function fondoReal() {
+        var candidatos = [document.body, document.documentElement];
+        for (var i = 0; i < candidatos.length; i++) {
+          var c = getComputedStyle(candidatos[i]).backgroundColor;
+          if (c && c !== 'transparent' && !/rgba\(0,\s*0,\s*0,\s*0\)/.test(c)) return c;
+        }
+        return '#ffffff';
+      }
+
       window.htmlToImage
         .toCanvas(document.body, {
-          backgroundColor: '#ffffff',
+          backgroundColor: fondoReal(),
           pixelRatio: 1,
           width: width,
           height: height,
