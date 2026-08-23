@@ -284,24 +284,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
     { role: 'user', content: userContent },
   ];
 
-  let upstream: Response;
-  try {
-    upstream = await requestCompletionStream({ messages, provider, signal: request.signal });
-  } catch (error) {
-    const status = error instanceof ProviderError ? error.status : 502;
-    const otro = alternateChoice(chosenModel);
-
-    // Si el proveedor elegido está caído, el docente no tiene por qué quedarse
-    // sin poder trabajar: se le ofrece el otro y decide él.
-    const puedeCambiar =
-      (!(error instanceof ProviderError) || error.canFallback) && isChoiceConfigured(otro);
-
-    return fail((error as Error).message, status, {
-      fallbackModel: puedeCambiar ? otro : undefined,
-      fallbackLabel: puedeCambiar ? resolveProvider(otro).label : undefined,
-    });
-  }
-
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       // Una vez que el navegador se va, el controller queda cerrado y cualquier
@@ -317,6 +299,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       };
 
+      // Un byte apenas arranca: a partir de acá la conexión ya tiene tráfico y
+      // ningún intermediario la puede dar por muerta.
+      try {
+        controller.enqueue(encoder.encode(': abierto\n\n'));
+      } catch {
+        closed = true;
+      }
+
       const heartbeat = setInterval(() => {
         if (closed) return;
         try {
@@ -325,6 +315,69 @@ export const POST: APIRoute = async ({ request, locals }) => {
           closed = true;
         }
       }, HEARTBEAT_MS);
+
+      /**
+       * El pedido al proveedor va ACÁ ADENTRO, no antes de devolver la Response.
+       *
+       * Hecho afuera, el servidor se quedaba sin mandar un solo byte durante
+       * todo el tiempo que el proveedor tardaba en contestar las cabeceras —y
+       * con una imagen en base64 encima, ese rato es largo—. Para el proxy del
+       * medio esa conexión nunca arrancó, la corta con un 502, y como el corte
+       * no pasa por nuestro código no queda ni una línea en los logs: justo el
+       * 502 sin rastro que veíamos. Adentro del stream, el keepalive ya está
+       * corriendo mientras se espera.
+       */
+      // Trazas con tiempos: cuando un turno se cae, lo primero que hace falta
+      // saber es si tardó el proveedor en contestar o si se cortó a mitad del
+      // stream. Sin esto, un 502 no dejaba ni una línea.
+      const arranque = Date.now();
+      const transcurrido = () => `${((Date.now() - arranque) / 1000).toFixed(1)}s`;
+      console.log(
+        `[chat/stream] inicio proyecto=${project.id} modelo=${chosenModel} mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
+      );
+
+      let upstream: Response;
+      try {
+        upstream = await requestCompletionStream({ messages, provider, signal: request.signal });
+        console.log(`[chat/stream] proveedor respondió cabeceras en ${transcurrido()}`);
+      } catch (error) {
+        console.error(`[chat/stream] el proveedor falló a los ${transcurrido()}:`, (error as Error).message);
+        const otro = alternateChoice(chosenModel);
+        const puedeCambiar =
+          (!(error instanceof ProviderError) || error.canFallback) && isChoiceConfigured(otro);
+        const detalle = (error as Error).message;
+
+        send({
+          type: 'error',
+          message: detalle,
+          fallbackModel: puedeCambiar ? otro : undefined,
+          fallbackLabel: puedeCambiar ? resolveProvider(otro).label : undefined,
+        });
+
+        // Se deja constancia en el hilo: si no, el último mensaje sigue siendo
+        // el del docente y al recargar la página el editor se queda esperando
+        // una respuesta que nunca va a llegar.
+        try {
+          const saved = await prisma.chatMessage.create({
+            data: { threadId: thread.id, role: 'assistant', content: `No pude completar el pedido. ${detalle}` },
+            select: { id: true },
+          });
+          send({ type: 'done', messageId: saved.id, codeUpdated: false, content: `No pude completar el pedido. ${detalle}` });
+        } catch (dbError) {
+          console.error('[chat/stream] no se pudo registrar el fallo del proveedor:', dbError);
+        }
+
+        clearInterval(heartbeat);
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* el navegador ya se había ido */
+          }
+        }
+        return;
+      }
 
       let assistantText = '';
       let generatedHtml: string | null = null;
@@ -432,6 +485,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
 
         clearInterval(heartbeat);
+        console.log(
+          `[chat/stream] fin en ${transcurrido()} texto=${assistantText.length}c codigo=${Boolean(generatedHtml)} corte=${finishReason || 'ninguno'}`,
+        );
         if (!closed) {
           closed = true;
           try {

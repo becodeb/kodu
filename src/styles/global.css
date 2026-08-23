@@ -137,12 +137,19 @@
   animation: kodu-shimmer 1.5s linear infinite;
 }
 
+/* El recorrido va de 100% a 0% y NO se sale de ahi. Con un degradado de 220%
+   de ancho, cualquier posicion dentro de ese rango cubre el texto entero; si se
+   pasa (140%, -40%), la parte descubierta se queda sin fondo y —como el color
+   es transparente— las letras directamente desaparecen. Ese era el "aparece y
+   desaparece": no era una transicion, era el brillo saliendose de la caja.
+   De 100% a 0% el degradado se corre hacia la derecha, asi que el destello
+   viaja de izquierda a derecha. */
 @keyframes kodu-shimmer {
   from {
-    background-position: 140% 0;
+    background-position: 100% 0;
   }
   to {
-    background-position: -40% 0;
+    background-position: 0% 0;
   }
 }
 
