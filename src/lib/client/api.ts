@@ -57,6 +57,8 @@ export type StreamEvent =
   | { type: 'code'; html: string }
   /** La IA empezó a escribir el recurso; el HTML todavía no llegó. */
   | { type: 'code_start' }
+  /** Algo que el docente tiene que saber pero que no cortó el turno. */
+  | { type: 'notice'; message: string }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
   /** `fallbackModel` llega cuando el proveedor elegido falló pero el otro sirve. */
   | { type: 'error'; message: string; fallbackModel?: 'ALPHA' | 'DEEPSEEK'; fallbackLabel?: string };

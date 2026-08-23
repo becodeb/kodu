@@ -194,8 +194,10 @@ export default function Workspace(props: WorkspaceProps) {
 
     let cancelado = false;
     let intentos = 0;
-    // 90 intentos × 4 s ≈ 6 minutos: más que el turno más lento que vimos.
-    const MAX_INTENTOS = 90;
+    // 450 intentos × 4 s = 30 minutos. Estaba en 6 y era MUY poco: un recurso
+    // grande tarda 15 o 20 minutos, así que el editor se rendía y avisaba que
+    // habia fallado justo cuando el turno estaba por terminar bien.
+    const MAX_INTENTOS = 450;
 
     setAiPhase('thinking');
     setIsStreaming(true);
@@ -207,8 +209,11 @@ export default function Workspace(props: WorkspaceProps) {
         window.clearInterval(timer);
         setIsStreaming(false);
         setAiPhase('idle');
-        setError('El turno anterior tardó demasiado. Podés volver a mandarlo.');
-        setFailedMessage(ultimo.content);
+        // No se ofrece reenviar: el turno puede seguir corriendo en el servidor
+        // y mandarlo de nuevo duplicaría el trabajo. Recargar es lo correcto.
+        setError(
+          'Después de 30 minutos todavía no llegó la respuesta. Si el recurso era muy grande puede seguir generándose: recargá la página en un rato para ver si llegó.',
+        );
         return;
       }
 
@@ -276,6 +281,9 @@ export default function Workspace(props: WorkspaceProps) {
           assistantText += event.delta;
           setStreamingText(assistantText);
           setAiPhase('writing');
+        } else if (event.type === 'notice') {
+          // No es un error: el turno sigue vivo, sólo está esperando.
+          flashNotice(event.message);
         } else if (event.type === 'code_start') {
           // Llega apenas arranca el tool call. Sin esto el chat seguía diciendo
           // "escribiéndote la respuesta" durante todo el rato en que en realidad

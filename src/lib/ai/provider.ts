@@ -100,10 +100,37 @@ export class ProviderError extends Error {
   }
 }
 
+/**
+ * Reintentos ante saturación del proveedor.
+ *
+ * El modelo gratuito estrangula bastante más los pedidos con imagen que los de
+ * texto: medido, dos pedidos con imagen seguidos vuelven 429 mientras los de
+ * texto de al lado pasan sin problema. El propio proveedor contesta "retry
+ * shortly", asi que reintentar es exactamente lo que corresponde — y es mucho
+ * mejor que hacerle reescribir el pedido al docente.
+ */
+const REINTENTOS = [4_000, 12_000, 25_000];
+
+function esperar(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const id = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(id);
+        reject(new ProviderError('El pedido se canceló mientras esperaba al proveedor.', 499, false));
+      },
+      { once: true },
+    );
+  });
+}
+
 export async function requestCompletionStream(options: {
   messages: ChatMessage[];
   provider: ProviderConfig;
   signal?: AbortSignal;
+  /** Se llama antes de cada espera, para poder avisarle al docente. */
+  onReintento?: (intento: number, esperaMs: number) => void;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -115,6 +142,26 @@ export async function requestCompletionStream(options: {
   }
 
   const endpoint = `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
+
+  for (let intento = 0; ; intento++) {
+    try {
+      return await intentarUna(endpoint, options);
+    } catch (error) {
+      const saturado = error instanceof ProviderError && error.status === 429;
+      if (!saturado || intento >= REINTENTOS.length) throw error;
+
+      const espera = REINTENTOS[intento]!;
+      options.onReintento?.(intento + 1, espera);
+      await esperar(espera, options.signal);
+    }
+  }
+}
+
+async function intentarUna(
+  endpoint: string,
+  options: { messages: ChatMessage[]; provider: ProviderConfig; signal?: AbortSignal },
+): Promise<Response> {
+  const { provider } = options;
 
   let response: Response;
   try {
@@ -148,6 +195,16 @@ export async function requestCompletionStream(options: {
 
   if (!response.ok || !response.body) {
     const detail = await response.text().catch(() => '');
+
+    // El 429 se distingue del resto: no es una falla del pedido, es que el
+    // proveedor está saturado y conviene volver a intentar.
+    if (response.status === 429) {
+      throw new ProviderError(
+        `${provider.label} está saturado en este momento.`,
+        429,
+      );
+    }
+
     throw new ProviderError(
       `${provider.label} respondió ${response.status}. ${detail.slice(0, 300)}`.trim(),
       502,

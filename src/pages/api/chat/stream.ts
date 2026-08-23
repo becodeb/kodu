@@ -74,8 +74,15 @@ const CODE_PROBLEMS: Record<'truncated' | 'invalid' | 'empty', string> = {
 const SILENT_TURN =
   'El motor de IA cortó el turno sin devolver nada. Tu recurso quedó como estaba. Probá de nuevo y, si vuelve a pasar, mandá el pedido en partes más chicas.';
 
-/** Cuántas imágenes del proyecto se reenvían cuando el mensaje no trae adjuntos. */
-const MAX_CONTEXT_IMAGES = 4;
+/**
+ * Cuántas imágenes del proyecto se reenvían cuando el mensaje no trae adjuntos.
+ *
+ * Es 1 y no más: medido, cada imagen cuesta ~850 tokens de prompt aun pesando
+ * 15 KB, y el modelo gratuito estrangula los pedidos con imagen mucho antes que
+ * los de texto. Reenviar cuatro en cada turno convertía una conversación normal
+ * en una fila de 429.
+ */
+const MAX_CONTEXT_IMAGES = 1;
 
 /**
  * Cada cuánto se manda una señal de vida por el SSE.
@@ -338,7 +345,18 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
       let upstream: Response;
       try {
-        upstream = await requestCompletionStream({ messages, provider, signal: request.signal });
+        upstream = await requestCompletionStream({
+          messages,
+          provider,
+          signal: request.signal,
+          onReintento: (intento, esperaMs) => {
+            console.warn(`[chat/stream] ${provider.label} saturado, reintento ${intento} en ${esperaMs}ms`);
+            send({
+              type: 'notice',
+              message: `${provider.label} está saturado. Reintentando (${intento} de 3)…`,
+            });
+          },
+        });
         console.log(`[chat/stream] proveedor respondió cabeceras en ${transcurrido()}`);
       } catch (error) {
         console.error(`[chat/stream] el proveedor falló a los ${transcurrido()}:`, (error as Error).message);
