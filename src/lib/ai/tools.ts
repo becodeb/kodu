@@ -67,3 +67,31 @@ export function parseUpdateResourceArgs(
 
   return { ok: true, html };
 }
+
+/**
+ * Rescata el documento HTML cuando el modelo lo escribió en el texto en vez de
+ * llamar a la herramienta.
+ *
+ * No es lo que debería pasar —el contrato es que el código viaje por
+ * `update_resource_code`— pero pasa: hay modelos que anuncian el cambio, pegan
+ * el HTML en la respuesta y nunca llaman la función. Perder ese trabajo y
+ * dejar el recurso intacto es peor que aceptarlo.
+ *
+ * Se exige un documento COMPLETO (de `<!DOCTYPE` o `<html` hasta `</html>`)
+ * justamente para no aplicar un fragmento suelto que rompería el recurso.
+ */
+export function rescatarHtmlDelTexto(texto: string): { html: string; resto: string } | null {
+  const enBloque = /```(?:html)?\s*(<(?:!doctype|html)[\s\S]*?<\/html\s*>)\s*```/i.exec(texto);
+  const suelto = /(<(?:!doctype|html)[\s\S]*?<\/html\s*>)/i.exec(texto);
+  const encontrado = enBloque ?? suelto;
+
+  if (!encontrado) return null;
+
+  const html = encontrado[1]!.trim();
+  if (html.length < 200) return null;
+
+  // El texto que queda es lo que va al chat: el código nunca se muestra ahí.
+  const resto = texto.replace(encontrado[0]!, '').replace(/\n{3,}/g, '\n\n').trim();
+
+  return { html, resto };
+}

@@ -17,7 +17,11 @@ import {
   type ModelChoice,
 } from '../../../lib/ai/provider.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
-import { UPDATE_RESOURCE_CODE, parseUpdateResourceArgs } from '../../../lib/ai/tools.ts';
+import {
+  UPDATE_RESOURCE_CODE,
+  parseUpdateResourceArgs,
+  rescatarHtmlDelTexto,
+} from '../../../lib/ai/tools.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 
@@ -102,19 +106,46 @@ const HEARTBEAT_MS = 10_000;
 const REINTENTOS_VISIBLES = 10;
 
 /**
- * Frases con las que el modelo ANUNCIA que va a tocar el recurso.
+ * ¿Este mensaje pide tocar el recurso?
  *
- * Existe un caso molesto: contesta "dale, ahí va, lo rehago" y termina el turno
- * sin haber llamado nunca a `update_resource_code`. Como hubo texto, el turno se
- * daba por bueno, y el docente leía una promesa mientras el recurso seguía
- * igual. Si el texto promete y no hubo código, se le vuelve a pedir.
+ * Importa porque de eso depende si se le OBLIGA al modelo a llamar
+ * `update_resource_code`. Medido contra el proveedor: con `tool_choice: auto`,
+ * MiniMax M3 casi nunca la llama —ni con un pedido explícito— y termina
+ * anunciando el cambio en el chat sin hacerlo. Forzada por nombre, la llama
+ * siempre. Así que la elección no se le deja al modelo.
  *
- * Es a propósito una lista de anuncios y no "cualquier turno sin código": una
- * pregunta ("¿qué colores usa?") se responde con texto y ahí está bien que no
- * toque nada.
+ * La decisión se toma sobre el pedido del DOCENTE y no sobre la respuesta: lo
+ * que determina si hace falta código es lo que se pidió, no cómo el modelo
+ * decidió redactar.
+ *
+ * Ante la duda se fuerza, porque en Kodu casi todo mensaje es un pedido de
+ * cambio: sólo se deja elegir cuando es claramente una consulta.
  */
-const PROMESAS =
-  /(ah[ií] va|voy a|ya lo|lo armo|lo hago|lo rehago|lo cambio|lo agrego|lo actualizo|lo corrijo|lo modifico|lo aplico|dale,|ahora lo|en seguida|enseguida|un momento|manos a la obra|arranco|empiezo)/i;
+/**
+ * Una consulta de verdad: empieza con palabra interrogativa Y lleva signo.
+ * Las dos condiciones importan. "¿de qué color es?" pregunta; "podés hacerlo
+ * rojo?" tiene signo pero es un pedido, y "cambiá el color" no lleva signo pero
+ * también lo es.
+ */
+const INTERROGATIVA =
+  /^\s*[¿]?\s*(de |a |en |con |para |por |sobre )?(qu[eé]|c[oó]mo|cu[aá]l(es)?|cu[aá]nt[oa]s?|d[oó]nde|qui[eé]n(es)?|por qu[eé]|para qu[eé]|cu[aá]ndo|se puede|hay|existe|sirve|anda|funciona)\b/i;
+
+/** Ordenes claras. Se aceptan con y sin tilde, que es como se escribe al apuro. */
+const IMPERATIVO =
+  /\b(hac[eé]|hacelo|hacela|pon[eé]|ponele|ponelo|agreg[aá]|agregale|añad[ií]|sac[aá]|sacale|quit[aá]|borr[aá]|elimin[aá]|cambi[aá]|cambiale|cambialo|modific[aá]|correg[ií]|corregilo|arregl[aá]|arreglalo|mejor[aá]|mejoralo|rehac[eé]|rehacelo|actualiz[aá]|mov[eé]|ajust[aá]|convert[ií]|transform[aá]|sum[aá]|us[aá]|aplic[aá]|arm[aá]|cre[aá]|gener[aá]|escrib[ií]|dej[aá]|quiero|necesito|dale|segu[ií]|continu[aá])\b/i;
+
+function pideCambio(mensaje: string): boolean {
+  const texto = mensaje.trim();
+
+  // El orden no es casual: se descarta la consulta ANTES de buscar ordenes.
+  // "que hace este recurso?" contiene "hace", pero es una pregunta, no un pedido.
+  if (/[?¿]/.test(texto) && INTERROGATIVA.test(texto)) return false;
+  if (IMPERATIVO.test(texto)) return true;
+
+  // Ante la duda, se fuerza: en Kodu casi todo mensaje pide un cambio, y el
+  // costo de equivocarse para este lado es mucho menor que el de no aplicarlo.
+  return true;
+}
 
 const encoder = new TextEncoder();
 
@@ -379,11 +410,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * El docente no tiene por qué enterarse de que un proveedor está caído ni
        * tener que elegir otro a mano: se avisa qué pasó y se sigue trabajando.
        */
+      const forzar = pideCambio(message);
+
       const pedirA = (usado: typeof provider, intentos: number) =>
         requestCompletionStream({
           messages,
           provider: usado,
           signal: request.signal,
+          forzarHerramienta: forzar,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             send({
@@ -521,15 +555,26 @@ export const POST: APIRoute = async ({ request, locals }) => {
         await consumir(upstream);
 
         /**
-         * Prometió y no cumplió: se le vuelve a pedir, esta vez obligándolo a
-         * llamar la herramienta en vez de dejarlo elegir. Un solo reintento —
-         * si tampoco así lo hace, es mejor decirlo que quedarse en un bucle.
+         * Se pidió un cambio y no llegó código. Antes de darlo por perdido:
+         *
+         * 1) Puede que el modelo haya escrito el HTML en el texto en vez de
+         *    llamar la herramienta. Ese trabajo se rescata en vez de tirarlo.
+         * 2) Si no, se le vuelve a pedir una sola vez. Un reintento y no más:
+         *    si tampoco así lo hace, es mejor decirlo que quedar en un bucle.
          */
-        const prometioSinHacer =
-          !generatedHtml && !codeProblem && PROMESAS.test(assistantText);
+        if (forzar && !generatedHtml && !codeProblem) {
+          const rescatado = rescatarHtmlDelTexto(assistantText);
 
-        if (prometioSinHacer) {
-          console.warn(`[chat/stream] anunció el cambio sin aplicarlo; se re-pide a los ${transcurrido()}`);
+          if (rescatado) {
+            console.warn(`[chat/stream] el HTML vino en el texto; se rescata a los ${transcurrido()}`);
+            generatedHtml = rescatado.html;
+            assistantText = rescatado.resto;
+            send({ type: 'code', html: rescatado.html });
+          }
+        }
+
+        if (forzar && !generatedHtml && !codeProblem) {
+          console.warn(`[chat/stream] no aplicó el cambio; se re-pide a los ${transcurrido()}`);
           send({ type: 'notice', message: 'Se quedó a mitad de camino. Se lo vuelvo a pedir…' });
 
           const reintento = await requestCompletionStream({
@@ -548,6 +593,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
           });
 
           await consumir(reintento);
+
+          if (!generatedHtml && !codeProblem) {
+            const rescatado = rescatarHtmlDelTexto(assistantText);
+            if (rescatado) {
+              generatedHtml = rescatado.html;
+              assistantText = rescatado.resto;
+              send({ type: 'code', html: rescatado.html });
+            }
+          }
         }
       } catch (error) {
         console.error('[chat/stream]', error);
