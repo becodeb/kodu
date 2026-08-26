@@ -50,7 +50,7 @@ const schema = z.object({
     .min(1, 'Escribí un mensaje')
     .max(MAX_MESSAGE_CHARS, 'El mensaje es demasiado largo para procesarlo.'),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
-  model: z.enum(['ALPHA', 'DEEPSEEK']).optional(),
+  model: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
 });
@@ -179,7 +179,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
-  // El selector Flash/Pro del panel izquierdo se persiste en el proyecto.
+  // El selector de modelo del panel izquierdo se persiste en el proyecto.
   const chosenModel = model ?? project.selectedModel;
   if (model && model !== project.selectedModel) {
     await prisma.project.update({ where: { id: project.id }, data: { selectedModel: model } });

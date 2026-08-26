@@ -8,7 +8,7 @@ const updateSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(400).nullable().optional(),
   currentHtml: z.string().min(20).max(400_000).optional(),
-  selectedModel: z.enum(['ALPHA', 'DEEPSEEK']).optional(),
+  selectedModel: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
   isInGallery: z.boolean().optional(),
 });
 

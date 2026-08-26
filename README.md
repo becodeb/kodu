@@ -5,10 +5,8 @@
 ### 1. Arquitectura General y Acceso
 
 * **Autenticación restringida:** Registro e inicio de sesión condicionado por lista blanca de dominios de correo electrónico institucionales autorizados (ej. `@rededucativa.edu.ar`).
-* **Seguridad de API Keys:** Clave maestra de DeepSeek almacenada exclusivamente como variable de entorno en el backend (`DEEPSEEK_API_KEY`), actuando como proxy seguro.
-* **Selector de Modelo:**
-* **Default:** `deepseek-v4-flash` (mayor velocidad y menor consumo).
-* **Opción avanzada:** Switch a `deepseek-v4-pro` para lógicas pedagógicas o simuladores que requieran mayor capacidad de razonamiento.
+* **Seguridad de API Keys:** Las claves de cada proveedor viven exclusivamente en variables de entorno del backend; el navegador nunca las recibe.
+* **Selector de Modelo:** Alpha, DeepSeek o MiniMax M3 (servido por GMI Cloud).
 
 
 
@@ -23,7 +21,7 @@ La vista principal de edición divide la pantalla en dos paneles sincronizados:
 │  PANEL IZQUIERDO: CHAT Y CONTROL     │  PANEL DERECHO: VISOR Y CÓDIGO       │
 │                                      │                                      │
 │  [ Historial ] [ Nuevo Chat ]        │  Tabs: [ Vista Previa ] [ Código ]   │
-│  Selector: (o) Flash  ( ) Pro        │  URL Pública: red.edu/p/xyz123 [🔗]  │
+│  Modelo: Alpha / DeepSeek / MiniMax M3 │  URL Pública: red.edu/p/xyz123 [🔗] │
 │ ──────────────────────────────────── │ ──────────────────────────────────── │
 │  Mensajes del Docente / IA           │                                      │
 │  (Solo explicaciones y cambios)      │  Iframe Sandbox                      │
@@ -81,4 +79,4 @@ La vista principal de edición divide la pantalla en dos paneles sincronizados:
 | **Editor de Código** | `@monaco-editor/react` o `@uiw/react-codemirror`. |
 | **Backend & Base de Datos** | Node/Bun (Fastify o API Routes), PostgreSQL / SQLite con Drizzle u ORM equivalente para usuarios, proyectos y chats. |
 | **Generación de Miniaturas** | Puppeteer o `@vercel/og` para captura automatizada de la pantalla del iframe al guardar. |
-| **Motor de IA** | API de DeepSeek (`/chat/completions` con streaming y context caching). |
+| **Motor de IA** | Proveedores OpenAI-compatible con streaming y tool calling: Alpha, DeepSeek y MiniMax M3 en GMI Cloud. |

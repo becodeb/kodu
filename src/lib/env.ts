@@ -36,11 +36,11 @@ const envSchema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
 
   /**
-   * Motor de IA. Hay dos proveedores y el docente elige cuál usa.
+   * Motor de IA. Hay tres proveedores y el docente elige cuál usa.
    *
-   * ALPHA es el de todos los días: gratuito, multimodal y sin cupo. DEEPSEEK se
-   * paga por token, así que trae tope por usuario — sin ese tope, un docente
-   * solo puede vaciar la cuenta en una tarde.
+   * ALPHA y MINIMAX son gratuitos, multimodales y sin cupo. DEEPSEEK se paga
+   * por token, así que trae tope por usuario — sin ese tope, un docente solo
+   * puede vaciar la cuenta en una tarde.
    *
    * Las claves NO son obligatorias para arrancar (la galería y el editor andan
    * igual): se validan recién al invocar el chat.
@@ -53,6 +53,10 @@ const envSchema = z.object({
   AI_DEEPSEEK_BASE_URL: z.string().min(1).default('https://api.deepseek.com'),
   AI_DEEPSEEK_MODEL: z.string().min(1).default('deepseek-v4-flash'),
 
+  AI_MINIMAX_API_KEY: z.string().default(''),
+  AI_MINIMAX_BASE_URL: z.string().min(1).default('https://api.gmi-serving.com'),
+  AI_MINIMAX_MODEL: z.string().min(1).default('MiniMaxAI/MiniMax-M3'),
+
   /**
    * Tope de tokens de UNA respuesta. Alto a propósito: el contrato obliga a la
    * IA a devolver el documento HTML completo en cada edición, y si se queda
@@ -61,26 +65,29 @@ const envSchema = z.object({
    */
   AI_ALPHA_MAX_TOKENS: z.coerce.number().int().positive().default(65_536),
   AI_DEEPSEEK_MAX_TOKENS: z.coerce.number().int().positive().default(8_192),
+  AI_MINIMAX_MAX_TOKENS: z.coerce.number().int().positive().default(65_536),
 
   /**
    * Tope ACUMULADO por usuario, en tokens. 0 = sin tope.
-   * Alpha es gratis, así que no lleva; DeepSeek sí.
+   * Alpha y MiniMax son gratis, así que no llevan; DeepSeek sí.
    */
   AI_ALPHA_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(0),
   AI_DEEPSEEK_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(300_000),
+  AI_MINIMAX_USER_TOKEN_LIMIT: z.coerce.number().int().min(0).default(0),
 
   /**
    * Largo máximo de UN mensaje del docente, en caracteres.
    *
    * No está para racionar: está para que el pedido entre en la ventana de
-   * contexto del modelo junto con el HTML del recurso y el historial. Alpha
-   * tiene 1M de tokens de contexto, asi que su tope es holgado; DeepSeek es
-   * mucho mas chico y ahi si conviene avisar antes de que la API lo rechace.
+   * contexto del modelo junto con el HTML del recurso y el historial. Alpha y
+   * MiniMax tienen 1M de tokens de contexto, asi que su tope es holgado;
+   * DeepSeek es mucho mas chico y ahi si conviene avisar antes del rechazo.
    */
   AI_ALPHA_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(400_000),
   AI_DEEPSEEK_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(24_000),
+  AI_MINIMAX_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(400_000),
 
-  /** Si Alpha recibe las imágenes adjuntas (formato OpenAI `image_url`). */
+  /** Si los modelos multimodales reciben adjuntos (formato OpenAI `image_url`). */
   AI_VISION: z
     .enum(['true', 'false'])
     .default('true')
@@ -112,12 +119,18 @@ export function getEnv(): Env {
     AI_DEEPSEEK_API_KEY: read('AI_DEEPSEEK_API_KEY') ?? read('DEEPSEEK_API_KEY_OLD_DEEPSEEK'),
     AI_DEEPSEEK_BASE_URL: read('AI_DEEPSEEK_BASE_URL'),
     AI_DEEPSEEK_MODEL: read('AI_DEEPSEEK_MODEL'),
+    AI_MINIMAX_API_KEY: read('AI_MINIMAX_API_KEY'),
+    AI_MINIMAX_BASE_URL: read('AI_MINIMAX_BASE_URL'),
+    AI_MINIMAX_MODEL: read('AI_MINIMAX_MODEL'),
     AI_ALPHA_MAX_TOKENS: read('AI_ALPHA_MAX_TOKENS') ?? read('AI_MAX_TOKENS'),
     AI_DEEPSEEK_MAX_TOKENS: read('AI_DEEPSEEK_MAX_TOKENS'),
+    AI_MINIMAX_MAX_TOKENS: read('AI_MINIMAX_MAX_TOKENS'),
     AI_ALPHA_USER_TOKEN_LIMIT: read('AI_ALPHA_USER_TOKEN_LIMIT'),
     AI_DEEPSEEK_USER_TOKEN_LIMIT: read('AI_DEEPSEEK_USER_TOKEN_LIMIT'),
+    AI_MINIMAX_USER_TOKEN_LIMIT: read('AI_MINIMAX_USER_TOKEN_LIMIT'),
     AI_ALPHA_MAX_INPUT_CHARS: read('AI_ALPHA_MAX_INPUT_CHARS'),
     AI_DEEPSEEK_MAX_INPUT_CHARS: read('AI_DEEPSEEK_MAX_INPUT_CHARS'),
+    AI_MINIMAX_MAX_INPUT_CHARS: read('AI_MINIMAX_MAX_INPUT_CHARS'),
     AI_VISION: read('AI_VISION'),
   });
 

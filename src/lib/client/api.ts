@@ -1,3 +1,5 @@
+import type { ModelChoice } from '../workspace-types.ts';
+
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
  * el navegador manda la cookie de sesión y el header Origin que Astro exige
@@ -61,7 +63,7 @@ export type StreamEvent =
   | { type: 'notice'; message: string }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
   /** `fallbackModel` llega cuando el proveedor elegido falló pero el otro sirve. */
-  | { type: 'error'; message: string; fallbackModel?: 'ALPHA' | 'DEEPSEEK'; fallbackLabel?: string };
+  | { type: 'error'; message: string; fallbackModel?: ModelChoice; fallbackLabel?: string };
 
 /**
  * Consume el SSE de /api/chat/stream.
@@ -73,7 +75,7 @@ export async function* streamChat(payload: {
   projectId: string;
   threadId: string;
   message: string;
-  model?: 'ALPHA' | 'DEEPSEEK';
+  model?: ModelChoice;
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
@@ -90,7 +92,7 @@ export async function* streamChat(payload: {
     // un mensaje genérico que no ayudaba a nadie a entender qué pasó.
     const error = (await response.json().catch(() => null)) as {
       error?: string;
-      fallbackModel?: 'ALPHA' | 'DEEPSEEK';
+      fallbackModel?: ModelChoice;
       fallbackLabel?: string;
     } | null;
     const detalle =

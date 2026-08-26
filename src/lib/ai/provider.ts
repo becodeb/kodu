@@ -5,18 +5,19 @@ import { RESOURCE_TOOLS } from './tools.ts';
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
  * viven sólo acá (SPEC §1) y el navegador nunca las ve.
  *
- * Hay DOS proveedores configurados y el docente elige cuál usa:
+ * Hay tres proveedores configurados y el docente elige cuál usa:
  *  - ALPHA    — el de todos los días, gratuito, sin cupo por usuario.
  *  - DEEPSEEK — se paga por token, así que tiene tope por usuario.
+ *  - MINIMAX  — MiniMax M3 servido por GMI Cloud, gratuito y multimodal.
  *
- * Los dos hablan el dialecto OpenAI (`/chat/completions` con `stream: true`),
- * así que el parser de abajo sirve para cualquiera de los dos y para el que
+ * Los tres hablan el dialecto OpenAI (`/chat/completions` con `stream: true`),
+ * así que el parser de abajo sirve para cualquiera de ellos y para el que
  * venga después.
  */
 
-export type ModelChoice = 'ALPHA' | 'DEEPSEEK';
+export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
-export const MODEL_CHOICES: ModelChoice[] = ['ALPHA', 'DEEPSEEK'];
+export const MODEL_CHOICES: ModelChoice[] = ['ALPHA', 'DEEPSEEK', 'MINIMAX'];
 
 export interface ProviderConfig {
   choice: ModelChoice;
@@ -33,6 +34,19 @@ export interface ProviderConfig {
 
 export function resolveProvider(choice: ModelChoice): ProviderConfig {
   const env = getEnv();
+
+  if (choice === 'MINIMAX') {
+    return {
+      choice,
+      label: 'MiniMax M3',
+      apiKey: env.AI_MINIMAX_API_KEY,
+      baseUrl: env.AI_MINIMAX_BASE_URL,
+      model: env.AI_MINIMAX_MODEL,
+      maxTokens: env.AI_MINIMAX_MAX_TOKENS,
+      userTokenLimit: env.AI_MINIMAX_USER_TOKEN_LIMIT,
+      maxInputChars: env.AI_MINIMAX_MAX_INPUT_CHARS,
+    };
+  }
 
   if (choice === 'DEEPSEEK') {
     return {
@@ -59,9 +73,10 @@ export function resolveProvider(choice: ModelChoice): ProviderConfig {
   };
 }
 
-/** El otro proveedor, para ofrecerlo cuando el elegido falla. */
+/** El proveedor alternativo preferido cuando el elegido falla. */
 export function alternateChoice(choice: ModelChoice): ModelChoice {
-  return choice === 'ALPHA' ? 'DEEPSEEK' : 'ALPHA';
+  if (choice !== 'ALPHA') return 'ALPHA';
+  return isChoiceConfigured('MINIMAX') ? 'MINIMAX' : 'DEEPSEEK';
 }
 
 export function isChoiceConfigured(choice: ModelChoice): boolean {
@@ -82,9 +97,8 @@ export interface ChatMessage {
 }
 
 export function supportsVision(choice: ModelChoice): boolean {
-  // Sólo Alpha es multimodal; mandarle partes `image_url` a un modelo de texto
-  // hace que la API conteste 400 y se caiga el turno entero.
-  return choice === 'ALPHA' && getEnv().AI_VISION;
+  // Alpha y MiniMax M3 son multimodales. DeepSeek sigue recibiendo sólo texto.
+  return choice !== 'DEEPSEEK' && getEnv().AI_VISION;
 }
 
 export class ProviderError extends Error {

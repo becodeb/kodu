@@ -23,6 +23,7 @@ const filas = await usageByUser();
 const topes: Record<string, number> = {
   ALPHA: env.AI_ALPHA_USER_TOKEN_LIMIT,
   DEEPSEEK: env.AI_DEEPSEEK_USER_TOKEN_LIMIT,
+  MINIMAX: env.AI_MINIMAX_USER_TOKEN_LIMIT,
 };
 
 const nombreProveedor = (valor: string) =>
@@ -40,12 +41,12 @@ const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila)
   <header class="mb-6 max-w-2xl">
     <h1 class="text-2xl font-bold text-ink-900">Consumo de tokens</h1>
     <p class="mt-1 text-sm text-ink-500">
-      Cuánto gastó cada docente en cada motor. Alpha es gratuito; lo que importa mirar acá es
-      DeepSeek, que se paga por token.
+      Cuánto usó cada docente en cada motor. Alpha y MiniMax son gratuitos;
+      DeepSeek mantiene su cupo por tokens.
     </p>
   </header>
 
-  <div class="mb-6 grid gap-3 sm:grid-cols-2">
+  <div class="mb-6 grid gap-3 sm:grid-cols-3">
     {
       MODELOS.map((modelo) => (
         <div class="kodu-card p-4">

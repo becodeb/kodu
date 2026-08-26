@@ -1,6 +1,6 @@
 /** Tipos que comparten la página Astro del editor y las islas de React. */
 
-export type ModelChoice = 'ALPHA' | 'DEEPSEEK';
+export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
 /** Lo que el docente ve de cada modelo al elegirlo. */
 export const MODELOS: Array<{
@@ -21,6 +21,12 @@ export const MODELOS: Array<{
     nombre: 'DeepSeek',
     detalle: 'Se paga por uso, así que tenés un cupo de tokens. No lee imágenes.',
     conCupo: true,
+  },
+  {
+    value: 'MINIMAX',
+    nombre: 'MiniMax M3',
+    detalle: 'Gratis, con contexto largo y soporte para las imágenes que subas.',
+    conCupo: false,
   },
 ];
 

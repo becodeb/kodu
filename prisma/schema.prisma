@@ -22,6 +22,8 @@ enum ModelChoice {
   ALPHA
   /// Se paga por token, por eso tiene tope por usuario.
   DEEPSEEK
+  /// MiniMax M3 servido por GMI Cloud; gratuito y multimodal.
+  MINIMAX
 }
 
 model User {
