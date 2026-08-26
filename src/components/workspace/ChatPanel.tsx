@@ -29,6 +29,7 @@ interface ChatPanelProps {
   fallbackLabel: string | null;
   onUseFallback: () => void;
   model: ModelChoice;
+  modelosDisponibles: ModelChoice[];
   onModelChange: (model: ModelChoice) => void;
   threads: WorkspaceThread[];
   activeThreadId: string;
@@ -150,7 +151,7 @@ export default function ChatPanel(props: ChatPanelProps) {
           <legend className="sr-only">Modelo de IA</legend>
 
           <div className="flex rounded-lg bg-sutil p-0.5">
-            {MODELOS.map((opcion) => (
+            {MODELOS.filter((opcion) => props.modelosDisponibles.includes(opcion.value)).map((opcion) => (
               <button
                 key={opcion.value}
                 type="button"

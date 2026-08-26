@@ -3,6 +3,7 @@ import BaseLayout from '../../../layouts/BaseLayout.astro';
 import Workspace from '../../../components/workspace/Workspace.tsx';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
+import { MODEL_CHOICES, isChoiceConfigured } from '../../../lib/ai/provider.ts';
 import type { ModelChoice } from '../../../lib/workspace-types.ts';
 
 const user = Astro.locals.user!;
@@ -37,6 +38,12 @@ const messages = await prisma.chatMessage.findMany({
 });
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
+
+// Sólo se ofrecen los motores que tienen clave. Mostrar uno sin configurar es
+// poner un botón que falla: el docente lo elige, recibe un error que no puede
+// resolver, y no tiene forma de saber que el problema no es suyo. Cuando se
+// carga la clave, la opción aparece sola.
+const modelosDisponibles = MODEL_CHOICES.filter(isChoiceConfigured);
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide>
@@ -96,5 +103,6 @@ const siteUrl = getEnv().PUBLIC_SITE_URL;
     assets={project.assets}
     siteUrl={siteUrl}
     authorName={user.name}
+    modelosDisponibles={modelosDisponibles.length > 0 ? modelosDisponibles : MODEL_CHOICES}
   />
 </BaseLayout>

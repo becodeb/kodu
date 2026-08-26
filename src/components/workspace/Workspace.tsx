@@ -21,6 +21,8 @@ interface WorkspaceProps {
   siteUrl: string;
   /** Nombre del docente, para previsualizar la tarjeta de la galería. */
   authorName: string;
+  /** Motores con clave cargada; el resto no se ofrece. */
+  modelosDisponibles: ModelChoice[];
 }
 
 /**
@@ -531,6 +533,7 @@ export default function Workspace(props: WorkspaceProps) {
           void handleSend(pedido, true);
         }}
         model={model}
+        modelosDisponibles={props.modelosDisponibles}
         onModelChange={(value) => {
           setModel(value);
           void patchProject({ selectedModel: value }, true);
