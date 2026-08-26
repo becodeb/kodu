@@ -101,6 +101,21 @@ const HEARTBEAT_MS = 10_000;
 /** Cuántos intentos se le anuncian al docente (primer intento + reintentos). */
 const REINTENTOS_VISIBLES = 10;
 
+/**
+ * Frases con las que el modelo ANUNCIA que va a tocar el recurso.
+ *
+ * Existe un caso molesto: contesta "dale, ahí va, lo rehago" y termina el turno
+ * sin haber llamado nunca a `update_resource_code`. Como hubo texto, el turno se
+ * daba por bueno, y el docente leía una promesa mientras el recurso seguía
+ * igual. Si el texto promete y no hubo código, se le vuelve a pedir.
+ *
+ * Es a propósito una lista de anuncios y no "cualquier turno sin código": una
+ * pregunta ("¿qué colores usa?") se responde con texto y ahí está bien que no
+ * toque nada.
+ */
+const PROMESAS =
+  /(ah[ií] va|voy a|ya lo|lo armo|lo hago|lo rehago|lo cambio|lo agrego|lo actualizo|lo corrijo|lo modifico|lo aplico|dale,|ahora lo|en seguida|enseguida|un momento|manos a la obra|arranco|empiezo)/i;
+
 const encoder = new TextEncoder();
 
 function sseFrame(payload: Record<string, unknown>): Uint8Array {
@@ -451,10 +466,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // cambié el fondo", el recurso no cambia y el docente no entiende por qué.
       let codeProblem: string | null = null;
       let finishReason = '';
-      let usage: { promptTokens: number; completionTokens: number } | null = null;
+      /**
+       * Va en un objeto y no en un `let` suelto porque lo completa `consumir`,
+       * que es una función anidada: con una variable suelta, el análisis de
+       * flujo de TypeScript la da por null para siempre y termina tipando el
+       * consumo como `never`.
+       */
+      const totales: { usage: { promptTokens: number; completionTokens: number } | null } = {
+        usage: null,
+      };
 
-      try {
-        for await (const event of readCompletionStream(upstream)) {
+      /** Consume un pase completo del proveedor, acumulando en las variables. */
+      async function consumir(respuesta: Response) {
+        for await (const event of readCompletionStream(respuesta)) {
           if (event.type === 'text') {
             assistantText += event.delta;
             send({ type: 'text', delta: event.delta });
@@ -469,7 +493,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }
 
           if (event.type === 'usage') {
-            usage = event.usage;
+            totales.usage = event.usage;
             continue;
           }
 
@@ -491,18 +515,56 @@ export const POST: APIRoute = async ({ request, locals }) => {
             }
           }
         }
+      }
+
+      try {
+        await consumir(upstream);
+
+        /**
+         * Prometió y no cumplió: se le vuelve a pedir, esta vez obligándolo a
+         * llamar la herramienta en vez de dejarlo elegir. Un solo reintento —
+         * si tampoco así lo hace, es mejor decirlo que quedarse en un bucle.
+         */
+        const prometioSinHacer =
+          !generatedHtml && !codeProblem && PROMESAS.test(assistantText);
+
+        if (prometioSinHacer) {
+          console.warn(`[chat/stream] anunció el cambio sin aplicarlo; se re-pide a los ${transcurrido()}`);
+          send({ type: 'notice', message: 'Se quedó a mitad de camino. Se lo vuelvo a pedir…' });
+
+          const reintento = await requestCompletionStream({
+            messages: [
+              ...messages,
+              { role: 'assistant', content: assistantText },
+              {
+                role: 'user',
+                content:
+                  'Dijiste que ibas a hacerlo pero no llamaste a update_resource_code, así que el recurso quedó igual. Hacelo AHORA: devolvé el documento HTML completo con el cambio aplicado, partiendo del código actual y respetando todo lo demás.',
+              },
+            ],
+            provider: proveedorUsado,
+            signal: request.signal,
+            forzarHerramienta: true,
+          });
+
+          await consumir(reintento);
+        }
       } catch (error) {
         console.error('[chat/stream]', error);
         send({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' });
       } finally {
         // El consumo se registra aunque el turno se haya cortado: los tokens ya
         // se gastaron igual.
-        if (usage) {
+        // Campo por campo y sin spread: `usage` se completa dentro de `consumir`,
+        // así que el análisis de flujo de TypeScript lo da por null en este
+        // punto y un spread de ahí no compila.
+        if (totales.usage) {
           await recordUsage({
             userId: user.id,
             provider: proveedorUsado.choice,
             model: proveedorUsado.model,
-            ...usage,
+            promptTokens: totales.usage.promptTokens,
+            completionTokens: totales.usage.completionTokens,
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 

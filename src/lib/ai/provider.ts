@@ -1,5 +1,5 @@
 import { getEnv } from '../env.ts';
-import { RESOURCE_TOOLS } from './tools.ts';
+import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE } from './tools.ts';
 
 /**
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
@@ -174,6 +174,12 @@ export async function requestCompletionStream(options: {
   signal?: AbortSignal;
   /** Se llama antes de cada espera, para poder avisarle al docente. */
   onReintento?: (intento: number, esperaMs: number) => void;
+  /**
+   * Obliga al modelo a llamar `update_resource_code` en vez de dejarlo elegir.
+   * Se usa en el reintento, cuando en el primer pase prometió el cambio y no lo
+   * hizo.
+   */
+  forzarHerramienta?: boolean;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -202,7 +208,12 @@ export async function requestCompletionStream(options: {
 
 async function intentarUna(
   endpoint: string,
-  options: { messages: ChatMessage[]; provider: ProviderConfig; signal?: AbortSignal },
+  options: {
+    messages: ChatMessage[];
+    provider: ProviderConfig;
+    signal?: AbortSignal;
+    forzarHerramienta?: boolean;
+  },
 ): Promise<Response> {
   const { provider } = options;
 
@@ -218,7 +229,9 @@ async function intentarUna(
         model: provider.model,
         messages: options.messages,
         tools: RESOURCE_TOOLS,
-        tool_choice: 'auto',
+        tool_choice: options.forzarHerramienta
+          ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
+          : 'auto',
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de
