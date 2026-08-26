@@ -11,7 +11,13 @@ import { crossOriginForbiddenResponse, isForbiddenCrossOrigin } from './lib/csrf
  */
 
 const PROTECTED_PAGE_PREFIXES = ['/app'];
-const PROTECTED_API_PREFIXES = ['/api/projects', '/api/chat', '/api/rules', '/api/uploads'];
+const PROTECTED_API_PREFIXES = [
+  '/api/projects',
+  '/api/chat',
+  '/api/rules',
+  '/api/uploads',
+  '/api/admin',
+];
 const GUEST_ONLY_PATHS = ['/login', '/register'];
 
 function matches(pathname: string, prefixes: string[]): boolean {

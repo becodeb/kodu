@@ -180,9 +180,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
   // El selector de modelo del panel izquierdo se persiste en el proyecto.
-  const chosenModel = model ?? project.selectedModel;
-  if (model && model !== project.selectedModel) {
-    await prisma.project.update({ where: { id: project.id }, data: { selectedModel: model } });
+  const pedido = model ?? project.selectedModel;
+
+  /**
+   * DeepSeek se cobra por token, asi que no alcanza con esconderlo del selector:
+   * un recurso creado cuando estaba habilitado lo tiene guardado, y seguiria
+   * gastando por la puerta de atras. Si el docente ya no lo tiene habilitado, el
+   * turno se resuelve con Alpha y se avisa.
+   */
+  let chosenModel = pedido;
+  let degradado: string | null = null;
+
+  if (pedido === 'DEEPSEEK') {
+    const cuenta = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { deepseekEnabled: true },
+    });
+
+    if (cuenta?.deepseekEnabled !== true) {
+      chosenModel = 'ALPHA';
+      degradado = 'DeepSeek no está habilitado en tu cuenta, así que usé Alpha para este pedido.';
+    }
+  }
+
+  if (chosenModel !== project.selectedModel) {
+    await prisma.project.update({
+      where: { id: project.id },
+      data: { selectedModel: chosenModel },
+    });
   }
 
   const [globalRules, userRules, assets, history] = await Promise.all([
@@ -337,6 +362,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // Trazas con tiempos: cuando un turno se cae, lo primero que hace falta
       // saber es si tardó el proveedor en contestar o si se cortó a mitad del
       // stream. Sin esto, un 502 no dejaba ni una línea.
+      if (degradado) send({ type: 'notice', message: degradado });
+
       const arranque = Date.now();
       const transcurrido = () => `${((Date.now() - arranque) / 1000).toFixed(1)}s`;
       console.log(

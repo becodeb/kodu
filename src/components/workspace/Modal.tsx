@@ -48,18 +48,36 @@ export default function Modal(props: ModalProps) {
     return () => window.clearTimeout(id);
   }, [props.abierto]);
 
+  /**
+   * El foco inicial se pone UNA sola vez, al abrir.
+   *
+   * Antes esto vivía en el mismo efecto que el manejo del teclado, y ese efecto
+   * dependía de `props` —un objeto nuevo en cada render—, así que volvía a
+   * enfocar el PRIMER campo con cada tecla: escribías en la descripción y la
+   * letra siguiente aparecía en el título.
+   */
   useEffect(() => {
     if (!montado) return;
 
-    // El primer campo enfocado: el docente puede empezar a escribir de una.
     const primero = panel.current?.querySelector<HTMLElement>(
       'input, textarea, select, button:not([data-cerrar])',
     );
     primero?.focus();
+  }, [montado]);
+
+  // El callback de cierre se lee por referencia para que el efecto del teclado
+  // no dependa de una función que cambia de identidad en cada render.
+  const alCerrar = useRef(props.onCerrar);
+  alCerrar.current = props.onCerrar;
+
+  const descartable = props.descartable !== false;
+
+  useEffect(() => {
+    if (!montado) return;
 
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && props.descartable !== false) {
-        props.onCerrar();
+      if (event.key === 'Escape' && descartable) {
+        alCerrar.current();
         return;
       }
 
@@ -86,7 +104,7 @@ export default function Modal(props: ModalProps) {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [montado, props]);
+  }, [montado, descartable]);
 
   if (!montado) return null;
 

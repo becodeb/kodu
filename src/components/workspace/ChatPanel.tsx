@@ -67,6 +67,7 @@ function renderRich(text: string) {
 export default function ChatPanel(props: ChatPanelProps) {
   const [draft, setDraft] = useState('');
   const [starterAbierto, setStarterAbierto] = useState<Starter | null>(null);
+  const [arrastrando, setArrastrando] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -109,8 +110,67 @@ export default function ChatPanel(props: ChatPanelProps) {
     event.target.value = '';
   }
 
+  /** Deja pasar sólo lo que el servidor acepta, para no pedir un 415 al pedo. */
+  function admitidos(files: File[]): File[] {
+    return files.filter((file) => file.type.startsWith('image/') || file.type === 'application/pdf');
+  }
+
+  /**
+   * Pegar con Ctrl+V.
+   *
+   * Una captura de pantalla no llega como archivo con nombre: viene en
+   * `clipboardData.files` (o entre los `items`) con el nombre vacío o genérico.
+   * Por eso se filtra por tipo y no por extensión, y sólo se corta el pegado
+   * cuando efectivamente había una imagen — si no, se deja pegar el texto.
+   */
+  function onPaste(event: React.ClipboardEvent) {
+    if (props.uploading || props.isStreaming) return;
+
+    const desdeFiles = Array.from(event.clipboardData?.files ?? []);
+    const desdeItems = Array.from(event.clipboardData?.items ?? [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    const candidatos = admitidos(desdeFiles.length > 0 ? desdeFiles : desdeItems);
+    if (candidatos.length === 0) return;
+
+    event.preventDefault();
+    props.onAttach(candidatos);
+  }
+
+  function onDrop(event: React.DragEvent) {
+    event.preventDefault();
+    setArrastrando(false);
+    if (props.uploading || props.isStreaming) return;
+
+    const candidatos = admitidos(Array.from(event.dataTransfer?.files ?? []));
+    if (candidatos.length > 0) props.onAttach(candidatos);
+  }
+
+  function onDragOver(event: React.DragEvent) {
+    // Sin esto el navegador abre el archivo en una pestaña nueva.
+    if (!Array.from(event.dataTransfer?.types ?? []).includes('Files')) return;
+    event.preventDefault();
+    if (!arrastrando) setArrastrando(true);
+  }
+
   return (
-    <section className="flex h-full min-h-0 w-full flex-col border-linea bg-superficie lg:border-r">
+    <section
+      className="relative flex h-full min-h-0 w-full flex-col border-linea bg-superficie lg:border-r"
+      onDrop={onDrop}
+      onDragOver={onDragOver}
+      onDragLeave={(event) => {
+        // Sólo cuando el puntero sale de la sección entera, no al pasar de un
+        // hijo a otro: si no, el cartel parpadea mientras se arrastra por encima.
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setArrastrando(false);
+      }}
+    >
+      {arrastrando && (
+        <div className="pointer-events-none absolute inset-2 z-30 grid place-items-center rounded-xl border-2 border-dashed border-brand-500 bg-brand-50/90">
+          <p className="text-sm font-semibold text-brand-700">Soltá acá para adjuntar</p>
+        </div>
+      )}
       <StarterDialog
         starter={starterAbierto}
         onCerrar={() => setStarterAbierto(null)}
@@ -289,24 +349,45 @@ export default function ChatPanel(props: ChatPanelProps) {
           </details>
         )}
 
+        {/* Vista previa de lo que se va a mandar. Con las imágenes se ve la
+            miniatura y no el nombre: un archivo pegado del portapapeles se llama
+            "image.png" y ese nombre no le dice nada a nadie. */}
         {props.pendingAssets.length > 0 && (
-          <ul className="flex flex-wrap gap-1.5">
-            {props.pendingAssets.map((asset) => (
-              <li
-                key={asset.id}
-                className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-1 text-xs text-brand-700"
-              >
-                {asset.filename}
-                <button
-                  type="button"
-                  onClick={() => props.onRemovePending(asset.id)}
-                  className="text-brand-700/70 hover:text-brand-700"
-                  aria-label={`Quitar ${asset.filename} de este mensaje`}
+          <ul className="flex flex-wrap gap-2">
+            {props.pendingAssets.map((asset) =>
+              asset.fileType === 'image' ? (
+                <li key={asset.id} className="group/adjunto relative">
+                  <img
+                    src={asset.url}
+                    alt={asset.filename}
+                    className="h-16 w-16 rounded-lg border border-linea object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => props.onRemovePending(asset.id)}
+                    aria-label={`Quitar ${asset.filename} de este mensaje`}
+                    className="absolute -top-1.5 -right-1.5 grid h-5 w-5 place-items-center rounded-full bg-carbon text-xs text-lienzo shadow-sm"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ) : (
+                <li
+                  key={asset.id}
+                  className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-1 text-xs text-brand-700"
                 >
-                  ✕
-                </button>
-              </li>
-            ))}
+                  {asset.filename}
+                  <button
+                    type="button"
+                    onClick={() => props.onRemovePending(asset.id)}
+                    className="text-brand-700/70 hover:text-brand-700"
+                    aria-label={`Quitar ${asset.filename} de este mensaje`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ),
+            )}
           </ul>
         )}
 
@@ -321,6 +402,7 @@ export default function ChatPanel(props: ChatPanelProps) {
         )}
 
         <textarea
+          onPaste={onPaste}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}

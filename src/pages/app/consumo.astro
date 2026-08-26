@@ -3,6 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { usageByUser } from '../../lib/ai/usage.ts';
 import { getEnv } from '../../lib/env.ts';
 import { MODELOS } from '../../lib/workspace-types.ts';
+import AdminDeepseekToggle from '../../components/AdminDeepseekToggle.tsx';
+import { prisma } from '../../lib/db.ts';
 
 /**
  * Consumo de tokens por docente (SPEC: agregado en agosto de 2026).
@@ -30,6 +32,14 @@ const nombreProveedor = (valor: string) =>
   MODELOS.find((modelo) => modelo.value === valor)?.nombre ?? valor;
 
 const miles = (n: number) => n.toLocaleString('es-AR');
+
+// El acceso a DeepSeek se administra desde acá porque es la única pantalla que
+// ya lista a los docentes, y porque habilitar el motor pago es justamente una
+// decisión que se toma mirando cuánto consume cada uno.
+const docentes = await prisma.user.findMany({
+  orderBy: [{ role: 'asc' }, { name: 'asc' }],
+  select: { id: true, name: true, email: true, role: true, deepseekEnabled: true },
+});
 
 const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila) => {
   acumulado[fila.provider] = (acumulado[fila.provider] ?? 0) + fila.total;
@@ -120,4 +130,43 @@ const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila)
       </div>
     )
   }
+  <section class="mt-8">
+    <h2 class="text-lg font-semibold text-ink-900">Acceso a DeepSeek</h2>
+    <p class="mt-1 mb-3 max-w-2xl text-sm text-ink-500">
+      Los motores que ve un docente por defecto son Alpha y MiniMax M3, que son gratuitos.
+      DeepSeek se paga por token, así que queda oculto hasta que lo habilites acá.
+    </p>
+
+    <div class="kodu-card overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-linea text-xs text-ink-500 uppercase">
+          <tr>
+            <th class="px-4 py-3 font-medium">Docente</th>
+            <th class="px-4 py-3 font-medium">Rol</th>
+            <th class="px-4 py-3 font-medium">DeepSeek</th>
+          </tr>
+        </thead>
+        <tbody>
+          {docentes.map((docente) => (
+            <tr class="border-b border-linea last:border-0">
+              <td class="px-4 py-3">
+                <span class="block font-medium text-ink-900">{docente.name}</span>
+                <span class="block text-xs text-ink-500">{docente.email}</span>
+              </td>
+              <td class="px-4 py-3 text-ink-700">
+                {docente.role === 'ADMIN' ? 'Administración' : 'Docente'}
+              </td>
+              <td class="px-4 py-3">
+                <AdminDeepseekToggle
+                  client:load
+                  userId={docente.id}
+                  inicial={docente.deepseekEnabled}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </BaseLayout>

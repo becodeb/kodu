@@ -32,6 +32,9 @@ model User {
   passwordHash String
   name         String
   role         Role         @default(DOCENTE)
+  /// DeepSeek se paga por token: queda oculto salvo que un admin lo habilite
+  /// para este docente en particular.
+  deepseekEnabled Boolean   @default(false)
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
