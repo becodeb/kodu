@@ -101,6 +101,33 @@ export function alternateChoice(choice: ModelChoice): ModelChoice {
   return choice === MODELO_RESPALDO ? MODELO_PRINCIPAL : MODELO_RESPALDO;
 }
 
+/**
+ * La cadena de motores que se prueba, en orden, hasta que uno conteste.
+ *
+ *   MiniMax M3  →  MiniMax M2.7  →  DeepSeek
+ *
+ * El segundo es el mismo proveedor con otro modelo: si M3 está saturado, lo más
+ * probable es que un hermano suyo conteste, y sigue siendo gratis. DeepSeek
+ * queda al final justamente porque es el único que se cobra: es el paracaídas
+ * del paracaídas, no la segunda opción.
+ *
+ * Se descartan los que no tengan clave para no gastar un intento al pedo.
+ */
+export function cadenaDeMotores(): ProviderConfig[] {
+  const env = getEnv();
+  const principal = resolveProvider(MODELO_PRINCIPAL);
+
+  const hermano: ProviderConfig = {
+    ...principal,
+    label: 'MiniMax M2.7',
+    model: env.AI_MINIMAX_FALLBACK_MODEL,
+  };
+
+  return [principal, hermano, resolveProvider(MODELO_RESPALDO)].filter(
+    (motor) => motor.apiKey.length > 0 && motor.model.length > 0,
+  );
+}
+
 export function isChoiceConfigured(choice: ModelChoice): boolean {
   return resolveProvider(choice).apiKey.length > 0;
 }

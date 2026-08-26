@@ -6,6 +6,7 @@ import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import {
   ProviderError,
   alternateChoice,
+  cadenaDeMotores,
   isChoiceConfigured,
   normalizarEleccion,
   readCompletionStream,
@@ -15,6 +16,7 @@ import {
   type ChatMessage,
   type ContentPart,
   type ModelChoice,
+  type ProviderConfig,
 } from '../../../lib/ai/provider.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import {
@@ -412,7 +414,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        */
       const forzar = pideCambio(message);
 
-      const pedirA = (usado: typeof provider, intentos: number) =>
+      const pedirA = (usado: ProviderConfig, intentos: number) =>
         requestCompletionStream({
           messages,
           provider: usado,
@@ -427,46 +429,52 @@ export const POST: APIRoute = async ({ request, locals }) => {
           },
         });
 
-      let upstream: Response;
+      /**
+       * Se recorre la cadena de motores hasta que uno conteste: M3, después su
+       * hermano M2.7, y recién al final DeepSeek, que es el único que se cobra.
+       * El docente no tiene que enterarse de que un proveedor está caído ni
+       * elegir otro a mano; se le avisa qué pasó y se sigue trabajando.
+       */
+      const motores = cadenaDeMotores();
+      let upstream: Response | null = null;
       let proveedorUsado = provider;
+      let ultimaFalla: unknown = null;
 
       try {
-        try {
-          upstream = await pedirA(provider, REINTENTOS_VISIBLES);
-        } catch (fallaPrincipal) {
-          const respaldo = resolveProvider(alternateChoice(chosenModel));
-          const abortado =
-            fallaPrincipal instanceof ProviderError && fallaPrincipal.status === 499;
+        for (const [indice, motor] of motores.entries()) {
+          try {
+            if (indice > 0) {
+              console.warn(
+                `[chat/stream] ${motores[indice - 1]!.label} no respondió a los ${transcurrido()}; se pasa a ${motor.label}`,
+              );
+              send({
+                type: 'notice',
+                message: `${motores[indice - 1]!.label} no respondió después de varios intentos. Sigo con ${motor.label}.`,
+              });
+            }
 
-          if (abortado || !isChoiceConfigured(respaldo.choice)) throw fallaPrincipal;
-
-          console.warn(
-            `[chat/stream] ${provider.label} agotó los reintentos a los ${transcurrido()}; se pasa a ${respaldo.label}`,
-          );
-          send({
-            type: 'notice',
-            message: `${provider.label} no respondió después de varios intentos. Sigo con ${respaldo.label}.`,
-          });
-
-          proveedorUsado = respaldo;
-          upstream = await pedirA(respaldo, REINTENTOS_VISIBLES);
+            upstream = await pedirA(motor, REINTENTOS_VISIBLES);
+            proveedorUsado = motor;
+            break;
+          } catch (falla) {
+            // Un abort es el docente tocando "Detener": no se busca otro motor.
+            if (falla instanceof ProviderError && falla.status === 499) throw falla;
+            ultimaFalla = falla;
+          }
         }
+
+        if (!upstream) throw ultimaFalla ?? new ProviderError('Ningún motor de IA respondió.');
+
         console.log(
           `[chat/stream] ${proveedorUsado.label} respondió cabeceras en ${transcurrido()}`,
         );
       } catch (error) {
-        console.error(`[chat/stream] el proveedor falló a los ${transcurrido()}:`, (error as Error).message);
-        const otro = alternateChoice(chosenModel);
-        const puedeCambiar =
-          (!(error instanceof ProviderError) || error.canFallback) && isChoiceConfigured(otro);
+        console.error(`[chat/stream] fallaron todos los motores a los ${transcurrido()}:`, (error as Error).message);
         const detalle = (error as Error).message;
 
-        send({
-          type: 'error',
-          message: detalle,
-          fallbackModel: puedeCambiar ? otro : undefined,
-          fallbackLabel: puedeCambiar ? resolveProvider(otro).label : undefined,
-        });
+        // Sin botón de "probar con otro": la cadena entera ya se recorrió, así
+        // que ofrecerlo sería mandarlo a repetir lo que acaba de fallar.
+        send({ type: 'error', message: detalle });
 
         // Se deja constancia en el hilo: si no, el último mensaje sigue siendo
         // el del docente y al recargar la página el editor se queda esperando

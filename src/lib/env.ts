@@ -56,6 +56,11 @@ const envSchema = z.object({
   AI_MINIMAX_API_KEY: z.string().default(''),
   AI_MINIMAX_BASE_URL: z.string().min(1).default('https://api.gmi-serving.com'),
   AI_MINIMAX_MODEL: z.string().min(1).default('MiniMaxAI/MiniMax-M3'),
+  /**
+   * Respaldo del principal, en el MISMO proveedor. Se prueba antes de tocar
+   * DeepSeek, que es el unico que se paga.
+   */
+  AI_MINIMAX_FALLBACK_MODEL: z.string().min(1).default('MiniMaxAI/MiniMax-M2.7'),
 
   /**
    * Tope de tokens de UNA respuesta. Alto a propósito: el contrato obliga a la
@@ -129,6 +134,7 @@ export function getEnv(): Env {
     AI_MINIMAX_API_KEY: read('AI_MINIMAX_API_KEY'),
     AI_MINIMAX_BASE_URL: read('AI_MINIMAX_BASE_URL'),
     AI_MINIMAX_MODEL: read('AI_MINIMAX_MODEL'),
+    AI_MINIMAX_FALLBACK_MODEL: read('AI_MINIMAX_FALLBACK_MODEL'),
     AI_ALPHA_MAX_TOKENS: read('AI_ALPHA_MAX_TOKENS') ?? read('AI_MAX_TOKENS'),
     AI_DEEPSEEK_MAX_TOKENS: read('AI_DEEPSEEK_MAX_TOKENS'),
     AI_MINIMAX_MAX_TOKENS: read('AI_MINIMAX_MAX_TOKENS'),
