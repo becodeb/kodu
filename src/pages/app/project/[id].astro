@@ -39,23 +39,9 @@ const messages = await prisma.chatMessage.findMany({
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
 
-// Qué motores ve este docente.
-//
-// Dos filtros encadenados:
-//  - que tengan clave: mostrar uno sin configurar es poner un botón que falla,
-//    con un error que el docente no puede resolver ni entender;
-//  - que DeepSeek sólo aparezca si un admin se lo habilitó. Es el único que se
-//    paga por token, así que no se ofrece de arriba: los principales son Alpha
-//    y MiniMax M3, que son gratuitos.
-const cuenta = await prisma.user.findUnique({
-  where: { id: user.id },
-  select: { deepseekEnabled: true },
-});
-const puedeDeepseek = cuenta?.deepseekEnabled === true;
-
-const modelosDisponibles = MODEL_CHOICES.filter(
-  (opcion) => isChoiceConfigured(opcion) && (opcion !== 'DEEPSEEK' || puedeDeepseek),
-);
+// Los motores que puede elegir un docente. Hoy es sólo MiniMax M3: DeepSeek
+// está bajo llave (entra solo como respaldo) y Alpha salió de servicio.
+const modelosDisponibles = MODEL_CHOICES.filter(isChoiceConfigured);
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide>

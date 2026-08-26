@@ -7,6 +7,7 @@ import {
   ProviderError,
   alternateChoice,
   isChoiceConfigured,
+  normalizarEleccion,
   readCompletionStream,
   requestCompletionStream,
   resolveProvider,
@@ -97,6 +98,9 @@ const MAX_CONTEXT_IMAGES = 1;
  */
 const HEARTBEAT_MS = 10_000;
 
+/** Cuántos intentos se le anuncian al docente (primer intento + reintentos). */
+const REINTENTOS_VISIBLES = 10;
+
 const encoder = new TextEncoder();
 
 function sseFrame(payload: Record<string, unknown>): Uint8Array {
@@ -179,29 +183,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
-  // El selector de modelo del panel izquierdo se persiste en el proyecto.
-  const pedido = model ?? project.selectedModel;
-
   /**
-   * DeepSeek se cobra por token, asi que no alcanza con esconderlo del selector:
-   * un recurso creado cuando estaba habilitado lo tiene guardado, y seguiria
-   * gastando por la puerta de atras. Si el docente ya no lo tiene habilitado, el
-   * turno se resuelve con Alpha y se avisa.
+   * El motor lo decide la plataforma, no el pedido.
+   *
+   * DeepSeek está bajo llave: se paga por token y sólo entra como respaldo
+   * automático cuando MiniMax agota sus reintentos. Por eso lo que llega en el
+   * body —o lo que quedó guardado en un proyecto viejo— se normaliza contra la
+   * lista de elegibles en vez de usarse tal cual.
    */
-  let chosenModel = pedido;
-  let degradado: string | null = null;
-
-  if (pedido === 'DEEPSEEK') {
-    const cuenta = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { deepseekEnabled: true },
-    });
-
-    if (cuenta?.deepseekEnabled !== true) {
-      chosenModel = 'ALPHA';
-      degradado = 'DeepSeek no está habilitado en tu cuenta, así que usé Alpha para este pedido.';
-    }
-  }
+  const chosenModel = normalizarEleccion(model ?? project.selectedModel);
 
   if (chosenModel !== project.selectedModel) {
     await prisma.project.update({
@@ -362,29 +352,59 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // Trazas con tiempos: cuando un turno se cae, lo primero que hace falta
       // saber es si tardó el proveedor en contestar o si se cortó a mitad del
       // stream. Sin esto, un 502 no dejaba ni una línea.
-      if (degradado) send({ type: 'notice', message: degradado });
-
       const arranque = Date.now();
       const transcurrido = () => `${((Date.now() - arranque) / 1000).toFixed(1)}s`;
       console.log(
         `[chat/stream] inicio proyecto=${project.id} modelo=${chosenModel} mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
       );
 
-      let upstream: Response;
-      try {
-        upstream = await requestCompletionStream({
+      /**
+       * Pide el turno, y si el principal no da más cae solo al respaldo.
+       *
+       * El docente no tiene por qué enterarse de que un proveedor está caído ni
+       * tener que elegir otro a mano: se avisa qué pasó y se sigue trabajando.
+       */
+      const pedirA = (usado: typeof provider, intentos: number) =>
+        requestCompletionStream({
           messages,
-          provider,
+          provider: usado,
           signal: request.signal,
           onReintento: (intento, esperaMs) => {
-            console.warn(`[chat/stream] ${provider.label} saturado, reintento ${intento} en ${esperaMs}ms`);
+            console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             send({
               type: 'notice',
-              message: `${provider.label} está saturado. Reintentando (${intento} de 3)…`,
+              message: `${usado.label} está saturado. Reintentando (${intento} de ${intentos})…`,
             });
           },
         });
-        console.log(`[chat/stream] proveedor respondió cabeceras en ${transcurrido()}`);
+
+      let upstream: Response;
+      let proveedorUsado = provider;
+
+      try {
+        try {
+          upstream = await pedirA(provider, REINTENTOS_VISIBLES);
+        } catch (fallaPrincipal) {
+          const respaldo = resolveProvider(alternateChoice(chosenModel));
+          const abortado =
+            fallaPrincipal instanceof ProviderError && fallaPrincipal.status === 499;
+
+          if (abortado || !isChoiceConfigured(respaldo.choice)) throw fallaPrincipal;
+
+          console.warn(
+            `[chat/stream] ${provider.label} agotó los reintentos a los ${transcurrido()}; se pasa a ${respaldo.label}`,
+          );
+          send({
+            type: 'notice',
+            message: `${provider.label} no respondió después de varios intentos. Sigo con ${respaldo.label}.`,
+          });
+
+          proveedorUsado = respaldo;
+          upstream = await pedirA(respaldo, REINTENTOS_VISIBLES);
+        }
+        console.log(
+          `[chat/stream] ${proveedorUsado.label} respondió cabeceras en ${transcurrido()}`,
+        );
       } catch (error) {
         console.error(`[chat/stream] el proveedor falló a los ${transcurrido()}:`, (error as Error).message);
         const otro = alternateChoice(chosenModel);
@@ -480,8 +500,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
         if (usage) {
           await recordUsage({
             userId: user.id,
-            provider: chosenModel,
-            model: provider.model,
+            provider: proveedorUsado.choice,
+            model: proveedorUsado.model,
             ...usage,
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }

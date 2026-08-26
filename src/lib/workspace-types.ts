@@ -2,31 +2,22 @@
 
 export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
-/** Lo que el docente ve de cada modelo al elegirlo. */
+/**
+ * Lo que el docente ve del motor.
+ *
+ * Hay uno solo: MiniMax M3. DeepSeek NO figura a propósito — está bajo llave y
+ * entra solo, como respaldo, cuando MiniMax no responde. Alpha salió de
+ * servicio cuando dejó de ser gratuito.
+ */
 export const MODELOS: Array<{
   value: ModelChoice;
   nombre: string;
   detalle: string;
-  /** Consume cupo pago: hay que avisarlo antes de que lo elija. */
-  conCupo: boolean;
 }> = [
-  {
-    value: 'ALPHA',
-    nombre: 'Alpha',
-    detalle: 'Gratis y sin límite. Entiende las imágenes que subas.',
-    conCupo: false,
-  },
-  {
-    value: 'DEEPSEEK',
-    nombre: 'DeepSeek',
-    detalle: 'Se paga por uso, así que tenés un cupo de tokens. No lee imágenes.',
-    conCupo: true,
-  },
   {
     value: 'MINIMAX',
     nombre: 'MiniMax M3',
-    detalle: 'Gratis, con contexto largo y soporte para las imágenes que subas.',
-    conCupo: false,
+    detalle: 'Contexto largo, entiende las imágenes que subas y trabaja sobre tu código.',
   },
 ];
 

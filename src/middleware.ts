@@ -16,7 +16,6 @@ const PROTECTED_API_PREFIXES = [
   '/api/chat',
   '/api/rules',
   '/api/uploads',
-  '/api/admin',
 ];
 const GUEST_ONLY_PATHS = ['/login', '/register'];
 

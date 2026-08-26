@@ -5,19 +5,41 @@ import { RESOURCE_TOOLS } from './tools.ts';
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
  * viven sólo acá (SPEC §1) y el navegador nunca las ve.
  *
- * Hay tres proveedores configurados y el docente elige cuál usa:
- *  - ALPHA    — el de todos los días, gratuito, sin cupo por usuario.
- *  - DEEPSEEK — se paga por token, así que tiene tope por usuario.
- *  - MINIMAX  — MiniMax M3 servido por GMI Cloud, gratuito y multimodal.
+ * El motor de trabajo es MINIMAX (MiniMax M3 por GMI Cloud): gratuito, con
+ * contexto largo y multimodal.
  *
- * Los tres hablan el dialecto OpenAI (`/chat/completions` con `stream: true`),
- * así que el parser de abajo sirve para cualquiera de ellos y para el que
- * venga después.
+ * DEEPSEEK queda BAJO LLAVE: no se ofrece en la interfaz y ningún docente puede
+ * elegirlo. Se usa solo, y únicamente, cuando MiniMax agota sus reintentos —
+ * es el paracaídas, no una opción. Se paga por token, así que abrirlo como
+ * opción es abrir la canilla.
+ *
+ * ALPHA quedó fuera de servicio (dejó de ser gratuito). El valor sigue en el
+ * enum porque hay recursos y consumo histórico que lo referencian, pero ya no
+ * se ofrece ni se resuelve: los proyectos que lo tenían se migraron a MiniMax.
+ *
+ * Todos hablan el dialecto OpenAI (`/chat/completions` con `stream: true`), así
+ * que el parser de abajo sirve para cualquiera y para el que venga después.
  */
 
 export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
-export const MODEL_CHOICES: ModelChoice[] = ['ALPHA', 'DEEPSEEK', 'MINIMAX'];
+/** Lo que un docente puede elegir. DeepSeek NO está: es sólo el respaldo. */
+export const MODEL_CHOICES: ModelChoice[] = ['MINIMAX'];
+
+/** El motor por defecto de toda la plataforma. */
+export const MODELO_PRINCIPAL: ModelChoice = 'MINIMAX';
+
+/** El respaldo automático, que nadie elige a mano. */
+export const MODELO_RESPALDO: ModelChoice = 'DEEPSEEK';
+
+/**
+ * Un docente sólo puede pedir lo que está en MODEL_CHOICES. Cualquier otra cosa
+ * —un proyecto viejo guardado con ALPHA, o alguien probando con DEEPSEEK en el
+ * body del pedido— cae al principal.
+ */
+export function normalizarEleccion(choice: ModelChoice | null | undefined): ModelChoice {
+  return choice && MODEL_CHOICES.includes(choice) ? choice : MODELO_PRINCIPAL;
+}
 
 export interface ProviderConfig {
   choice: ModelChoice;
@@ -61,22 +83,22 @@ export function resolveProvider(choice: ModelChoice): ProviderConfig {
     };
   }
 
+  // ALPHA ya no se sirve: cualquier cosa que no sea DeepSeek cae en MiniMax.
   return {
-    choice: 'ALPHA',
-    label: 'Alpha',
-    apiKey: env.AI_ALPHA_API_KEY,
-    baseUrl: env.AI_ALPHA_BASE_URL,
-    model: env.AI_ALPHA_MODEL,
-    maxTokens: env.AI_ALPHA_MAX_TOKENS,
-    userTokenLimit: env.AI_ALPHA_USER_TOKEN_LIMIT,
-    maxInputChars: env.AI_ALPHA_MAX_INPUT_CHARS,
+    choice: 'MINIMAX',
+    label: 'MiniMax M3',
+    apiKey: env.AI_MINIMAX_API_KEY,
+    baseUrl: env.AI_MINIMAX_BASE_URL,
+    model: env.AI_MINIMAX_MODEL,
+    maxTokens: env.AI_MINIMAX_MAX_TOKENS,
+    userTokenLimit: env.AI_MINIMAX_USER_TOKEN_LIMIT,
+    maxInputChars: env.AI_MINIMAX_MAX_INPUT_CHARS,
   };
 }
 
-/** El proveedor alternativo preferido cuando el elegido falla. */
+/** El respaldo cuando el motor principal no da más. */
 export function alternateChoice(choice: ModelChoice): ModelChoice {
-  if (choice !== 'ALPHA') return 'ALPHA';
-  return isChoiceConfigured('MINIMAX') ? 'MINIMAX' : 'DEEPSEEK';
+  return choice === MODELO_RESPALDO ? MODELO_PRINCIPAL : MODELO_RESPALDO;
 }
 
 export function isChoiceConfigured(choice: ModelChoice): boolean {
@@ -97,7 +119,8 @@ export interface ChatMessage {
 }
 
 export function supportsVision(choice: ModelChoice): boolean {
-  // Alpha y MiniMax M3 son multimodales. DeepSeek sigue recibiendo sólo texto.
+  // MiniMax M3 lee imágenes. DeepSeek es sólo texto: mandarle partes
+  // `image_url` hace que la API conteste 400 y se caiga el turno.
   return choice !== 'DEEPSEEK' && getEnv().AI_VISION;
 }
 
@@ -122,8 +145,14 @@ export class ProviderError extends Error {
  * texto de al lado pasan sin problema. El propio proveedor contesta "retry
  * shortly", asi que reintentar es exactamente lo que corresponde — y es mucho
  * mejor que hacerle reescribir el pedido al docente.
+ *
+ * Son 10 intentos en total (el primero más nueve esperas, ~102 s en el peor
+ * caso). Recién cuando se agotan se toca el respaldo pago: la idea es que
+ * DeepSeek se use lo menos posible, no que entre al primer tropiezo.
  */
-const REINTENTOS = [4_000, 12_000, 25_000];
+const REINTENTOS = [
+  2_000, 4_000, 6_000, 8_000, 10_000, 12_000, 15_000, 20_000, 25_000,
+];
 
 function esperar(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

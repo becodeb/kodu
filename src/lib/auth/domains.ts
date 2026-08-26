@@ -14,15 +14,16 @@ export function emailDomain(email: string): string {
  *
  * Acepta coincidencia exacta (`rededucativa.edu.ar`) y comodin de subdominio
  * (`*.edu.ar` habilita `escuela12.edu.ar`).
- * Si la lista esta vacia, no se permite ningun registro: preferimos fallar
- * cerrado antes que abrir la plataforma por un `.env` incompleto.
+ * Si la lista esta VACIA, se acepta cualquier dominio. Es una decision tomada:
+ * la plataforma se abrio a docentes de cualquier correo. Para volver a
+ * restringirla alcanza con poner dominios en ALLOWED_EMAIL_DOMAINS.
  */
 export function isAllowedDomain(email: string): boolean {
   const domain = emailDomain(email);
   if (!domain) return false;
 
   const allowed = getAllowedDomains();
-  if (allowed.length === 0) return false;
+  if (allowed.length === 0) return true;
 
   return allowed.some((pattern) => {
     if (pattern.startsWith('*.')) {
@@ -36,7 +37,7 @@ export function isAllowedDomain(email: string): boolean {
 /** Texto legible con los dominios habilitados, para mostrar en los formularios. */
 export function allowedDomainsLabel(): string {
   const allowed = getAllowedDomains();
-  if (allowed.length === 0) return 'ningún dominio configurado';
+  if (allowed.length === 0) return 'cualquier correo';
   return allowed.map((domain) => `@${domain}`).join(', ');
 }
 
