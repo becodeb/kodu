@@ -87,6 +87,13 @@ const envSchema = z.object({
   AI_DEEPSEEK_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(24_000),
   AI_MINIMAX_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(400_000),
 
+  /**
+   * Google Sign-In. Vacias = el boton no se muestra y solo queda el ingreso con
+   * correo y contrasena, asi un entorno sin configurar no muestra un boton roto.
+   */
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+
   /** Si los modelos multimodales reciben adjuntos (formato OpenAI `image_url`). */
   AI_VISION: z
     .enum(['true', 'false'])
@@ -132,6 +139,8 @@ export function getEnv(): Env {
     AI_DEEPSEEK_MAX_INPUT_CHARS: read('AI_DEEPSEEK_MAX_INPUT_CHARS'),
     AI_MINIMAX_MAX_INPUT_CHARS: read('AI_MINIMAX_MAX_INPUT_CHARS'),
     AI_VISION: read('AI_VISION'),
+    GOOGLE_CLIENT_ID: read('GOOGLE_CLIENT_ID'),
+    GOOGLE_CLIENT_SECRET: read('GOOGLE_CLIENT_SECRET'),
   });
 
   if (!parsed.success) {
@@ -143,6 +152,12 @@ export function getEnv(): Env {
 
   cached = parsed.data;
   return cached;
+}
+
+/** Google Sign-In queda activo solo si estan las dos credenciales. */
+export function isGoogleEnabled(): boolean {
+  const env = getEnv();
+  return env.GOOGLE_CLIENT_ID.length > 0 && env.GOOGLE_CLIENT_SECRET.length > 0;
 }
 
 export function isProduction(): boolean {

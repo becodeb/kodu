@@ -30,7 +30,10 @@ enum ModelChoice {
 model User {
   id           String       @id @default(uuid())
   email        String       @unique
-  passwordHash String
+  /// Opcional: quien entra con Google no tiene contrasena en Kodu.
+  passwordHash String?
+  /// `sub` de Google. Identifica la cuenta aunque cambie el correo visible.
+  googleId     String?      @unique
   name         String
   role         Role         @default(DOCENTE)
   /// DeepSeek se paga por token: queda oculto salvo que un admin lo habilite

@@ -33,6 +33,15 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   if (!user) {
     return credencialesInvalidas;
   }
+
+  // Una cuenta creada con Google no tiene contraseña. Acá SÍ conviene ser
+  // específico: el docente existe y está intentando entrar por la puerta
+  // equivocada, así que decirle "email o contraseña incorrectos" lo manda a
+  // dar vueltas sin salida. No filtra nada que Google no confirme igual.
+  if (!user.passwordHash) {
+    return fail('Esta cuenta entra con Google. Usá el botón "Continuar con Google".', 409);
+  }
+
   if (!(await verifyPassword(password, user.passwordHash))) {
     return credencialesInvalidas;
   }

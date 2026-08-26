@@ -2,10 +2,23 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
 import { allowedDomainsLabel } from '../lib/auth/domains.ts';
+import GoogleButton from '../components/GoogleButton.astro';
+import { isGoogleEnabled } from '../lib/env.ts';
 
 const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
 // Solo aceptamos redirecciones internas: evita open redirect via ?next=https://...
 const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
+
+const ERRORES: Record<string, string> = {
+  'google-cancelado': 'Cancelaste el ingreso con Google.',
+  'google-state': 'El ingreso con Google expiró o no se pudo verificar. Probá de nuevo.',
+  'google-sin-verificar': 'Esa cuenta de Google todavía no tiene el correo verificado.',
+  'google-no-configurado': 'El ingreso con Google no está disponible en este momento.',
+  dominio: 'Ese correo no está habilitado para entrar a Kodu.',
+  google: 'No pudimos completar el ingreso con Google. Probá de nuevo.',
+};
+const errorGoogle = ERRORES[Astro.url.searchParams.get('error') ?? ''];
+const googleActivo = isGoogleEnabled();
 ---
 
 <BaseLayout title="Ingresar">
@@ -18,8 +31,26 @@ const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//')
         height="252"
         class="mb-5 h-10 w-auto"
       />
+      {errorGoogle && (
+        <p role="alert" class="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          {errorGoogle}
+        </p>
+      )}
+
       <h1 class="font-display text-2xl font-bold text-ink-900">Ingresar</h1>
       <p class="mt-1 mb-6 text-sm text-ink-500">Accedé con tu cuenta institucional.</p>
+
+
+      {googleActivo && (
+        <>
+          <GoogleButton />
+          <div class="my-5 flex items-center gap-3">
+            <span class="h-px flex-1 bg-linea"></span>
+            <span class="text-xs text-ink-500">o con tu correo</span>
+            <span class="h-px flex-1 bg-linea"></span>
+          </div>
+        </>
+      )}
 
       <AuthForm client:load mode="login" allowedDomains={allowedDomainsLabel()} nextUrl={safeNext} />
 
