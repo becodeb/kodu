@@ -7,6 +7,7 @@ import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
+import { pideCambio } from '../src/pages/api/chat/stream.ts';
 
 /**
  * Pruebas unitarias sin test runner (no hay uno en este repo — ver context.md).
@@ -232,6 +233,62 @@ await prueba('nivelDeConsumo: los tres cortes, con los bordes exactos', () => {
   assert.equal(nivelDeConsumo(CONSUMO_ALTO - 1), 'medio');
   assert.equal(nivelDeConsumo(CONSUMO_ALTO), 'alto', 'el corte es inclusivo');
   assert.equal(nivelDeConsumo(CONSUMO_ALTO * 10), 'alto');
+});
+
+// ─────────────────────────────────────────────────────────────
+// pideCambio: consulta vs. pedido de cambio
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Existe por un defecto concreto: los patrones terminaban en `\b`, que en
+ * JavaScript sólo considera "palabra" a [A-Za-z0-9_]. Una vocal con tilde
+ * queda afuera, así que "¿Qué hace este recurso?" NO cerraba la alternativa
+ * `qu[eé]`, caía al default ("es un pedido") y la IA reescribía el recurso
+ * entero cuando la docente sólo había preguntado. Andaba sin tilde y fallaba
+ * con tilde, en una app enteramente en castellano.
+ *
+ * Las dos direcciones importan y por eso se prueban las dos: confundir un
+ * pedido con una consulta hace que un cambio pedido no se aplique.
+ */
+await prueba('pideCambio: una pregunta con tilde NO dispara una reescritura', () => {
+  for (const consulta of [
+    '¿Qué hace este recurso?',
+    '¿Por qué no anda el botón?',
+    '¿Para qué sirve esto?',
+    '¿Cómo funciona el quiz?',
+    '¿Cuándo se corrige?',
+    '¿Quién lo puede ver?',
+    '¿Cuál es el límite?',
+    '¿Cuántos intentos permite?',
+    '¿Dónde se guarda?',
+    '¿De qué color es el fondo?',
+  ]) {
+    assert.equal(pideCambio(consulta), false, `debería leerse como consulta: ${consulta}`);
+  }
+});
+
+await prueba('pideCambio: sin tilde sigue andando, como se escribe al apuro', () => {
+  assert.equal(pideCambio('que hace este recurso?'), false);
+  assert.equal(pideCambio('como funciona el quiz?'), false);
+});
+
+await prueba('pideCambio: un pedido SIGUE siendo un pedido (la otra dirección)', () => {
+  for (const pedido of [
+    'cambiá el color a rojo',
+    'Hacé que el botón sea más grande',
+    'agregá una pregunta más',
+    'poné el título en mayúsculas',
+    'sacá la imagen de arriba',
+    'corregí el error de ortografía',
+    'quiero que tenga sonido',
+    'mejoralo un poco',
+    // Lleva signo de pregunta pero es un pedido: el caso que el comentario
+    // de `stream.ts` marca como difícil desde antes de este arreglo.
+    '¿podés hacerlo rojo?',
+    '¿me lo hacés en dos columnas?',
+  ]) {
+    assert.equal(pideCambio(pedido), true, `debería leerse como pedido: ${pedido}`);
+  }
 });
 
 await prisma.$disconnect();

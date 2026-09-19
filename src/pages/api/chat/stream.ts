@@ -130,14 +130,32 @@ const REINTENTOS_VISIBLES = 10;
  * rojo?" tiene signo pero es un pedido, y "cambiá el color" no lleva signo pero
  * también lo es.
  */
+/*
+ * POR QUE estos dos patrones NO usan `\b`:
+ *
+ * `\b` de JavaScript define "palabra" como [A-Za-z0-9_], y ahi no entran las
+ * vocales con tilde ni la ñ. Entonces, en "¿Qué hace este recurso?", despues
+ * de la "é" viene un espacio: dos caracteres que para `\b` son "no palabra",
+ * o sea SIN frontera, y la alternativa `qu[eé]` no cerraba. La consulta caia
+ * al default de `pideCambio` ("es un pedido") y la IA reescribia el recurso
+ * entero cuando la docente solo habia preguntado. Rompia justo con "qué",
+ * "por qué" y "para qué" — los tres arranques de pregunta mas comunes — y
+ * andaba si el mensaje venia SIN tilde, que es exactamente al reves de lo
+ * deseable en una app en castellano.
+ *
+ * El reemplazo es una frontera de palabra Unicode: "no puede seguir una letra,
+ * un numero ni un guion bajo", con \p{L} que si abarca acentos y ñ. Necesita
+ * la bandera `u`.
+ */
 const INTERROGATIVA =
-  /^\s*[¿]?\s*(de |a |en |con |para |por |sobre )?(qu[eé]|c[oó]mo|cu[aá]l(es)?|cu[aá]nt[oa]s?|d[oó]nde|qui[eé]n(es)?|por qu[eé]|para qu[eé]|cu[aá]ndo|se puede|hay|existe|sirve|anda|funciona)\b/i;
+  /^\s*[¿]?\s*(de |a |en |con |para |por |sobre )?(qu[eé]|c[oó]mo|cu[aá]l(es)?|cu[aá]nt[oa]s?|d[oó]nde|qui[eé]n(es)?|por qu[eé]|para qu[eé]|cu[aá]ndo|se puede|hay|existe|sirve|anda|funciona)(?![\p{L}\p{N}_])/iu;
 
 /** Ordenes claras. Se aceptan con y sin tilde, que es como se escribe al apuro. */
 const IMPERATIVO =
-  /\b(hac[eé]|hacelo|hacela|pon[eé]|ponele|ponelo|agreg[aá]|agregale|añad[ií]|sac[aá]|sacale|quit[aá]|borr[aá]|elimin[aá]|cambi[aá]|cambiale|cambialo|modific[aá]|correg[ií]|corregilo|arregl[aá]|arreglalo|mejor[aá]|mejoralo|rehac[eé]|rehacelo|actualiz[aá]|mov[eé]|ajust[aá]|convert[ií]|transform[aá]|sum[aá]|us[aá]|aplic[aá]|arm[aá]|cre[aá]|gener[aá]|escrib[ií]|dej[aá]|quiero|necesito|dale|segu[ií]|continu[aá])\b/i;
+  /(?<![\p{L}\p{N}_])(hac[eé]|hacelo|hacela|pon[eé]|ponele|ponelo|agreg[aá]|agregale|añad[ií]|sac[aá]|sacale|quit[aá]|borr[aá]|elimin[aá]|cambi[aá]|cambiale|cambialo|modific[aá]|correg[ií]|corregilo|arregl[aá]|arreglalo|mejor[aá]|mejoralo|rehac[eé]|rehacelo|actualiz[aá]|mov[eé]|ajust[aá]|convert[ií]|transform[aá]|sum[aá]|us[aá]|aplic[aá]|arm[aá]|cre[aá]|gener[aá]|escrib[ií]|dej[aá]|quiero|necesito|dale|segu[ií]|continu[aá])(?![\p{L}\p{N}_])/iu;
 
-function pideCambio(mensaje: string): boolean {
+/** Exportada sólo para `e2e/unidad.ts`: nadie más fuera de este módulo la usa. */
+export function pideCambio(mensaje: string): boolean {
   const texto = mensaje.trim();
 
   // El orden no es casual: se descarta la consulta ANTES de buscar ordenes.
