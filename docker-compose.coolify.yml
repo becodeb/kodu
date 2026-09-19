@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KoduEdu — despliegue en Coolify como UN SOLO recurso
+#
+# Reemplaza el par "aplicación Dockerfile + base administrada" por un único
+# recurso de tipo Docker Compose. Coolify se encarga de:
+#   · crear la red privada del recurso y conectarle el proxy;
+#   · generar las etiquetas de Traefik a partir del `expose` del servicio `app`;
+#   · inyectar `env_file: [.env]` en TODOS los servicios con las variables
+#     cargadas en el panel del recurso.
+#
+# Por eso acá no hay secretos ni puertos publicados al host: las variables
+# viven en Coolify y el único ingreso es el proxy.
+#
+#   Build pack:               Docker Compose
+#   Compose file location:    /docker-compose.coolify.yml
+#   Dominio (servicio `app`): https://kodu.becode.com.ar
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: $POSTGRES_USER
+      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
+      POSTGRES_DB: $POSTGRES_DB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # $$ escapa la interpolación de compose: lo expande la shell del contenedor.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      # Apunta al servicio `db` por su nombre dentro de la red del recurso.
+      DATABASE_URL: $DATABASE_URL
+    # `expose` no publica al host: solo le dice a Coolify a qué puerto enrutar.
+    expose:
+      - "3000"
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      # curl viene instalado en el stage `base` del Dockerfile.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # El entrypoint corre `prisma migrate deploy` antes de servir.
+      start_period: 90s
+
+volumes:
+  # Los dos volúmenes son `external` A PROPÓSITO: ya existen en el servidor y
+  # contienen los datos de producción de los recursos anteriores. Declararlos
+  # externos hace que el despliegue falle en vez de arrancar con una base vacía
+  # si alguna vez no estuvieran. NO renombrar sin migrar los datos primero.
+  pgdata:
+    # Volumen de la base administrada `kodu-db` (uuid wzz52stf5ofry13ajzdl24nm).
+    name: postgres-data-wzz52stf5ofry13ajzdl24nm
+    external: true
+  uploads:
+    # Volumen de subidas de la aplicación `kodu` (uuid svs3pf21ca3h9mrx8h8lnkeg).
+    name: svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads
+    external: true
