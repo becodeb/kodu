@@ -4,10 +4,9 @@ import AiStatus from './AiStatus.tsx';
 import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
 import { STARTERS, type Starter } from './starters.ts';
-import { MODELOS } from '../../lib/workspace-types.ts';
 import type {
   AiPhase,
-  ModelChoice,
+  MotorPublico,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceThread,
@@ -28,9 +27,12 @@ interface ChatPanelProps {
   /** Nombre del otro proveedor cuando el elegido falló y se puede redirigir. */
   fallbackLabel: string | null;
   onUseFallback: () => void;
-  model: ModelChoice;
-  modelosDisponibles: ModelChoice[];
-  onModelChange: (model: ModelChoice) => void;
+  /** Llega cuando la demo agota su tope (M7): un link real a /register. */
+  registerUrl: string | null;
+  /** El `id` del `AiModel` vigente. */
+  model: string;
+  motoresDisponibles: MotorPublico[];
+  onModelChange: (modelId: string) => void;
   threads: WorkspaceThread[];
   activeThreadId: string;
   onThreadChange: (threadId: string) => void;
@@ -211,25 +213,25 @@ export default function ChatPanel(props: ChatPanelProps) {
           <legend className="sr-only">Modelo de IA</legend>
 
           <div className="flex rounded-lg bg-sutil p-0.5">
-            {MODELOS.filter((opcion) => props.modelosDisponibles.includes(opcion.value)).map((opcion) => (
+            {props.motoresDisponibles.map((motor) => (
               <button
-                key={opcion.value}
+                key={motor.id}
                 type="button"
-                aria-pressed={props.model === opcion.value}
-                onClick={() => props.onModelChange(opcion.value)}
+                aria-pressed={props.model === motor.id}
+                onClick={() => props.onModelChange(motor.id)}
                 className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                  props.model === opcion.value
+                  props.model === motor.id
                     ? 'bg-superficie text-ink-900 shadow-sm'
                     : 'text-ink-500 hover:text-ink-700'
                 }`}
               >
-                {opcion.nombre}
+                {motor.displayName}
               </button>
             ))}
           </div>
 
           <p className="text-[0.7rem] leading-snug text-ink-500">
-            {MODELOS.find((opcion) => opcion.value === props.model)?.detalle}
+            {props.motoresDisponibles.find((motor) => motor.id === props.model)?.description}
           </p>
         </fieldset>
       </header>
@@ -269,23 +271,29 @@ export default function ChatPanel(props: ChatPanelProps) {
         )}
 
         {props.messages.map((message) => (
-          <article
-            key={message.id}
-            className={
-              message.role === 'user'
-                ? 'ml-6 rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                : 'mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
-            }
-          >
-            {renderRich(message.content)}
-            {message.attachments.length > 0 && (
-              <ul className="mt-2 space-y-1 text-xs opacity-80">
-                {message.attachments.map((url) => (
-                  <li key={url}>{url.split('/').pop()}</li>
-                ))}
-              </ul>
+          <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
+            {/* M8 (design.md §7): marca durable de que este turno lo escribió un
+                admin, no el docente dueño del recurso. Ausente en el caso normal. */}
+            {message.authorName && (
+              <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
             )}
-          </article>
+            <article
+              className={
+                message.role === 'user'
+                  ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
+                  : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
+              }
+            >
+              {renderRich(message.content)}
+              {message.attachments.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs opacity-80">
+                  {message.attachments.map((url) => (
+                    <li key={url}>{url.split('/').pop()}</li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          </div>
         ))}
 
         {/* La burbuja aparece recién cuando hay algo que leer. Mientras tanto el
@@ -317,6 +325,14 @@ export default function ChatPanel(props: ChatPanelProps) {
                 >
                   Probar con {props.fallbackLabel}
                 </button>
+              )}
+              {props.registerUrl && (
+                <a
+                  href={props.registerUrl}
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
+                >
+                  Creá tu cuenta
+                </a>
               )}
             </div>
           </div>

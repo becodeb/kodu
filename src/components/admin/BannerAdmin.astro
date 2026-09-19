@@ -1,0 +1,33 @@
+---
+/**
+ * Tira de "estás actuando en un recurso ajeno" (M8, design.md §7 — "The
+ * admin-acting banner").
+ *
+ * A propósito NO es una advertencia (nunca rojo/ámbar): el admin está
+ * haciendo algo permitido, y pintarlo como una alarma entrena a la gente a
+ * ignorar las alarmas. Vive en el flujo del documento, no flotando — empuja
+ * al editor hacia abajo en vez de taparlo, así nada queda escondido detrás.
+ */
+
+interface Props {
+  /** Nombre del docente dueño del recurso. */
+  ownerName: string;
+  /** A dónde vuelve el admin — la ficha de ESE docente en /admin/usuarios. */
+  backHref: string;
+}
+
+const { ownerName, backHref } = Astro.props;
+---
+
+<div
+  role="status"
+  class="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-brand-300 bg-brand-50 px-4 py-2.5 text-sm text-brand-700"
+>
+  <p>
+    Estás trabajando en un recurso de <strong class="font-semibold">{ownerName}</strong>. Todo lo
+    que cambies lo va a ver esa persona.
+  </p>
+  <a href={backHref} class="shrink-0 font-semibold whitespace-nowrap hover:underline">
+    Volver al panel →
+  </a>
+</div>

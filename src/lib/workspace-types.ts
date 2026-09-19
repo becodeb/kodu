@@ -1,25 +1,17 @@
 /** Tipos que comparten la página Astro del editor y las islas de React. */
 
-export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
-
 /**
- * Lo que el docente ve del motor.
- *
- * Hay uno solo: MiniMax M3. DeepSeek NO figura a propósito — está bajo llave y
- * entra solo, como respaldo, cuando MiniMax no responde. Alpha salió de
- * servicio cuando dejó de ser gratuito.
+ * Lo que el docente ve de un motor en el selector: sin `provider`/`providerModel`
+ * (identificadores internos), sin claves, sin precios. Lo produce
+ * `motoresParaDocente()` en `src/lib/ai/catalogo.ts`, ya en el orden que
+ * configuró un admin.
  */
-export const MODELOS: Array<{
-  value: ModelChoice;
-  nombre: string;
-  detalle: string;
-}> = [
-  {
-    value: 'MINIMAX',
-    nombre: 'MiniMax M3',
-    detalle: 'Contexto largo, entiende las imágenes que subas y trabaja sobre tu código.',
-  },
-];
+export interface MotorPublico {
+  id: string;
+  displayName: string;
+  description: string | null;
+  supportsVision: boolean;
+}
 
 export interface WorkspaceProject {
   id: string;
@@ -27,7 +19,8 @@ export interface WorkspaceProject {
   description: string | null;
   slug: string;
   currentHtml: string;
-  selectedModel: ModelChoice;
+  /** El `id` del `AiModel` vigente para este proyecto (nunca el enum viejo). */
+  aiModelId: string;
   isInGallery: boolean;
   screenshotUrl: string | null;
 }
@@ -44,6 +37,12 @@ export interface WorkspaceMessage {
   attachments: string[];
   /** Epoch ms. Permite mostrar hace cuánto espera un turno que sigue corriendo. */
   createdAt?: number;
+  /**
+   * Nombre del admin que escribió este turno, cuando NO fue el dueño del
+   * recurso (M8, design.md §7). `null`/ausente en el caso normal — el
+   * dueño escribiendo su propio recurso nunca lleva esta marca.
+   */
+  authorName?: string | null;
 }
 
 export interface WorkspaceAsset {

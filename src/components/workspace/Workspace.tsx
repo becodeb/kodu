@@ -5,7 +5,7 @@ import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import type {
   AiPhase,
-  ModelChoice,
+  MotorPublico,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceProject,
@@ -21,8 +21,16 @@ interface WorkspaceProps {
   siteUrl: string;
   /** Nombre del docente, para previsualizar la tarjeta de la galería. */
   authorName: string;
-  /** Motores con clave cargada; el resto no se ofrece. */
-  modelosDisponibles: ModelChoice[];
+  /** Motores habilitados y elegibles por un docente, ya en orden de catálogo. */
+  motoresDisponibles: MotorPublico[];
+  /**
+   * Aviso quieto para mostrar una sola vez al abrir la página (por ahora,
+   * sólo el repunteo de motor apagado — spec `ai-model-catalog`,
+   * "Fallback when a project's model is disabled"). `null` cuando no hay
+   * nada que avisar. Reusa el mismo `flashNotice` que "Guardado" o los
+   * avisos del chat: no es un modal ni una alarma.
+   */
+  initialNotice: string | null;
 }
 
 /**
@@ -40,7 +48,7 @@ export default function Workspace(props: WorkspaceProps) {
   const [description, setDescription] = useState(props.project.description ?? '');
   const [isInGallery, setIsInGallery] = useState(props.project.isInGallery);
   const [screenshotUrl, setScreenshotUrl] = useState(props.project.screenshotUrl);
-  const [model, setModel] = useState<ModelChoice>(props.project.selectedModel);
+  const [model, setModel] = useState<string>(props.project.aiModelId);
 
   const [threads, setThreads] = useState(props.threads);
   const [activeThreadId, setActiveThreadId] = useState(props.activeThreadId);
@@ -93,8 +101,10 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
 
-  /** Otro proveedor sugerido cuando el elegido falló. */
-  const [fallback, setFallback] = useState<{ model: ModelChoice; label: string } | null>(null);
+  /** Otro motor sugerido cuando el elegido falló. */
+  const [fallback, setFallback] = useState<{ model: string; label: string } | null>(null);
+  /** Llega cuando la demo agota su tope (M7): un link real, no sólo texto. */
+  const [registerUrl, setRegisterUrl] = useState<string | null>(null);
 
   /**
    * La ficha se pide al abrir un recurso recién creado: título y descripción
@@ -108,6 +118,18 @@ export default function Workspace(props: WorkspaceProps) {
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice(null), 2_500);
+  }, []);
+
+  /**
+   * El aviso de repunteo de motor (o cualquier otro aviso de "una sola vez al
+   * abrir") lo calcula el servidor en el frontmatter de la página, porque ahí
+   * es donde se sabe si `aiModelId` cambió. Acá sólo se dispara una vez al
+   * montar — no en cada cambio de `props`, porque la página no vuelve a
+   * evaluar el frontmatter sin una recarga completa.
+   */
+  useEffect(() => {
+    if (props.initialNotice) flashNotice(props.initialNotice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const patchProject = useCallback(
@@ -272,6 +294,7 @@ export default function Workspace(props: WorkspaceProps) {
     setError(null);
     setFailedMessage(null);
     setFallback(null);
+    setRegisterUrl(null);
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -334,6 +357,7 @@ export default function Workspace(props: WorkspaceProps) {
           if (event.fallbackModel && event.fallbackLabel) {
             setFallback({ model: event.fallbackModel, label: event.fallbackLabel });
           }
+          if (event.registerUrl) setRegisterUrl(event.registerUrl);
         } else if (event.type === 'done') {
           setMessages((current) => [
             ...current,
@@ -522,21 +546,22 @@ export default function Workspace(props: WorkspaceProps) {
           if (failedMessage) void handleSend(failedMessage, true);
         }}
         fallbackLabel={fallback && !isStreaming ? fallback.label : null}
+        registerUrl={registerUrl && !isStreaming ? registerUrl : null}
         onUseFallback={() => {
           if (!fallback || !failedMessage) return;
           // Se cambia el modelo del proyecto Y se reintenta: si sólo se cambiara
           // el selector, el docente tendría que volver a mandar el mensaje.
           setModel(fallback.model);
-          void patchProject({ selectedModel: fallback.model }, true);
+          void patchProject({ aiModelId: fallback.model }, true);
           const pedido = failedMessage;
           setFallback(null);
           void handleSend(pedido, true);
         }}
         model={model}
-        modelosDisponibles={props.modelosDisponibles}
+        motoresDisponibles={props.motoresDisponibles}
         onModelChange={(value) => {
           setModel(value);
-          void patchProject({ selectedModel: value }, true);
+          void patchProject({ aiModelId: value }, true);
         }}
         threads={threads}
         activeThreadId={activeThreadId}

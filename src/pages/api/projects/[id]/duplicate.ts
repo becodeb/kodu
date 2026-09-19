@@ -9,7 +9,7 @@ import { fail, ok } from '../../../../lib/http.ts';
 export const POST: APIRoute = async ({ params, locals }) => {
   const user = locals.user!;
 
-  const copy = await duplicateProject(params.id!, user.id);
+  const copy = await duplicateProject(params.id!, user.id, user.isDemo);
   if (!copy) return fail('Ese recurso no está publicado en la galería.', 404);
 
   return ok({

@@ -1,5 +1,3 @@
-import type { ModelChoice } from '../workspace-types.ts';
-
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
  * el navegador manda la cookie de sesión y el header Origin que Astro exige
@@ -62,8 +60,11 @@ export type StreamEvent =
   /** Algo que el docente tiene que saber pero que no cortó el turno. */
   | { type: 'notice'; message: string }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
-  /** `fallbackModel` llega cuando el proveedor elegido falló pero el otro sirve. */
-  | { type: 'error'; message: string; fallbackModel?: ModelChoice; fallbackLabel?: string };
+  /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
+   *  falló pero otro de la cadena tiene lugar para el pedido.
+   *  `registerUrl` llega cuando la cuenta de demo agotó su tope (M7): nunca
+   *  un error mudo, siempre con una salida real. */
+  | { type: 'error'; message: string; fallbackModel?: string; fallbackLabel?: string; registerUrl?: string };
 
 /**
  * Consume el SSE de /api/chat/stream.
@@ -75,7 +76,8 @@ export async function* streamChat(payload: {
   projectId: string;
   threadId: string;
   message: string;
-  model?: ModelChoice;
+  /** El `id` de un `AiModel`. */
+  model?: string;
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
@@ -92,8 +94,9 @@ export async function* streamChat(payload: {
     // un mensaje genérico que no ayudaba a nadie a entender qué pasó.
     const error = (await response.json().catch(() => null)) as {
       error?: string;
-      fallbackModel?: ModelChoice;
+      fallbackModel?: string;
       fallbackLabel?: string;
+      registerUrl?: string;
     } | null;
     const detalle =
       error?.error ??
@@ -107,6 +110,7 @@ export async function* streamChat(payload: {
       message: detalle,
       fallbackModel: error?.fallbackModel,
       fallbackLabel: error?.fallbackLabel,
+      registerUrl: error?.registerUrl,
     };
     return;
   }

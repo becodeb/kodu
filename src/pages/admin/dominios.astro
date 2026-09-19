@@ -1,0 +1,13 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import DominiosPanel from '../../components/admin/DominiosPanel.tsx';
+import { listarDominiosAdmin } from '../../lib/admin/dominios.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const dominios = await listarDominiosAdmin();
+---
+
+<AdminLayout>
+  <DominiosPanel client:load initialDominios={dominios} />
+</AdminLayout>
+

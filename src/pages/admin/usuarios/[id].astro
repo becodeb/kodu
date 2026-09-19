@@ -1,0 +1,132 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import GraficoColumnas from '../../../components/admin/GraficoColumnas.tsx';
+import GraficoBarras from '../../../components/admin/GraficoBarras.tsx';
+import { prisma } from '../../../lib/db.ts';
+import { obtenerUsuarioAdmin } from '../../../lib/admin/usuarios.ts';
+import { consumoDiarioDeUsuario, consumoPorUsuario } from '../../../lib/ai/usage.ts';
+import { formatearCostoAdminUsd } from '../../../lib/format/costo.ts';
+import { formatearTokensCompacto } from '../../../lib/format/tokens.ts';
+import { haceTiempo } from '../../../lib/format/fecha.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const usuario = await obtenerUsuarioAdmin(Astro.params.id!);
+if (!usuario) return Astro.redirect('/admin/usuarios', 302);
+
+const [periodo, porModeloRaw, proyectos] = await Promise.all([
+  consumoDiarioDeUsuario(usuario.id, 30),
+  consumoPorUsuario(usuario.id),
+  prisma.project.findMany({
+    where: { userId: usuario.id },
+    orderBy: { updatedAt: 'desc' },
+    select: { id: true, title: true, updatedAt: true },
+  }),
+]);
+
+/**
+ * "Todavía no usó la IA" es sobre TODA la historia del docente, no sólo la
+ * ventana de 30 días del gráfico de columnas (design.md): alguien que usó
+ * la IA hace 40 días y no volvió no "todavía no usó la IA", así que el
+ * corte usa el total de `usuario.tokens` (all-time), no `periodo.tokens`.
+ */
+const nuncaUsoLaIa = usuario.tokens === 0;
+
+const subtituloColumnas = (() => {
+  const tokensTexto = `${formatearTokensCompacto(periodo.tokens)} tokens`;
+  if (periodo.costUsd !== null && periodo.costUsd.isZero()) {
+    return `${tokensTexto} · US$ 0,00 — todo con el motor sin costo.`;
+  }
+  return `${tokensTexto} · ${formatearCostoAdminUsd(periodo.costUsd?.toString() ?? null)} en los últimos 30 días.`;
+})();
+
+const porModelo = porModeloRaw.map((fila) => ({
+  etiqueta: fila.etiqueta,
+  tokens: fila.tokens,
+  costoDisplay: fila.historico ? '— histórico' : formatearCostoAdminUsd(fila.costUsd?.toString() ?? null),
+}));
+---
+
+<AdminLayout title={usuario.name}>
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <a href="/admin/usuarios" class="text-xs text-ink-500 hover:text-brand-600">← Docentes</a>
+      <h1 class="font-display mt-1 text-2xl font-bold text-ink-900">{usuario.name}</h1>
+      <p class="mt-1 flex items-center gap-1.5 text-sm text-ink-500">
+        {usuario.email} · {usuario.creadoDisplay}
+        {usuario.esGoogle && (
+          <span
+            title="Inició sesión con Google"
+            aria-label="Cuenta de Google"
+            class="inline-flex h-4 w-4 items-center justify-center rounded-full border border-linea text-[10px] leading-none text-ink-500"
+          >
+            G
+          </span>
+        )}
+      </p>
+    </div>
+    <p class="rounded-lg border border-linea bg-sutil px-3 py-1.5 text-sm text-ink-700">
+      {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} · Acceso a la IA: {usuario.accesoIa}
+    </p>
+  </div>
+
+  <div class="kodu-card mb-6 grid grid-cols-1 divide-y divide-linea sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+    <div class="p-5">
+      <p class="font-display text-2xl text-ink-900">{formatearTokensCompacto(usuario.tokens)}</p>
+      <p class="text-xs text-ink-500">tokens</p>
+    </div>
+    <div class="p-5">
+      <p class="font-display text-2xl text-ink-900">{usuario.costoDisplay}</p>
+      <p class="text-xs text-ink-500">costo</p>
+    </div>
+    <div class="p-5">
+      <p class="font-display text-2xl text-ink-900">{usuario.proyectosCount}</p>
+      <p class="text-xs text-ink-500">{usuario.proyectosCount === 1 ? 'recurso' : 'recursos'}</p>
+    </div>
+  </div>
+
+  <section class="kodu-card mb-6 p-5">
+    <h2 class="text-sm font-semibold text-ink-900">Consumo de los últimos 30 días</h2>
+    {
+      nuncaUsoLaIa ? (
+        <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
+      ) : (
+        <div class="mt-4">
+          <GraficoColumnas porDia={periodo.porDia} subtitulo={subtituloColumnas} />
+        </div>
+      )
+    }
+  </section>
+
+  <section class="kodu-card mb-6 p-5">
+    <h2 class="text-sm font-semibold text-ink-900">En qué motor se fue</h2>
+    {
+      nuncaUsoLaIa ? (
+        <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
+      ) : (
+        <div class="mt-4">
+          <GraficoBarras filas={porModelo} />
+        </div>
+      )
+    }
+  </section>
+
+  <section class="kodu-card p-5">
+    <h2 class="text-sm font-semibold text-ink-900">Recursos</h2>
+    {
+      proyectos.length === 0 ? (
+        <p class="mt-4 text-sm text-ink-500">Todavía no creó ningún recurso.</p>
+      ) : (
+        <ul class="mt-4 divide-y divide-linea">
+          {proyectos.map((proyecto) => (
+            <li class="flex items-center justify-between py-2.5 text-sm">
+              <a href={`/app/project/${proyecto.id}`} class="font-medium text-ink-900 hover:text-brand-600">
+                {proyecto.title}
+              </a>
+              <span class="text-xs text-ink-500">{haceTiempo(proyecto.updatedAt)}</span>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+</AdminLayout>

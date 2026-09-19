@@ -1,24 +1,23 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
-import { findOwnedProject } from '../../../lib/projects.ts';
+import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import {
   ProviderError,
-  alternateChoice,
-  cadenaDeMotores,
-  isChoiceConfigured,
-  normalizarEleccion,
   readCompletionStream,
   requestCompletionStream,
-  resolveProvider,
   supportsVision,
   type ChatMessage,
   type ContentPart,
-  type ModelChoice,
   type ProviderConfig,
+  type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
+import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
+import { consumoDeLaDemo } from '../../../lib/demo.ts';
+import { leerAppSettings } from '../../../lib/settings.ts';
 import {
   UPDATE_RESOURCE_CODE,
   parseUpdateResourceArgs,
@@ -57,7 +56,9 @@ const schema = z.object({
     .min(1, 'Escribí un mensaje')
     .max(MAX_MESSAGE_CHARS, 'El mensaje es demasiado largo para procesarlo.'),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
-  model: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
+  /** El `id` de un `AiModel`. Cualquier valor que no resuelva a uno habilitado
+   *  cae al default — ver `normalizarMotor` en `lib/ai/catalogo.ts`. */
+  model: z.string().min(1).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
 });
@@ -129,14 +130,32 @@ const REINTENTOS_VISIBLES = 10;
  * rojo?" tiene signo pero es un pedido, y "cambiá el color" no lleva signo pero
  * también lo es.
  */
+/*
+ * POR QUE estos dos patrones NO usan `\b`:
+ *
+ * `\b` de JavaScript define "palabra" como [A-Za-z0-9_], y ahi no entran las
+ * vocales con tilde ni la ñ. Entonces, en "¿Qué hace este recurso?", despues
+ * de la "é" viene un espacio: dos caracteres que para `\b` son "no palabra",
+ * o sea SIN frontera, y la alternativa `qu[eé]` no cerraba. La consulta caia
+ * al default de `pideCambio` ("es un pedido") y la IA reescribia el recurso
+ * entero cuando la docente solo habia preguntado. Rompia justo con "qué",
+ * "por qué" y "para qué" — los tres arranques de pregunta mas comunes — y
+ * andaba si el mensaje venia SIN tilde, que es exactamente al reves de lo
+ * deseable en una app en castellano.
+ *
+ * El reemplazo es una frontera de palabra Unicode: "no puede seguir una letra,
+ * un numero ni un guion bajo", con \p{L} que si abarca acentos y ñ. Necesita
+ * la bandera `u`.
+ */
 const INTERROGATIVA =
-  /^\s*[¿]?\s*(de |a |en |con |para |por |sobre )?(qu[eé]|c[oó]mo|cu[aá]l(es)?|cu[aá]nt[oa]s?|d[oó]nde|qui[eé]n(es)?|por qu[eé]|para qu[eé]|cu[aá]ndo|se puede|hay|existe|sirve|anda|funciona)\b/i;
+  /^\s*[¿]?\s*(de |a |en |con |para |por |sobre )?(qu[eé]|c[oó]mo|cu[aá]l(es)?|cu[aá]nt[oa]s?|d[oó]nde|qui[eé]n(es)?|por qu[eé]|para qu[eé]|cu[aá]ndo|se puede|hay|existe|sirve|anda|funciona)(?![\p{L}\p{N}_])/iu;
 
 /** Ordenes claras. Se aceptan con y sin tilde, que es como se escribe al apuro. */
 const IMPERATIVO =
-  /\b(hac[eé]|hacelo|hacela|pon[eé]|ponele|ponelo|agreg[aá]|agregale|añad[ií]|sac[aá]|sacale|quit[aá]|borr[aá]|elimin[aá]|cambi[aá]|cambiale|cambialo|modific[aá]|correg[ií]|corregilo|arregl[aá]|arreglalo|mejor[aá]|mejoralo|rehac[eé]|rehacelo|actualiz[aá]|mov[eé]|ajust[aá]|convert[ií]|transform[aá]|sum[aá]|us[aá]|aplic[aá]|arm[aá]|cre[aá]|gener[aá]|escrib[ií]|dej[aá]|quiero|necesito|dale|segu[ií]|continu[aá])\b/i;
+  /(?<![\p{L}\p{N}_])(hac[eé]|hacelo|hacela|pon[eé]|ponele|ponelo|agreg[aá]|agregale|añad[ií]|sac[aá]|sacale|quit[aá]|borr[aá]|elimin[aá]|cambi[aá]|cambiale|cambialo|modific[aá]|correg[ií]|corregilo|arregl[aá]|arreglalo|mejor[aá]|mejoralo|rehac[eé]|rehacelo|actualiz[aá]|mov[eé]|ajust[aá]|convert[ií]|transform[aá]|sum[aá]|us[aá]|aplic[aá]|arm[aá]|cre[aá]|gener[aá]|escrib[ií]|dej[aá]|quiero|necesito|dale|segu[ií]|continu[aá])(?![\p{L}\p{N}_])/iu;
 
-function pideCambio(mensaje: string): boolean {
+/** Exportada sólo para `e2e/unidad.ts`: nadie más fuera de este módulo la usa. */
+export function pideCambio(mensaje: string): boolean {
   const texto = mensaje.trim();
 
   // El orden no es casual: se descarta la consulta ANTES de buscar ordenes.
@@ -171,7 +190,7 @@ async function buildUserContent(
   message: string,
   attachmentUrls: string[],
   projectImageUrls: string[],
-  choice: ModelChoice,
+  motor: ProviderConfig,
 ): Promise<string | ContentPart[]> {
   const own = attachmentUrls.length > 0;
   // Las del mensaje mandan; si no hay, las del proyecto (las últimas, acotadas
@@ -182,7 +201,7 @@ async function buildUserContent(
 
   const names = candidates.map((url) => url.split('/').pop() ?? url).join(', ');
 
-  if (!supportsVision(choice)) {
+  if (!supportsVision(motor)) {
     return own
       ? `${message}
 
@@ -212,8 +231,52 @@ async function buildUserContent(
   ];
 }
 
+/**
+ * Busca, en la cadena de respaldo de `actual`, el primer motor con lugar para
+ * `largoMensaje` — para sugerirlo en el 413 de "mensaje demasiado largo".
+ *
+ * Usa la cadena (no la lista completa del catálogo) a propósito: es la misma
+ * lista de motores que ya sabemos que están habilitados y con clave, así que
+ * la sugerencia nunca apunta a algo que después no puede contestar.
+ */
+async function motorConCapacidad(actual: ProviderConfig, largoMensaje: number): Promise<ProviderConfig | null> {
+  const cadena = await cadenaDeMotores(actual.id);
+  return cadena.find((motor) => motor.id !== actual.id && motor.maxInputChars >= largoMensaje) ?? null;
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const user = locals.user!;
+
+  /**
+   * El gate de acceso a la IA vive ACÁ, no en el middleware ni en el login
+   * (design.md §10): la política de "quién puede usar la IA" decide en el
+   * punto donde se va a gastar, junto al tope por usuario más abajo. Por
+   * construcción — no por cuidado — esto también es lo que hace que revocar
+   * el acceso aplique al PRÓXIMO turno y nunca corte uno que ya está
+   * transmitiendo: el middleware relee `aiAccessOverride` en cada request
+   * nueva a esta ruta, y un turno en curso no hace una request nueva.
+   */
+  if (!(await puedeUsarLaIa(user))) {
+    return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
+  }
+
+  /**
+   * El apagado de la demo (design.md §8; specs/demo-mode/spec.md — "Turning
+   * demo mode off disables the demo account immediately") va ACÁ, no en el
+   * middleware: la cuenta de demo tiene `aiAccessOverride=true` fijo (ver
+   * `lib/demo.ts`), así que `puedeUsarLaIa` de arriba siempre la deja pasar.
+   * El interruptor real es este chequeo aparte. Igual que la revocación de
+   * M6, esto es lo que hace que apagar la demo aplique al PRÓXIMO turno y
+   * nunca corte uno que ya está transmitiendo — el middleware relee
+   * `AppSettings` en cada request nueva, un turno en curso no hace una.
+   */
+  let demoSettings: Awaited<ReturnType<typeof leerAppSettings>> | null = null;
+  if (user.isDemo) {
+    demoSettings = await leerAppSettings();
+    if (!demoSettings.demoEnabled) {
+      return fail('La demo está cerrada por el momento.', 403);
+    }
+  }
 
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {
@@ -222,8 +285,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher } = parsed.data;
 
-  const project = await findOwnedProject(projectId, user.id);
+  const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
+
+  // M8 (design.md §7): un admin mandando un turno en un recurso ajeno deja
+  // la marca en el Project ANTES de gastar nada, y `actuaComoAdmin` decide
+  // si el mensaje del docente que se crea más abajo lleva `authorUserId`
+  // (nunca la respuesta de la IA — esa no la "escribió" nadie).
+  const actuaComoAdmin = await marcarSiActuaAdmin(project, user);
 
   const thread = await prisma.chatThread.findFirst({
     where: { id: threadId, projectId: project.id },
@@ -232,19 +301,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
   /**
-   * El motor lo decide la plataforma, no el pedido.
+   * El motor lo decide el catálogo, no el pedido a ciegas.
    *
-   * DeepSeek está bajo llave: se paga por token y sólo entra como respaldo
-   * automático cuando MiniMax agota sus reintentos. Por eso lo que llega en el
-   * body —o lo que quedó guardado en un proyecto viejo— se normaliza contra la
-   * lista de elegibles en vez de usarse tal cual.
+   * Lo que llega en el body —o lo que quedó guardado en el proyecto— se
+   * normaliza contra `AiModel`: si el id no existe o el motor está apagado,
+   * cae al default vigente. Async porque el catálogo vive en la base, con
+   * caché de 30s (ver `lib/ai/catalogo.ts`).
    */
-  const chosenModel = normalizarEleccion(model ?? project.selectedModel);
+  const provider = await normalizarMotor(model ?? project.aiModelId);
+  if (!provider) {
+    return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);
+  }
 
-  if (chosenModel !== project.selectedModel) {
+  if (provider.id !== project.aiModelId) {
     await prisma.project.update({
       where: { id: project.id },
-      data: { selectedModel: chosenModel },
+      data: { aiModelId: provider.id },
     });
   }
 
@@ -281,37 +353,60 @@ export const POST: APIRoute = async ({ request, locals }) => {
     extractedText: asset.extractedText,
   }));
 
-  const provider = resolveProvider(chosenModel);
-
   // Un pedido larguísimo no entra en la ventana de contexto del modelo junto con
   // el HTML del recurso y el historial. Se avisa acá, con el número y con la
   // salida concreta, en vez de dejar que la API lo rechace con su propio error.
   if (message.length > provider.maxInputChars) {
-    const otro = alternateChoice(chosenModel);
-    const otroProveedor = resolveProvider(otro);
-    const sirveElOtro =
-      isChoiceConfigured(otro) && otroProveedor.maxInputChars >= message.length;
+    const otro = await motorConCapacidad(provider, message.length);
 
     return fail(
       `Tu mensaje tiene ${message.length.toLocaleString('es-AR')} caracteres y ${provider.label} ` +
         `admite hasta ${provider.maxInputChars.toLocaleString('es-AR')}. ` +
-        (sirveElOtro
-          ? `Con ${otroProveedor.label} entra: cambiá el modelo y volvé a mandarlo.`
+        (otro
+          ? `Con ${otro.label} entra: cambiá el modelo y volvé a mandarlo.`
           : 'Mandalo en dos partes: primero el contexto, después el pedido.'),
       413,
-      sirveElOtro ? { fallbackModel: otro, fallbackLabel: otroProveedor.label } : {},
+      otro ? { fallbackModel: otro.id, fallbackLabel: otro.label } : {},
     );
   }
 
+  /**
+   * El tope de la demo (design.md §8; specs/demo-mode/spec.md — "Token
+   * ceiling is the only cap"). Es GLOBAL a la cuenta compartida, no por
+   * motor como el tope de abajo — una tarde abusiva en un solo motor no
+   * debería poder esquivarlo cambiando de proveedor.
+   *
+   * No hay rate limiting en ningún lugar de este repo (ni en
+   * `/api/auth/login`, ni acá, ni en `/api/uploads`): este tope de tokens es
+   * el único techo real para la demo. Un visitante puede llamar
+   * `/api/auth/demo` mil veces y cada llamada abre una cookie de la MISMA
+   * cuenta, así que el tope de abajo sigue rigiendo el gasto — pero nada
+   * acota cuántos uploads o recursos de galería puede generar antes de
+   * llegar a él. Eso se acota después, a mano, con el purgado de
+   * `/admin/demo`, no acá.
+   */
+  if (user.isDemo && demoSettings) {
+    const consumidos = await consumoDeLaDemo();
+    if (consumidos >= demoSettings.demoTokenLimit) {
+      return fail(
+        'La demo ya usó todo el crédito de esta ronda. Si querés seguir armando recursos, creá tu cuenta: es gratis y tus recursos quedan guardados.',
+        429,
+        { registerUrl: '/register' },
+      );
+    }
+  }
+
   // El tope por usuario se chequea ANTES de gastar: avisar después de consumir
-  // no sirve de nada. Se ofrece el otro proveedor, que es la salida real.
+  // no sirve de nada. Se ofrece el otro motor, que es la salida real.
   if (provider.userTokenLimit > 0) {
-    const usados = await consumedTokens(user.id, chosenModel);
+    const usados = await consumedTokens(user.id, provider.id);
     if (usados >= provider.userTokenLimit) {
-      const otro = alternateChoice(chosenModel);
+      const otro = await motorConCapacidad(provider, 0);
       return fail(
         `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}. ` +
-          `Cambiá el modelo a ${resolveProvider(otro).label}, que no tiene tope, o pedile más cupo a la administración.`,
+          (otro
+            ? `Cambiá el modelo a ${otro.label}, o pedile más cupo a la administración.`
+            : 'Pedile más cupo a la administración.'),
         429,
       );
     }
@@ -323,7 +418,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     assets: assetContexts,
     currentHtml: project.currentHtml,
     projectTitle: project.title,
-    canSeeImages: supportsVision(chosenModel),
+    canSeeImages: supportsVision(provider),
     htmlEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
@@ -331,7 +426,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     message,
     attachmentUrls ?? [],
     assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
-    chosenModel,
+    provider,
   );
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
@@ -342,6 +437,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       role: 'user',
       content: message,
       attachments: attachmentUrls?.length ? JSON.stringify(attachmentUrls) : null,
+      authorUserId: actuaComoAdmin ? user.id : null,
     },
   });
 
@@ -403,7 +499,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const arranque = Date.now();
       const transcurrido = () => `${((Date.now() - arranque) / 1000).toFixed(1)}s`;
       console.log(
-        `[chat/stream] inicio proyecto=${project.id} modelo=${chosenModel} mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
+        `[chat/stream] inicio proyecto=${project.id} motor=${provider.id} (${provider.label}) mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
       );
 
       /**
@@ -430,12 +526,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
         });
 
       /**
-       * Se recorre la cadena de motores hasta que uno conteste: M3, después su
-       * hermano M2.7, y recién al final DeepSeek, que es el único que se cobra.
-       * El docente no tiene que enterarse de que un proveedor está caído ni
-       * elegir otro a mano; se le avisa qué pasó y se sigue trabajando.
+       * Se recorre la cadena de respaldo del motor elegido, en el orden que
+       * marca `fallbackModelId` (ver catalogo.ts). El docente no tiene que
+       * enterarse de que un proveedor está caído ni elegir otro a mano; se le
+       * avisa qué pasó y se sigue trabajando.
        */
-      const motores = cadenaDeMotores();
+      const motores = await cadenaDeMotores(provider.id);
       let upstream: Response | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;
@@ -514,7 +610,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * flujo de TypeScript la da por null para siempre y termina tipando el
        * consumo como `never`.
        */
-      const totales: { usage: { promptTokens: number; completionTokens: number } | null } = {
+      const totales: { usage: MotorTokenUsage | null } = {
         usage: null,
       };
 
@@ -623,10 +719,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
         if (totales.usage) {
           await recordUsage({
             userId: user.id,
-            provider: proveedorUsado.choice,
+            projectId: project.id,
+            aiModelId: proveedorUsado.id,
             model: proveedorUsado.model,
             promptTokens: totales.usage.promptTokens,
+            cachedInputTokens: totales.usage.cachedTokens,
             completionTokens: totales.usage.completionTokens,
+            precios: proveedorUsado.precios,
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 

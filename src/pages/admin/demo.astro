@@ -1,0 +1,12 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import DemoPanel from '../../components/admin/DemoPanel.tsx';
+import { resumenDemo } from '../../lib/admin/demo.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const resumen = await resumenDemo();
+---
+
+<AdminLayout>
+  <DemoPanel client:load initial={resumen} />
+</AdminLayout>

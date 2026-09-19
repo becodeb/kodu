@@ -103,10 +103,27 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
             </div>
 
             <div class="flex items-center gap-2 justify-self-end text-sm">
+              {user?.role === 'ADMIN' && (
+                /* Distinto por tipo, no por volumen: un objeto con borde y un
+                   punto, contra los enlaces de texto pelado del centro — así
+                   se lee de un vistazo que este es otro tipo de destino. */
+                <a
+                  href="/admin"
+                  aria-current={ruta.startsWith('/admin') ? 'page' : undefined}
+                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2.5 py-1.5 text-sm ${
+                    ruta.startsWith('/admin')
+                      ? 'border-brand-300 text-brand-700'
+                      : 'border-linea text-ink-700 hover:border-ink-500'
+                  }`}
+                >
+                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
+                  Panel
+                </a>
+              )}
               {user ? (
                 /* Reglas y el tema viven acá adentro: son ajustes, no destinos.
                    La barra se queda solo con los dos lugares a los que uno va. */
-                <details class="relative" data-menu-perfil>
+                <details class="relative" data-menu>
                   <summary
                     class="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-linea px-2.5 py-1.5 text-ink-700 hover:border-ink-500"
                   >
@@ -128,15 +145,6 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
                     >
                       Reglas de la IA
                     </a>
-
-                    {user.role === 'ADMIN' && (
-                      <a
-                        href="/app/consumo"
-                        class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil"
-                      >
-                        Consumo de tokens
-                      </a>
-                    )}
 
                     <button
                       type="button"
@@ -191,7 +199,10 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
     <script is:inline>
       (function () {
         var root = document.documentElement;
-        var menu = document.querySelector('[data-menu-perfil]');
+        // [data-menu] es genérico a propósito: además del perfil, M5 lo
+        // reusa para el menú de acciones de cada fila de la tabla de
+        // docentes, y este mismo script tiene que cerrar cualquiera de ellos.
+        var menus = document.querySelectorAll('[data-menu]');
         var boton = document.querySelector('[data-toggle-tema]');
         if (!boton) return;
 
@@ -216,10 +227,15 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
 
         // El <details> no se cierra solo al hacer clic afuera.
         document.addEventListener('click', function (event) {
-          if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
+          menus.forEach(function (menu) {
+            if (menu.open && !menu.contains(event.target)) menu.open = false;
+          });
         });
         document.addEventListener('keydown', function (event) {
-          if (event.key === 'Escape' && menu) menu.open = false;
+          if (event.key !== 'Escape') return;
+          menus.forEach(function (menu) {
+            menu.open = false;
+          });
         });
 
         pintar();

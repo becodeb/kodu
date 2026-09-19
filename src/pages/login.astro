@@ -1,20 +1,26 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
-import { allowedDomainsLabel } from '../lib/auth/domains.ts';
 import GoogleButton from '../components/GoogleButton.astro';
 import { isGoogleEnabled } from '../lib/env.ts';
+import { leerAppSettings } from '../lib/settings.ts';
+
+// Discreto a propósito (design.md §8): sólo se pinta el <form> cuando la
+// demo está prendida, nunca deshabilitado/oculto con CSS — mientras está
+// apagada, ni siquiera existe en el HTML.
+const { demoEnabled } = await leerAppSettings();
 
 const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
 // Solo aceptamos redirecciones internas: evita open redirect via ?next=https://...
 const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
 
+// "dominio" salió del mapa: desde M6 el dominio ya no bloquea el login
+// (design.md §10), así que `callback.ts` no vuelve a emitir ese error.
 const ERRORES: Record<string, string> = {
   'google-cancelado': 'Cancelaste el ingreso con Google.',
   'google-state': 'El ingreso con Google expiró o no se pudo verificar. Probá de nuevo.',
   'google-sin-verificar': 'Esa cuenta de Google todavía no tiene el correo verificado.',
   'google-no-configurado': 'El ingreso con Google no está disponible en este momento.',
-  dominio: 'Ese correo no está habilitado para entrar a Kodu.',
   google: 'No pudimos completar el ingreso con Google. Probá de nuevo.',
 };
 const errorGoogle = ERRORES[Astro.url.searchParams.get('error') ?? ''];
@@ -52,12 +58,28 @@ const googleActivo = isGoogleEnabled();
         </>
       )}
 
-      <AuthForm client:load mode="login" allowedDomains={allowedDomainsLabel()} nextUrl={safeNext} />
+      <AuthForm client:load mode="login" nextUrl={safeNext} />
 
       <p class="mt-6 text-center text-sm text-ink-500">
         ¿No tenés cuenta?{' '}
         <a href="/register" class="font-medium text-brand-600 hover:underline">Registrate</a>
       </p>
+
+      {/*
+        El envoltorio es un <div> y no un <p> a propósito: el <p> sólo admite
+        contenido de frase, así que el navegador lo cerraba solo antes del
+        <form> y se perdían `text-center` y `text-xs` — la línea salía grande y
+        pegada a la izquierda en vez de centrada y chica.
+      */}
+      {demoEnabled && (
+        <div class="mt-3 text-center text-xs text-ink-500">
+          <form method="POST" action="/api/auth/demo" class="inline">
+            <button type="submit" class="underline decoration-dotted underline-offset-2 hover:text-ink-700">
+              ¿Sólo estás mirando? Entrá a la demo
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   </div>
 </BaseLayout>

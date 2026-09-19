@@ -104,6 +104,17 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((value) => value === 'true'),
+
+  /**
+   * Clave de cifrado de las API keys del catálogo (`AiModel.apiKeyCipher`),
+   * AES-256-GCM: 32 bytes en hexadecimal (64 caracteres).
+   *
+   * Se valida perezosamente DENTRO de `src/lib/crypto/secretos.ts`, no acá:
+   * una instancia sin ningún motor cargado todavía tiene que poder arrancar
+   * igual. Separada de AUTH_SECRET a propósito — rotar una no debe forzar a
+   * rotar la otra (ver design.md §4).
+   */
+  KODU_ENCRYPTION_KEY: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -147,6 +158,7 @@ export function getEnv(): Env {
     AI_VISION: read('AI_VISION'),
     GOOGLE_CLIENT_ID: read('GOOGLE_CLIENT_ID'),
     GOOGLE_CLIENT_SECRET: read('GOOGLE_CLIENT_SECRET'),
+    KODU_ENCRYPTION_KEY: read('KODU_ENCRYPTION_KEY'),
   });
 
   if (!parsed.success) {

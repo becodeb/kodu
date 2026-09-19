@@ -20,6 +20,17 @@ export interface SessionUser {
   email: string;
   name: string;
   role: SessionRole;
+  /**
+   * null = sin opinión, sigue la regla de dominio; true = acceso a la IA
+   * habilitado a mano; false = revocado a mano (design.md §10). Columna real
+   * desde M6 (`User.aiAccessOverride`); se relee de la base en cada request
+   * a una ruta gateada (middleware.ts), nunca se firma en el JWT.
+   */
+  aiAccessOverride: boolean | null;
+  /** Cuenta compartida de demo (M7; `User.isDemo`, columna real desde la
+   *  migración 20260922000000). Se relee de la base en cada request a una
+   *  ruta gateada (middleware.ts), nunca se firma en el JWT. */
+  isDemo: boolean;
 }
 
 function secretKey(): Uint8Array {
@@ -30,7 +41,15 @@ function ttlSeconds(): number {
   return getEnv().SESSION_TTL_HOURS * 60 * 60;
 }
 
-export async function createSessionToken(user: SessionUser): Promise<string> {
+/**
+ * `ttlSecondsOverride` existe para la sesión de demo (M7): 2 horas fijas,
+ * bastante más corto que el `SESSION_TTL_HOURS` de una cuenta real (168h
+ * por defecto). Opcional y sin tocar ningún llamador existente.
+ */
+export async function createSessionToken(
+  user: SessionUser,
+  ttlSecondsOverride?: number,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
   return new SignJWT({ email: user.email, name: user.name, role: user.role })
@@ -39,7 +58,7 @@ export async function createSessionToken(user: SessionUser): Promise<string> {
     .setIssuedAt(now)
     .setIssuer('koduedu')
     .setAudience('koduedu-app')
-    .setExpirationTime(now + ttlSeconds())
+    .setExpirationTime(now + (ttlSecondsOverride ?? ttlSeconds()))
     .sign(secretKey());
 }
 
@@ -55,20 +74,34 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
     }
     const role = payload.role === 'ADMIN' ? 'ADMIN' : 'DOCENTE';
 
-    return { id: payload.sub, email: payload.email, name: payload.name, role };
+    // El JWT solo guarda identidad (email/nombre/rol); las banderas de IA se
+    // leen de la base en cada request a una ruta protegida (middleware.ts).
+    // Acá arrancan degradadas: nadie las usó todavía en este request.
+    return {
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      role,
+      aiAccessOverride: null,
+      isDemo: false,
+    };
   } catch {
     // Firma invalida, token expirado o manipulado: sesion inexistente.
     return null;
   }
 }
 
-export function setSessionCookie(cookies: AstroCookies, token: string): void {
+export function setSessionCookie(
+  cookies: AstroCookies,
+  token: string,
+  maxAgeSecondsOverride?: number,
+): void {
   cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
     secure: isProduction(),
     path: '/',
-    maxAge: ttlSeconds(),
+    maxAge: maxAgeSecondsOverride ?? ttlSeconds(),
   });
 }
 

@@ -1,0 +1,63 @@
+---
+import BaseLayout from './BaseLayout.astro';
+
+/**
+ * Cascarón de /admin: encabezado fijo + fila de pestañas horizontal.
+ *
+ * No hay sidebar en ningún lugar de la app — un solo header arriba — así que
+ * cuatro destinos no justifican inventar uno acá. La fila de pestañas reusa
+ * el idioma visual del selector de motor en ChatPanel.tsx (bg-sutil p-0.5,
+ * pestaña activa bg-superficie + shadow-sm).
+ */
+
+interface Props {
+  title?: string;
+}
+
+const { title = 'Panel' } = Astro.props;
+const ruta = Astro.url.pathname;
+
+const PESTAÑAS = [
+  { href: '/admin/usuarios', etiqueta: 'Docentes' },
+  { href: '/admin/motores', etiqueta: 'Motores' },
+  { href: '/admin/dominios', etiqueta: 'Dominios' },
+  { href: '/admin/demo', etiqueta: 'Demo' },
+];
+---
+
+<BaseLayout title={title} wide>
+  <header class="mb-6 max-w-2xl">
+    <h1 class="font-display text-2xl font-bold text-ink-900">Panel</h1>
+    <p class="mt-1 text-sm text-ink-500">Motores, acceso y consumo de la plataforma.</p>
+  </header>
+
+  {/*
+    overflow-x-auto + el par -mx-4/px-4 hacen que en mobile la tira se pueda
+    scrollear de punta a punta sin perder la alineación con el resto de la
+    página. Sin hamburguesa ni <select>: un select ocultaría las secciones
+    hermanas, que es justo lo que una fila de pestañas existe para mostrar.
+  */}
+  <nav
+    class="mb-6 -mx-4 flex snap-x gap-0.5 overflow-x-auto rounded-lg bg-sutil p-0.5 px-4"
+    aria-label="Secciones del panel"
+  >
+    {
+      PESTAÑAS.map((pestaña) => {
+        const activa = ruta === pestaña.href || ruta.startsWith(`${pestaña.href}/`);
+        return (
+          <a
+            href={pestaña.href}
+            aria-current={activa ? 'page' : undefined}
+            class={`shrink-0 snap-start rounded-md px-3.5 py-1.5 text-sm whitespace-nowrap transition-colors ${
+              activa ? 'bg-superficie text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
+            }`}
+          >
+            {pestaña.etiqueta}
+          </a>
+        );
+      })
+    }
+  </nav>
+
+  <slot />
+</BaseLayout>

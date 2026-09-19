@@ -1,14 +1,15 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
-import { findOwnedProject } from '../../../lib/projects.ts';
+import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
 
 const updateSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(400).nullable().optional(),
   currentHtml: z.string().min(20).max(400_000).optional(),
-  selectedModel: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
+  /** El `id` de un `AiModel`. El FK de la base rechaza uno que no exista. */
+  aiModelId: z.string().min(1).optional(),
   isInGallery: z.boolean().optional(),
 });
 
@@ -18,7 +19,7 @@ const updateSchema = z.object({
  */
 export const PATCH: APIRoute = async ({ params, request, locals }) => {
   const user = locals.user!;
-  const project = await findOwnedProject(params.id!, user.id);
+  const project = await findProjectForActor(params.id!, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
 
   const parsed = updateSchema.safeParse(await readBody(request));
@@ -30,6 +31,11 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
     return fail('No hay nada para actualizar.', 422);
   }
 
+  // M8 (design.md §7): un admin editando el código/título de un recurso
+  // ajeno deja la marca ANTES del update, para que un fallo del update no
+  // deje una marca huérfana sin cambio real detrás.
+  await marcarSiActuaAdmin(project, user);
+
   const updated = await prisma.project.update({
     where: { id: project.id },
     data: parsed.data,
@@ -39,7 +45,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
       description: true,
       slug: true,
       isInGallery: true,
-      selectedModel: true,
+      aiModelId: true,
       screenshotUrl: true,
       updatedAt: true,
     },
@@ -51,7 +57,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
 /** DELETE /api/projects/:id — borra el recurso y todo lo que cuelga de él. */
 export const DELETE: APIRoute = async ({ params, locals }) => {
   const user = locals.user!;
-  const project = await findOwnedProject(params.id!, user.id);
+  const project = await findProjectForActor(params.id!, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
 
   await prisma.project.delete({ where: { id: project.id } });

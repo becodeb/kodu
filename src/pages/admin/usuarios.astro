@@ -1,0 +1,12 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import UsuariosTabla from '../../components/admin/UsuariosTabla.tsx';
+import { listarUsuariosAdmin } from '../../lib/admin/usuarios.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const usuarios = await listarUsuariosAdmin();
+---
+
+<AdminLayout>
+  <UsuariosTabla client:load initialUsuarios={usuarios} />
+</AdminLayout>

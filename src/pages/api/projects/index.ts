@@ -21,6 +21,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     userId: user.id,
     title: parsed.data.title,
     description: parsed.data.description ?? null,
+    createdByDemo: user.isDemo,
   });
 
   return ok({
