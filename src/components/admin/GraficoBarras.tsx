@@ -15,8 +15,21 @@ interface Props {
 const ANCHO = 700;
 const ALTO_BARRA = 28;
 
-/** Cicla los tres colores que pide design.md, aunque haya más de tres motores. */
-const PALETA = ['fill-brand-600', 'fill-brand-300', 'fill-brand-100'];
+/**
+ * Un solo color de marca con opacidades decrecientes, en vez de tres pasos de
+ * la rampa. Dos motivos, los dos verificados:
+ *
+ * 1) En tema oscuro `global.css` redefine `brand-300` y `brand-600` con la
+ *    MISMA luminosidad (0.62), separados solo por 0.02 de croma. En el resto
+ *    de la interfaz no molesta porque esos dos tonos casi nunca se tocan, pero
+ *    una barra apilada los pone pegados y se funden en un solo bloque.
+ * 2) Las utilidades `fill-*` de Tailwind solo pintan elementos SVG. La leyenda
+ *    son `<span>`, así que `fill-brand-600` ahí no pintaba nada.
+ *
+ * La opacidad sobre un único color resuelve las dos: se mantiene distinguible
+ * sobre fondo claro y oscuro, y funciona igual en `<rect>` y en `<span>`.
+ */
+const OPACIDADES = [1, 0.55, 0.28];
 
 /**
  * "En qué motor se fue" (design.md — "The user detail view"). Responde: ¿qué
@@ -55,7 +68,8 @@ export default function GraficoBarras({ filas }: Props) {
               width={ancho}
               height={ALTO_BARRA}
               rx={indice === 0 || indice === filas.length - 1 ? 4 : 0}
-              className={PALETA[indice % PALETA.length]}
+              className="fill-brand-600"
+              fillOpacity={OPACIDADES[indice % OPACIDADES.length]}
             >
               <title>{`${fila.etiqueta}: ${fila.tokens.toLocaleString('es-AR')} tokens, ${fila.costoDisplay}`}</title>
             </rect>
@@ -68,7 +82,8 @@ export default function GraficoBarras({ filas }: Props) {
           <li key={fila.etiqueta} className="flex items-center gap-2 text-xs text-ink-700">
             <span
               aria-hidden="true"
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${PALETA[indice % PALETA.length]}`}
+              className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand-600"
+              style={{ opacity: OPACIDADES[indice % OPACIDADES.length] }}
             />
             <span className="font-medium text-ink-900">{fila.etiqueta}</span>
             <span className="text-ink-500">
