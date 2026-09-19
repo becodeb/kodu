@@ -34,6 +34,10 @@ export async function createProject(options: {
   title: string;
   description?: string | null;
   html?: string;
+  /** El actor que crea el recurso es la cuenta de demo (design.md §8):
+   *  habilita el purgado masivo desde /admin/demo sin tocar nada de
+   *  docentes reales. */
+  createdByDemo?: boolean;
 }) {
   return withUniqueSlug(options.title, (slug) =>
     prisma.project.create({
@@ -43,6 +47,7 @@ export async function createProject(options: {
         slug,
         currentHtml: options.html ?? DEFAULT_HTML,
         userId: options.userId,
+        createdByDemo: options.createdByDemo ?? false,
         threads: { create: { title: 'Conversación' } },
       },
       include: { threads: true },
@@ -51,7 +56,11 @@ export async function createProject(options: {
 }
 
 /** Duplica un recurso de la galería en la cuenta propia (SPEC §5.3). */
-export async function duplicateProject(sourceId: string, targetUserId: string) {
+export async function duplicateProject(
+  sourceId: string,
+  targetUserId: string,
+  createdByDemo = false,
+) {
   const source = await prisma.project.findFirst({
     where: { id: sourceId, isInGallery: true },
     select: { title: true, description: true, currentHtml: true },
@@ -65,6 +74,7 @@ export async function duplicateProject(sourceId: string, targetUserId: string) {
     title: `${source.title} (copia)`,
     description: source.description,
     html: source.currentHtml,
+    createdByDemo,
   });
 }
 

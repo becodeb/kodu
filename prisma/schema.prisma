@@ -44,6 +44,10 @@ model User {
   /// DeepSeek); sus valores `true` NO se heredan como permiso — la migracion
   /// los limpia a `null`.
   aiAccessOverride Boolean?
+  /// Cuenta compartida de demo publica (design.md #8; specs/demo-mode).
+  /// Ver el indice unico parcial en la migracion 20260922000000: a lo sumo
+  /// una fila en true, igual que AiModel.isDefault.
+  isDemo       Boolean      @default(false)
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
@@ -124,6 +128,10 @@ model Project {
   aiModel       AiModel?       @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
   userId        String
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Marca los recursos creados por la cuenta compartida de demo (design.md
+  /// #8): habilita el purgado masivo desde /admin/demo sin rozar nada de
+  /// docentes reales.
+  createdByDemo Boolean        @default(false)
   threads       ChatThread[]
   assets        ProjectAsset[]
   tokenUsage    TokenUsage[]

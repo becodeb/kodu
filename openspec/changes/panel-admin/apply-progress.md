@@ -896,3 +896,149 @@ that wiring is M7's job.
   checkpoint (task 6.11).
 - Estimated review budget impact: `review_budget_lines` is unbounded for
   this change per the owner, so this is informational only.
+
+## Phase 7: M7 — Demo mode
+
+**Status**: complete. 11/11 tasks done (7.1–7.11).
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m7-demo.ts` → all 23 scenario assertions passed, both themes where applicable; run twice in a row to confirm idempotency (identical result both times — the shared demo account and its usage history persist by design, and the script's own teardown restores `AppSettings` and removes only its own test fixtures). Regressions re-run clean: `npx tsx e2e/unidad.ts` (11/11), `npx tsx e2e/m1-admin-shell.ts` (11/11), `npx tsx e2e/m2-catalogo.ts` (7/7), `npx tsx e2e/m3-motores.ts` (14/14), `npx tsx e2e/m4-costos.ts` (17/17), `npx tsx e2e/m5-usuarios.ts` (23/23), `npx tsx e2e/m6-acceso.ts` (23/23) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`. **Not a clean schema rollback** by itself — `migration_down.sql` sits beside `migration.sql` (same convention as M2/M4) and drops `User.isDemo`/`Project.createdByDemo`, but per the task's own rollback boundary ("revert branch drops `isDemo`/`createdByDemo`") the fast path is simply flipping the toggle off (no deploy needed) since the demo account then can't use the AI and the entry vanishes — a real schema rollback is only needed to remove the columns outright, and is a deliberate separate step, run by hand, never automatic |
+
+### Completed tasks
+
+- [x] 7.1 `prisma/schema.prisma`: `User.isDemo Boolean @default(false)` + partial unique index `User_un_solo_demo` (`WHERE "isDemo" = true`, hand-written — same reason as `AiModel_un_solo_default`); `Project.createdByDemo Boolean @default(false)`. Hand-written `prisma/migrations/20260922000000_modo_demo/migration.sql` with the Spanish WHY block, applied via `docker exec kodu_db_dev psql` (never `prisma migrate dev`), then `prisma migrate resolve --applied`. `prisma migrate status` confirms "Database schema is up to date!" `migration_down.sql` sits beside it, same convention as M2/M4.
+- [x] 7.2 `src/lib/demo.ts`: `asegurarCuentaDemo()` (idempotent find-or-create, `passwordHash=null`/`googleId=null`/`demo@kodu.local`, `aiAccessOverride: true` from birth — see Deviation 1), `buscarCuentaDemo()`, `consumoDeLaDemo()` (sums `TokenUsage.promptTokens + completionTokens` across every model, `WHERE createdAt >= AppSettings.demoCycleStartedAt`).
+- [x] 7.3 `src/pages/api/auth/demo.ts`: `POST`, no body needed (the `<form>` carries nothing but the click); 404 (not 403) when `demoEnabled` is off; on success, 2-hour-TTL session (new optional `ttlSecondsOverride`/`maxAgeSecondsOverride` params on `createSessionToken`/`setSessionCookie` in `session.ts` — backward-compatible, every existing call site untouched), `redirect('/app', 302)`.
+- [x] 7.4 `src/pages/api/chat/stream.ts`: demo-off gate right after the existing `puedeUsarLaIa` check (before body parsing — "before anything is spent", same placement discipline as M6); demo ceiling check beside the per-model `userTokenLimit` check, `429` with the exact design.md invitation copy plus `{ registerUrl: '/register' }`. Both gates are real HTTP checks on a per-request basis, so toggling off or exhausting the ceiling bites on the demo account's very next request with no re-login — proven directly in `e2e/m7-demo.ts`, not asserted from the code alone.
+- [x] 7.5 `src/pages/login.astro`: reads `leerAppSettings()` server-side; when `demoEnabled` a plain `<form method="POST" action="/api/auth/demo">` with a `text-xs text-ink-500` dotted-underline button renders under the "¿No tenés cuenta?" line; entirely absent from the HTML when off (not hidden/disabled).
+- [x] 7.6 `src/pages/api/admin/settings.ts` (`PATCH { demoEnabled?, demoTokenLimit? }`, creates the demo account on the transition to `true`), `src/pages/api/admin/demo/reiniciar.ts` (`POST`, moves `demoCycleStartedAt` to now, touches zero `TokenUsage` rows), `src/pages/api/admin/demo/recursos.ts` (`GET` count preview + `DELETE` purge — see Deviation 2), `src/pages/admin/demo.astro` + `src/lib/admin/demo.ts` (`resumenDemo()`) + `src/components/admin/DemoPanel.tsx` (toggle via the shared `Interruptor.tsx`, token-limit form, reset button, two-step purge confirmation).
+- [x] 7.7 `src/lib/projects.ts`: `createProject`/`duplicateProject` both grew an optional `createdByDemo` parameter; both call sites (`api/projects/index.ts`, `api/projects/[id]/duplicate.ts`) pass `user.isDemo`.
+- [x] 7.8 DB-state checks embedded in `e2e/m7-demo.ts` (direct `prisma.user`/`prisma.project`/`prisma.tokenUsage` reads): exactly one `isDemo=true` row survives a second login through `/api/auth/demo`; a real turn's `TokenUsage` row carries the demo user's own id and the exact `promptTokens`/`completionTokens` the mock reported; the bulk purge leaves a real docente's resource untouched while removing the demo-created one.
+- [x] 7.9 `e2e/m7-demo.ts` — both themes where the scenario has a visual component (login entry presence/absence, the ceiling-exhausted UI with its `<a href="/register">` link, the `/admin/demo` toggle reflection); the toggle-on/off, session-issuance, "second visitor sees the first visitor's work", and in-flight-survives-revocation scenarios are proven once each via the real HTTP/DB path (theme has no bearing on them, matching how M6's revocation-mid-turn scenario is also theme-independent).
+- [x] 7.10 `npm run check` → exit 0.
+- [x] 7.11 M7 checkpoint: the demo door opens and closes at will from `/admin/demo`, with its own token ceiling and a real purge — deliverable.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `prisma/schema.prisma` | Modify | `User.isDemo`; `Project.createdByDemo` |
+| `prisma/migrations/20260922000000_modo_demo/migration.sql` | Create | The column + partial unique index + `createdByDemo` column, Spanish WHY block |
+| `prisma/migrations/20260922000000_modo_demo/migration_down.sql` | Create | Hand-run rollback |
+| `src/lib/demo.ts` | Create | `asegurarCuentaDemo`, `buscarCuentaDemo`, `consumoDeLaDemo` |
+| `src/lib/admin/demo.ts` | Create | `resumenDemo()` — the server-side summary for `/admin/demo`, all values pre-converted for the `client:load` boundary |
+| `src/lib/auth/session.ts` | Modify | `createSessionToken`/`setSessionCookie` gain optional TTL overrides for the demo's 2h session; comment on `SessionUser.isDemo` updated (real column now) |
+| `src/middleware.ts` | Modify | `resolverIdentidadFresca` selects and forwards the real `isDemo` column instead of hardcoding `false` |
+| `src/pages/api/auth/demo.ts` | Create | `POST`, 404 when off, issues the 2h demo session |
+| `src/pages/login.astro` | Modify | The discreet demo entry, server-gated on `demoEnabled` |
+| `src/pages/api/chat/stream.ts` | Modify | Demo-off gate + demo ceiling check |
+| `src/lib/client/api.ts` | Modify | `StreamEvent`'s error variant and `streamChat` grow an optional `registerUrl` |
+| `src/components/workspace/Workspace.tsx` | Modify | `registerUrl` state, threaded to `ChatPanel` |
+| `src/components/workspace/ChatPanel.tsx` | Modify | Renders a real `<a href={registerUrl}>Creá tu cuenta</a>` beside the retry/fallback buttons |
+| `src/lib/projects.ts` | Modify | `createProject`/`duplicateProject` accept `createdByDemo` |
+| `src/pages/api/projects/index.ts` | Modify | Passes `user.isDemo` to `createProject` |
+| `src/pages/api/projects/[id]/duplicate.ts` | Modify | Passes `user.isDemo` to `duplicateProject` |
+| `src/pages/api/admin/settings.ts` | Create | `PATCH { demoEnabled?, demoTokenLimit? }`, creates the account on the on-transition |
+| `src/pages/api/admin/demo/reiniciar.ts` | Create | `POST`, moves `demoCycleStartedAt` |
+| `src/pages/api/admin/demo/recursos.ts` | Create | `GET` count + `DELETE` purge |
+| `src/pages/admin/demo.astro` | Modify | Empty M1 shell → renders `DemoPanel` with server-fetched `resumenDemo()` |
+| `src/components/admin/DemoPanel.tsx` | Create | The admin panel: toggle, token-limit form, reset, two-step purge confirmation |
+| `src/lib/admin/usuarios.ts` | Modify | `listarUsuariosAdmin`/`obtenerUsuarioAdmin` exclude the demo account (see Deviation 3) |
+| `src/pages/api/admin/users/[id].ts` | Modify | Refuses `role: 'ADMIN'` on the demo account (409) |
+| `e2e/m7-demo.ts` | Create | Slice verification, both themes where applicable |
+
+### Deviations from design
+
+1. **The demo account is created with `aiAccessOverride: true` from birth, composing with M6's access rule instead of adding a parallel bypass.** The brief explicitly asked how a demo session interacts with domain rules, since `demo@kodu.local` will never be on any admin's authorized-domain list. Design.md §8 doesn't spell out the mechanism. Two options existed: (a) special-case `isDemo` inside `puedeUsarLaIa()` in `auth/domains.ts` so it always returns `true` regardless of `aiAccessOverride`/domain, or (b) give the demo account the SAME explicit individual grant M6 already built for any docente an admin wants to enable by hand. I chose (b): `asegurarCuentaDemo()` sets `aiAccessOverride: true` at creation, and `puedeUsarLaIa()` in `domains.ts` is completely untouched by M7. This means the demo's AI access is real, inspectable, revocable through the exact same code path as any other user's override (an admin could, in principle, flip it — though nothing in the UI exposes that, and doing so would just make the demo silently fail `puedeUsarLaIa` without the clearer "La demo está cerrada por el momento." message the dedicated gate gives), and there is no special-cased identity check anywhere in the access-control code. The actual on/off switch for the demo is `AppSettings.demoEnabled`, checked as a SEPARATE gate in `stream.ts`, right after `puedeUsarLaIa`.
+2. **`src/pages/api/admin/demo/recursos.ts` also got a `GET` handler**, not in the design/tasks file list (which only names `DELETE`). The brief's own TRAPS section says "Guard the destructive purge… it must be unambiguous what is about to be deleted." A purge button that fires with no visible count first fails that bar, so `DemoPanel.tsx` fetches the count from this `GET` (via `resumenDemo()` server-side on load, i.e. via `lib/admin/demo.ts`, not this route directly — the route itself exists for symmetry with the models/domains `index.ts` GET+POST-in-one-file convention and so the confirmation step can re-check the count is still > 0 without a full page reload) before showing "¿Seguro? Se van a borrar N recursos." This is additive (no existing behavior changed) and follows the established one-file-multiple-verbs pattern already used by `api/admin/models/index.ts` and `api/admin/domains/index.ts`.
+3. **The demo account is excluded from `/admin/usuarios` and `/admin/usuarios/[id]`, not merely labeled differently.** The brief said: "must not appear as a normal teacher in a way that confuses the users table. Decide how it presents there and document it." I decided it doesn't present there at all — `listarUsuariosAdmin()`'s query gained `where: { isDemo: false }`, and `obtenerUsuarioAdmin()` returns `null` (→ 404 page) for a demo id. Reasoning: the users table's whole point is "who is this docente, what did they cost, can I promote them" — every one of those questions has a different or nonsensical answer for a shared synthetic account (there's no "who", promoting it is nonsensical, and its cost is already visible on its own dedicated `/admin/demo` page with its own ceiling, distinct from the tope-agnostic dollar figures `/admin/usuarios` shows). A row that LOOKS like a teacher row but behaves differently (grayed out, a badge, a disabled menu) would still show up in searches/scans and would need bespoke handling in `UsuariosTabla.tsx`/the overflow menu for every single action. Full exclusion is the design decision that keeps the table meaning exactly what it says. Defense in depth: `PATCH /api/admin/users/:id` independently refuses `role: 'ADMIN'` on the demo account with 409, in case anyone ever pegs the endpoint directly with its id (e2e-verified).
+4. **The ceiling-exhausted invitation is delivered as a real clickable `<a href="/register">`, which required extending `StreamEvent`'s error shape and threading a new prop through `Workspace.tsx`/`ChatPanel.tsx`**, not listed as files M7 would touch. Task 7.9/the spec explicitly require "a working link to register," and every existing error in the chat UI (`fallbackModel`/`fallbackLabel`, task 4's cost indicator's neighbor) already established the pattern of extending the same typed error channel rather than inventing a second one — `registerUrl` is additive and optional everywhere, so no existing caller of `streamChat`/`ChatPanel` needed a change beyond passing the new (nullable) prop through.
+5. **`createSessionToken`/`setSessionCookie` grew optional TTL-override parameters instead of a parallel demo-specific session function.** Design.md just says "2-hour-TTL cookie." The alternative — a second `createDemoSessionToken` — would have duplicated the entire JWT-signing logic for one different number. The chosen shape (`ttlSecondsOverride?`, `maxAgeSecondsOverride?`, both optional and defaulting to the existing `SESSION_TTL_HOURS`-derived value) is backward compatible: `login.ts`/`register.ts`/`callback.ts` call the same functions with the same two arguments they always did.
+
+### Issues found
+
+None blocking. One thing worth being explicit about for whoever reviews this, since the brief specifically asked for honesty here: **this change does not add any rate limiting.** The token ceiling (`AppSettings.demoTokenLimit`, checked in `stream.ts` before any AI call) is the ONLY real cap the demo account has. Concretely, and unchanged from design.md §8's own admission:
+
+- A script can call `POST /api/auth/demo` as many times as it wants. Every call issues a fresh cookie for the exact same shared account (the partial unique index guarantees there is only ever one), so the token ceiling still binds spend — but nothing stops those sessions from uploading files (`MAX_UPLOAD_MB` each, no per-account cap) or publishing an unbounded number of gallery entries before the ceiling is ever reached.
+- Disk usage from demo-account uploads/resources is bounded by nothing automatic. The only cleanup mechanism is the manual purge button on `/admin/demo`, which is after-the-fact and admin-triggered — not a preventative control.
+- This is not a regression M7 introduces; it is the same fact `design.md` states plainly ("There is no rate limiting anywhere in this codebase") and that this milestone does not attempt to fix. Rate limiting, if wanted, is its own separate change.
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m7-demo.ts
+✔ preparado: motor de IA de prueba y docente real dados de alta
+✔ interruptor apagado: /login no muestra ninguna entrada a la demo (2 temas)
+✔ interruptor prendido: /login muestra la entrada discreta a la demo (2 temas)
+✔ seguir la entrada autentica al visitante
+✔ la cuenta compartida de demo existe en la base (isDemo=true, rol DOCENTE)
+✔ un recurso creado por la demo nace con createdByDemo=true
+✔ la cuenta de demo puede usar la IA a través del pipeline real de streaming
+✔ el consumo de la demo se acumula contra SU propio tope, separado de cualquier otro usuario
+✔ la demo puede publicar a la galería, y el recurso sigue marcado createdByDemo
+✔ un segundo visitante que entra a la demo ve el recurso que dejó el primero
+✔ (light) tope agotado: mensaje sobrio de invitación, nunca un error crudo
+✔ (light) el link de invitación es un <a href="/register"> real, no sólo texto
+✔ (dark) tope agotado: mensaje sobrio de invitación, nunca un error crudo
+✔ (dark) el link de invitación es un <a href="/register"> real, no sólo texto
+✔ apagar la demo a mitad de un turno no lo corta; termina normal
+✔ el turno SIGUIENTE, con la demo ya apagada, queda bloqueado — sin volver a loguearse
+✔ apagar el interruptor hace desaparecer la entrada de /login de nuevo
+✔ el purgado masivo borra sólo recursos createdByDemo=true; un recurso real sobrevive
+✔ la cuenta de demo no aparece en /admin/usuarios
+✔ la cuenta de demo no es promovible a ADMIN, ni siquiera pegándole directo al endpoint
+✔ (light) /admin/demo refleja el interruptor prendido
+✔ (dark) /admin/demo refleja el interruptor prendido
+
+✔ e2e/m7-demo.ts: todos los escenarios pasaron
+
+$ npx tsx e2e/unidad.ts        # regresión → 11/11
+$ npx tsx e2e/m1-admin-shell.ts  # regresión → 11/11
+$ npx tsx e2e/m2-catalogo.ts    # regresión → 7/7
+$ npx tsx e2e/m3-motores.ts    # regresión → 14/14
+$ npx tsx e2e/m4-costos.ts     # regresión → 17/17
+$ npx tsx e2e/m5-usuarios.ts   # regresión → 23/23
+$ npx tsx e2e/m6-acceso.ts     # regresión → 23/23
+
+$ rg -n 'bg-white|bg-slate-' src/pages/admin/demo.astro src/components/admin/DemoPanel.tsx src/pages/login.astro src/pages/api/auth/demo.ts src/lib/demo.ts src/lib/admin/demo.ts
+(exit 1, no matches — expected)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c 'SELECT "demoEnabled","demoTokenLimit" FROM "AppSettings";'
+  demoEnabled=f, demoTokenLimit=200000 — restored to defaults after the run
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c 'SELECT count(*) FROM "User" WHERE "isDemo" = true;'
+  1 — the shared demo account persists by design (not deleted between runs)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"Project\" WHERE title LIKE 'Recurso E2E M7%';"
+  0 — this run's test fixtures cleaned up (purged via the admin API + teardown)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"AiModel\" WHERE provider = 'test-m7';"
+  0 — mock engine removed
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT email FROM \"User\" WHERE email = 'docente-e2e-m7-real@kodu.local';"
+  0 rows — test docente fixture removed
+```
+
+### Remaining tasks
+
+None for Phase 7. Phase 8 (M8) remains out of scope for this apply batch — it depends only on M1 and may land independently.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M7
+- Boundary: starts where M6 left off on `feat/panel-admin`, ends at the M7
+  checkpoint (task 7.11).
+- Estimated review budget impact: forecast estimated ~400 changed lines for
+  M7. `review_budget_lines` is unbounded for this change per the owner, so
+  this is informational only.

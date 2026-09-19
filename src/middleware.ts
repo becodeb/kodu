@@ -31,10 +31,13 @@ function matches(pathname: string, prefixes: string[]): boolean {
  * toleran un dato viejo, las mutaciones de /api/admin no (ver
  * requireFreshAdmin).
  *
- * `aiAccessOverride` ya tiene columna propia desde M6 y se relee acá en cada
- * pedido gateado. `isDemo` todavía no tiene columna propia — llega con la
- * migración de M7 — así que hasta entonces viaja en `false` sin importar el
- * resultado de esta lectura.
+ * `aiAccessOverride` tiene columna propia desde M6 e `isDemo` desde M7; las
+ * dos se releen acá en cada pedido gateado. Esto es lo que hace que apagar
+ * el interruptor de la demo (`AppSettings.demoEnabled`, chequeado en
+ * `chat/stream.ts`) surta efecto en el PRÓXIMO pedido de la cuenta de demo
+ * sin ningún re-login: no cambia `isDemo` en sí (la cuenta sigue siendo la
+ * cuenta de demo), lo que cambia es que el gate de `stream.ts` vuelve a leer
+ * `demoEnabled` en ese pedido nuevo.
  */
 async function resolverIdentidadFresca(
   sesion: SessionUser,
@@ -42,7 +45,7 @@ async function resolverIdentidadFresca(
   try {
     const fila = await prisma.user.findUnique({
       where: { id: sesion.id },
-      select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
+      select: { id: true, email: true, name: true, role: true, aiAccessOverride: true, isDemo: true },
     });
 
     if (!fila) {
@@ -57,7 +60,7 @@ async function resolverIdentidadFresca(
         name: fila.name,
         role: fila.role,
         aiAccessOverride: fila.aiAccessOverride,
-        isDemo: false,
+        isDemo: fila.isDemo,
       },
       fresh: true,
     };

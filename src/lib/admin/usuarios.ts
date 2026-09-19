@@ -51,10 +51,18 @@ export interface FilaUsuarioAdmin {
   ultimaActividad: string;
 }
 
-/** La tabla completa de `/admin/usuarios`, ordenada alfabéticamente por nombre. */
+/**
+ * La tabla completa de `/admin/usuarios`, ordenada alfabéticamente por
+ * nombre. Excluye a la cuenta de demo (M7, design.md §8): no es un docente
+ * real, tiene su propia página (`/admin/demo`) con su propio consumo y su
+ * propio tope, y listarla acá al lado de docentes de verdad — con "Rol:
+ * Docente" y un botón "Hacer administrador" que jamás debería tocarla —
+ * confundiría la tabla en vez de aclararla.
+ */
 export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
   const [usuarios, filasUso, proyectosPorUsuario] = await Promise.all([
     prisma.user.findMany({
+      where: { isDemo: false },
       select: { id: true, name: true, email: true, googleId: true, role: true, aiAccessOverride: true },
     }),
     prisma.tokenUsage.findMany({
@@ -135,7 +143,9 @@ export interface DetalleUsuarioAdmin {
   proyectosCount: number;
 }
 
-/** El encabezado + trío de estadísticas del detalle de un docente. `null` si no existe. */
+/** El encabezado + trío de estadísticas del detalle de un docente. `null` si
+ *  no existe O si es la cuenta de demo (ver `listarUsuariosAdmin`: no tiene
+ *  ficha acá, vive en `/admin/demo`). */
 export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdmin | null> {
   const usuario = await prisma.user.findUnique({
     where: { id },
@@ -147,9 +157,10 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
       role: true,
       createdAt: true,
       aiAccessOverride: true,
+      isDemo: true,
     },
   });
-  if (!usuario) return null;
+  if (!usuario || usuario.isDemo) return null;
 
   const [{ tokens, costUsd }, proyectosCount, autorizadoPorDominio] = await Promise.all([
     costoTotalDeUsuario(usuario.id),

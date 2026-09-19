@@ -95,6 +95,8 @@ export default function Workspace(props: WorkspaceProps) {
 
   /** Otro motor sugerido cuando el elegido falló. */
   const [fallback, setFallback] = useState<{ model: string; label: string } | null>(null);
+  /** Llega cuando la demo agota su tope (M7): un link real, no sólo texto. */
+  const [registerUrl, setRegisterUrl] = useState<string | null>(null);
 
   /**
    * La ficha se pide al abrir un recurso recién creado: título y descripción
@@ -272,6 +274,7 @@ export default function Workspace(props: WorkspaceProps) {
     setError(null);
     setFailedMessage(null);
     setFallback(null);
+    setRegisterUrl(null);
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -334,6 +337,7 @@ export default function Workspace(props: WorkspaceProps) {
           if (event.fallbackModel && event.fallbackLabel) {
             setFallback({ model: event.fallbackModel, label: event.fallbackLabel });
           }
+          if (event.registerUrl) setRegisterUrl(event.registerUrl);
         } else if (event.type === 'done') {
           setMessages((current) => [
             ...current,
@@ -522,6 +526,7 @@ export default function Workspace(props: WorkspaceProps) {
           if (failedMessage) void handleSend(failedMessage, true);
         }}
         fallbackLabel={fallback && !isStreaming ? fallback.label : null}
+        registerUrl={registerUrl && !isStreaming ? registerUrl : null}
         onUseFallback={() => {
           if (!fallback || !failedMessage) return;
           // Se cambia el modelo del proyecto Y se reintenta: si sólo se cambiara

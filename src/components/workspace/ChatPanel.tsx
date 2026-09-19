@@ -27,6 +27,8 @@ interface ChatPanelProps {
   /** Nombre del otro proveedor cuando el elegido falló y se puede redirigir. */
   fallbackLabel: string | null;
   onUseFallback: () => void;
+  /** Llega cuando la demo agota su tope (M7): un link real a /register. */
+  registerUrl: string | null;
   /** El `id` del `AiModel` vigente. */
   model: string;
   motoresDisponibles: MotorPublico[];
@@ -317,6 +319,14 @@ export default function ChatPanel(props: ChatPanelProps) {
                 >
                   Probar con {props.fallbackLabel}
                 </button>
+              )}
+              {props.registerUrl && (
+                <a
+                  href={props.registerUrl}
+                  className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700"
+                >
+                  Creá tu cuenta
+                </a>
               )}
             </div>
           </div>

@@ -162,17 +162,17 @@ reinterpretation of the design's intent.
 
 ## Phase 7: M7 — Demo mode
 
-- [ ] 7.1 `prisma/schema.prisma` + `prisma/migrations/20260922000000_modo_demo/migration.sql`: `User.isDemo Boolean @default(false)` + **partial unique index** `WHERE "isDemo" = true` (hand-written, same reason as 2.3); `Project.createdByDemo Boolean @default(false)`. Apply; `prisma migrate resolve --applied`.
-- [ ] 7.2 Create `src/lib/demo.ts`: `asegurarCuentaDemo()` lazily creates the shared account (`passwordHash=null`, `googleId=null`, `demo@kodu.local`) the first time the toggle flips on — **not in the migration**, so `createdAt` is meaningful; `consumoDeLaDemo()` sums `TokenUsage` across all models `WHERE createdAt >= demoCycleStartedAt`.
-- [ ] 7.3 Create `src/pages/api/auth/demo.ts`: `POST`, form-urlencoded; **404**, not 403, when `demoEnabled` is off (so the endpoint doesn't advertise itself while closed); on success, 2-hour-TTL cookie, redirect to `/app`.
-- [ ] 7.4 `src/pages/api/chat/stream.ts`: demo ceiling check beside the per-model limit (`consumoDeLaDemo() >= AppSettings.demoTokenLimit` → invitation copy); demo-off gate (`isDemo && !demoEnabled` → `"La demo está cerrada por el momento."` on the **next** turn, never killing one already streaming).
-- [ ] 7.5 `src/pages/login.astro`: discreet demo line under "¿No tenés cuenta?", rendered only when `demoEnabled`, a plain `<form method="POST" action="/api/auth/demo">` — **not rendered at all when off**, not hidden/disabled.
-- [ ] 7.6 Create `src/pages/admin/demo.astro` + `src/pages/api/admin/settings.ts` (`PATCH { demoEnabled?, demoTokenLimit? }`) + `src/pages/api/admin/demo/reiniciar.ts` (moves `demoCycleStartedAt` to now, never deletes usage) + `src/pages/api/admin/demo/recursos.ts` (`DELETE`, purges `createdByDemo=true` rows).
-- [ ] 7.7 Set `Project.createdByDemo = true` at creation whenever the actor is the demo user.
-- [ ] 7.8 DB-state check: exactly one `isDemo=true` row; demo usage accrues against its own ceiling, separate from any other user's; bulk purge removes only `createdByDemo=true` rows, real teachers' resources untouched.
-- [ ] 7.9 Browser check `e2e/m7-demo.ts`, both themes: toggle on → entry line appears on the next request, demo works, content persists across visitor sessions; toggle off → line gone, next demo AI request refused (in-flight one completes); ceiling exhausted → sober invitation copy with a working register link.
-- [ ] 7.10 `npm run check` passes.
-- [ ] 7.11 **M7 checkpoint**: demo door openable/closable at will — deliverable.
+- [x] 7.1 `prisma/schema.prisma` + `prisma/migrations/20260922000000_modo_demo/migration.sql`: `User.isDemo Boolean @default(false)` + **partial unique index** `WHERE "isDemo" = true` (hand-written, same reason as 2.3); `Project.createdByDemo Boolean @default(false)`. Apply; `prisma migrate resolve --applied`.
+- [x] 7.2 Create `src/lib/demo.ts`: `asegurarCuentaDemo()` lazily creates the shared account (`passwordHash=null`, `googleId=null`, `demo@kodu.local`) the first time the toggle flips on — **not in the migration**, so `createdAt` is meaningful; `consumoDeLaDemo()` sums `TokenUsage` across all models `WHERE createdAt >= demoCycleStartedAt`.
+- [x] 7.3 Create `src/pages/api/auth/demo.ts`: `POST`, form-urlencoded; **404**, not 403, when `demoEnabled` is off (so the endpoint doesn't advertise itself while closed); on success, 2-hour-TTL cookie, redirect to `/app`.
+- [x] 7.4 `src/pages/api/chat/stream.ts`: demo ceiling check beside the per-model limit (`consumoDeLaDemo() >= AppSettings.demoTokenLimit` → invitation copy); demo-off gate (`isDemo && !demoEnabled` → `"La demo está cerrada por el momento."` on the **next** turn, never killing one already streaming).
+- [x] 7.5 `src/pages/login.astro`: discreet demo line under "¿No tenés cuenta?", rendered only when `demoEnabled`, a plain `<form method="POST" action="/api/auth/demo">` — **not rendered at all when off**, not hidden/disabled.
+- [x] 7.6 Create `src/pages/admin/demo.astro` + `src/pages/api/admin/settings.ts` (`PATCH { demoEnabled?, demoTokenLimit? }`) + `src/pages/api/admin/demo/reiniciar.ts` (moves `demoCycleStartedAt` to now, never deletes usage) + `src/pages/api/admin/demo/recursos.ts` (`DELETE`, purges `createdByDemo=true` rows). **Deviation** (see apply-progress.md): `recursos.ts` also got a `GET` (count preview), not in the original file list — needed so the destructive purge button can show an unambiguous "you're about to delete N resources" count before confirming.
+- [x] 7.7 Set `Project.createdByDemo = true` at creation whenever the actor is the demo user.
+- [x] 7.8 DB-state check: exactly one `isDemo=true` row; demo usage accrues against its own ceiling, separate from any other user's; bulk purge removes only `createdByDemo=true` rows, real teachers' resources untouched.
+- [x] 7.9 Browser check `e2e/m7-demo.ts`, both themes: toggle on → entry line appears on the next request, demo works, content persists across visitor sessions; toggle off → line gone, next demo AI request refused (in-flight one completes); ceiling exhausted → sober invitation copy with a working register link.
+- [x] 7.10 `npm run check` passes.
+- [x] 7.11 **M7 checkpoint**: demo door openable/closable at will — deliverable.
 
 ## Phase 8: M8 — Cross-owner project access (depends only on M1, may land right after Phase 1)
 

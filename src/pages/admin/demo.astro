@@ -1,10 +1,12 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
+import DemoPanel from '../../components/admin/DemoPanel.tsx';
+import { resumenDemo } from '../../lib/admin/demo.ts';
 
-// El middleware ya garantiza sesión + rol ADMIN en /admin/**; esto es solo
-// para el tipo. Contenido real: M7.
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const resumen = await resumenDemo();
 ---
 
 <AdminLayout>
-  <p class="text-sm text-ink-500">Demo: todavía no implementado.</p>
+  <DemoPanel client:load initial={resumen} />
 </AdminLayout>

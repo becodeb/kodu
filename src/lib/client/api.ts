@@ -61,8 +61,10 @@ export type StreamEvent =
   | { type: 'notice'; message: string }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
   /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
-   *  falló pero otro de la cadena tiene lugar para el pedido. */
-  | { type: 'error'; message: string; fallbackModel?: string; fallbackLabel?: string };
+   *  falló pero otro de la cadena tiene lugar para el pedido.
+   *  `registerUrl` llega cuando la cuenta de demo agotó su tope (M7): nunca
+   *  un error mudo, siempre con una salida real. */
+  | { type: 'error'; message: string; fallbackModel?: string; fallbackLabel?: string; registerUrl?: string };
 
 /**
  * Consume el SSE de /api/chat/stream.
@@ -94,6 +96,7 @@ export async function* streamChat(payload: {
       error?: string;
       fallbackModel?: string;
       fallbackLabel?: string;
+      registerUrl?: string;
     } | null;
     const detalle =
       error?.error ??
@@ -107,6 +110,7 @@ export async function* streamChat(payload: {
       message: detalle,
       fallbackModel: error?.fallbackModel,
       fallbackLabel: error?.fallbackLabel,
+      registerUrl: error?.registerUrl,
     };
     return;
   }

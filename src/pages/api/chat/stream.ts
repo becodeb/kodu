@@ -16,6 +16,8 @@ import {
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
+import { consumoDeLaDemo } from '../../../lib/demo.ts';
+import { leerAppSettings } from '../../../lib/settings.ts';
 import {
   UPDATE_RESOURCE_CODE,
   parseUpdateResourceArgs,
@@ -240,6 +242,24 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
   }
 
+  /**
+   * El apagado de la demo (design.md §8; specs/demo-mode/spec.md — "Turning
+   * demo mode off disables the demo account immediately") va ACÁ, no en el
+   * middleware: la cuenta de demo tiene `aiAccessOverride=true` fijo (ver
+   * `lib/demo.ts`), así que `puedeUsarLaIa` de arriba siempre la deja pasar.
+   * El interruptor real es este chequeo aparte. Igual que la revocación de
+   * M6, esto es lo que hace que apagar la demo aplique al PRÓXIMO turno y
+   * nunca corte uno que ya está transmitiendo — el middleware relee
+   * `AppSettings` en cada request nueva, un turno en curso no hace una.
+   */
+  let demoSettings: Awaited<ReturnType<typeof leerAppSettings>> | null = null;
+  if (user.isDemo) {
+    demoSettings = await leerAppSettings();
+    if (!demoSettings.demoEnabled) {
+      return fail('La demo está cerrada por el momento.', 403);
+    }
+  }
+
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
@@ -324,6 +344,32 @@ export const POST: APIRoute = async ({ request, locals }) => {
       413,
       otro ? { fallbackModel: otro.id, fallbackLabel: otro.label } : {},
     );
+  }
+
+  /**
+   * El tope de la demo (design.md §8; specs/demo-mode/spec.md — "Token
+   * ceiling is the only cap"). Es GLOBAL a la cuenta compartida, no por
+   * motor como el tope de abajo — una tarde abusiva en un solo motor no
+   * debería poder esquivarlo cambiando de proveedor.
+   *
+   * No hay rate limiting en ningún lugar de este repo (ni en
+   * `/api/auth/login`, ni acá, ni en `/api/uploads`): este tope de tokens es
+   * el único techo real para la demo. Un visitante puede llamar
+   * `/api/auth/demo` mil veces y cada llamada abre una cookie de la MISMA
+   * cuenta, así que el tope de abajo sigue rigiendo el gasto — pero nada
+   * acota cuántos uploads o recursos de galería puede generar antes de
+   * llegar a él. Eso se acota después, a mano, con el purgado de
+   * `/admin/demo`, no acá.
+   */
+  if (user.isDemo && demoSettings) {
+    const consumidos = await consumoDeLaDemo();
+    if (consumidos >= demoSettings.demoTokenLimit) {
+      return fail(
+        'La demo ya usó todo el crédito de esta ronda. Si querés seguir armando recursos, creá tu cuenta: es gratis y tus recursos quedan guardados.',
+        429,
+        { registerUrl: '/register' },
+      );
+    }
   }
 
   // El tope por usuario se chequea ANTES de gastar: avisar después de consumir

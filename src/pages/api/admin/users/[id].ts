@@ -38,6 +38,15 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     return fail('No hay nada para actualizar.', 422);
   }
 
+  // La cuenta de demo no es promovible (design.md §8): es una cuenta
+  // sintética compartida, sin dueño humano — un admin con esas credenciales
+  // no tiene sentido y `/admin/usuarios` ni siquiera la lista (ver
+  // `listarUsuariosAdmin`), así que esto sólo defiende contra pegarle el
+  // PATCH directo con su id.
+  if (existente.isDemo && datos.role === 'ADMIN') {
+    return fail('La cuenta de demo no puede ser administradora.', 409);
+  }
+
   // Bajar al único admin que queda está prohibido: primero hay que nombrar
   // a otro (specs/admin-users/spec.md — el mensaje es literal del spec).
   if (datos.role === 'DOCENTE' && existente.role === 'ADMIN') {
