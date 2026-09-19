@@ -23,6 +23,14 @@ interface WorkspaceProps {
   authorName: string;
   /** Motores habilitados y elegibles por un docente, ya en orden de catálogo. */
   motoresDisponibles: MotorPublico[];
+  /**
+   * Aviso quieto para mostrar una sola vez al abrir la página (por ahora,
+   * sólo el repunteo de motor apagado — spec `ai-model-catalog`,
+   * "Fallback when a project's model is disabled"). `null` cuando no hay
+   * nada que avisar. Reusa el mismo `flashNotice` que "Guardado" o los
+   * avisos del chat: no es un modal ni una alarma.
+   */
+  initialNotice: string | null;
 }
 
 /**
@@ -110,6 +118,18 @@ export default function Workspace(props: WorkspaceProps) {
   const flashNotice = useCallback((text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice(null), 2_500);
+  }, []);
+
+  /**
+   * El aviso de repunteo de motor (o cualquier otro aviso de "una sola vez al
+   * abrir") lo calcula el servidor en el frontmatter de la página, porque ahí
+   * es donde se sabe si `aiModelId` cambió. Acá sólo se dispara una vez al
+   * montar — no en cada cambio de `props`, porque la página no vuelve a
+   * evaluar el frontmatter sin una recarga completa.
+   */
+  useEffect(() => {
+    if (props.initialNotice) flashNotice(props.initialNotice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const patchProject = useCallback(

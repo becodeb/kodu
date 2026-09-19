@@ -460,6 +460,105 @@ None for Phase 3. Phases 4–8 (M4–M8) remain out of scope for this apply batc
   M3. `review_budget_lines` is unbounded for this change per the owner, so
   this is informational only.
 
+### Remediation — quiet repoint notice (`GAP-aviso-de-motor-repunteado`)
+
+**Correcting the record**: Deviation 5 above deferred the "quiet repoint
+notice" half of the `ai-model-catalog` spec's "Fallback when a project's
+model is disabled" requirement from M2 to M3, reasoning that M3's admin UI
+was the first point where the scenario became exercisable. **M3 never
+picked it up** — `tasks.md`'s M3 task list has no task for it, and no code
+anywhere in the repo produced the notice copy or referenced it. This is a
+real gap, not a documentation lag: it went unnoticed through M3–M8 and was
+only caught by an `sdd-verify` CRITICAL after all 8 milestones had landed.
+Closed here as a narrow, standalone remediation.
+
+**What was built**: `src/pages/app/project/[id].astro` now keeps the
+pre-remediation project's original `aiModelId` (`motorOriginal`) before
+computing the repointed one, so it can tell "had a model, it went away"
+(`motorOriginal !== null`, a real repoint — avisar) apart from "brand-new
+project, no model yet" (`motorOriginal === null` — never a repoint, never an
+avisar). The `prisma.project.update` persist keeps firing on both cases,
+unchanged from M2's original behavior (`e2e/m2-catalogo.ts` still covers
+that). The notice text is computed only for the real-repoint case and passed
+as a new `initialNotice` prop into `Workspace.tsx`, which fires it once
+through its existing `flashNotice` mechanism (the same one that already
+shows "Guardado" and the chat's SSE `notice` events) in a mount-only
+`useEffect`. No new component, no new SSE event type, no schema change.
+"Notice does not repeat" falls out for free: the repoint already persisted
+the new `aiModelId` on the first open, so the same `motorOriginal !==
+motorVigente.id` comparison is `false` on the next one. Also removed the
+stale "M3" pointer left in `catalogo.ts:137`'s comment.
+
+**A bug caught by regression, not by the new coverage itself**: the first
+implementation gated the `prisma.project.update` persist on the same
+"had a model before" condition as the notice, which silently broke the
+pre-existing M2 behavior of assigning a brand-new project's `aiModelId` to
+the seeded default on first open — `e2e/m2-catalogo.ts` failed
+(`actual: null` where it expected the default's id) on the very first full
+regression pass. Fixed by splitting persistence (`motorCambio`, unconditional
+as before) from the notice (`motorCambio && motorOriginal !== null`). Left
+in this note as a reminder that "gate the notice on X" and "gate the write
+on X" are two different decisions even when X looks like the same
+condition.
+
+#### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m3-motores.ts` → 18/18 scenario assertions passed, including the 4 new ones (steps 10a–10d): repoint + notice in light theme with DB persisted to the default id, notice does not repeat on reopen, repoint + notice in dark theme, brand-new project with no model never shows it |
+| Rollback boundary | `git revert` this work unit's commit on `feat/panel-admin`. Touches only `src/pages/app/project/[id].astro`, `src/components/workspace/Workspace.tsx`, `src/lib/ai/catalogo.ts` (comment only), `e2e/m3-motores.ts`, `tasks.md`, this file. No schema change, no new route, no new component — a clean revert restores the M2/M3-era silent-persist-only behavior |
+
+#### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `src/pages/app/project/[id].astro` | Modify | Track `motorOriginal`; split persist (`motorCambio`) from notice (`motorCambio && motorOriginal !== null`); pass `initialNotice` to `Workspace` |
+| `src/components/workspace/Workspace.tsx` | Modify | New `initialNotice` prop; mount-only `useEffect` firing it through the existing `flashNotice` |
+| `src/lib/ai/catalogo.ts` | Modify | Comment only — removed the stale "M3" pointer, now points at where the repoint/notice actually live |
+| `e2e/m3-motores.ts` | Modify | Steps 10a–10d (both themes, does-not-repeat, brand-new-project); `limpiarEstado()` now also clears the test docente's projects between runs |
+| `openspec/changes/panel-admin/tasks.md` | Modify | Added and checked off task 3.14 |
+
+#### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m3-motores.ts
+... (14 pre-existing checks, unchanged) ...
+✔ repunteo + aviso quieto: tema light, motor apagado → default vigente
+✔ el aviso de repunteo no se repite al reabrir el mismo proyecto
+✔ repunteo + aviso quieto: tema dark, motor apagado → default vigente
+✔ un proyecto nuevo sin motor nunca muestra el aviso de repunteo
+
+✔ e2e/m3-motores.ts: todos los escenarios pasaron
+
+# Full regression, all 9 suites, run individually:
+$ npx tsx e2e/unidad.ts            → ✔ todas las pruebas pasaron
+$ npx tsx e2e/m1-admin-shell.ts    → ✔ todos los escenarios pasaron
+$ npx tsx e2e/m2-catalogo.ts       → ✔ todos los escenarios pasaron (after the
+                                      motorCambio/notice split fix above — the
+                                      first attempt broke this suite)
+$ npx tsx e2e/m3-motores.ts        → ✔ todos los escenarios pasaron (18/18)
+$ npx tsx e2e/m4-costos.ts         → ✔ todos los escenarios pasaron
+$ npx tsx e2e/m5-usuarios.ts       → ✔ todos los escenarios pasaron
+$ npx tsx e2e/m6-acceso.ts         → ✔ todos los escenarios pasaron
+$ npx tsx e2e/m7-demo.ts           → ✔ todos los escenarios pasaron
+$ npx tsx e2e/m8-proyectos-ajenos.ts → ✔ todos los escenarios pasaron
+
+# Seed state confirmed byte-for-byte restored after the full run:
+MiniMax M3 (enabled, default, sortOrder 0), MiniMax M2.7 (enabled,
+sortOrder 1), DeepSeek (enabled, sortOrder 2), Alpha (disabled,
+sortOrder 3) — matches the migration's original seed exactly.
+```
+
+#### Remaining tasks
+
+None. `GAP-aviso-de-motor-repunteado` is closed.
+
 ## Phase 4: M4 — Cost accounting + indicator
 
 **Status**: complete. 12/12 tasks done (4.1–4.12).

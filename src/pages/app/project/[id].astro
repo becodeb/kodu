@@ -55,12 +55,33 @@ const motoresDisponibles = await motoresParaDocente();
 // El motor vigente del proyecto puede no existir más, estar apagado, o el
 // proyecto puede ser nuevo y no tener ninguno todavía: `normalizarMotor` cae
 // al default vigente en cualquiera de esos casos (design.md §5).
+//
+// `motorOriginal` se guarda ANTES de pisar `aiModelId`: separa dos casos que
+// persisten igual (M2, ya probado por e2e/m2-catalogo.ts) pero que NO avisan
+// igual:
+//  - proyecto nuevo sin motor todavía (`motorOriginal` null) → primera
+//    asignación, se persiste calladito, nunca es un "repunteo";
+//  - proyecto que SÍ tenía un motor y dejó de estar disponible
+//    (`motorOriginal` no null) → repunteo real, spec `ai-model-catalog`
+//    ("Fallback when a project's model is disabled") pide avisar.
+const motorOriginal = project.aiModelId;
 const motorVigente = await normalizarMotor(project.aiModelId);
 const aiModelId = motorVigente?.id ?? project.aiModelId ?? '';
+const motorCambio = !!motorVigente && motorVigente.id !== motorOriginal;
 
-if (motorVigente && motorVigente.id !== project.aiModelId) {
+if (motorCambio && motorVigente) {
   await prisma.project.update({ where: { id: project.id }, data: { aiModelId: motorVigente.id } });
 }
+
+// El aviso se muestra UNA vez porque el `update` de arriba ya persistió el
+// nuevo `aiModelId`: la próxima carga de esta misma página, `motorOriginal`
+// va a ser igual a `motorVigente.id`, `motorCambio` va a dar `false` solo, y
+// esta cuenta también. No hace falta ninguna columna nueva ni timestamp de
+// "ya lo vio" (M2 lo había diferido a M3; M3 nunca lo retomó, se cierra acá).
+const avisoDeMotorRepunteado =
+  motorCambio && motorOriginal !== null
+    ? 'Cambiamos el motor de este proyecto porque el anterior ya no está disponible.'
+    : null;
 
 // Si ningún motor quedó marcado "para el docente" (todavía sin configurar, o
 // todos apagados salvo el vigente), igual se muestra el que está en uso: un
@@ -164,5 +185,6 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
     siteUrl={siteUrl}
     authorName={user.name}
     motoresDisponibles={motoresParaElSelector}
+    initialNotice={avisoDeMotorRepunteado}
   />
 </BaseLayout>

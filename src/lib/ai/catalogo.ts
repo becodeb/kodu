@@ -133,8 +133,10 @@ export async function motorPorDefecto(): Promise<ProviderConfig | null> {
 /**
  * El motor que corresponde usar para un pedido: el `id` pedido si existe y
  * está habilitado, o el default en cualquier otro caso (falta, no existe,
- * está apagado). No decide nada sobre reencaminar el proyecto — eso lo hace
- * quien la llama (ver `stream.ts` y, para el aviso al docente, M3).
+ * está apagado). No decide nada sobre reencaminar el proyecto ni sobre
+ * avisarle al docente — eso lo hace quien la llama
+ * (`src/pages/app/project/[id].astro`: persiste el repunteo y arma el aviso
+ * quieto de una sola vez, ver `specs/ai-model-catalog/spec.md`).
  */
 export async function normalizarMotor(modelId: string | null): Promise<ProviderConfig | null> {
   const filas = await filasDelCatalogo();

@@ -66,6 +66,13 @@ async function limpiarEstado(): Promise<void> {
   await prisma.$transaction(
     Object.entries(SORT_ORDER_SEMILLA).map(([id, sortOrder]) => prisma.aiModel.update({ where: { id }, data: { sortOrder } })),
   );
+
+  // Los recursos que crea este script (selector del docente, escenarios de
+  // repunteo) tampoco tienen que sobrevivir entre corridas. El docente de
+  // prueba puede no existir todavía la primera vez que corre esta función
+  // (se llama antes y después de `asegurarDocenteDePrueba` en `main`).
+  const docente = await prisma.user.findUnique({ where: { email: DOCENTE_EMAIL }, select: { id: true } });
+  if (docente) await prisma.project.deleteMany({ where: { userId: docente.id } });
 }
 
 async function main(): Promise<void> {
@@ -246,6 +253,78 @@ async function main(): Promise<void> {
     const sigueEnSelector = await pageDocente.getByRole('button', { name: NOMBRE_MOTOR }).count();
     assert.equal(sigueEnSelector, 0, 'un motor deshabilitado no debería seguir en el selector del docente');
     console.log('✔ deshabilitar un motor no-default lo saca del selector del docente');
+
+    // 10. Aviso quieto de repunteo (Requirement "Fallback when a project's
+    //     model is disabled", scenarios "silently repoints and notifies
+    //     once" y "notice does not repeat"). Se usan proyectos propios,
+    //     aparte del de arriba, para no gastar el "una sola vez" antes de
+    //     poder comprobarlo y para cubrir los dos temas por separado.
+    const AVISO_REPUNTEO = 'Cambiamos el motor de este proyecto porque el anterior ya no está disponible.';
+
+    async function creaProyectoDocente(titulo: string): Promise<string> {
+      const respuestaCreacion2 = await pageDocente.request.post(`${BASE_URL}/api/projects`, { data: { title: titulo } });
+      assert.ok(respuestaCreacion2.ok(), `crear "${titulo}" debería dar 200, dio ${respuestaCreacion2.status()}`);
+      const { project: proyectoCreado } = (await respuestaCreacion2.json()) as { project: { id: string } };
+      return proyectoCreado.id;
+    }
+
+    /** Polling corto: el aviso lo dispara un `useEffect` al hidratar (no está
+     *  en el HTML del SSR) y se auto-oculta a los 2.5s, así que hay que
+     *  encuestar seguido en vez de una sola lectura tardía. */
+    async function hayAvisoRepunteo(timeoutMs = 6_000): Promise<boolean> {
+      const inicio = Date.now();
+      while (Date.now() - inicio < timeoutMs) {
+        if ((await pageDocente.getByText(AVISO_REPUNTEO).count()) > 0) return true;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return false;
+    }
+
+    // 10a. Proyecto que ya tenía el motor recién apagado (`motorCreado`, no
+    //      default): abrirlo en tema LIGHT tiene que repuntear al default
+    //      vigente Y mostrar el aviso.
+    const idProyectoLight = await creaProyectoDocente('Recurso E2E M3 — repunteo light');
+    await prisma.project.update({ where: { id: idProyectoLight }, data: { aiModelId: motorCreado.id } });
+    await conTema(pageDocente, 'light');
+    await pageDocente.goto(`${BASE_URL}/app/project/${idProyectoLight}`, { waitUntil: 'domcontentloaded' });
+    assert.ok(await hayAvisoRepunteo(), 'el aviso de repunteo debería aparecer en tema light al abrir el proyecto');
+    const proyectoLightTrasAbrir = await prisma.project.findUniqueOrThrow({ where: { id: idProyectoLight } });
+    assert.equal(
+      proyectoLightTrasAbrir.aiModelId,
+      MINIMAX_M3_ID,
+      'el proyecto debería quedar apuntando al default vigente tras el repunteo',
+    );
+    console.log('✔ repunteo + aviso quieto: tema light, motor apagado → default vigente');
+
+    // 10b. Reabrir el MISMO proyecto: el aviso ya se vio y `aiModelId` ya es
+    //      igual al vigente, así que no tiene que repetirse.
+    await pageDocente.reload({ waitUntil: 'domcontentloaded' });
+    assert.equal(
+      await hayAvisoRepunteo(1_500),
+      false,
+      'el aviso de repunteo no debería repetirse al reabrir el mismo proyecto',
+    );
+    console.log('✔ el aviso de repunteo no se repite al reabrir el mismo proyecto');
+
+    // 10c. Mismo escenario en tema DARK — la spec pide los dos temas para el
+    //      scenario "silently repoints and notifies once".
+    const idProyectoDark = await creaProyectoDocente('Recurso E2E M3 — repunteo dark');
+    await prisma.project.update({ where: { id: idProyectoDark }, data: { aiModelId: motorCreado.id } });
+    await conTema(pageDocente, 'dark');
+    await pageDocente.goto(`${BASE_URL}/app/project/${idProyectoDark}`, { waitUntil: 'domcontentloaded' });
+    assert.ok(await hayAvisoRepunteo(), 'el aviso de repunteo debería aparecer en tema dark al abrir el proyecto');
+    console.log('✔ repunteo + aviso quieto: tema dark, motor apagado → default vigente');
+
+    // 10d. Un proyecto recién creado (sin motor todavía, `aiModelId: null`)
+    //      no es un repunteo: nunca tiene que mostrar el aviso.
+    const idProyectoNuevo = await creaProyectoDocente('Recurso E2E M3 — sin motor');
+    await pageDocente.goto(`${BASE_URL}/app/project/${idProyectoNuevo}`, { waitUntil: 'domcontentloaded' });
+    assert.equal(
+      await hayAvisoRepunteo(1_500),
+      false,
+      'un proyecto nuevo sin motor no debería mostrar el aviso de repunteo',
+    );
+    console.log('✔ un proyecto nuevo sin motor nunca muestra el aviso de repunteo');
 
     await contextoDocente.close();
   } finally {

@@ -108,6 +108,7 @@ reinterpretation of the design's intent.
 - [x] 3.11 Browser check `e2e/m3-motores.ts`, both themes: create+enable+default+keyboard-reorder a model; selector shows name+description, no provider id; price form shows exactly 3 rate fields, no peak/off-peak; disabling the current default is refused (still default); disabling a non-default model removes it from the selector.
 - [x] 3.12 `npm run check` passes; `rg -n 'bg-white|bg-slate-' src/components/admin src/pages/admin` returns nothing.
 - [x] 3.13 **M3 checkpoint**: admin CRUD complete, teacher selector reflects live catalog — deliverable.
+- [x] 3.14 **Remediation (closed after `sdd-verify` CRITICAL)**: the quiet "we changed your engine" notice from the "Fallback when a project's model is disabled" requirement — deferred from M2 to M3 (apply-progress.md deviation #5), never picked up by M3. Detect the repoint case in `src/pages/app/project/[id].astro` (had a model that went away, not a brand-new project with none yet), persist it as before, and surface it once via `Workspace.tsx`'s existing `flashNotice` mechanism (`initialNotice` prop, fired in a mount-only `useEffect`). The "notice does not repeat" scenario needs no new column: the repoint persists `aiModelId`, so the same comparison is `false` on the next open. Coverage added to `e2e/m3-motores.ts` (steps 10a–10d): both themes, does-not-repeat, and a brand-new project never showing it. Removed the stale "M3" pointer comment in `src/lib/ai/catalogo.ts:137`.
 
 ## Phase 4: M4 — Cost accounting + indicator
 
