@@ -8,7 +8,8 @@ const updateSchema = z.object({
   title: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(400).nullable().optional(),
   currentHtml: z.string().min(20).max(400_000).optional(),
-  selectedModel: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
+  /** El `id` de un `AiModel`. El FK de la base rechaza uno que no exista. */
+  aiModelId: z.string().min(1).optional(),
   isInGallery: z.boolean().optional(),
 });
 
@@ -39,7 +40,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
       description: true,
       slug: true,
       isInGallery: true,
-      selectedModel: true,
+      aiModelId: true,
       screenshotUrl: true,
       updatedAt: true,
     },

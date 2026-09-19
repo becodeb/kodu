@@ -9,9 +9,15 @@ import type { ModelChoice } from './provider.ts';
  * que entrar a la consola del proveedor.
  */
 
+/**
+ * El registro de un turno, ya sobre el catálogo (`AiModel`): `provider` (el
+ * enum viejo) queda afuera a propósito — es dato histórico, no algo que las
+ * filas nuevas vuelvan a escribir (ver design.md §3). La columna admite NULL
+ * desde la migración de M2, así que Prisma la deja así sin que se la pase.
+ */
 export interface UsageRecord {
   userId: string;
-  provider: ModelChoice;
+  aiModelId: string;
   model: string;
   promptTokens: number;
   completionTokens: number;
@@ -24,10 +30,10 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
   await prisma.tokenUsage.create({ data: record });
 }
 
-/** Tokens acumulados por un usuario en un proveedor (prompt + respuesta). */
-export async function consumedTokens(userId: string, provider: ModelChoice): Promise<number> {
+/** Tokens acumulados por un usuario en UN motor puntual (prompt + respuesta). */
+export async function consumedTokens(userId: string, aiModelId: string): Promise<number> {
   const total = await prisma.tokenUsage.aggregate({
-    where: { userId, provider },
+    where: { userId, aiModelId },
     _sum: { promptTokens: true, completionTokens: true },
   });
 
@@ -38,7 +44,8 @@ export interface UsageByUser {
   userId: string;
   name: string;
   email: string;
-  provider: ModelChoice;
+  /** `null` en toda fila escrita después de M2 — ver el comentario de arriba. */
+  provider: ModelChoice | null;
   promptTokens: number;
   completionTokens: number;
   total: number;
@@ -68,7 +75,7 @@ export async function usageByUser(): Promise<UsageByUser[]> {
         userId: grupo.userId,
         name: usuario?.name ?? '(usuario borrado)',
         email: usuario?.email ?? '',
-        provider: grupo.provider as ModelChoice,
+        provider: grupo.provider,
         promptTokens,
         completionTokens,
         total: promptTokens + completionTokens,

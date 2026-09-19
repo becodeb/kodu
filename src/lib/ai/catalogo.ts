@@ -1,0 +1,208 @@
+import { prisma } from '../db.ts';
+import type { AiModel } from '../../generated/prisma/client.ts';
+import { ClaveInvalida, ClaveNoConfigurada, descifrar } from '../crypto/secretos.ts';
+import type { ProviderConfig } from './provider.ts';
+import type { MotorPublico } from '../workspace-types.ts';
+
+/**
+ * El catálogo de motores, leído desde `AiModel` (design.md §5).
+ *
+ * Reemplaza al viejo `resolveProvider`/`MODEL_CHOICES` de `provider.ts`: ahí
+ * el motor era un valor fijo del enum, acá es una fila que un admin puede
+ * prender, apagar, reordenar o cambiar de clave sin tocar código.
+ */
+
+/**
+ * 30 segundos: un admin que apaga un motor lo ve reflejado en el selector del
+ * docente en la próxima carga de página, sin servir nunca una clave vieja
+ * (la invalidación explícita en cada mutación del panel hace que el TTL sea
+ * sólo una red para un futuro deploy multi-proceso — hoy Astro node standalone
+ * es un solo proceso, así que la invalidación explícita ya es exacta).
+ */
+const CACHE_TTL_MS = 30_000;
+
+/**
+ * Tope DURO de la cadena de respaldo, constante de código y no un ajuste del
+ * panel: cada eslabón puede tardar hasta ~102s en agotar sus reintentos
+ * (`provider.ts`), así que una cadena de 5 sería ocho minutos de espera antes
+ * de decirle al docente que nada funcionó.
+ */
+const TOPE_CADENA = 3;
+
+let cache: { filas: AiModel[]; expira: number } | null = null;
+
+async function filasDelCatalogo(): Promise<AiModel[]> {
+  if (cache && cache.expira > Date.now()) return cache.filas;
+
+  const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' } });
+  cache = { filas, expira: Date.now() + CACHE_TTL_MS };
+  return filas;
+}
+
+/** Se llama desde cada mutación de `/api/admin/models/*` (M3). */
+export function invalidarCatalogo(): void {
+  cache = null;
+}
+
+/**
+ * Descifra la clave de una fila. `null` si no tiene clave cargada o si no se
+ * pudo descifrar — en los dos casos el motor se trata como sin clave, nunca
+ * se tira una excepción hacia arriba: un admin cambiando `KODU_ENCRYPTION_KEY`
+ * a mitad de despliegue no tiene por qué tirar abajo el chat de todos.
+ */
+function clavePlano(fila: AiModel): string | null {
+  if (!fila.apiKeyCipher) return null;
+
+  try {
+    return descifrar(fila.apiKeyCipher, fila.id);
+  } catch (error) {
+    if (error instanceof ClaveNoConfigurada || error instanceof ClaveInvalida) {
+      // Nunca se loguea el ciphertext ni la clave: sólo el id de la fila.
+      console.error(`[catalogo] motor ${fila.id} (${fila.displayName}) sin clave utilizable: ${error.name}`);
+      return null;
+    }
+    throw error;
+  }
+}
+
+function construirConfig(fila: AiModel): ProviderConfig {
+  const precios =
+    fila.priceInputPerMToken !== null && fila.priceOutputPerMToken !== null
+      ? {
+          input: fila.priceInputPerMToken,
+          output: fila.priceOutputPerMToken,
+          cachedInput: fila.priceCachedInputPerMToken,
+        }
+      : null;
+
+  return {
+    id: fila.id,
+    label: fila.displayName,
+    // Cadena vacía cuando no hay clave utilizable: es el mismo camino que ya
+    // recorría un motor sin `AI_*_API_KEY` cargada (`requestCompletionStream`
+    // lo rechaza con 503 antes de pegarle a la red).
+    apiKey: clavePlano(fila) ?? '',
+    baseUrl: fila.baseUrl,
+    model: fila.providerModel,
+    maxTokens: fila.maxOutputTokens,
+    userTokenLimit: fila.userTokenLimit,
+    maxInputChars: fila.maxInputChars,
+    supportsVision: fila.supportsVision,
+    precios,
+  };
+}
+
+function tieneClaveUtilizable(config: ProviderConfig): boolean {
+  return config.apiKey.length > 0;
+}
+
+/** Resuelve un `id` puntual del catálogo. `null` si la fila no existe. */
+export async function resolverMotor(modelId: string | null): Promise<ProviderConfig | null> {
+  if (!modelId) return null;
+
+  const filas = await filasDelCatalogo();
+  const fila = filas.find((candidata) => candidata.id === modelId);
+  return fila ? construirConfig(fila) : null;
+}
+
+/**
+ * El motor con el que arranca la plataforma cuando no hay uno elegido.
+ *
+ * El índice único parcial de `isDefault` permite CERO filas en true (nunca
+ * más de una, pero puede no haber ninguna), así que este resolver tiene que
+ * poder arreglárselas sin default: cae al habilitado de menor `sortOrder`.
+ */
+export async function motorPorDefecto(): Promise<ProviderConfig | null> {
+  const filas = await filasDelCatalogo();
+
+  const porDefecto = filas.find((fila) => fila.isDefault && fila.enabled);
+  if (porDefecto) return construirConfig(porDefecto);
+
+  const [habilitado] = filas.filter((fila) => fila.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
+  if (!habilitado) {
+    console.error('[catalogo] no hay ningún motor habilitado — el chat va a contestar 503');
+    return null;
+  }
+
+  console.warn(
+    `[catalogo] sin default activo; se usa "${habilitado.displayName}" por ser el habilitado con menor sortOrder`,
+  );
+  return construirConfig(habilitado);
+}
+
+/**
+ * El motor que corresponde usar para un pedido: el `id` pedido si existe y
+ * está habilitado, o el default en cualquier otro caso (falta, no existe,
+ * está apagado). No decide nada sobre reencaminar el proyecto — eso lo hace
+ * quien la llama (ver `stream.ts` y, para el aviso al docente, M3).
+ */
+export async function normalizarMotor(modelId: string | null): Promise<ProviderConfig | null> {
+  const filas = await filasDelCatalogo();
+  const fila = modelId ? filas.find((candidata) => candidata.id === modelId) : undefined;
+
+  if (fila && fila.enabled) return construirConfig(fila);
+
+  return motorPorDefecto();
+}
+
+/**
+ * La cadena de respaldo a partir de un motor, en el orden que marca
+ * `fallbackModelId`, hasta que uno conteste. Se detiene en:
+ *  - un ciclo (A→B→A): `visitados` corta ahí, no cuelga el pedido;
+ *  - `TOPE_CADENA` eslabones, aunque la cadena siguiera;
+ *  - una fila sin `fallbackModelId`.
+ *
+ * Los motores apagados o sin clave utilizable no entran a la cadena (no vale
+ * la pena gastar un intento contra algo que no puede contestar), pero SÍ se
+ * atraviesan para seguir al siguiente eslabón. Si la cadena queda vacía, se
+ * usa el default como último recurso — aunque tampoco tenga clave: es mejor
+ * que `requestCompletionStream` explique "sin clave" a que no haya ningún
+ * motor para intentar.
+ */
+export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderConfig[]> {
+  const filas = await filasDelCatalogo();
+  const porId = new Map(filas.map((fila) => [fila.id, fila]));
+
+  let actualId = desdeId ?? (await motorPorDefecto())?.id ?? null;
+  const cadena: ProviderConfig[] = [];
+  const visitados = new Set<string>();
+
+  while (actualId && cadena.length < TOPE_CADENA && !visitados.has(actualId)) {
+    visitados.add(actualId);
+    const fila = porId.get(actualId);
+    if (!fila) break;
+
+    if (fila.enabled) {
+      const config = construirConfig(fila);
+      if (tieneClaveUtilizable(config)) cadena.push(config);
+    }
+
+    actualId = fila.fallbackModelId;
+  }
+
+  if (cadena.length === 0) {
+    const porDefecto = await motorPorDefecto();
+    if (porDefecto) cadena.push(porDefecto);
+  }
+
+  return cadena;
+}
+
+/**
+ * Lo que puede elegir un docente: habilitados Y `selectableByTeacher`, sin
+ * `provider`/`providerModel` (identificadores internos), sin claves ni
+ * precios. Ya en el orden configurado (`filasDelCatalogo` ordena por
+ * `sortOrder`).
+ */
+export async function motoresParaDocente(): Promise<MotorPublico[]> {
+  const filas = await filasDelCatalogo();
+
+  return filas
+    .filter((fila) => fila.enabled && fila.selectableByTeacher)
+    .map((fila) => ({
+      id: fila.id,
+      displayName: fila.displayName,
+      description: fila.description,
+      supportsVision: fila.supportsVision,
+    }));
+}

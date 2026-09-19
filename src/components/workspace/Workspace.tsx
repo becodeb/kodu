@@ -5,7 +5,7 @@ import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import type {
   AiPhase,
-  ModelChoice,
+  MotorPublico,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceProject,
@@ -21,8 +21,8 @@ interface WorkspaceProps {
   siteUrl: string;
   /** Nombre del docente, para previsualizar la tarjeta de la galería. */
   authorName: string;
-  /** Motores con clave cargada; el resto no se ofrece. */
-  modelosDisponibles: ModelChoice[];
+  /** Motores habilitados y elegibles por un docente, ya en orden de catálogo. */
+  motoresDisponibles: MotorPublico[];
 }
 
 /**
@@ -40,7 +40,7 @@ export default function Workspace(props: WorkspaceProps) {
   const [description, setDescription] = useState(props.project.description ?? '');
   const [isInGallery, setIsInGallery] = useState(props.project.isInGallery);
   const [screenshotUrl, setScreenshotUrl] = useState(props.project.screenshotUrl);
-  const [model, setModel] = useState<ModelChoice>(props.project.selectedModel);
+  const [model, setModel] = useState<string>(props.project.aiModelId);
 
   const [threads, setThreads] = useState(props.threads);
   const [activeThreadId, setActiveThreadId] = useState(props.activeThreadId);
@@ -93,8 +93,8 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
 
-  /** Otro proveedor sugerido cuando el elegido falló. */
-  const [fallback, setFallback] = useState<{ model: ModelChoice; label: string } | null>(null);
+  /** Otro motor sugerido cuando el elegido falló. */
+  const [fallback, setFallback] = useState<{ model: string; label: string } | null>(null);
 
   /**
    * La ficha se pide al abrir un recurso recién creado: título y descripción
@@ -527,16 +527,16 @@ export default function Workspace(props: WorkspaceProps) {
           // Se cambia el modelo del proyecto Y se reintenta: si sólo se cambiara
           // el selector, el docente tendría que volver a mandar el mensaje.
           setModel(fallback.model);
-          void patchProject({ selectedModel: fallback.model }, true);
+          void patchProject({ aiModelId: fallback.model }, true);
           const pedido = failedMessage;
           setFallback(null);
           void handleSend(pedido, true);
         }}
         model={model}
-        modelosDisponibles={props.modelosDisponibles}
+        motoresDisponibles={props.motoresDisponibles}
         onModelChange={(value) => {
           setModel(value);
-          void patchProject({ selectedModel: value }, true);
+          void patchProject({ aiModelId: value }, true);
         }}
         threads={threads}
         activeThreadId={activeThreadId}

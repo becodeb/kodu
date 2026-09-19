@@ -5,19 +5,15 @@ import { findOwnedProject } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import {
   ProviderError,
-  alternateChoice,
-  cadenaDeMotores,
-  isChoiceConfigured,
-  normalizarEleccion,
   readCompletionStream,
   requestCompletionStream,
-  resolveProvider,
   supportsVision,
   type ChatMessage,
   type ContentPart,
-  type ModelChoice,
   type ProviderConfig,
+  type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
+import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import {
   UPDATE_RESOURCE_CODE,
@@ -57,7 +53,9 @@ const schema = z.object({
     .min(1, 'Escribí un mensaje')
     .max(MAX_MESSAGE_CHARS, 'El mensaje es demasiado largo para procesarlo.'),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
-  model: z.enum(['ALPHA', 'DEEPSEEK', 'MINIMAX']).optional(),
+  /** El `id` de un `AiModel`. Cualquier valor que no resuelva a uno habilitado
+   *  cae al default — ver `normalizarMotor` en `lib/ai/catalogo.ts`. */
+  model: z.string().min(1).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
 });
@@ -171,7 +169,7 @@ async function buildUserContent(
   message: string,
   attachmentUrls: string[],
   projectImageUrls: string[],
-  choice: ModelChoice,
+  motor: ProviderConfig,
 ): Promise<string | ContentPart[]> {
   const own = attachmentUrls.length > 0;
   // Las del mensaje mandan; si no hay, las del proyecto (las últimas, acotadas
@@ -182,7 +180,7 @@ async function buildUserContent(
 
   const names = candidates.map((url) => url.split('/').pop() ?? url).join(', ');
 
-  if (!supportsVision(choice)) {
+  if (!supportsVision(motor)) {
     return own
       ? `${message}
 
@@ -212,6 +210,19 @@ async function buildUserContent(
   ];
 }
 
+/**
+ * Busca, en la cadena de respaldo de `actual`, el primer motor con lugar para
+ * `largoMensaje` — para sugerirlo en el 413 de "mensaje demasiado largo".
+ *
+ * Usa la cadena (no la lista completa del catálogo) a propósito: es la misma
+ * lista de motores que ya sabemos que están habilitados y con clave, así que
+ * la sugerencia nunca apunta a algo que después no puede contestar.
+ */
+async function motorConCapacidad(actual: ProviderConfig, largoMensaje: number): Promise<ProviderConfig | null> {
+  const cadena = await cadenaDeMotores(actual.id);
+  return cadena.find((motor) => motor.id !== actual.id && motor.maxInputChars >= largoMensaje) ?? null;
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const user = locals.user!;
 
@@ -232,19 +243,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
   /**
-   * El motor lo decide la plataforma, no el pedido.
+   * El motor lo decide el catálogo, no el pedido a ciegas.
    *
-   * DeepSeek está bajo llave: se paga por token y sólo entra como respaldo
-   * automático cuando MiniMax agota sus reintentos. Por eso lo que llega en el
-   * body —o lo que quedó guardado en un proyecto viejo— se normaliza contra la
-   * lista de elegibles en vez de usarse tal cual.
+   * Lo que llega en el body —o lo que quedó guardado en el proyecto— se
+   * normaliza contra `AiModel`: si el id no existe o el motor está apagado,
+   * cae al default vigente. Async porque el catálogo vive en la base, con
+   * caché de 30s (ver `lib/ai/catalogo.ts`).
    */
-  const chosenModel = normalizarEleccion(model ?? project.selectedModel);
+  const provider = await normalizarMotor(model ?? project.aiModelId);
+  if (!provider) {
+    return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);
+  }
 
-  if (chosenModel !== project.selectedModel) {
+  if (provider.id !== project.aiModelId) {
     await prisma.project.update({
       where: { id: project.id },
-      data: { selectedModel: chosenModel },
+      data: { aiModelId: provider.id },
     });
   }
 
@@ -281,37 +295,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
     extractedText: asset.extractedText,
   }));
 
-  const provider = resolveProvider(chosenModel);
-
   // Un pedido larguísimo no entra en la ventana de contexto del modelo junto con
   // el HTML del recurso y el historial. Se avisa acá, con el número y con la
   // salida concreta, en vez de dejar que la API lo rechace con su propio error.
   if (message.length > provider.maxInputChars) {
-    const otro = alternateChoice(chosenModel);
-    const otroProveedor = resolveProvider(otro);
-    const sirveElOtro =
-      isChoiceConfigured(otro) && otroProveedor.maxInputChars >= message.length;
+    const otro = await motorConCapacidad(provider, message.length);
 
     return fail(
       `Tu mensaje tiene ${message.length.toLocaleString('es-AR')} caracteres y ${provider.label} ` +
         `admite hasta ${provider.maxInputChars.toLocaleString('es-AR')}. ` +
-        (sirveElOtro
-          ? `Con ${otroProveedor.label} entra: cambiá el modelo y volvé a mandarlo.`
+        (otro
+          ? `Con ${otro.label} entra: cambiá el modelo y volvé a mandarlo.`
           : 'Mandalo en dos partes: primero el contexto, después el pedido.'),
       413,
-      sirveElOtro ? { fallbackModel: otro, fallbackLabel: otroProveedor.label } : {},
+      otro ? { fallbackModel: otro.id, fallbackLabel: otro.label } : {},
     );
   }
 
   // El tope por usuario se chequea ANTES de gastar: avisar después de consumir
-  // no sirve de nada. Se ofrece el otro proveedor, que es la salida real.
+  // no sirve de nada. Se ofrece el otro motor, que es la salida real.
   if (provider.userTokenLimit > 0) {
-    const usados = await consumedTokens(user.id, chosenModel);
+    const usados = await consumedTokens(user.id, provider.id);
     if (usados >= provider.userTokenLimit) {
-      const otro = alternateChoice(chosenModel);
+      const otro = await motorConCapacidad(provider, 0);
       return fail(
         `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}. ` +
-          `Cambiá el modelo a ${resolveProvider(otro).label}, que no tiene tope, o pedile más cupo a la administración.`,
+          (otro
+            ? `Cambiá el modelo a ${otro.label}, o pedile más cupo a la administración.`
+            : 'Pedile más cupo a la administración.'),
         429,
       );
     }
@@ -323,7 +334,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     assets: assetContexts,
     currentHtml: project.currentHtml,
     projectTitle: project.title,
-    canSeeImages: supportsVision(chosenModel),
+    canSeeImages: supportsVision(provider),
     htmlEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
@@ -331,7 +342,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     message,
     attachmentUrls ?? [],
     assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
-    chosenModel,
+    provider,
   );
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
@@ -403,7 +414,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const arranque = Date.now();
       const transcurrido = () => `${((Date.now() - arranque) / 1000).toFixed(1)}s`;
       console.log(
-        `[chat/stream] inicio proyecto=${project.id} modelo=${chosenModel} mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
+        `[chat/stream] inicio proyecto=${project.id} motor=${provider.id} (${provider.label}) mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
       );
 
       /**
@@ -430,12 +441,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
         });
 
       /**
-       * Se recorre la cadena de motores hasta que uno conteste: M3, después su
-       * hermano M2.7, y recién al final DeepSeek, que es el único que se cobra.
-       * El docente no tiene que enterarse de que un proveedor está caído ni
-       * elegir otro a mano; se le avisa qué pasó y se sigue trabajando.
+       * Se recorre la cadena de respaldo del motor elegido, en el orden que
+       * marca `fallbackModelId` (ver catalogo.ts). El docente no tiene que
+       * enterarse de que un proveedor está caído ni elegir otro a mano; se le
+       * avisa qué pasó y se sigue trabajando.
        */
-      const motores = cadenaDeMotores();
+      const motores = await cadenaDeMotores(provider.id);
       let upstream: Response | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;
@@ -514,7 +525,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * flujo de TypeScript la da por null para siempre y termina tipando el
        * consumo como `never`.
        */
-      const totales: { usage: { promptTokens: number; completionTokens: number } | null } = {
+      const totales: { usage: MotorTokenUsage | null } = {
         usage: null,
       };
 
@@ -623,7 +634,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         if (totales.usage) {
           await recordUsage({
             userId: user.id,
-            provider: proveedorUsado.choice,
+            aiModelId: proveedorUsado.id,
             model: proveedorUsado.model,
             promptTokens: totales.usage.promptTokens,
             completionTokens: totales.usage.completionTokens,

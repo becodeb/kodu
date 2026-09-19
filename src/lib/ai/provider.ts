@@ -1,3 +1,4 @@
+import type { Prisma } from '../../generated/prisma/client.ts';
 import { getEnv } from '../env.ts';
 import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE } from './tools.ts';
 
@@ -5,44 +6,25 @@ import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE } from './tools.ts';
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
  * viven sólo acá (SPEC §1) y el navegador nunca las ve.
  *
- * El motor de trabajo es MINIMAX (MiniMax M3 por GMI Cloud): gratuito, con
- * contexto largo y multimodal.
- *
- * DEEPSEEK queda BAJO LLAVE: no se ofrece en la interfaz y ningún docente puede
- * elegirlo. Se usa solo, y únicamente, cuando MiniMax agota sus reintentos —
- * es el paracaídas, no una opción. Se paga por token, así que abrirlo como
- * opción es abrir la canilla.
- *
- * ALPHA quedó fuera de servicio (dejó de ser gratuito). El valor sigue en el
- * enum porque hay recursos y consumo histórico que lo referencian, pero ya no
- * se ofrece ni se resuelve: los proyectos que lo tenían se migraron a MiniMax.
- *
- * Todos hablan el dialecto OpenAI (`/chat/completions` con `stream: true`), así
- * que el parser de abajo sirve para cualquiera y para el que venga después.
+ * Este módulo es sólo HTTP y SSE: hablar el dialecto OpenAI
+ * (`/chat/completions` con `stream: true`) contra la config que le pasen.
+ * QUÉ motor usar, en qué orden probarlos y de dónde sale la clave ya no es
+ * cosa de acá — eso vive en `src/lib/ai/catalogo.ts`, que lee el catálogo
+ * (`AiModel`) y arma el `ProviderConfig` que este módulo consume.
  */
-
-export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
-
-/** Lo que un docente puede elegir. DeepSeek NO está: es sólo el respaldo. */
-export const MODEL_CHOICES: ModelChoice[] = ['MINIMAX'];
-
-/** El motor por defecto de toda la plataforma. */
-export const MODELO_PRINCIPAL: ModelChoice = 'MINIMAX';
-
-/** El respaldo automático, que nadie elige a mano. */
-export const MODELO_RESPALDO: ModelChoice = 'DEEPSEEK';
 
 /**
- * Un docente sólo puede pedir lo que está en MODEL_CHOICES. Cualquier otra cosa
- * —un proyecto viejo guardado con ALPHA, o alguien probando con DEEPSEEK en el
- * body del pedido— cae al principal.
+ * Valor histórico del viejo enum `ModelChoice` (`ALPHA`/`DEEPSEEK`/`MINIMAX`).
+ * Sigue existiendo SOLO porque `TokenUsage.provider` y `Project.selectedModel`
+ * (dato histórico, no leer) lo usan como tipo de columna — ningún código de
+ * resolución en tiempo real vuelve a producir ni a consumir este valor.
  */
-export function normalizarEleccion(choice: ModelChoice | null | undefined): ModelChoice {
-  return choice && MODEL_CHOICES.includes(choice) ? choice : MODELO_PRINCIPAL;
-}
+export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
+/** Lo que hace falta para pedirle un turno a un motor concreto. */
 export interface ProviderConfig {
-  choice: ModelChoice;
+  /** El `id` de la fila `AiModel` que produjo esta config. */
+  id: string;
   label: string;
   apiKey: string;
   baseUrl: string;
@@ -52,84 +34,13 @@ export interface ProviderConfig {
   userTokenLimit: number;
   /** Largo máximo de un mensaje del docente, en caracteres. */
   maxInputChars: number;
-}
-
-export function resolveProvider(choice: ModelChoice): ProviderConfig {
-  const env = getEnv();
-
-  if (choice === 'MINIMAX') {
-    return {
-      choice,
-      label: 'MiniMax M3',
-      apiKey: env.AI_MINIMAX_API_KEY,
-      baseUrl: env.AI_MINIMAX_BASE_URL,
-      model: env.AI_MINIMAX_MODEL,
-      maxTokens: env.AI_MINIMAX_MAX_TOKENS,
-      userTokenLimit: env.AI_MINIMAX_USER_TOKEN_LIMIT,
-      maxInputChars: env.AI_MINIMAX_MAX_INPUT_CHARS,
-    };
-  }
-
-  if (choice === 'DEEPSEEK') {
-    return {
-      choice,
-      label: 'DeepSeek',
-      apiKey: env.AI_DEEPSEEK_API_KEY,
-      baseUrl: env.AI_DEEPSEEK_BASE_URL,
-      model: env.AI_DEEPSEEK_MODEL,
-      maxTokens: env.AI_DEEPSEEK_MAX_TOKENS,
-      userTokenLimit: env.AI_DEEPSEEK_USER_TOKEN_LIMIT,
-      maxInputChars: env.AI_DEEPSEEK_MAX_INPUT_CHARS,
-    };
-  }
-
-  // ALPHA ya no se sirve: cualquier cosa que no sea DeepSeek cae en MiniMax.
-  return {
-    choice: 'MINIMAX',
-    label: 'MiniMax M3',
-    apiKey: env.AI_MINIMAX_API_KEY,
-    baseUrl: env.AI_MINIMAX_BASE_URL,
-    model: env.AI_MINIMAX_MODEL,
-    maxTokens: env.AI_MINIMAX_MAX_TOKENS,
-    userTokenLimit: env.AI_MINIMAX_USER_TOKEN_LIMIT,
-    maxInputChars: env.AI_MINIMAX_MAX_INPUT_CHARS,
-  };
-}
-
-/** El respaldo cuando el motor principal no da más. */
-export function alternateChoice(choice: ModelChoice): ModelChoice {
-  return choice === MODELO_RESPALDO ? MODELO_PRINCIPAL : MODELO_RESPALDO;
-}
-
-/**
- * La cadena de motores que se prueba, en orden, hasta que uno conteste.
- *
- *   MiniMax M3  →  MiniMax M2.7  →  DeepSeek
- *
- * El segundo es el mismo proveedor con otro modelo: si M3 está saturado, lo más
- * probable es que un hermano suyo conteste, y sigue siendo gratis. DeepSeek
- * queda al final justamente porque es el único que se cobra: es el paracaídas
- * del paracaídas, no la segunda opción.
- *
- * Se descartan los que no tengan clave para no gastar un intento al pedo.
- */
-export function cadenaDeMotores(): ProviderConfig[] {
-  const env = getEnv();
-  const principal = resolveProvider(MODELO_PRINCIPAL);
-
-  const hermano: ProviderConfig = {
-    ...principal,
-    label: 'MiniMax M2.7',
-    model: env.AI_MINIMAX_FALLBACK_MODEL,
-  };
-
-  return [principal, hermano, resolveProvider(MODELO_RESPALDO)].filter(
-    (motor) => motor.apiKey.length > 0 && motor.model.length > 0,
-  );
-}
-
-export function isChoiceConfigured(choice: ModelChoice): boolean {
-  return resolveProvider(choice).apiKey.length > 0;
+  supportsVision: boolean;
+  /** `null` si a este motor le falta algún precio: nunca se inventa un costo. */
+  precios: {
+    input: Prisma.Decimal;
+    output: Prisma.Decimal;
+    cachedInput: Prisma.Decimal | null;
+  } | null;
 }
 
 /**
@@ -145,10 +56,14 @@ export interface ChatMessage {
   content: string | ContentPart[];
 }
 
-export function supportsVision(choice: ModelChoice): boolean {
-  // MiniMax M3 lee imágenes. DeepSeek es sólo texto: mandarle partes
-  // `image_url` hace que la API conteste 400 y se caiga el turno.
-  return choice !== 'DEEPSEEK' && getEnv().AI_VISION;
+/**
+ * Si ESTE motor puede leer imágenes. El catálogo ya trae `supportsVision` por
+ * fila (algunos proveedores son sólo texto); acá se cruza además con el
+ * apagador global `AI_VISION`, que sigue siendo un kill-switch operativo
+ * independiente del catálogo.
+ */
+export function supportsVision(config: ProviderConfig): boolean {
+  return config.supportsVision && getEnv().AI_VISION;
 }
 
 export class ProviderError extends Error {
@@ -300,6 +215,13 @@ async function intentarUna(
 export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
+  /**
+   * Subconjunto de `promptTokens`, NO un adicional: el dialecto OpenAI cuenta
+   * los tokens cacheados COMO PARTE del prompt. Restar antes de facturar es
+   * responsabilidad de quien calcule el costo (ver design.md §6) — este
+   * módulo sólo reporta lo que el proveedor mandó.
+   */
+  cachedTokens: number;
 }
 
 export type StreamEvent =
@@ -394,6 +316,9 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
             usage: {
               promptTokens: Number(chunk.usage.prompt_tokens ?? 0),
               completionTokens: Number(chunk.usage.completion_tokens ?? 0),
+              // Subconjunto de prompt_tokens, no un extra (ver el comentario
+              // en la interfaz TokenUsage más arriba).
+              cachedTokens: Number(chunk.usage.prompt_tokens_details?.cached_tokens ?? 0),
             },
           };
         }

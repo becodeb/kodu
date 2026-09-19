@@ -48,14 +48,17 @@ model User {
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
 /// por usuario del proveedor pago, y poder ver quien gasta cuanto.
 model TokenUsage {
-  id               String      @id @default(uuid())
-  userId           String
-  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider         ModelChoice
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
+  provider         ModelChoice?
+  aiModelId        String?
+  aiModel          AiModel?     @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
   model            String
-  promptTokens     Int         @default(0)
-  completionTokens Int         @default(0)
-  createdAt        DateTime    @default(now())
+  promptTokens     Int          @default(0)
+  completionTokens Int          @default(0)
+  createdAt        DateTime     @default(now())
 
   @@index([userId, provider])
   @@index([createdAt])
@@ -69,7 +72,10 @@ model Project {
   currentHtml   String         @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
   screenshotUrl String?
   isInGallery   Boolean        @default(false)
+  /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
   selectedModel ModelChoice    @default(MINIMAX)
+  aiModelId     String?
+  aiModel       AiModel?       @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
   userId        String
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   threads       ChatThread[]
@@ -79,6 +85,63 @@ model Project {
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
+}
+
+/// El catalogo de motores de IA: reemplaza al enum ModelChoice como fuente de
+/// verdad en tiempo de ejecucion. Cada fila es un motor que un admin puede
+/// prender, apagar, reordenar o marcar como el que arranca por defecto.
+model AiModel {
+  /// Generado por la app con crypto.randomUUID() ANTES de cifrar la clave: es
+  /// el AAD del cifrado (ver src/lib/crypto/secretos.ts). No lleva @default.
+  id String @id
+  /// Etiqueta corta del proveedor: "gmi", "deepseek", "openrouter".
+  provider String
+  /// El identificador exacto que espera la API del proveedor.
+  providerModel String
+  /// Lo que ve el docente en el selector.
+  displayName String
+  /// Una linea para el docente, debajo del selector.
+  description String?
+  /// Nota interna. El docente nunca la ve.
+  adminNote String?
+  baseUrl   String
+
+  /// AES-256-GCM. Formato "v1.<nonce>.<ct>.<tag>" en base64url. Nunca sale del server.
+  apiKeyCipher String?
+  /// Ultimos 4 caracteres de la clave en claro, para reconocerla en el panel.
+  apiKeyHint String?
+
+  /// Precio APROXIMADO en USD por millon de tokens. NULL = sin cargar (≠ 0 = gratis).
+  priceInputPerMToken Decimal? @db.Decimal(12, 6)
+  /// Entrada que el proveedor ya tenia cacheada. Suele costar bastante menos.
+  priceCachedInputPerMToken Decimal? @db.Decimal(12, 6)
+  priceOutputPerMToken      Decimal? @db.Decimal(12, 6)
+
+  enabled Boolean @default(true)
+  /// Aparece en el selector del docente. DeepSeek va en false: es el respaldo.
+  selectableByTeacher Boolean @default(true)
+  /// Ver el indice unico parcial en la migracion: a lo sumo un true.
+  isDefault           Boolean @default(false)
+  sortOrder           Int     @default(0)
+
+  maxOutputTokens Int     @default(65536)
+  maxInputChars   Int     @default(400000)
+  supportsVision  Boolean @default(false)
+  /// Tope acumulado por usuario, en tokens. 0 = sin tope.
+  userTokenLimit  Int     @default(0)
+
+  fallbackModelId String?
+  fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)
+  respaldoDe      AiModel[] @relation("Respaldo")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projects   Project[]
+  tokenUsage TokenUsage[]
+
+  @@unique([provider, providerModel])
+  @@index([enabled, sortOrder])
 }
 
 model ChatThread {

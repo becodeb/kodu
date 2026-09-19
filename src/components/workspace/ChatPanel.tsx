@@ -4,10 +4,9 @@ import AiStatus from './AiStatus.tsx';
 import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
 import { STARTERS, type Starter } from './starters.ts';
-import { MODELOS } from '../../lib/workspace-types.ts';
 import type {
   AiPhase,
-  ModelChoice,
+  MotorPublico,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceThread,
@@ -28,9 +27,10 @@ interface ChatPanelProps {
   /** Nombre del otro proveedor cuando el elegido falló y se puede redirigir. */
   fallbackLabel: string | null;
   onUseFallback: () => void;
-  model: ModelChoice;
-  modelosDisponibles: ModelChoice[];
-  onModelChange: (model: ModelChoice) => void;
+  /** El `id` del `AiModel` vigente. */
+  model: string;
+  motoresDisponibles: MotorPublico[];
+  onModelChange: (modelId: string) => void;
   threads: WorkspaceThread[];
   activeThreadId: string;
   onThreadChange: (threadId: string) => void;
@@ -211,25 +211,25 @@ export default function ChatPanel(props: ChatPanelProps) {
           <legend className="sr-only">Modelo de IA</legend>
 
           <div className="flex rounded-lg bg-sutil p-0.5">
-            {MODELOS.filter((opcion) => props.modelosDisponibles.includes(opcion.value)).map((opcion) => (
+            {props.motoresDisponibles.map((motor) => (
               <button
-                key={opcion.value}
+                key={motor.id}
                 type="button"
-                aria-pressed={props.model === opcion.value}
-                onClick={() => props.onModelChange(opcion.value)}
+                aria-pressed={props.model === motor.id}
+                onClick={() => props.onModelChange(motor.id)}
                 className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                  props.model === opcion.value
+                  props.model === motor.id
                     ? 'bg-superficie text-ink-900 shadow-sm'
                     : 'text-ink-500 hover:text-ink-700'
                 }`}
               >
-                {opcion.nombre}
+                {motor.displayName}
               </button>
             ))}
           </div>
 
           <p className="text-[0.7rem] leading-snug text-ink-500">
-            {MODELOS.find((opcion) => opcion.value === props.model)?.detalle}
+            {props.motoresDisponibles.find((motor) => motor.id === props.model)?.description}
           </p>
         </fieldset>
       </header>

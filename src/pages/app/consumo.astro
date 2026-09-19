@@ -2,8 +2,6 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { usageByUser } from '../../lib/ai/usage.ts';
 import { getEnv } from '../../lib/env.ts';
-import { MODELOS } from '../../lib/workspace-types.ts';
-import { prisma } from '../../lib/db.ts';
 
 /**
  * Consumo de tokens por docente (SPEC: agregado en agosto de 2026).
@@ -11,6 +9,13 @@ import { prisma } from '../../lib/db.ts';
  * Es una pantalla para nosotros, no para los docentes: sirve para ver quién
  * gasta cuánto en el proveedor pago antes de que llegue la factura. Por eso es
  * sólo para ADMIN.
+ *
+ * **Vista histórica desde M2**: `usageByUser()` agrupa por el enum viejo
+ * (`TokenUsage.provider`), que las filas escritas DESPUÉS de M2 ya no
+ * completan (ver `src/lib/ai/usage.ts` — ahora escriben `aiModelId`). Esta
+ * pantalla entera la reemplaza `/admin/usuarios` en M5; hasta entonces sigue
+ * mostrando fielmente el consumo histórico y nada del consumo nuevo, en vez
+ * de mentir agrupándolo bajo un motor equivocado.
  */
 const user = Astro.locals.user!;
 
@@ -27,13 +32,21 @@ const topes: Record<string, number> = {
   MINIMAX: env.AI_MINIMAX_USER_TOKEN_LIMIT,
 };
 
-const nombreProveedor = (valor: string) =>
-  MODELOS.find((modelo) => modelo.value === valor)?.nombre ?? valor;
+/** Nombres históricos del enum viejo, sólo para esta vista de archivo. */
+const NOMBRES_HISTORICOS: Record<string, string> = {
+  ALPHA: 'Alpha',
+  DEEPSEEK: 'DeepSeek',
+  MINIMAX: 'MiniMax M3',
+};
+
+const nombreProveedor = (valor: string | null) =>
+  (valor && NOMBRES_HISTORICOS[valor]) ?? valor ?? 'Motor nuevo (ver /admin/motores)';
 
 const miles = (n: number) => n.toLocaleString('es-AR');
 
 const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila) => {
-  acumulado[fila.provider] = (acumulado[fila.provider] ?? 0) + fila.total;
+  const clave = fila.provider ?? '—';
+  acumulado[clave] = (acumulado[clave] ?? 0) + fila.total;
   return acumulado;
 }, {});
 ---
@@ -49,15 +62,13 @@ const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila)
 
   <div class="mb-6 grid gap-3 sm:grid-cols-3">
     {
-      MODELOS.map((modelo) => (
+      Object.entries(NOMBRES_HISTORICOS).map(([valor, nombre]) => (
         <div class="kodu-card p-4">
-          <p class="text-xs font-medium tracking-wide text-ink-500 uppercase">{modelo.nombre}</p>
-          <p class="font-display mt-1 text-2xl text-ink-900">
-            {miles(totalPorProveedor[modelo.value] ?? 0)}
-          </p>
+          <p class="text-xs font-medium tracking-wide text-ink-500 uppercase">{nombre}</p>
+          <p class="font-display mt-1 text-2xl text-ink-900">{miles(totalPorProveedor[valor] ?? 0)}</p>
           <p class="mt-1 text-xs text-ink-500">
-            {topes[modelo.value]
-              ? `Tope por docente: ${miles(topes[modelo.value]!)} tokens`
+            {topes[valor]
+              ? `Tope por docente: ${miles(topes[valor]!)} tokens`
               : 'Sin tope por docente'}
           </p>
         </div>
@@ -88,7 +99,7 @@ const totalPorProveedor = filas.reduce<Record<string, number>>((acumulado, fila)
           </thead>
           <tbody>
             {filas.map((fila) => {
-              const tope = topes[fila.provider] ?? 0;
+              const tope = (fila.provider && topes[fila.provider]) ?? 0;
               const pasado = tope > 0 && fila.total >= tope;
 
               return (
