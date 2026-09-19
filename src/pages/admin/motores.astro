@@ -1,10 +1,14 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
+import ModelosPanel from '../../components/admin/ModelosPanel.tsx';
+import { prisma } from '../../lib/db.ts';
+import { serializarMotor } from '../../lib/admin/modelos.ts';
 
-// El middleware ya garantiza sesión + rol ADMIN en /admin/**; esto es solo
-// para el tipo. Contenido real: M3.
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' } });
+const motores = filas.map(serializarMotor);
 ---
 
 <AdminLayout>
-  <p class="text-sm text-ink-500">Motores: todavía no implementado.</p>
+  <ModelosPanel client:load initialMotores={motores} />
 </AdminLayout>

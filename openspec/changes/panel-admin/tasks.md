@@ -95,19 +95,19 @@ reinterpretation of the design's intent.
 
 ## Phase 3: M3 — Models route + teacher selector
 
-- [ ] 3.1 Create `src/pages/api/admin/models/index.ts`: `GET` → `{ motores: MotorAdmin[] }` (select excludes `apiKeyCipher`, includes `tieneClave`/`apiKeyHint`); `POST` → create (generate `id` via `crypto.randomUUID()` before encrypting; zod `safeParse`, 422 on failure).
-- [ ] 3.2 Create `src/pages/api/admin/models/[id].ts`: `PATCH` partial; write-only `apiKey` (omitted = keep, `null` = clear); `isDefault=true` inside `prisma.$transaction` (clear old, set new); disabling the current default → 409 `"Ese motor es el predeterminado. Elegí otro predeterminado antes de apagarlo."`; call `invalidarCatalogo()` on every mutation. **No `DELETE` handler — model deletion is deliberately not implemented; do not add a delete button or endpoint.**
-- [ ] 3.3 Create `src/pages/api/admin/models/orden.ts`: `PATCH { ids: string[] }`, full ordered array (not a delta), one transaction, `invalidarCatalogo()`.
-- [ ] 3.4 Create `src/components/admin/ModelosPanel.tsx`: one `kodu-card` row (handle, order, name+provider/providerModel, key hint, price pair, enable toggle, default radio, Editar). Reorder via `draggable` AND ArrowUp/ArrowDown on the focused handle `<button>`; `aria-live="polite"` announces position; `aria-label="Mover {name}"`; both paths write the same `PATCH .../orden`.
-- [ ] 3.5 Create `src/components/admin/Interruptor.tsx`: lift the rail-and-knob switch out of `BaseLayout.astro:147-156` for reuse (this toggle + M7's demo toggle).
-- [ ] 3.6 Create `src/components/admin/ModeloForm.tsx`: create/edit fields per §2; write-only key field masked `•••• {hint}` / `Sin clave`, label `Reemplazar clave`; three price inputs (`Entrada (sin caché)` / `Entrada cacheada` / `Salida`) under `Precio aproximado (USD por millón de tokens)` + the estimate-disclaimer line; a live client-side preview line (8k in / 2k cached / 4k out) catching a per-thousand-vs-per-million entry error.
-- [ ] 3.7 `src/pages/admin/motores.astro`: render `ModelosPanel`.
-- [ ] 3.8 `src/components/workspace/ChatPanel.tsx`: render each model's `displayName` + `description` (never `providerModel`), in prop order.
-- [ ] 3.9 **`Prisma.Decimal` boundary trap**: every price field returned by 3.1–3.3 and consumed by 3.4/3.6 MUST be `.toString()`'d (display) or `.toNumber()`'d (math) at the API boundary — a raw `Decimal` handed to a React island silently becomes `{}`.
-- [ ] 3.10 DB-state check: create a model, confirm every field persisted and `apiKeyCipher` ≠ plaintext; set model B default, confirm exactly one `isDefault=true` row and it is B.
-- [ ] 3.11 Browser check `e2e/m3-motores.ts`, both themes: create+enable+default+keyboard-reorder a model; selector shows name+description, no provider id; price form shows exactly 3 rate fields, no peak/off-peak; disabling the current default is refused (still default); disabling a non-default model removes it from the selector.
-- [ ] 3.12 `npm run check` passes; `rg -n 'bg-white|bg-slate-' src/components/admin src/pages/admin` returns nothing.
-- [ ] 3.13 **M3 checkpoint**: admin CRUD complete, teacher selector reflects live catalog — deliverable.
+- [x] 3.1 Create `src/pages/api/admin/models/index.ts`: `GET` → `{ motores: MotorAdmin[] }` (select excludes `apiKeyCipher`, includes `tieneClave`/`apiKeyHint`); `POST` → create (generate `id` via `crypto.randomUUID()` before encrypting; zod `safeParse`, 422 on failure).
+- [x] 3.2 Create `src/pages/api/admin/models/[id].ts`: `PATCH` partial; write-only `apiKey` (omitted = keep, `null` = clear); `isDefault=true` inside `prisma.$transaction` (clear old, set new); disabling the current default → 409 `"Ese motor es el predeterminado. Elegí otro predeterminado antes de apagarlo."`; call `invalidarCatalogo()` on every mutation. **No `DELETE` handler — model deletion is deliberately not implemented; do not add a delete button or endpoint.**
+- [x] 3.3 Create `src/pages/api/admin/models/orden.ts`: `PATCH { ids: string[] }`, full ordered array (not a delta), one transaction, `invalidarCatalogo()`.
+- [x] 3.4 Create `src/components/admin/ModelosPanel.tsx`: one `kodu-card` row (handle, order, name+provider/providerModel, key hint, price pair, enable toggle, default radio, Editar). Reorder via `draggable` AND ArrowUp/ArrowDown on the focused handle `<button>`; `aria-live="polite"` announces position; `aria-label="Mover {name}"`; both paths write the same `PATCH .../orden`.
+- [x] 3.5 Create `src/components/admin/Interruptor.tsx`: lift the rail-and-knob switch out of `BaseLayout.astro:147-156` for reuse (this toggle + M7's demo toggle).
+- [x] 3.6 Create `src/components/admin/ModeloForm.tsx`: create/edit fields per §2; write-only key field masked `•••• {hint}` / `Sin clave`, label `Reemplazar clave`; three price inputs (`Entrada (sin caché)` / `Entrada cacheada` / `Salida`) under `Precio aproximado (USD por millón de tokens)` + the estimate-disclaimer line; a live client-side preview line (8k in / 2k cached / 4k out) catching a per-thousand-vs-per-million entry error.
+- [x] 3.7 `src/pages/admin/motores.astro`: render `ModelosPanel`.
+- [x] 3.8 `src/components/workspace/ChatPanel.tsx`: render each model's `displayName` + `description` (never `providerModel`), in prop order. **Already delivered by M2** (task 2.11's plumbing) — verified unchanged here, no edit needed; `e2e/m3-motores.ts` exercises it end to end against an admin-created model.
+- [x] 3.9 **`Prisma.Decimal` boundary trap**: every price field returned by 3.1–3.3 and consumed by 3.4/3.6 MUST be `.toString()`'d (display) or `.toNumber()`'d (math) at the API boundary — a raw `Decimal` handed to a React island silently becomes `{}`.
+- [x] 3.10 DB-state check: create a model, confirm every field persisted and `apiKeyCipher` ≠ plaintext; set model B default, confirm exactly one `isDefault=true` row and it is B.
+- [x] 3.11 Browser check `e2e/m3-motores.ts`, both themes: create+enable+default+keyboard-reorder a model; selector shows name+description, no provider id; price form shows exactly 3 rate fields, no peak/off-peak; disabling the current default is refused (still default); disabling a non-default model removes it from the selector.
+- [x] 3.12 `npm run check` passes; `rg -n 'bg-white|bg-slate-' src/components/admin src/pages/admin` returns nothing.
+- [x] 3.13 **M3 checkpoint**: admin CRUD complete, teacher selector reflects live catalog — deliverable.
 
 ## Phase 4: M4 — Cost accounting + indicator
 

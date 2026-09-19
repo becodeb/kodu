@@ -342,3 +342,120 @@ None for Phase 2. Phases 3–8 (M3–M8) remain out of scope for this apply batc
   is informational only; `design.md`'s own note already flagged M2 as one of
   the two candidates worth a further split if reviewer load becomes a
   problem.
+
+## Phase 3: M3 — Models route + teacher selector
+
+**Status**: complete. 13/13 tasks done (3.1–3.13).
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m3-motores.ts` → 14/14 scenario assertions passed across both themes (list renders light+dark; create+enable+default+keyboard-reorder from the real form; the enabled-default 409 refusal; the masked-key invariant on both the creation response and `GET /api/admin/models`; the teacher selector showing name+description and never `providerModel`; disabling a non-default model removing it from the selector). Regressions re-run clean: `npx tsx e2e/unidad.ts` (4/4) and `npx tsx e2e/m1-admin-shell.ts` (11/11) and `npx tsx e2e/m2-catalogo.ts` (7/7) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`. No migration — `AiModel`'s schema from M2 already carries every M3 field. Rollback removes the 3 `/api/admin/models*` routes, the 3 `src/components/admin/*` files, and reverts `src/pages/admin/motores.astro` to its M1 empty shell; `ChatPanel.tsx` is untouched by M3 (already wired in M2) so nothing there needs reverting |
+
+### Completed tasks
+
+- [x] 3.1 `src/pages/api/admin/models/index.ts`: `GET` → `{ motores: MotorAdmin[] }`; `POST` → create, `id` generated via `crypto.randomUUID()` before encrypting (the AAD), `sortOrder` computed server-side as `max+1`.
+- [x] 3.2 `src/pages/api/admin/models/[id].ts`: `PATCH` partial; write-only `apiKey` (`undefined` = keep, `null` = clear, string = replace, encrypted with the row's own existing `id` as AAD); `isDefault: true` runs inside `prisma.$transaction` (clear every other default, then set this one) so the partial unique index never sees two `true` rows; disabling the current default → 409 with the exact copy from design.md §2.
+- [x] 3.3 `src/pages/api/admin/models/orden.ts`: `PATCH { ids: string[] }`; rejects unless the array is exactly the full existing id set (no delta, no partial); one `prisma.$transaction` writing `sortOrder = index`.
+- [x] 3.4 `src/components/admin/ModelosPanel.tsx`: one `kodu-card` row per motor in an `<ol>` (order is data, not decoration); handle button (`⠿`, matching the design mock's own glyph) supports `draggable` AND `ArrowUp`/`ArrowDown` while focused, both paths write the same `PATCH .../orden` with the full ordered array; `aria-live="polite"` region announces `"{name}, posición N de M"`; enable toggle and default radio act directly on the row (optimistic update, revert + inline error banner on failure).
+- [x] 3.5 `src/components/admin/Interruptor.tsx`: the rail-and-knob lifted out of `BaseLayout.astro`'s dark-mode toggle as a controlled `<input type="checkbox" className="sr-only">` + painted rail, reused for both the row's enable toggle and (later, M7) the demo toggle.
+- [x] 3.6 `src/components/admin/ModeloForm.tsx`: create/edit dialog (built on the existing `workspace/Modal.tsx`) with every field not already covered by row-level controls — provider identity, description/adminNote, base URL, write-only key field labelled `Reemplazar clave` with the `•••• {hint}` / `Sin clave` placeholder, the three price fields under `Precio aproximado (USD por millón de tokens)` with the estimate-disclaimer line, a live per-turn cost preview (8k/2k/4k) that catches a per-thousand-vs-per-million typo, teacher-selectable + vision toggles, token/char ceilings, and a fallback-model `<select>` excluding itself.
+- [x] 3.7 `src/pages/admin/motores.astro`: fetches the catalog server-side (`prisma.aiModel.findMany` ordered by `sortOrder`) through the same `serializarMotor()` the API routes use, and renders `<ModelosPanel client:load>`.
+- [x] 3.8 `ChatPanel.tsx` — **no change needed**. M2's task 2.11 already wired the selector to read `displayName`/`description` off the `motoresDisponibles` prop; verified unchanged and exercised end-to-end by `e2e/m3-motores.ts` against a model created live through the M3 admin UI.
+- [x] 3.9 Centralized the `Prisma.Decimal` boundary conversion in one place — `src/lib/admin/modelos.ts`'s `serializarMotor()` calls `.toString()` on all three price fields — so every route (3.1–3.3) and the two admin components (3.4/3.6) go through the same conversion instead of repeating the trap three times.
+- [x] 3.10 DB-state checks embedded in `e2e/m3-motores.ts` (direct `prisma.aiModel` reads, not just UI assertions): created row's `apiKeyCipher` starts with `v1.` and never equals the plaintext key; after marking a second model default, exactly one row has `isDefault = true` and it is the new one.
+- [x] 3.11 `e2e/m3-motores.ts` — both themes (creation flow runs in dark, persistence-after-reload check runs in light): create+enable+default+keyboard-reorder a model through the real form; teacher selector shows name+description and never `providerModel`; disabling the current default is refused with 409 and the row visibly stays enabled; disabling a non-default model removes it from the teacher's selector on next load.
+- [x] 3.12 `npm run check` → exit 0. `rg -n 'bg-white|bg-slate-' src/components/admin src/pages/admin` → exit 1, no matches.
+- [x] 3.13 M3 checkpoint: admin CRUD (create/edit/reorder/toggle/default, no delete) is live at `/admin/motores`, and the teacher-facing selector in `ChatPanel.tsx` reflects the live catalog end to end — deliverable.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `src/lib/admin/modelos.ts` | Create | `MotorAdmin` type, `serializarMotor()` (the single `Prisma.Decimal`→string boundary), `precioADecimal()` |
+| `src/pages/api/admin/models/index.ts` | Create | `GET` list, `POST` create |
+| `src/pages/api/admin/models/[id].ts` | Create | `PATCH` partial update, incl. the default transaction and the disable-current-default 409 |
+| `src/pages/api/admin/models/orden.ts` | Create | `PATCH` full ordered array reorder |
+| `src/components/admin/Interruptor.tsx` | Create | Reusable rail-and-knob toggle |
+| `src/components/admin/ModeloForm.tsx` | Create | Create/edit dialog |
+| `src/components/admin/ModelosPanel.tsx` | Create | The row list: reorder, toggle, default, opens the form |
+| `src/pages/admin/motores.astro` | Modify | Empty M1 shell → renders `ModelosPanel` with server-fetched initial data |
+| `e2e/m3-motores.ts` | Create | Slice verification, both themes |
+
+### Deviations from design
+
+1. **Field split between the row and the form wasn't explicit in design.md, so it was inferred.** Design's row mock (`⠿ 1 MiniMax M3 … [●—] ( ) default Editar`) only shows handle/order/name/key-hint/price/enable/default/Editar; it doesn't show `selectableByTeacher`, `supportsVision`, `maxOutputTokens`, `maxInputChars`, `userTokenLimit`, or `fallbackModelId` anywhere in the UI section. Since the top-level field list (design.md's "AiModel data model" requirement and the orchestrator's task brief) requires all of these to be admin-editable somewhere, and design explicitly assigns enable/default/order to the row, everything else not on the row went into `ModeloForm.tsx`. This is the only reading that covers every field exactly once with no duplication.
+2. **`enabled` and `isDefault` are deliberately NOT in `ModeloForm`'s payload**, even though they're real `AiModel` columns. They're exclusively row-level (toggle, radio) per design's mock. Keeping them out of the form means editing "everything else" about a model can never accidentally flip its enabled/default state as a side effect of an unrelated save.
+3. **The masked-key placeholder text (`•••• {hint}` / `Sin clave`) is a `placeholder`, not pre-filled `value`, on the `Reemplazar clave` input.** Design says "permanently empty on load" for that field — a `placeholder` satisfies that literally (the field is empty; the hint is greyed-out guidance text), while showing the hint as a `value` would mean the admin has to manually clear it before typing a new key, which contradicts "empty on load."
+4. **The handle glyph is the literal `⠿` character from design.md's own mock**, not a hand-drawn SVG grip icon. The project has no icon library (`design-taste-frontend` skill's guidance to avoid hand-rolled SVG icons), and design.md already committed to this exact character in its own ASCII mock — reusing it is the most literal reading, not a new decorative choice.
+5. **`e2e/m3-motores.ts` needed a click-and-verify retry around the teacher-selector click**, not a plain `.click()`. First runs showed real (if rare) flakiness: the Astro island (`client:load`) can have its HTML in the DOM slightly before React hydration attaches the `onClick`, so a click in that narrow window is silently swallowed by the browser (native click event fires, no React handler yet). The fix retries the click until `aria-pressed` actually flips, which is the same category of hydration-timing trap noted in this project's own `chromium-headless-ui-testing` lesson, applied to a new symptom (swallowed click, not layout clamp).
+6. **The E2E script mutates and restores `sortOrder` for all 4 seed rows, not just the ones it directly touches.** The keyboard-reorder scenario legitimately renumbers the whole table (`PATCH orden` always writes a full ordered array), so without an explicit restore, repeated test runs would leave a permanent gap in the seed rows' `sortOrder` sequence (harmless for catalog resolution, which only cares about relative order, but untidy and worth avoiding). `limpiarEstado()` resets all 4 fixed UUIDs back to `sortOrder` 0–3 in both the success and failure paths.
+
+### Issues found
+
+None blocking. Two things worth flagging for whoever picks up M4+:
+
+1. **The `ModeloForm` price-preview line duplicates (in miniature) the display-rounding logic M4's `src/lib/format/costo.ts` will formalize.** It's intentionally NOT the same function — M4's formatter handles the full 5-case table (≥0.01, <0.01, rounds-to-zero, exactly-zero, NULL) for *stored, already-computed* costs, while this preview is a client-side, always-4-decimal estimate of a hypothetical turn from whatever the admin is currently typing (which can be blank/invalid mid-edit). Trying to share one function would have forced the preview to handle NULL/`—`/`histórico` states that make no sense for a live form field. If M4 wants to unify them later, that's a legitimate small refactor, not something skipped here.
+2. **No confirmation dialog before disabling a model or changing the default**, even though both are consequential (a disabled model disappears from the teacher selector immediately, per M2's `normalizarMotor`/repoint logic; a new default becomes what every *new* project starts on). Design.md doesn't ask for one, and the disable-current-default guard (409) already catches the one truly destructive case (an admin accidentally orphaning the platform's only default). Flagging in case product wants a confirm step later — not implemented here since nothing in `design.md` or `specs/ai-model-catalog/spec.md` calls for it.
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m3-motores.ts
+✔ ADMIN: /admin/motores renderiza el listado sembrado (tema light)
+✔ ADMIN: el listado sigue andando en tema dark
+✔ crear+enable+default+reorden: el motor nuevo se crea desde el formulario (tema dark)
+✔ la fila nueva muestra la pista de la clave (últimos 4 caracteres), nunca la clave completa
+✔ la fila guardada en la base tiene la clave cifrada, no en texto plano
+✔ el toggle de habilitado persiste en los dos sentidos
+✔ setear un nuevo default desmarca el anterior (invariante de un solo default)
+✔ deshabilitar el motor por defecto se rechaza (409) y el motor sigue habilitado
+✔ ArrowUp en el handle sube una posición y lo anuncia en la región aria-live
+✔ ADMIN: /admin/motores sigue funcional en tema light (persistencia tras recargar)
+✔ GET /api/admin/models nunca expone clave en texto plano ni el campo cifrado
+✔ el selector del docente muestra nombre + descripción del motor recién creado
+✔ el selector nunca expone el providerModel
+✔ deshabilitar un motor no-default lo saca del selector del docente
+
+✔ e2e/m3-motores.ts: todos los escenarios pasaron
+
+$ npx tsx e2e/unidad.ts       # regresión, no forma parte de M3
+✔ e2e/unidad.ts: todas las pruebas pasaron (4/4)
+
+$ npx tsx e2e/m1-admin-shell.ts   # regresión, no forma parte de M3
+✔ e2e/m1-admin-shell.ts: todos los escenarios pasaron (11/11)
+
+$ npx tsx e2e/m2-catalogo.ts   # regresión, no forma parte de M3
+✔ e2e/m2-catalogo.ts: todos los escenarios pasaron (7/7)
+
+$ rg -n 'bg-white|bg-slate-' src/components/admin src/pages/admin
+(exit 1, no matches — expected)
+
+$ docker exec -i kodu_db_dev psql -U kodu -d koduedu -c '... AiModel ...'
+  4 filas (estado sembrado restaurado tras la corrida de e2e/m3-motores.ts):
+  MiniMax M3 (default, sortOrder 0), MiniMax M2.7 (sortOrder 1),
+  DeepSeek (sortOrder 2), Alpha (disabled, sortOrder 3) — exactamente
+  1 fila con isDefault=true, sin ningún rastro del motor de prueba.
+```
+
+### Remaining tasks
+
+None for Phase 3. Phases 4–8 (M4–M8) remain out of scope for this apply batch.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M3
+- Boundary: starts where M2 left off on `feat/panel-admin`, ends at the M3
+  checkpoint (task 3.13).
+- Estimated review budget impact: forecast estimated ~500 changed lines for
+  M3. `review_budget_lines` is unbounded for this change per the owner, so
+  this is informational only.
