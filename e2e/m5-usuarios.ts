@@ -55,10 +55,25 @@ const TODOS_LOS_EMAILS = [
 ];
 
 const MARCA_MOTOR_PRUEBA = 'test-m5';
+const PROVEEDOR_ID_PRUEBA = 'e2e-m5-provider';
 const MODELO_HISTORICO = 'e2e-m5-modelo-historico';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
+
+/** Cuenta de proveedor fija para los motores de prueba de este script (catalogo-de-proveedores). */
+async function asegurarProveedorDePrueba(): Promise<void> {
+  await prisma.aiProvider.upsert({
+    where: { id: PROVEEDOR_ID_PRUEBA },
+    update: {},
+    create: {
+      id: PROVEEDOR_ID_PRUEBA,
+      kind: MARCA_MOTOR_PRUEBA,
+      label: MARCA_MOTOR_PRUEBA,
+      baseUrl: 'http://localhost:0',
+    },
+  });
+}
 
 async function asegurarDocentes(): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
@@ -84,10 +99,9 @@ async function crearMotorConPrecio(opts: { input: string; output: string }): Pro
   await prisma.aiModel.create({
     data: {
       id,
-      provider: MARCA_MOTOR_PRUEBA,
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: `modelo-${id.slice(0, 8)}`,
       displayName: 'Motor E2E M5 — pago',
-      baseUrl: 'http://localhost:0',
       enabled: true,
       selectableByTeacher: false,
       priceInputPerMToken: opts.input,
@@ -102,10 +116,9 @@ async function crearMotorGratis(): Promise<string> {
   await prisma.aiModel.create({
     data: {
       id,
-      provider: MARCA_MOTOR_PRUEBA,
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: `gratis-${id.slice(0, 8)}`,
       displayName: 'Motor E2E M5 — gratis',
-      baseUrl: 'http://localhost:0',
       enabled: true,
       selectableByTeacher: false,
       priceInputPerMToken: '0',
@@ -120,10 +133,9 @@ async function crearMotorSinPrecio(): Promise<string> {
   await prisma.aiModel.create({
     data: {
       id,
-      provider: MARCA_MOTOR_PRUEBA,
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: `sinprecio-${id.slice(0, 8)}`,
       displayName: 'Motor E2E M5 — sin precio',
-      baseUrl: 'http://localhost:0',
       enabled: true,
       selectableByTeacher: false,
     },
@@ -177,12 +189,13 @@ async function limpiarEstado(ids: Record<string, string>): Promise<void> {
   const userIds = Object.values(ids);
   await prisma.tokenUsage.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.project.deleteMany({ where: { userId: { in: userIds } } });
-  await prisma.aiModel.deleteMany({ where: { provider: MARCA_MOTOR_PRUEBA } });
+  await prisma.aiModel.deleteMany({ where: { providerId: PROVEEDOR_ID_PRUEBA } });
   // El de "único admin" nunca debe quedar ADMIN entre corridas.
   await prisma.user.updateMany({ where: { email: EMAIL_ADMIN_SOLO }, data: { role: 'DOCENTE' } });
 }
 
 async function main(): Promise<void> {
+  await asegurarProveedorDePrueba();
   const ids = await asegurarDocentes();
   await limpiarEstado(ids);
 

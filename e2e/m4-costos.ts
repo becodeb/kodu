@@ -23,10 +23,25 @@ import { CONSUMO_MEDIO, costoPorProyecto, recordUsage } from '../src/lib/ai/usag
 const DOCENTE_EMAIL = 'docente-e2e-m4@kodu.local';
 const DOCENTE_PASSWORD = 'Docente.E2E.2026';
 const MARCA_MOTOR_PRUEBA = 'test-m4';
+const PROVEEDOR_ID_PRUEBA = 'e2e-m4-provider';
 const MODELO_HISTORICO = 'e2e-m4-modelo-historico';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
+
+/** Cuenta de proveedor fija para los motores de prueba de este script (catalogo-de-proveedores). */
+async function asegurarProveedorDePrueba(): Promise<void> {
+  await prisma.aiProvider.upsert({
+    where: { id: PROVEEDOR_ID_PRUEBA },
+    update: {},
+    create: {
+      id: PROVEEDOR_ID_PRUEBA,
+      kind: MARCA_MOTOR_PRUEBA,
+      label: MARCA_MOTOR_PRUEBA,
+      baseUrl: 'http://localhost:0',
+    },
+  });
+}
 
 async function asegurarDocenteDePrueba(): Promise<string> {
   const docente = await prisma.user.upsert({
@@ -52,10 +67,9 @@ async function crearMotorConPrecio(opts: {
   await prisma.aiModel.create({
     data: {
       id,
-      provider: MARCA_MOTOR_PRUEBA,
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: `modelo-${id.slice(0, 8)}`,
       displayName: 'Motor E2E M4',
-      baseUrl: 'http://localhost:0',
       enabled: true,
       selectableByTeacher: false,
       isDefault: false,
@@ -73,10 +87,9 @@ async function crearMotorSinPrecio(): Promise<string> {
   await prisma.aiModel.create({
     data: {
       id,
-      provider: MARCA_MOTOR_PRUEBA,
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: `sin-precio-${id.slice(0, 8)}`,
       displayName: 'Motor E2E M4 sin precio',
-      baseUrl: 'http://localhost:0',
       enabled: true,
       selectableByTeacher: false,
       isDefault: false,
@@ -96,10 +109,11 @@ async function crearProyectoDePrueba(userId: string, titulo: string): Promise<st
 async function limpiarEstado(docenteId: string): Promise<void> {
   await prisma.tokenUsage.deleteMany({ where: { userId: docenteId } });
   await prisma.project.deleteMany({ where: { userId: docenteId } });
-  await prisma.aiModel.deleteMany({ where: { provider: MARCA_MOTOR_PRUEBA } });
+  await prisma.aiModel.deleteMany({ where: { providerId: PROVEEDOR_ID_PRUEBA } });
 }
 
 async function main(): Promise<void> {
+  await asegurarProveedorDePrueba();
   const docenteId = await asegurarDocenteDePrueba();
   await limpiarEstado(docenteId);
 

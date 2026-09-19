@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { Prisma } from '../../../../generated/prisma/client.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
-import { ClaveNoConfigurada, cifrar, pistaDeClave } from '../../../../lib/crypto/secretos.ts';
 import { invalidarCatalogo } from '../../../../lib/ai/catalogo.ts';
 import { precioADecimal, serializarMotor } from '../../../../lib/admin/modelos.ts';
 
 /**
- * PATCH /api/admin/models/:id — edición parcial de un motor (design.md §2, §3.1).
+ * PATCH /api/admin/models/:id — edición parcial de un motor (design.md §2, §3.1;
+ * catalogo-de-proveedores design.md §6 para `providerId`).
  *
  * **No hay DELETE**: borrar un motor no está implementado a propósito — el FK
  * de `TokenUsage.aiModelId` es `onDelete: SetNull`, así que no rompería nada
@@ -21,14 +21,11 @@ const precioSchema = z
   .optional();
 
 const actualizarMotorSchema = z.object({
-  provider: z.string().trim().min(1).max(60).optional(),
+  providerId: z.string().trim().min(1, 'Elegí una cuenta de proveedor').optional(),
   providerModel: z.string().trim().min(1).max(200).optional(),
   displayName: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(300).nullable().optional(),
   adminNote: z.string().trim().max(1_000).nullable().optional(),
-  baseUrl: z.string().trim().min(1).max(300).optional(),
-  /** `undefined` = dejar la clave como está, `null` = borrarla, string = reemplazarla. */
-  apiKey: z.string().trim().min(1).max(500).nullable().optional(),
   priceInputPerMToken: precioSchema,
   priceCachedInputPerMToken: precioSchema,
   priceOutputPerMToken: precioSchema,
@@ -60,6 +57,13 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     return fail('Un motor no puede ser su propio respaldo.', 422);
   }
 
+  // Pre-check explícito: sin esto, repuntear a una cuenta inexistente caería
+  // en el P2003/P2025 genérico que hoy sólo dice "el motor de respaldo no existe".
+  if (datos.providerId !== undefined) {
+    const proveedor = await prisma.aiProvider.findUnique({ where: { id: datos.providerId }, select: { id: true } });
+    if (!proveedor) return fail('La cuenta de proveedor elegida no existe.', 422);
+  }
+
   // Apagar el motor que hoy es el default está prohibido: primero hay que
   // elegir otro default (design.md §2). Si el mismo PATCH ya lo está sacando
   // de default (isDefault: false) no hace falta este freno.
@@ -70,12 +74,11 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   }
 
   const cambios: Prisma.AiModelUncheckedUpdateInput = {};
-  if (datos.provider !== undefined) cambios.provider = datos.provider;
+  if (datos.providerId !== undefined) cambios.providerId = datos.providerId;
   if (datos.providerModel !== undefined) cambios.providerModel = datos.providerModel;
   if (datos.displayName !== undefined) cambios.displayName = datos.displayName;
   if (datos.description !== undefined) cambios.description = datos.description;
   if (datos.adminNote !== undefined) cambios.adminNote = datos.adminNote;
-  if (datos.baseUrl !== undefined) cambios.baseUrl = datos.baseUrl;
   if (datos.enabled !== undefined) cambios.enabled = datos.enabled;
   if (datos.selectableByTeacher !== undefined) cambios.selectableByTeacher = datos.selectableByTeacher;
   if (datos.maxOutputTokens !== undefined) cambios.maxOutputTokens = datos.maxOutputTokens;
@@ -93,24 +96,6 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     cambios.priceOutputPerMToken = precioADecimal(datos.priceOutputPerMToken);
   }
 
-  if (datos.apiKey !== undefined) {
-    if (datos.apiKey === null) {
-      cambios.apiKeyCipher = null;
-      cambios.apiKeyHint = null;
-    } else {
-      try {
-        // El AAD es el id de la fila EXISTENTE, nunca uno nuevo: cambiar el
-        // AAD volvería indescifrable cualquier clave que hubiera quedado
-        // cifrada con el id viejo, y acá el id nunca cambia.
-        cambios.apiKeyCipher = cifrar(datos.apiKey, existente.id);
-      } catch (error) {
-        if (error instanceof ClaveNoConfigurada) return fail(error.message, 503);
-        throw error;
-      }
-      cambios.apiKeyHint = pistaDeClave(datos.apiKey);
-    }
-  }
-
   try {
     const actualizado =
       datos.isDefault === true
@@ -122,16 +107,17 @@ export const PATCH: APIRoute = async ({ params, request }) => {
             return tx.aiModel.update({
               where: { id: existente.id },
               data: { ...cambios, isDefault: true },
+              include: { provider: true },
             });
           })
-        : await prisma.aiModel.update({ where: { id: existente.id }, data: cambios });
+        : await prisma.aiModel.update({ where: { id: existente.id }, data: cambios, include: { provider: true } });
 
     invalidarCatalogo();
     return ok({ motor: serializarMotor(actualizado) });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       if (error.code === 'P2002') {
-        return fail('Ya existe un motor con ese proveedor y ese identificador.', 422);
+        return fail('Ya existe un motor con ese identificador en esa cuenta.', 422);
       }
       if (error.code === 'P2003' || error.code === 'P2025') {
         return fail('El motor de respaldo elegido no existe.', 422);

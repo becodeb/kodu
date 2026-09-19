@@ -37,7 +37,7 @@ export const PATCH: APIRoute = async ({ request }) => {
   await prisma.$transaction(ids.map((id, indice) => prisma.aiModel.update({ where: { id }, data: { sortOrder: indice } })));
   invalidarCatalogo();
 
-  const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' } });
+  const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' }, include: { provider: true } });
   const motores: MotorAdmin[] = filas.map(serializarMotor);
   return ok({ motores });
 };

@@ -3,9 +3,12 @@ import Interruptor from './Interruptor.tsx';
 import ModeloForm from './ModeloForm.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
 import type { MotorAdmin } from '../../lib/admin/modelos.ts';
+import type { ProveedorAdmin } from '../../lib/admin/proveedores.ts';
 
 interface ModelosPanelProps {
   initialMotores: MotorAdmin[];
+  /** El catálogo entero de cuentas de proveedor, para el <select> de ModeloForm. */
+  proveedores: ProveedorAdmin[];
 }
 
 /**
@@ -189,12 +192,15 @@ export default function ModelosPanel(props: ModelosPanelProps) {
               <div className="min-w-40 flex-1">
                 <p className="font-medium text-ink-900">{motor.displayName}</p>
                 <p className="text-xs text-ink-500">
-                  {motor.provider} · {motor.providerModel}
+                  {motor.provider.label} · {motor.providerModel}
+                  {!motor.provider.enabled && (
+                    <span className="ml-2 rounded-full bg-sutil px-2 py-0.5 text-ink-500">Cuenta apagada</span>
+                  )}
                 </p>
               </div>
 
               <span className="w-28 shrink-0 text-xs text-ink-500">
-                {motor.tieneClave ? `•••• ${motor.apiKeyHint ?? ''}` : 'Sin clave'}
+                {motor.provider.tieneClave ? `•••• ${motor.provider.apiKeyHint ?? ''}` : 'Sin clave'}
               </span>
 
               <span className="w-40 shrink-0 text-xs tabular-nums text-ink-500">{formatearPrecio(motor)}</span>
@@ -235,6 +241,7 @@ export default function ModelosPanel(props: ModelosPanelProps) {
         <ModeloForm
           motor={motorEnEdicion}
           otrosMotores={otrosMotores}
+          proveedores={props.proveedores}
           onGuardado={alGuardar}
           onCerrar={() => setFormAbierto(null)}
         />

@@ -6,7 +6,7 @@ import { cifrarConClaveHex, descifrarConClaveHex } from '../src/lib/crypto/secre
 /**
  * Rotación de `KODU_ENCRYPTION_KEY`.
  *
- * Descifra cada `AiModel.apiKeyCipher` con `KODU_ENCRYPTION_KEY_OLD` y lo
+ * Descifra cada `AiProvider.apiKeyCipher` con `KODU_ENCRYPTION_KEY_OLD` y lo
  * vuelve a cifrar con `KODU_ENCRYPTION_KEY`, todo en una sola transacción: o
  * rotan todas las filas o no rota ninguna, nunca un catálogo a medio migrar.
  *
@@ -33,13 +33,13 @@ async function main(): Promise<void> {
   const prisma = new PrismaClient({ adapter });
 
   try {
-    const filas = await prisma.aiModel.findMany({
+    const filas = await prisma.aiProvider.findMany({
       where: { apiKeyCipher: { not: null } },
-      select: { id: true, displayName: true, apiKeyCipher: true },
+      select: { id: true, label: true, apiKeyCipher: true },
     });
 
     if (filas.length === 0) {
-      console.log('✔ Ningún motor tiene clave cargada: nada para rotar.');
+      console.log('✔ Ninguna cuenta de proveedor tiene clave cargada: nada para rotar.');
       return;
     }
 
@@ -48,16 +48,16 @@ async function main(): Promise<void> {
       // rotación, sólo cambia la clave de cifrado.
       const textoPlano = descifrarConClaveHex(fila.apiKeyCipher!, fila.id, claveVieja);
       const nuevoCipher = cifrarConClaveHex(textoPlano, fila.id, claveNueva);
-      return { id: fila.id, displayName: fila.displayName, nuevoCipher };
+      return { id: fila.id, label: fila.label, nuevoCipher };
     });
 
     await prisma.$transaction(
       reescrituras.map((fila) =>
-        prisma.aiModel.update({ where: { id: fila.id }, data: { apiKeyCipher: fila.nuevoCipher } }),
+        prisma.aiProvider.update({ where: { id: fila.id }, data: { apiKeyCipher: fila.nuevoCipher } }),
       ),
     );
 
-    console.log(`✔ ${reescrituras.length} clave(s) rotada(s): ${reescrituras.map((f) => f.displayName).join(', ')}`);
+    console.log(`✔ ${reescrituras.length} clave(s) rotada(s): ${reescrituras.map((f) => f.label).join(', ')}`);
   } finally {
     await prisma.$disconnect();
   }

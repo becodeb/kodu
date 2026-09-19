@@ -3,15 +3,18 @@ import Modal from '../workspace/Modal.tsx';
 import Interruptor from './Interruptor.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
 import type { MotorAdmin } from '../../lib/admin/modelos.ts';
+import type { ProveedorAdmin } from '../../lib/admin/proveedores.ts';
 
 /**
- * Alta y edición de un motor (design.md — "The models list").
+ * Alta y edición de un motor (design.md — "The models list"; catalogo-de-proveedores
+ * design.md §7 para el `<select>` de cuenta).
  *
  * Lo que vive en la FILA del panel (habilitar, default, orden) NO está acá:
  * el enable toggle y el radio de default se manejan directo desde
  * `ModelosPanel.tsx`, y el orden lo escriben el arrastre y las flechas. Este
- * diálogo es para todo lo demás: identidad del proveedor, la clave, el
- * precio y los topes.
+ * diálogo es para todo lo demás: la cuenta de proveedor, el identificador, el
+ * precio y los topes. La clave en sí ya no se toca acá — vive en la cuenta,
+ * se edita desde `/admin/proveedores`.
  */
 
 interface ModeloFormProps {
@@ -19,6 +22,8 @@ interface ModeloFormProps {
   motor: MotorAdmin | null;
   /** El resto del catálogo, para elegir un respaldo (nunca uno mismo). */
   otrosMotores: MotorAdmin[];
+  /** El catálogo entero de cuentas de proveedor, para el `<select>` de abajo. */
+  proveedores: ProveedorAdmin[];
   onGuardado: (motor: MotorAdmin) => void;
   onCerrar: () => void;
 }
@@ -50,14 +55,13 @@ function previewDePrecio(entrada: string, cacheada: string, salida: string): str
 export default function ModeloForm(props: ModeloFormProps) {
   const { motor } = props;
   const idBase = useId();
+  const sinProveedores = props.proveedores.length === 0;
 
-  const [provider, setProvider] = useState(motor?.provider ?? '');
+  const [providerId, setProviderId] = useState(motor?.providerId ?? '');
   const [providerModel, setProviderModel] = useState(motor?.providerModel ?? '');
   const [displayName, setDisplayName] = useState(motor?.displayName ?? '');
   const [description, setDescription] = useState(motor?.description ?? '');
   const [adminNote, setAdminNote] = useState(motor?.adminNote ?? '');
-  const [baseUrl, setBaseUrl] = useState(motor?.baseUrl ?? '');
-  const [apiKey, setApiKey] = useState('');
   const [selectableByTeacher, setSelectableByTeacher] = useState(motor?.selectableByTeacher ?? true);
   const [supportsVision, setSupportsVision] = useState(motor?.supportsVision ?? false);
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(motor?.maxOutputTokens ?? 65_536));
@@ -77,20 +81,19 @@ export default function ModeloForm(props: ModeloFormProps) {
     event.preventDefault();
     setError(null);
 
-    if (!displayName.trim() || !provider.trim() || !providerModel.trim() || !baseUrl.trim()) {
-      setError('Completá proveedor, identificador, nombre y URL base.');
+    if (!providerId || !providerModel.trim() || !displayName.trim()) {
+      setError('Completá la cuenta, el identificador y el nombre.');
       return;
     }
 
     setPending(true);
 
     const payload: Record<string, unknown> = {
-      provider: provider.trim(),
+      providerId,
       providerModel: providerModel.trim(),
       displayName: displayName.trim(),
       description: description.trim() === '' ? null : description.trim(),
       adminNote: adminNote.trim() === '' ? null : adminNote.trim(),
-      baseUrl: baseUrl.trim(),
       selectableByTeacher,
       supportsVision,
       maxOutputTokens: Number(maxOutputTokens),
@@ -101,7 +104,6 @@ export default function ModeloForm(props: ModeloFormProps) {
       priceCachedInputPerMToken: precioCacheada.trim() === '' ? null : Number(precioCacheada),
       priceOutputPerMToken: precioSalida.trim() === '' ? null : Number(precioSalida),
     };
-    if (apiKey.trim() !== '') payload.apiKey = apiKey.trim();
 
     const result = motor
       ? await apiRequest<{ motor: MotorAdmin }>(`/api/admin/models/${motor.id}`, 'PATCH', payload)
@@ -120,33 +122,55 @@ export default function ModeloForm(props: ModeloFormProps) {
     <Modal
       abierto
       titulo={motor ? `Editar ${motor.displayName}` : 'Nuevo motor'}
-      descripcion="Los campos con clave nunca vuelven a mostrar el valor cargado."
+      descripcion="La clave de la cuenta se edita desde /admin/proveedores, no acá."
       onCerrar={props.onCerrar}
       pie={
         <>
           <button type="button" onClick={props.onCerrar} className="kodu-btn-ghost text-sm">
             Cancelar
           </button>
-          <button type="submit" form={`${idBase}-form`} disabled={pending} className="kodu-btn-primary text-sm">
+          <button
+            type="submit"
+            form={`${idBase}-form`}
+            disabled={pending || sinProveedores}
+            className="kodu-btn-primary text-sm"
+          >
             {pending ? 'Guardando…' : 'Guardar'}
           </button>
         </>
       }
     >
       <form id={`${idBase}-form`} onSubmit={submit} className="space-y-4">
+        {sinProveedores && (
+          <div className="kodu-card space-y-2 p-4 text-sm text-ink-700">
+            <p>Todavía no hay ninguna cuenta de proveedor. Cargá una y volvé a crear el motor.</p>
+            <a href="/admin/proveedores" className="kodu-btn-primary inline-block text-sm">
+              Ir a Proveedores
+            </a>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-provider`}>
-              Proveedor
+              Cuenta de proveedor
             </label>
-            <input
+            <select
               id={`${idBase}-provider`}
-              value={provider}
-              onChange={(event) => setProvider(event.target.value)}
-              placeholder="gmi"
+              value={providerId}
+              onChange={(event) => setProviderId(event.target.value)}
               className="kodu-input"
               required
-            />
+              disabled={sinProveedores}
+            >
+              <option value="">— Elegí una cuenta —</option>
+              {props.proveedores.map((proveedor) => (
+                <option key={proveedor.id} value={proveedor.id}>
+                  {proveedor.label}
+                  {proveedor.enabled ? '' : ' (apagada)'}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-providerModel`}>
@@ -204,38 +228,6 @@ export default function ModeloForm(props: ModeloFormProps) {
             maxLength={1_000}
             className="kodu-input resize-none"
           />
-        </div>
-
-        <div>
-          <label className="kodu-label" htmlFor={`${idBase}-baseUrl`}>
-            URL base
-          </label>
-          <input
-            id={`${idBase}-baseUrl`}
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="https://api.gmi-serving.com"
-            className="kodu-input"
-            required
-          />
-        </div>
-
-        <div>
-          <label className="kodu-label" htmlFor={`${idBase}-apiKey`}>
-            Reemplazar clave
-          </label>
-          <input
-            id={`${idBase}-apiKey`}
-            type="password"
-            autoComplete="new-password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={motor?.tieneClave ? `•••• ${motor.apiKeyHint ?? ''}` : 'Sin clave'}
-            className="kodu-input"
-          />
-          <p className="mt-1 text-xs text-ink-500">
-            Dejalo vacío para no tocar la clave guardada. Nunca se vuelve a mostrar acá.
-          </p>
         </div>
 
         <fieldset className="space-y-2 rounded-[10px] border border-linea p-3">

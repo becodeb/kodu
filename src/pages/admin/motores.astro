@@ -3,12 +3,18 @@ import AdminLayout from '../../layouts/AdminLayout.astro';
 import ModelosPanel from '../../components/admin/ModelosPanel.tsx';
 import { prisma } from '../../lib/db.ts';
 import { serializarMotor } from '../../lib/admin/modelos.ts';
+import { serializarProveedor } from '../../lib/admin/proveedores.ts';
 
 // El middleware ya garantiza sesión + rol ADMIN en /admin/**.
-const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' } });
+const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' }, include: { provider: true } });
 const motores = filas.map(serializarMotor);
+
+// El <select> de cuenta del formulario de motor necesita el catálogo entero
+// de proveedores, no sólo los que ya tienen algún motor.
+const filasProveedores = await prisma.aiProvider.findMany({ orderBy: [{ kind: 'asc' }, { label: 'asc' }] });
+const proveedores = filasProveedores.map((fila) => serializarProveedor(fila));
 ---
 
 <AdminLayout>
-  <ModelosPanel client:load initialMotores={motores} />
+  <ModelosPanel client:load initialMotores={motores} proveedores={proveedores} />
 </AdminLayout>

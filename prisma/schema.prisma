@@ -155,15 +155,46 @@ model Project {
   @@index([isInGallery, updatedAt])
 }
 
+/// La cuenta de un proveedor de IA (design.md de
+/// catalogo-de-proveedores/design.md §1): guarda la clave cifrada UNA sola
+/// vez aunque varios `AiModel` la usen, y deja legal la misma cuenta de
+/// proveedor dos veces (una clave para la escuela, otra personal).
+model AiProvider {
+  /// Generado por la app con crypto.randomUUID() ANTES de cifrar la clave: es
+  /// el AAD del cifrado (ver src/lib/crypto/secretos.ts). No lleva @default.
+  id String @id
+  /// Slug estable: "gmi", "deepseek", "openrouter". Es lo que hace legible
+  /// "el mismo proveedor dos veces".
+  kind String
+  /// Lo que distingue dos cuentas del mismo kind en el desplegable del
+  /// formulario de motor: "GMI — cuenta de la escuela".
+  label String
+  baseUrl String
+
+  /// AES-256-GCM. Formato "v1.<nonce>.<ct>.<tag>" en base64url. Nunca sale del server.
+  apiKeyCipher String?
+  /// Ultimos 4 caracteres de la clave en claro, para reconocerla en el panel.
+  apiKeyHint String?
+
+  /// Apagar la cuenta apaga sus motores sin tocarles su propio `enabled`, así
+  /// que volver a prenderla restaura el estado anterior de cada uno.
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  modelos AiModel[]
+}
+
 /// El catalogo de motores de IA: reemplaza al enum ModelChoice como fuente de
 /// verdad en tiempo de ejecucion. Cada fila es un motor que un admin puede
 /// prender, apagar, reordenar o marcar como el que arranca por defecto.
 model AiModel {
-  /// Generado por la app con crypto.randomUUID() ANTES de cifrar la clave: es
-  /// el AAD del cifrado (ver src/lib/crypto/secretos.ts). No lleva @default.
   id String @id
-  /// Etiqueta corta del proveedor: "gmi", "deepseek", "openrouter".
-  provider String
+  /// La cuenta de proveedor dueña de la clave y la URL base (ver AiProvider).
+  /// `onDelete: Restrict` porque no hay ruta de borrado de proveedor.
+  providerId String
+  provider   AiProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
   /// El identificador exacto que espera la API del proveedor.
   providerModel String
   /// Lo que ve el docente en el selector.
@@ -172,12 +203,6 @@ model AiModel {
   description String?
   /// Nota interna. El docente nunca la ve.
   adminNote String?
-  baseUrl   String
-
-  /// AES-256-GCM. Formato "v1.<nonce>.<ct>.<tag>" en base64url. Nunca sale del server.
-  apiKeyCipher String?
-  /// Ultimos 4 caracteres de la clave en claro, para reconocerla en el panel.
-  apiKeyHint String?
 
   /// Precio APROXIMADO en USD por millon de tokens. NULL = sin cargar (≠ 0 = gratis).
   priceInputPerMToken Decimal? @db.Decimal(12, 6)
@@ -208,7 +233,7 @@ model AiModel {
   projects   Project[]
   tokenUsage TokenUsage[]
 
-  @@unique([provider, providerModel])
+  @@unique([providerId, providerModel])
   @@index([enabled, sortOrder])
 }
 

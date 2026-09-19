@@ -1,0 +1,17 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import ProveedoresPanel from '../../components/admin/ProveedoresPanel.tsx';
+import { prisma } from '../../lib/db.ts';
+import { serializarProveedor } from '../../lib/admin/proveedores.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const filas = await prisma.aiProvider.findMany({
+  orderBy: [{ kind: 'asc' }, { label: 'asc' }],
+  include: { _count: { select: { modelos: true } } },
+});
+const proveedores = filas.map((fila) => serializarProveedor(fila));
+---
+
+<AdminLayout>
+  <ProveedoresPanel client:load initialProveedores={proveedores} />
+</AdminLayout>

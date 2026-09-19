@@ -183,7 +183,8 @@ async function limpiarEstado(): Promise<void> {
   }
 
   await prisma.user.deleteMany({ where: { email: { in: [EMAIL_DUENIO, EMAIL_AJENO] } } });
-  await prisma.aiModel.deleteMany({ where: { provider: MARCA_MOTOR_PRUEBA } });
+  await prisma.aiModel.deleteMany({ where: { provider: { kind: MARCA_MOTOR_PRUEBA } } });
+  await prisma.aiProvider.deleteMany({ where: { kind: MARCA_MOTOR_PRUEBA } });
 }
 
 async function main(): Promise<void> {
@@ -213,13 +214,22 @@ async function main(): Promise<void> {
         const contexto = await browser.newContext();
         const page = await contexto.newPage();
         await iniciarSesion(page, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
-        const respuesta = await page.request.post(`${BASE_URL}/api/admin/models`, {
+        const respuestaProveedor = await page.request.post(`${BASE_URL}/api/admin/providers`, {
           data: {
-            provider: MARCA_MOTOR_PRUEBA,
-            providerModel: 'm8-mock',
-            displayName: 'Motor E2E M8 — mock local',
+            kind: MARCA_MOTOR_PRUEBA,
+            label: MARCA_MOTOR_PRUEBA,
             baseUrl: `http://127.0.0.1:${mock.port}`,
             apiKey: 'clave-de-prueba-m8',
+          },
+        });
+        assert.ok(respuestaProveedor.ok(), `alta de la cuenta de prueba debe responder 200 (${respuestaProveedor.status()})`);
+        const { proveedor } = (await respuestaProveedor.json()) as { proveedor: { id: string } };
+
+        const respuesta = await page.request.post(`${BASE_URL}/api/admin/models`, {
+          data: {
+            providerId: proveedor.id,
+            providerModel: 'm8-mock',
+            displayName: 'Motor E2E M8 — mock local',
             selectableByTeacher: true,
           },
         });

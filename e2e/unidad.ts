@@ -57,7 +57,24 @@ await prueba('descifrar: un AAD distinto (ciphertext copiado a otra fila) rechaz
 // Catálogo: caminata de la cadena de respaldo (src/lib/ai/catalogo.ts)
 // ─────────────────────────────────────────────────────────────
 
-/** Fila mínima de AiModel para las pruebas de abajo, con clave utilizable. */
+const PROVEEDOR_ID_PRUEBA = 'e2e-unidad-provider';
+
+/** Cuenta de proveedor fija para los motores de prueba de abajo (catalogo-de-proveedores). */
+async function asegurarProveedorDePrueba(): Promise<void> {
+  await prisma.aiProvider.upsert({
+    where: { id: PROVEEDOR_ID_PRUEBA },
+    update: { apiKeyCipher: cifrar('clave-de-prueba', PROVEEDOR_ID_PRUEBA), enabled: true },
+    create: {
+      id: PROVEEDOR_ID_PRUEBA,
+      kind: 'test-unidad',
+      label: 'test-unidad',
+      baseUrl: 'http://localhost:0',
+      apiKeyCipher: cifrar('clave-de-prueba', PROVEEDOR_ID_PRUEBA),
+    },
+  });
+}
+
+/** Fila mínima de AiModel para las pruebas de abajo, con clave utilizable (vía su cuenta de proveedor). */
 async function crearMotorDePrueba(opts: {
   providerModel: string;
   fallbackModelId?: string | null;
@@ -66,11 +83,9 @@ async function crearMotorDePrueba(opts: {
   await prisma.aiModel.create({
     data: {
       id,
-      provider: 'test-unidad',
+      providerId: PROVEEDOR_ID_PRUEBA,
       providerModel: opts.providerModel,
       displayName: `Prueba ${opts.providerModel}`,
-      baseUrl: 'http://localhost:0',
-      apiKeyCipher: cifrar('clave-de-prueba', id),
       enabled: true,
       selectableByTeacher: false,
       isDefault: false,
@@ -84,10 +99,12 @@ async function limpiarMotoresDePrueba(): Promise<void> {
   // Primero se sueltan los fallbackModelId (la FK es ON DELETE SET NULL, pero
   // mejor no depender del orden de borrado entre filas que se referencian
   // entre sí).
-  await prisma.aiModel.updateMany({ where: { provider: 'test-unidad' }, data: { fallbackModelId: null } });
-  await prisma.aiModel.deleteMany({ where: { provider: 'test-unidad' } });
+  await prisma.aiModel.updateMany({ where: { providerId: PROVEEDOR_ID_PRUEBA }, data: { fallbackModelId: null } });
+  await prisma.aiModel.deleteMany({ where: { providerId: PROVEEDOR_ID_PRUEBA } });
   invalidarCatalogo();
 }
+
+await asegurarProveedorDePrueba();
 
 await prueba('cadenaDeMotores: un ciclo A→B→A no cuelga y corta en 2', async () => {
   await limpiarMotoresDePrueba();
@@ -105,6 +122,79 @@ await prueba('cadenaDeMotores: un ciclo A→B→A no cuelga y corta en 2', async
       [idA, idB],
     );
   } finally {
+    await limpiarMotoresDePrueba();
+  }
+});
+
+const PROVEEDOR_ID_PRUEBA_2 = 'e2e-unidad-provider-2';
+
+/** Segunda cuenta de proveedor, distinta de `PROVEEDOR_ID_PRUEBA`, para probar que la cadena cruza cuentas. */
+async function asegurarSegundaProveedorDePrueba(): Promise<void> {
+  await prisma.aiProvider.upsert({
+    where: { id: PROVEEDOR_ID_PRUEBA_2 },
+    update: { apiKeyCipher: cifrar('clave-de-prueba-2', PROVEEDOR_ID_PRUEBA_2), enabled: true },
+    create: {
+      id: PROVEEDOR_ID_PRUEBA_2,
+      kind: 'test-unidad-2',
+      label: 'test-unidad-2',
+      baseUrl: 'http://localhost:0',
+      apiKeyCipher: cifrar('clave-de-prueba-2', PROVEEDOR_ID_PRUEBA_2),
+    },
+  });
+}
+
+/** Igual que `crearMotorDePrueba`, pero permite elegir en qué cuenta vive el motor. */
+async function crearMotorDePruebaEnCuenta(opts: {
+  providerId: string;
+  providerModel: string;
+  fallbackModelId?: string | null;
+}): Promise<string> {
+  const id = randomUUID();
+  await prisma.aiModel.create({
+    data: {
+      id,
+      providerId: opts.providerId,
+      providerModel: opts.providerModel,
+      displayName: `Prueba ${opts.providerModel}`,
+      enabled: true,
+      selectableByTeacher: false,
+      isDefault: false,
+      fallbackModelId: opts.fallbackModelId ?? null,
+    },
+  });
+  return id;
+}
+
+await prueba('cadenaDeMotores: la cadena puede cruzar dos cuentas de proveedor distintas', async () => {
+  await limpiarMotoresDePrueba();
+  await asegurarSegundaProveedorDePrueba();
+  try {
+    // A vive en PROVEEDOR_ID_PRUEBA, B vive en PROVEEDOR_ID_PRUEBA_2 — dos
+    // cuentas (AiProvider) distintas, cada una con su propia clave.
+    // "Model-level fallback chain may span providers" (ai-model-catalog spec):
+    // la traversal en catalogo.ts es ciega a `providerId` por construcción,
+    // pero hasta esta prueba ningún fixture había armado una cadena que de
+    // verdad atravesara dos cuentas — todos compartían PROVEEDOR_ID_PRUEBA.
+    const idB = await crearMotorDePruebaEnCuenta({ providerId: PROVEEDOR_ID_PRUEBA_2, providerModel: 'cruce-b' });
+    const idA = await crearMotorDePruebaEnCuenta({
+      providerId: PROVEEDOR_ID_PRUEBA,
+      providerModel: 'cruce-a',
+      fallbackModelId: idB,
+    });
+    invalidarCatalogo();
+
+    const cadena = await cadenaDeMotores(idA);
+
+    assert.equal(cadena.length, 2, `esperaba a A y B, los dos con clave utilizable, dio ${cadena.length}`);
+    assert.deepEqual(
+      cadena.map((motor) => motor.id),
+      [idA, idB],
+      'la cadena debe recorrer A (una cuenta) → B (otra cuenta) en orden',
+    );
+  } finally {
+    await prisma.aiModel.updateMany({ where: { providerId: PROVEEDOR_ID_PRUEBA_2 }, data: { fallbackModelId: null } });
+    await prisma.aiModel.deleteMany({ where: { providerId: PROVEEDOR_ID_PRUEBA_2 } });
+    await prisma.aiProvider.delete({ where: { id: PROVEEDOR_ID_PRUEBA_2 } });
     await limpiarMotoresDePrueba();
   }
 });

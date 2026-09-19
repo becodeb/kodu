@@ -110,7 +110,8 @@ async function main(): Promise<void> {
 
         await page.waitForSelector('h1:has-text("Panel")');
         const pestañas = page.locator('nav[aria-label="Secciones del panel"] a');
-        await assertCantidad(pestañas, 4, `la fila de pestañas debe tener 4 links (tema ${tema})`);
+        // 5 desde el cambio catalogo-de-proveedores: se sumó la pestaña Proveedores.
+        await assertCantidad(pestañas, 5, `la fila de pestañas debe tener 5 links (tema ${tema})`);
 
         const pillPanel = page.locator('a[href="/admin"]', { hasText: 'Panel' });
         await assertVisible(pillPanel, `el nav debe mostrar el pill "Panel" para ADMIN (tema ${tema})`);

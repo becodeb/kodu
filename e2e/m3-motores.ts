@@ -4,15 +4,21 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, conTema, iniciarSesion } from './harness.ts';
+import { invalidarCatalogo, motoresParaDocente } from '../src/lib/ai/catalogo.ts';
 
 /**
- * Verificación de slice M3: CRUD de motores en /admin/motores + selector del
- * docente (specs/ai-model-catalog/spec.md).
+ * Verificación de slice M3 + catalogo-de-proveedores: CRUD de cuentas de
+ * proveedor en /admin/proveedores, CRUD de motores en /admin/motores + el
+ * selector del docente (specs/ai-model-catalog/spec.md,
+ * specs/ai-provider-catalog/spec.md).
  *
- * Cubre: alta, reorden (con teclado), habilitar/deshabilitar, marcar default,
- * el invariante de un solo default, el invariante de la clave enmascarada
- * (nunca texto plano ni cifrado en una respuesta), y el selector del docente
- * mostrando nombre + descripción. Todo en los dos temas.
+ * Reescrito íntegro por catalogo-de-proveedores (design.md §10): el motor ya
+ * no carga proveedor/URL base/clave directamente — primero hace falta una
+ * cuenta. Cubre: alta de cuenta + motor, el invariante de la clave enmascarada
+ * en LOS DOS niveles (cuenta y motor), reorden (con teclado),
+ * habilitar/deshabilitar, marcar default, el invariante de un solo default,
+ * la cascada de apagar una cuenta, y la feature en sí — el mismo
+ * `providerModel` en dos cuentas del mismo `kind`. Todo en los dos temas.
  *
  * Corre con: npx tsx e2e/m3-motores.ts
  */
@@ -24,6 +30,10 @@ const DOCENTE_PASSWORD = 'Docente.E2E.2026';
 
 const MINIMAX_M3_ID = '10000000-0000-0000-0000-000000000001';
 
+const PROVIDER_KIND = 'test-e2e';
+const PROVIDER_LABEL = 'Cuenta E2E';
+const PROVIDER_LABEL_2 = 'Cuenta E2E — segunda';
+const PROVIDER_BASE_URL = 'https://example.test/api';
 const CLAVE_DE_PRUEBA = 'clave-secreta-de-prueba-12345';
 const NOMBRE_MOTOR = 'Motor E2E M3';
 const PROVIDER_MODEL_MOTOR = 'test-e2e-model-1';
@@ -55,12 +65,13 @@ const SORT_ORDER_SEMILLA: Record<string, number> = {
 
 /**
  * Vuelve todo al estado con el que corren m1/m2: MiniMax M3 como único
- * default, sin el motor de prueba, y el `sortOrder` de la semilla intacto
- * (el reorden por teclado de este script lo corre; sin este reset quedaría
- * un hueco permanente en la numeración tras cada corrida).
+ * default, sin las cuentas/motores de prueba, y el `sortOrder` de la semilla
+ * intacto. Los motores se borran ANTES que las cuentas — la FK
+ * `AiModel.providerId` es `Restrict`.
  */
 async function limpiarEstado(): Promise<void> {
-  await prisma.aiModel.deleteMany({ where: { providerModel: PROVIDER_MODEL_MOTOR } });
+  await prisma.aiModel.deleteMany({ where: { provider: { kind: PROVIDER_KIND } } });
+  await prisma.aiProvider.deleteMany({ where: { kind: PROVIDER_KIND } });
   await prisma.aiModel.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
   await prisma.aiModel.update({ where: { id: MINIMAX_M3_ID }, data: { isDefault: true } });
   await prisma.$transaction(
@@ -93,19 +104,104 @@ async function main(): Promise<void> {
     // El resto de la creación y edición corre en tema oscuro, para probar
     // el modal y el panel en los dos temas sin duplicar todo el script.
     await conTema(page, 'dark');
-    await page.waitForSelector('li:has-text("MiniMax M3")');
-    console.log('✔ ADMIN: el listado sigue andando en tema dark');
 
-    // 1. Alta de un motor nuevo, por la UI real (no por API directa).
+    // ───────────────────────────────────────────────────────────
+    // 1. Alta de la cuenta de proveedor, por la UI real de /admin/proveedores.
+    // ───────────────────────────────────────────────────────────
+    await page.goto(`${BASE_URL}/admin/proveedores`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('h1:has-text("Panel")');
+    console.log('✔ ADMIN: /admin/proveedores renderiza (tema dark)');
+
+    await page.getByRole('button', { name: '+ Nueva cuenta' }).click();
+    await page.waitForSelector('[role="dialog"][aria-label="Nueva cuenta de proveedor"]');
+
+    await page.getByLabel('Tipo de proveedor').fill(PROVIDER_KIND);
+    await page.getByLabel('Nombre de la cuenta').fill(PROVIDER_LABEL);
+    await page.getByLabel('URL base').fill(PROVIDER_BASE_URL);
+    await page.getByLabel('Reemplazar clave').fill(CLAVE_DE_PRUEBA);
+
+    const [respuestaCreacionProveedor] = await Promise.all([
+      page.waitForResponse((res) => res.url().endsWith('/api/admin/providers') && res.request().method() === 'POST'),
+      page.getByRole('button', { name: 'Guardar' }).click(),
+    ]);
+    assert.equal(
+      respuestaCreacionProveedor.status(),
+      200,
+      `la creación de la cuenta debería dar 200, dio ${respuestaCreacionProveedor.status()}`,
+    );
+
+    const cuerpoCreacionProveedor = await respuestaCreacionProveedor.text();
+    assert.ok(!cuerpoCreacionProveedor.includes(CLAVE_DE_PRUEBA), 'la respuesta de creación no debe traer la clave en texto plano');
+    assert.ok(!cuerpoCreacionProveedor.includes('apiKeyCipher'), 'la respuesta de creación no debe traer el campo apiKeyCipher');
+    console.log('✔ crear cuenta de proveedor: POST 200, sin clave en texto plano ni cifrada en la respuesta');
+
+    // ───────────────────────────────────────────────────────────
+    // 2. La fila de la cuenta muestra la pista; la base tiene el cifrado real.
+    // ───────────────────────────────────────────────────────────
+    await page.waitForSelector(`li:has-text("${PROVIDER_LABEL}")`);
+    const filaProveedor = page.locator('li').filter({ hasText: PROVIDER_LABEL });
+    await filaProveedor.locator('text=•••• 2345').waitFor();
+    console.log('✔ la fila de la cuenta muestra la pista de la clave (últimos 4 caracteres), nunca la clave completa');
+
+    const proveedorCreado = await prisma.aiProvider.findFirstOrThrow({ where: { kind: PROVIDER_KIND, label: PROVIDER_LABEL } });
+    assert.notEqual(proveedorCreado.apiKeyCipher, CLAVE_DE_PRUEBA, 'la clave guardada en la base no debe ser el texto plano');
+    assert.ok(proveedorCreado.apiKeyCipher?.startsWith('v1.'), 'la clave guardada debe estar en el formato cifrado v1.<nonce>.<ct>.<tag>');
+    console.log('✔ la cuenta guardada en la base tiene la clave cifrada, no en texto plano');
+
+    // ───────────────────────────────────────────────────────────
+    // 2b. La UI de edición nunca vuelve a mostrar la clave completa: el campo
+    //     "Reemplazar clave" abre vacío, con la pista como placeholder.
+    // ───────────────────────────────────────────────────────────
+    await filaProveedor.getByRole('button', { name: 'Editar' }).click();
+    await page.waitForSelector(`[role="dialog"][aria-label="Editar ${PROVIDER_LABEL}"]`);
+    const campoClaveEdicion = page.getByLabel('Reemplazar clave');
+    assert.equal(await campoClaveEdicion.inputValue(), '', 'el campo de clave debe abrir vacío al editar, nunca precargado');
+    assert.equal(
+      await campoClaveEdicion.getAttribute('placeholder'),
+      '•••• 2345',
+      'el placeholder debe mostrar sólo la pista, no la clave completa',
+    );
+    const htmlDialogoEdicion = await page.locator('[role="dialog"]').innerHTML();
+    assert.ok(!htmlDialogoEdicion.includes(CLAVE_DE_PRUEBA), 'el diálogo de edición no debe traer la clave completa en ningún lado del DOM');
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    console.log('✔ el diálogo de edición de la cuenta nunca renderiza la clave completa, sólo la pista enmascarada');
+
+    // ───────────────────────────────────────────────────────────
+    // 3. Ciphertext-leak assertion sobre el listado de cuentas.
+    // ───────────────────────────────────────────────────────────
+    const respuestaListadoProveedores = await page.request.get(`${BASE_URL}/api/admin/providers`);
+    const textoListadoProveedores = await respuestaListadoProveedores.text();
+    assert.ok(!textoListadoProveedores.includes(CLAVE_DE_PRUEBA), 'GET /api/admin/providers no debe traer ninguna clave en texto plano');
+    assert.ok(!textoListadoProveedores.includes('apiKeyCipher'), 'GET /api/admin/providers no debe traer el campo apiKeyCipher');
+    assert.ok(!textoListadoProveedores.includes('v1.'), 'GET /api/admin/providers no debe traer nada con la forma del cifrado');
+    console.log('✔ GET /api/admin/providers nunca expone clave en texto plano, el campo cifrado, ni la forma "v1."');
+
+    // ───────────────────────────────────────────────────────────
+    // 4. Alta del motor, eligiendo la cuenta recién creada en el <select>.
+    // ───────────────────────────────────────────────────────────
+    await page.goto(`${BASE_URL}/admin/motores`, { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('li:has-text("MiniMax M3")');
+
     await page.getByRole('button', { name: '+ Nuevo motor' }).click();
     await page.waitForSelector('[role="dialog"][aria-label="Nuevo motor"]');
 
-    await page.getByLabel('Proveedor').fill('test-e2e');
+    // El motor ya no tiene campos de proveedor/URL base/clave: sólo la cuenta.
+    // `exact: true` importa: "Cuenta de proveedor" CONTIENE la palabra
+    // "Proveedor", así que un match por substring (el default de getByLabel)
+    // encontraría el <select> nuevo y daría un falso positivo acá.
+    for (const etiquetaAusente of ['Proveedor', 'URL base', 'Reemplazar clave']) {
+      assert.equal(
+        await page.getByLabel(etiquetaAusente, { exact: true }).count(),
+        0,
+        `"${etiquetaAusente}" no debería existir en el diálogo de motor`,
+      );
+    }
+    console.log('✔ el diálogo de motor no tiene campos de proveedor/URL base/clave (se movieron a la cuenta)');
+
+    await page.getByLabel('Cuenta de proveedor').selectOption({ label: PROVIDER_LABEL });
     await page.getByLabel('Identificador del modelo').fill(PROVIDER_MODEL_MOTOR);
     await page.getByLabel('Nombre para el docente').fill(NOMBRE_MOTOR);
     await page.getByLabel('Descripción para el docente').fill(DESCRIPCION_MOTOR);
-    await page.getByLabel('URL base').fill('https://example.test/api');
-    await page.getByLabel('Reemplazar clave').fill(CLAVE_DE_PRUEBA);
     await page.getByLabel('Entrada (sin caché)').fill('0.5');
     await page.getByLabel('Salida', { exact: true }).fill('1.5');
 
@@ -118,17 +214,16 @@ async function main(): Promise<void> {
     const cuerpoCreacion = await respuestaCreacion.text();
     assert.ok(!cuerpoCreacion.includes(CLAVE_DE_PRUEBA), 'la respuesta de creación no debe traer la clave en texto plano');
     assert.ok(!cuerpoCreacion.includes('apiKeyCipher'), 'la respuesta de creación no debe traer el campo apiKeyCipher');
-    console.log('✔ crear+enable+default+reorden: el motor nuevo se crea desde el formulario (tema dark)');
+    console.log('✔ crear+enable+default+reorden: el motor nuevo se crea eligiendo la cuenta en el <select> (tema dark)');
 
     await page.waitForSelector(`li:has-text("${NOMBRE_MOTOR}")`);
     const fila = page.locator('li').filter({ hasText: NOMBRE_MOTOR });
     await fila.locator('text=•••• 2345').waitFor();
-    console.log('✔ la fila nueva muestra la pista de la clave (últimos 4 caracteres), nunca la clave completa');
+    console.log('✔ la fila del motor muestra la pista de la clave de SU CUENTA (últimos 4 caracteres)');
 
     const motorCreado = await prisma.aiModel.findFirstOrThrow({ where: { providerModel: PROVIDER_MODEL_MOTOR } });
-    assert.notEqual(motorCreado.apiKeyCipher, CLAVE_DE_PRUEBA, 'la clave guardada en la base no debe ser el texto plano');
-    assert.ok(motorCreado.apiKeyCipher?.startsWith('v1.'), 'la clave guardada debe estar en el formato cifrado v1.<nonce>.<ct>.<tag>');
-    console.log('✔ la fila guardada en la base tiene la clave cifrada, no en texto plano');
+    assert.equal(motorCreado.providerId, proveedorCreado.id, 'el motor debe apuntar a la cuenta recién creada');
+    console.log('✔ el motor guardado en la base apunta a la cuenta correcta, y ya no tiene columnas propias de clave');
 
     // 2. Habilitar/deshabilitar (sobre un motor que todavía no es default).
     // El input real es `sr-only` (el riel pintado es sólo su piel visual), así
@@ -187,16 +282,103 @@ async function main(): Promise<void> {
     await esperarHasta(async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: MINIMAX_M3_ID } })).isDefault === true);
     console.log('✔ ADMIN: /admin/motores sigue funcional en tema light (persistencia tras recargar)');
 
-    // 7. Invariante de la clave enmascarada sobre el listado completo.
+    // 7. Invariante de la clave enmascarada sobre el listado completo de motores.
     const respuestaListado = await page.request.get(`${BASE_URL}/api/admin/models`);
     const textoListado = await respuestaListado.text();
     assert.ok(!textoListado.includes(CLAVE_DE_PRUEBA), 'GET /api/admin/models no debe traer ninguna clave en texto plano');
     assert.ok(!textoListado.includes('apiKeyCipher'), 'GET /api/admin/models no debe traer el campo apiKeyCipher');
     console.log('✔ GET /api/admin/models nunca expone clave en texto plano ni el campo cifrado');
 
+    // ───────────────────────────────────────────────────────────
+    // 8. La cascada: apagar la cuenta apaga sus motores sin tocar su propio
+    //    `enabled`; volver a prenderla los restaura.
+    // ───────────────────────────────────────────────────────────
+    const respuestaApagarCuenta = await page.request.patch(`${BASE_URL}/api/admin/providers/${proveedorCreado.id}`, {
+      data: { enabled: false },
+    });
+    assert.equal(respuestaApagarCuenta.status(), 200, `apagar la cuenta debería dar 200, dio ${respuestaApagarCuenta.status()}`);
+
+    const motorTrasApagarCuenta = await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } });
+    assert.equal(motorTrasApagarCuenta.enabled, true, 'apagar la cuenta NO debe tocar el enabled propio del motor');
+    console.log('✔ apagar la cuenta no toca el enabled propio de sus motores en la base');
+
+    // La API ya invalida el catálogo del PROCESO DEL SERVIDOR en cada mutación
+    // de /api/admin/providers — pero este script corre en su PROPIO proceso
+    // (`npx tsx`), con su propia instancia de `catalogo.ts` y su propio caché
+    // de 30s: ese invalidarCatalogo() del servidor nunca llega acá. Hay que
+    // invalidar también el caché de ESTE proceso antes de cada lectura.
+    invalidarCatalogo();
+    const selectorTrasApagar = await motoresParaDocente();
+    assert.ok(
+      !selectorTrasApagar.some((motor) => motor.id === motorCreado.id),
+      'el motor debería desaparecer del selector del docente mientras su cuenta está apagada',
+    );
+    console.log('✔ apagar la cuenta saca a sus motores del selector del docente');
+
+    const respuestaPrenderCuenta = await page.request.patch(`${BASE_URL}/api/admin/providers/${proveedorCreado.id}`, {
+      data: { enabled: true },
+    });
+    assert.equal(respuestaPrenderCuenta.status(), 200, `re-habilitar la cuenta debería dar 200, dio ${respuestaPrenderCuenta.status()}`);
+    console.log('✔ nuevo — la cascada: apagar/re-habilitar la cuenta funciona sin tocar el enabled propio del motor');
+
+    invalidarCatalogo();
+    const selectorTrasReHabilitar = await motoresParaDocente();
+    assert.ok(
+      selectorTrasReHabilitar.some((motor) => motor.id === motorCreado.id),
+      're-habilitar la cuenta debería devolver al motor al selector del docente',
+    );
+    console.log('✔ re-habilitar la cuenta restaura al motor en el selector del docente (cascada en los dos sentidos)');
+
+    // ───────────────────────────────────────────────────────────
+    // 9. La feature en sí: el MISMO providerModel en dos cuentas del MISMO
+    //    kind era imposible antes de este cambio, ahora da 200.
+    // ───────────────────────────────────────────────────────────
+    const respuestaCreacionProveedor2 = await page.request.post(`${BASE_URL}/api/admin/providers`, {
+      data: { kind: PROVIDER_KIND, label: PROVIDER_LABEL_2, baseUrl: PROVIDER_BASE_URL, apiKey: 'otra-clave-de-prueba' },
+    });
+    assert.equal(respuestaCreacionProveedor2.status(), 200, `crear la segunda cuenta debería dar 200, dio ${respuestaCreacionProveedor2.status()}`);
+    const { proveedor: proveedor2 } = (await respuestaCreacionProveedor2.json()) as { proveedor: { id: string } };
+
+    const respuestaSegundoMotor = await page.request.post(`${BASE_URL}/api/admin/models`, {
+      data: {
+        providerId: proveedor2.id,
+        providerModel: PROVIDER_MODEL_MOTOR,
+        displayName: `${NOMBRE_MOTOR} — segunda cuenta`,
+        selectableByTeacher: false,
+      },
+    });
+    assert.equal(
+      respuestaSegundoMotor.status(),
+      200,
+      `crear el mismo providerModel en una SEGUNDA cuenta del mismo kind debería dar 200, dio ${respuestaSegundoMotor.status()}`,
+    );
+    console.log('✔ nuevo — la feature: el mismo providerModel en dos cuentas del mismo kind coexiste (imposible antes)');
+
+    // ───────────────────────────────────────────────────────────
+    // 9b. El mismo providerModel DOS VECES en la MISMA cuenta sigue rechazado
+    //     — el `@@unique([providerId, providerModel])` sigue vigente, sólo
+    //     cambió de qué campos está compuesto.
+    // ───────────────────────────────────────────────────────────
+    const respuestaDuplicadaMismaCuenta = await page.request.post(`${BASE_URL}/api/admin/models`, {
+      data: {
+        providerId: proveedorCreado.id,
+        providerModel: PROVIDER_MODEL_MOTOR,
+        displayName: `${NOMBRE_MOTOR} — duplicado en la misma cuenta`,
+        selectableByTeacher: false,
+      },
+    });
+    assert.equal(
+      respuestaDuplicadaMismaCuenta.status(),
+      422,
+      `crear el mismo providerModel en la MISMA cuenta debería dar 422, dio ${respuestaDuplicadaMismaCuenta.status()}`,
+    );
+    const cuerpoDuplicadaMismaCuenta = (await respuestaDuplicadaMismaCuenta.json()) as { error: string };
+    assert.match(cuerpoDuplicadaMismaCuenta.error, /ya existe un motor/i);
+    console.log('✔ nuevo — el mismo providerModel dos veces en la MISMA cuenta se sigue rechazando (422)');
+
     await contexto.close();
 
-    // 8. El selector del docente: nombre + descripción, nunca el id interno.
+    // 10. El selector del docente: nombre + descripción, nunca el id interno.
     const contextoDocente = await browser.newContext();
     const pageDocente = await contextoDocente.newPage();
     await iniciarSesion(pageDocente, { email: DOCENTE_EMAIL, password: DOCENTE_PASSWORD });
@@ -227,8 +409,8 @@ async function main(): Promise<void> {
     assert.ok(!textoPagina.includes(PROVIDER_MODEL_MOTOR), 'el selector nunca debe exponer el identificador interno del proveedor');
     console.log('✔ el selector nunca expone el providerModel');
 
-    // 9. Deshabilitarlo lo saca del selector (Requirement "Ordering,
-    //    enable/disable, single default" — ya no es default, así que se puede).
+    // 11. Deshabilitarlo lo saca del selector (Requirement "Ordering,
+    //     enable/disable, single default" — ya no es default, así que se puede).
     const respuestaApagado = await pageDocente.request.patch(`${BASE_URL}/api/admin/models/${motorCreado.id}`, {
       data: { enabled: false },
     });
@@ -254,7 +436,7 @@ async function main(): Promise<void> {
     assert.equal(sigueEnSelector, 0, 'un motor deshabilitado no debería seguir en el selector del docente');
     console.log('✔ deshabilitar un motor no-default lo saca del selector del docente');
 
-    // 10. Aviso quieto de repunteo (Requirement "Fallback when a project's
+    // 12. Aviso quieto de repunteo (Requirement "Fallback when a project's
     //     model is disabled", scenarios "silently repoints and notifies
     //     once" y "notice does not repeat"). Se usan proyectos propios,
     //     aparte del de arriba, para no gastar el "una sola vez" antes de
@@ -280,7 +462,7 @@ async function main(): Promise<void> {
       return false;
     }
 
-    // 10a. Proyecto que ya tenía el motor recién apagado (`motorCreado`, no
+    // 12a. Proyecto que ya tenía el motor recién apagado (`motorCreado`, no
     //      default): abrirlo en tema LIGHT tiene que repuntear al default
     //      vigente Y mostrar el aviso.
     const idProyectoLight = await creaProyectoDocente('Recurso E2E M3 — repunteo light');
@@ -296,7 +478,7 @@ async function main(): Promise<void> {
     );
     console.log('✔ repunteo + aviso quieto: tema light, motor apagado → default vigente');
 
-    // 10b. Reabrir el MISMO proyecto: el aviso ya se vio y `aiModelId` ya es
+    // 12b. Reabrir el MISMO proyecto: el aviso ya se vio y `aiModelId` ya es
     //      igual al vigente, así que no tiene que repetirse.
     await pageDocente.reload({ waitUntil: 'domcontentloaded' });
     assert.equal(
@@ -306,7 +488,7 @@ async function main(): Promise<void> {
     );
     console.log('✔ el aviso de repunteo no se repite al reabrir el mismo proyecto');
 
-    // 10c. Mismo escenario en tema DARK — la spec pide los dos temas para el
+    // 12c. Mismo escenario en tema DARK — la spec pide los dos temas para el
     //      scenario "silently repoints and notifies once".
     const idProyectoDark = await creaProyectoDocente('Recurso E2E M3 — repunteo dark');
     await prisma.project.update({ where: { id: idProyectoDark }, data: { aiModelId: motorCreado.id } });
@@ -315,7 +497,7 @@ async function main(): Promise<void> {
     assert.ok(await hayAvisoRepunteo(), 'el aviso de repunteo debería aparecer en tema dark al abrir el proyecto');
     console.log('✔ repunteo + aviso quieto: tema dark, motor apagado → default vigente');
 
-    // 10d. Un proyecto recién creado (sin motor todavía, `aiModelId: null`)
+    // 12d. Un proyecto recién creado (sin motor todavía, `aiModelId: null`)
     //      no es un repunteo: nunca tiene que mostrar el aviso.
     const idProyectoNuevo = await creaProyectoDocente('Recurso E2E M3 — sin motor');
     await pageDocente.goto(`${BASE_URL}/app/project/${idProyectoNuevo}`, { waitUntil: 'domcontentloaded' });
@@ -327,6 +509,11 @@ async function main(): Promise<void> {
     console.log('✔ un proyecto nuevo sin motor nunca muestra el aviso de repunteo');
 
     await contextoDocente.close();
+
+    // Nota (design.md §10.9): el estado vacío del <select> de cuenta en
+    // ModeloForm.tsx (cero AiProvider en la base) no es automatable sin
+    // vaciar la tabla entera — queda como chequeo manual/Playwright (tasks.md
+    // 5.8), y no se duplica acá.
   } finally {
     await browser.close();
     await limpiarEstado();

@@ -1,8 +1,11 @@
 import { prisma } from '../db.ts';
-import type { AiModel } from '../../generated/prisma/client.ts';
+import type { AiModel, AiProvider } from '../../generated/prisma/client.ts';
 import { ClaveInvalida, ClaveNoConfigurada, descifrar } from '../crypto/secretos.ts';
 import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
+
+/** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
+type FilaConProveedor = AiModel & { provider: AiProvider };
 
 /**
  * El catálogo de motores, leído desde `AiModel` (design.md §5).
@@ -29,43 +32,53 @@ const CACHE_TTL_MS = 30_000;
  */
 const TOPE_CADENA = 3;
 
-let cache: { filas: AiModel[]; expira: number } | null = null;
+let cache: { filas: FilaConProveedor[]; expira: number } | null = null;
 
-async function filasDelCatalogo(): Promise<AiModel[]> {
+async function filasDelCatalogo(): Promise<FilaConProveedor[]> {
   if (cache && cache.expira > Date.now()) return cache.filas;
 
-  const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' } });
+  const filas = await prisma.aiModel.findMany({ orderBy: { sortOrder: 'asc' }, include: { provider: true } });
   cache = { filas, expira: Date.now() + CACHE_TTL_MS };
   return filas;
 }
 
-/** Se llama desde cada mutación de `/api/admin/models/*` (M3). */
+/** Se llama desde cada mutación de `/api/admin/models/*` Y `/api/admin/providers/*` (M3, catalogo-de-proveedores). */
 export function invalidarCatalogo(): void {
   cache = null;
 }
 
+/** Un motor sirve sólo si están prendidos los dos: el motor y su cuenta. */
+function utilizable(fila: FilaConProveedor): boolean {
+  return fila.enabled && fila.provider.enabled;
+}
+
 /**
- * Descifra la clave de una fila. `null` si no tiene clave cargada o si no se
- * pudo descifrar — en los dos casos el motor se trata como sin clave, nunca
- * se tira una excepción hacia arriba: un admin cambiando `KODU_ENCRYPTION_KEY`
- * a mitad de despliegue no tiene por qué tirar abajo el chat de todos.
+ * Descifra la clave de la cuenta de una fila. `null` si no tiene clave
+ * cargada o si no se pudo descifrar — en los dos casos el motor se trata
+ * como sin clave, nunca se tira una excepción hacia arriba: un admin
+ * cambiando `KODU_ENCRYPTION_KEY` a mitad de despliegue no tiene por qué
+ * tirar abajo el chat de todos.
  */
-function clavePlano(fila: AiModel): string | null {
-  if (!fila.apiKeyCipher) return null;
+function clavePlano(fila: FilaConProveedor): string | null {
+  if (!fila.provider.apiKeyCipher) return null;
 
   try {
-    return descifrar(fila.apiKeyCipher, fila.id);
+    return descifrar(fila.provider.apiKeyCipher, fila.provider.id);
   } catch (error) {
     if (error instanceof ClaveNoConfigurada || error instanceof ClaveInvalida) {
-      // Nunca se loguea el ciphertext ni la clave: sólo el id de la fila.
-      console.error(`[catalogo] motor ${fila.id} (${fila.displayName}) sin clave utilizable: ${error.name}`);
+      // Nunca se loguea el ciphertext ni la clave: sólo el id del motor Y el
+      // de la cuenta — con una cuenta alimentando varios motores, el id de
+      // la cuenta es lo que hace la línea accionable.
+      console.error(
+        `[catalogo] motor ${fila.id} (${fila.displayName}) de la cuenta ${fila.provider.id} sin clave utilizable: ${error.name}`,
+      );
       return null;
     }
     throw error;
   }
 }
 
-function construirConfig(fila: AiModel): ProviderConfig {
+function construirConfig(fila: FilaConProveedor): ProviderConfig {
   const precios =
     fila.priceInputPerMToken !== null && fila.priceOutputPerMToken !== null
       ? {
@@ -82,7 +95,7 @@ function construirConfig(fila: AiModel): ProviderConfig {
     // recorría un motor sin `AI_*_API_KEY` cargada (`requestCompletionStream`
     // lo rechaza con 503 antes de pegarle a la red).
     apiKey: clavePlano(fila) ?? '',
-    baseUrl: fila.baseUrl,
+    baseUrl: fila.provider.baseUrl,
     model: fila.providerModel,
     maxTokens: fila.maxOutputTokens,
     userTokenLimit: fila.userTokenLimit,
@@ -115,10 +128,10 @@ export async function resolverMotor(modelId: string | null): Promise<ProviderCon
 export async function motorPorDefecto(): Promise<ProviderConfig | null> {
   const filas = await filasDelCatalogo();
 
-  const porDefecto = filas.find((fila) => fila.isDefault && fila.enabled);
+  const porDefecto = filas.find((fila) => fila.isDefault && utilizable(fila));
   if (porDefecto) return construirConfig(porDefecto);
 
-  const [habilitado] = filas.filter((fila) => fila.enabled).sort((a, b) => a.sortOrder - b.sortOrder);
+  const [habilitado] = filas.filter(utilizable).sort((a, b) => a.sortOrder - b.sortOrder);
   if (!habilitado) {
     console.error('[catalogo] no hay ningún motor habilitado — el chat va a contestar 503');
     return null;
@@ -142,7 +155,7 @@ export async function normalizarMotor(modelId: string | null): Promise<ProviderC
   const filas = await filasDelCatalogo();
   const fila = modelId ? filas.find((candidata) => candidata.id === modelId) : undefined;
 
-  if (fila && fila.enabled) return construirConfig(fila);
+  if (fila && utilizable(fila)) return construirConfig(fila);
 
   return motorPorDefecto();
 }
@@ -174,7 +187,7 @@ export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderC
     const fila = porId.get(actualId);
     if (!fila) break;
 
-    if (fila.enabled) {
+    if (utilizable(fila)) {
       const config = construirConfig(fila);
       if (tieneClaveUtilizable(config)) cadena.push(config);
     }
@@ -200,7 +213,7 @@ export async function motoresParaDocente(): Promise<MotorPublico[]> {
   const filas = await filasDelCatalogo();
 
   return filas
-    .filter((fila) => fila.enabled && fila.selectableByTeacher)
+    .filter((fila) => utilizable(fila) && fila.selectableByTeacher)
     .map((fila) => ({
       id: fila.id,
       displayName: fila.displayName,

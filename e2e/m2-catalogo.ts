@@ -28,6 +28,10 @@ const DOCENTE_PASSWORD = 'Docente.E2E.2026';
 
 const MINIMAX_M3_ID = '10000000-0000-0000-0000-000000000001';
 const MINIMAX_M27_ID = '10000000-0000-0000-0000-000000000002';
+/** Ambos motores de la semilla comparten esta cuenta (`gmi`), sin clave. */
+const GMI_PROVIDER_ID = '10000000-0000-0000-0000-000000000001';
+/** Cuenta de proveedor propia de este script, con clave, creada y borrada por el test. */
+const PROVEEDOR_KEYED_ID = 'e2e-m2-provider-keyed';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
@@ -118,21 +122,44 @@ async function main(): Promise<void> {
     await contexto.close();
 
     // 3. La cadena SALTEA un motor sin clave utilizable y usa el siguiente.
-    //    Se prueba directo contra el catálogo (mismo módulo que usa stream.ts)
-    //    dándole a MiniMax M2.7 una clave de prueba mientras M3 sigue sin ella.
+    //    Se prueba directo contra el catálogo (mismo módulo que usa stream.ts).
+    //
+    //    Re-expresado por catalogo-de-proveedores: antes, la clave vivía en la
+    //    fila de `AiModel`, así que alcanzaba con setear `apiKeyCipher` en
+    //    MiniMax M2.7 mientras M3 quedaba sin clave. Ahora la clave vive en la
+    //    CUENTA (`AiProvider`), y la migración fusionó M3 y M2.7 en la MISMA
+    //    cuenta `gmi` (ver migration.sql §2.2, caso all-NULL) — habilitar la
+    //    clave en esa cuenta habilitaría a los dos motores a la vez, y el
+    //    escenario "M2.7 con clave, M3 sin clave" dejaría de ser expresable.
+    //    Se re-arma con dos cuentas: se crea una segunda cuenta CON clave
+    //    (`PROVEEDOR_KEYED_ID`) y se re-apunta M2.7 a ella temporalmente,
+    //    mientras M3 se queda en `gmi` (sin clave). El comportamiento bajo
+    //    prueba — la cadena saltea un motor cuya cuenta no tiene clave
+    //    utilizable y sigue con el siguiente — sigue siendo el mismo.
+    await prisma.aiProvider.create({
+      data: {
+        id: PROVEEDOR_KEYED_ID,
+        kind: 'test-e2e-m2',
+        label: 'Cuenta E2E M2 (con clave)',
+        baseUrl: 'http://localhost:0',
+        apiKeyCipher: cifrar('clave-de-prueba-e2e', PROVEEDOR_KEYED_ID),
+        enabled: true,
+      },
+    });
     await prisma.aiModel.update({
       where: { id: MINIMAX_M27_ID },
-      data: { apiKeyCipher: cifrar('clave-de-prueba-e2e', MINIMAX_M27_ID) },
+      data: { providerId: PROVEEDOR_KEYED_ID },
     });
     invalidarCatalogo();
 
     try {
       const cadena = await cadenaDeMotores(MINIMAX_M3_ID);
       assert.equal(cadena.length, 1, `esperaba que sólo M2.7 quede en la cadena (M3 sin clave, DeepSeek sin clave), dio ${cadena.length}`);
-      assert.equal(cadena[0]!.id, MINIMAX_M27_ID, 'el motor sin clave (M3) tiene que quedar afuera de la cadena');
-      console.log('✔ un motor sin clave utilizable queda afuera de la cadena; el siguiente con clave entra');
+      assert.equal(cadena[0]!.id, MINIMAX_M27_ID, 'el motor cuya cuenta no tiene clave (M3) tiene que quedar afuera de la cadena');
+      console.log('✔ un motor cuya cuenta no tiene clave utilizable queda afuera de la cadena; el siguiente con clave entra');
     } finally {
-      await prisma.aiModel.update({ where: { id: MINIMAX_M27_ID }, data: { apiKeyCipher: null } });
+      await prisma.aiModel.update({ where: { id: MINIMAX_M27_ID }, data: { providerId: GMI_PROVIDER_ID } });
+      await prisma.aiProvider.delete({ where: { id: PROVEEDOR_KEYED_ID } });
       invalidarCatalogo();
     }
   } finally {

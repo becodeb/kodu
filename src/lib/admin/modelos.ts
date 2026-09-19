@@ -1,5 +1,6 @@
 import { Prisma } from '../../generated/prisma/client.ts';
-import type { AiModel } from '../../generated/prisma/client.ts';
+import type { AiModel, AiProvider } from '../../generated/prisma/client.ts';
+import { serializarProveedor, type ProveedorAdmin } from './proveedores.ts';
 
 /**
  * Lo que ve el panel admin de un motor: nunca `apiKeyCipher`, y los tres
@@ -10,15 +11,13 @@ import type { AiModel } from '../../generated/prisma/client.ts';
  */
 export interface MotorAdmin {
   id: string;
-  provider: string;
+  providerId: string;
+  /** Era un string. Ahora es la cuenta, ya enmascarada (catalogo-de-proveedores). */
+  provider: ProveedorAdmin;
   providerModel: string;
   displayName: string;
   description: string | null;
   adminNote: string | null;
-  baseUrl: string;
-  /** Nunca la clave ni el cifrado: sólo si hay una cargada. */
-  tieneClave: boolean;
-  apiKeyHint: string | null;
   priceInputPerMToken: string | null;
   priceCachedInputPerMToken: string | null;
   priceOutputPerMToken: string | null;
@@ -33,17 +32,15 @@ export interface MotorAdmin {
   fallbackModelId: string | null;
 }
 
-export function serializarMotor(fila: AiModel): MotorAdmin {
+export function serializarMotor(fila: AiModel & { provider: AiProvider }): MotorAdmin {
   return {
     id: fila.id,
-    provider: fila.provider,
+    providerId: fila.providerId,
+    provider: serializarProveedor(fila.provider),
     providerModel: fila.providerModel,
     displayName: fila.displayName,
     description: fila.description,
     adminNote: fila.adminNote,
-    baseUrl: fila.baseUrl,
-    tieneClave: fila.apiKeyCipher !== null,
-    apiKeyHint: fila.apiKeyHint,
     priceInputPerMToken: fila.priceInputPerMToken?.toString() ?? null,
     priceCachedInputPerMToken: fila.priceCachedInputPerMToken?.toString() ?? null,
     priceOutputPerMToken: fila.priceOutputPerMToken?.toString() ?? null,

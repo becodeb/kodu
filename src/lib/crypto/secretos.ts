@@ -2,7 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { getEnv } from '../env.ts';
 
 /**
- * Cifrado de las API keys del catálogo (`AiModel.apiKeyCipher`).
+ * Cifrado de las API keys del catálogo (`AiProvider.apiKeyCipher`).
  *
  * AES-256-GCM porque autentica además de cifrar: si alguien pega el
  * ciphertext de una fila en otra, la falla de autenticación (el AAD no
@@ -100,9 +100,10 @@ function descifrarConClave(valorGuardado: string, aad: string, clave: Buffer): s
  * Cifra `textoPlano` (la API key en claro) con `KODU_ENCRYPTION_KEY`.
  *
  * `aad` es el AAD (additional authenticated data): en este módulo siempre es
- * el `id` de la fila `AiModel`, generado por el caller ANTES de cifrar
- * (`crypto.randomUUID()`). Un ciphertext copiado a otra fila falla al
- * descifrar porque el AAD ya no coincide.
+ * el `id` de la fila dueña del cifrado (`AiProvider` desde
+ * catalogo-de-proveedores; antes era `AiModel`), generado por el caller ANTES
+ * de cifrar (`crypto.randomUUID()`). Un ciphertext copiado a otra fila falla
+ * al descifrar porque el AAD ya no coincide.
  */
 export function cifrar(textoPlano: string, aad: string): string {
   return cifrarConClave(textoPlano, aad, obtenerClave());
