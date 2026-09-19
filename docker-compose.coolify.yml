@@ -14,6 +14,25 @@
 #   Build pack:               Docker Compose
 #   Compose file location:    /docker-compose.coolify.yml
 #   Dominio (servicio `app`): https://kodu.becode.com.ar
+#
+# ── Sobre los montajes ───────────────────────────────────────────────────────
+# Los dos montajes apuntan a rutas absolutas del host A PROPÓSITO, y no a
+# volúmenes con nombre.
+#
+# Con `compose_parsing_version: 5`, Coolify reescribe toda referencia a un
+# volumen con nombre prefijándola con el uuid del recurso, y esa reescritura
+# ignora tanto `name:` como `external: true`. El resultado es un volumen nuevo
+# y vacío. Las rutas absolutas, en cambio, el parser las deja intactas.
+#
+# Los dos directorios son los volúmenes que ya existen en el servidor y
+# contienen los datos de producción de los recursos anteriores:
+#   · postgres-data-wzz52stf5ofry13ajzdl24nm  — base administrada `kodu-db`
+#   · svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads   — subidas de la app `kodu`
+#
+# NO tocar estas rutas sin migrar los datos primero. Y ojo: un bind mount a una
+# ruta inexistente NO falla, Docker crea un directorio vacío. Después de
+# cualquier cambio acá, verificar en los logs de arranque que
+# `prisma migrate deploy` diga "No pending migrations to apply".
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -25,7 +44,7 @@ services:
       POSTGRES_PASSWORD: $POSTGRES_PASSWORD
       POSTGRES_DB: $POSTGRES_DB
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - /var/lib/docker/volumes/postgres-data-wzz52stf5ofry13ajzdl24nm/_data:/var/lib/postgresql/data
     healthcheck:
       # $$ escapa la interpolación de compose: lo expande la shell del contenedor.
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -53,7 +72,7 @@ services:
     expose:
       - "3000"
     volumes:
-      - uploads:/app/uploads
+      - /var/lib/docker/volumes/svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads/_data:/app/uploads
     healthcheck:
       # curl viene instalado en el stage `base` del Dockerfile.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/ >/dev/null || exit 1"]
@@ -62,17 +81,3 @@ services:
       retries: 5
       # El entrypoint corre `prisma migrate deploy` antes de servir.
       start_period: 90s
-
-volumes:
-  # Los dos volúmenes son `external` A PROPÓSITO: ya existen en el servidor y
-  # contienen los datos de producción de los recursos anteriores. Declararlos
-  # externos hace que el despliegue falle en vez de arrancar con una base vacía
-  # si alguna vez no estuvieran. NO renombrar sin migrar los datos primero.
-  pgdata:
-    # Volumen de la base administrada `kodu-db` (uuid wzz52stf5ofry13ajzdl24nm).
-    name: postgres-data-wzz52stf5ofry13ajzdl24nm
-    external: true
-  uploads:
-    # Volumen de subidas de la aplicación `kodu` (uuid svs3pf21ca3h9mrx8h8lnkeg).
-    name: svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads
-    external: true
