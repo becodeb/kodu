@@ -1,0 +1,95 @@
+schema: spec-driven
+
+project: kodu
+package_name: koduedu
+
+context: |
+  Product: KoduEdu — Argentine teachers ("docentes") build self-contained
+  single-file HTML didactic resources via AI chat.
+  Stack: Astro 7 SSR (@astrojs/node standalone) + React 19 islands,
+  Prisma 7 (prisma-client ESM generator, @prisma/adapter-pg,
+  src/generated/prisma), PostgreSQL 17, Tailwind CSS 4 (CSS-first,
+  no config file), TypeScript 7, zod 4, jose.
+  Architecture: Astro SSR pages/API routes + React islands; Prisma repo
+  layer; src/lib/http.ts response envelope; src/lib/client/api.ts fetch
+  wrapper.
+  Testing: no test runner/files exist; only gate is `npm run check`
+  (tsc --noEmit); Playwright is installed (used by a screenshot endpoint)
+  but has no test harness yet.
+  Style: Argentine Spanish voseo in all UI copy and comments; Spanish
+  domain vocabulary (docente, recurso, motor, hilo, reglas, galería,
+  consumo, ficha, tope); Prisma fields/React props stay English.
+
+strict_tdd: false
+
+testing:
+  test_command: "npm run check"
+  test_runner: none
+  test_layers:
+    unit: false
+    integration: false
+    e2e_harness: false
+  e2e_capability:
+    tool: playwright
+    version: "^1.62.1"
+    status: "installed as devDependency, used by the screenshot endpoint; no test harness/spec files exist yet"
+  coverage:
+    available: false
+    command: null
+  quality_tools:
+    linter:
+      available: false
+      command: null
+      note: "no eslint config found in repo root"
+    type_checker:
+      available: true
+      command: "npm run check"
+      tool: "tsc --noEmit"
+    formatter:
+      available: false
+      command: null
+      note: "no prettier config found in repo root"
+  other_commands:
+    dev: "npm run dev"
+    build: "npm run build"
+    db_migrate: "npm run db:migrate"
+    db_deploy: "npm run db:deploy"
+    db_seed: "npm run db:seed"
+  environment_state:
+    dependencies_installed: true
+    env_configured: true
+    db_running: "docker compose up -d db, port 5432, 7 migrations applied, seeded"
+    dev_server_verified: "http://localhost:3000 responds 200"
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - State whether the change affects the AI resource-generation flow, auth, or the Prisma schema
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    - Note any change to the src/generated/prisma client or prisma.config.ts datasource wiring
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Since there is no test runner, tasks that touch UI or the AI resource flow MUST include a manual/Playwright verification step
+  apply:
+    guidelines:
+      - Follow existing code patterns
+      - All user-facing copy and code comments are Argentine Spanish with voseo
+      - Never use bg-white or bg-slate-*; use the kodu-* design tokens/utilities in src/styles/global.css
+      - API responses go through src/lib/http.ts (ok/fail); client calls go through apiRequest<T>() in src/lib/client/api.ts
+      - Hand-written migrations only: prisma/migrations/<YYYYMMDD>000000_<nombre_en_espanol>/migration.sql, opening with a Spanish WHY comment
+    tdd: false
+    test_command: "npm run check"
+  verify:
+    test_command: "npm run check"
+    build_command: "npm run build"
+    coverage_threshold: 0
+    notes: "No automated test suite exists. npm run check (tsc --noEmit) is the only automated gate. Playwright is available for real-browser verification of UI-affecting changes but no harness exists yet — set one up if a change needs it."
+  archive:
+    - Warn before merging destructive deltas
+    - Warn if a change touched Prisma schema/migrations without a corresponding hand-written migration file
