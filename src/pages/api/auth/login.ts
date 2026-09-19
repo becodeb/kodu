@@ -46,7 +46,16 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     return credencialesInvalidas;
   }
 
-  const session = { id: user.id, email: user.email, name: user.name, role: user.role };
+  // aiAccessOverride/isDemo no tienen columna propia todavía (llegan en M6/M7);
+  // la próxima request a una ruta protegida los reconfirma igual.
+  const session = {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    aiAccessOverride: null,
+    isDemo: false,
+  };
   setSessionCookie(cookies, await createSessionToken(session));
 
   return ok({ user: session, redirect: '/app' });

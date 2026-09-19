@@ -20,6 +20,15 @@ export interface SessionUser {
   email: string;
   name: string;
   role: SessionRole;
+  /**
+   * null = sin opinión, sigue la regla de dominio; true = acceso a la IA
+   * habilitado a mano; false = revocado a mano. Todavía no tiene columna
+   * propia en la base (llega con la migración de M6); hasta entonces viaja
+   * en null.
+   */
+  aiAccessOverride: boolean | null;
+  /** Cuenta compartida de demo (M7). Todavía no tiene columna propia. */
+  isDemo: boolean;
 }
 
 function secretKey(): Uint8Array {
@@ -55,7 +64,17 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
     }
     const role = payload.role === 'ADMIN' ? 'ADMIN' : 'DOCENTE';
 
-    return { id: payload.sub, email: payload.email, name: payload.name, role };
+    // El JWT solo guarda identidad (email/nombre/rol); las banderas de IA se
+    // leen de la base en cada request a una ruta protegida (middleware.ts).
+    // Acá arrancan degradadas: nadie las usó todavía en este request.
+    return {
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      role,
+      aiAccessOverride: null,
+      isDemo: false,
+    };
   } catch {
     // Firma invalida, token expirado o manipulado: sesion inexistente.
     return null;

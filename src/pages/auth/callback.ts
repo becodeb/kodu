@@ -58,7 +58,9 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
           select: { id: true, email: true, name: true, role: true },
         });
 
-    setSessionCookie(cookies, await createSessionToken(user));
+    // aiAccessOverride/isDemo no tienen columna propia todavía (llegan en M6/M7).
+    const session = { ...user, aiAccessOverride: null, isDemo: false };
+    setSessionCookie(cookies, await createSessionToken(session));
     return redirect('/app', 302);
   } catch (error) {
     console.error('[auth/callback]', error);

@@ -1,0 +1,5 @@
+---
+// /admin no es una pantalla en sí: el middleware ya garantizó el rol ADMIN,
+// así que esto solo decide a qué pestaña entra por defecto.
+return Astro.redirect('/admin/usuarios', 302);
+---

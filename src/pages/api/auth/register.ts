@@ -39,8 +39,10 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       select: { id: true, email: true, name: true, role: true },
     });
 
-    setSessionCookie(cookies, await createSessionToken(user));
-    return ok({ user, redirect: '/app' });
+    // aiAccessOverride/isDemo no tienen columna propia todavía (llegan en M6/M7).
+    const session = { ...user, aiAccessOverride: null, isDemo: false };
+    setSessionCookie(cookies, await createSessionToken(session));
+    return ok({ user: session, redirect: '/app' });
   } catch (error) {
     // Carrera entre el findUnique y el create.
     if (error && typeof error === 'object' && 'code' in error && error.code === 'P2002') {

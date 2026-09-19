@@ -60,18 +60,18 @@ reinterpretation of the design's intent.
 
 **Do not re-add the `.env.example` `0x01` byte fix — already applied on `feat/panel-admin`.**
 
-- [ ] 1.1 `src/env.d.ts`: add `identityFresh: boolean` to `App.Locals`; extend `SessionUser` (`src/lib/auth/session.ts`) with `aiAccessOverride: boolean | null`, `isDemo: boolean`.
-- [ ] 1.2 `src/middleware.ts`: after `readSessionFromCookies`, add the per-request `prisma.user.findUnique`, only for gated paths (public routes skip it per design §1). **Trap**: on read failure, degrade to the JWT `role`, force `aiAccess=false`/`isDemo=false`, set `identityFresh=false` — never hard-fail the request. **Deviation** (see report): 4-column select (id/email/name/role), not 6 — `aiAccessOverride`/`isDemo` have no DB column yet (arrive in M6/M7); they travel as `null`/`false` until then.
-- [ ] 1.3 `src/middleware.ts`: add `/admin` and `/api/admin` to the protected-prefix list, reusing the existing `matches()` helper (never a bare `startsWith`) — must correctly reject `/adminfoo`, `/api/adminx`.
-- [ ] 1.4 Create `src/lib/auth/guards.ts`: `requireUser()` (401), `requireAdmin()` (403), `requireFreshAdmin()` (+503 if `!identityFresh`) — return a `Response` via `fail()`, matching existing route refusal.
-- [ ] 1.5 Wire guards in `src/middleware.ts`: `/admin/**` non-admin → 302 to `/app` (never 404/blank); `/api/admin/**` non-admin → 403 JSON via `fail()` (never a redirect); `/api/admin/**` when `!identityFresh` → 503, no mutation (scoped to mutating methods, per design §1's "mutating /api/admin/*" wording — GET stays admin-gated but not freshness-gated).
-- [ ] 1.6 Create `src/layouts/AdminLayout.astro`: header, tab row (Docentes/Motores/Dominios/Demo), `wide` container (`max-w-[110rem]`), mobile strip is `overflow-x-auto`, no hamburger/`<select>`.
-- [ ] 1.7 Create `src/pages/admin/index.astro` (redirect to `/admin/usuarios`) + empty shells `src/pages/admin/{usuarios,motores,dominios,demo}.astro`.
-- [ ] 1.8 `src/layouts/BaseLayout.astro`: add admin nav pill (`role === 'ADMIN'` only; bordered `bg-sutil` + brand dot, `aria-current="page"` + `border-brand-300 text-brand-700` on `/admin/*`); generalize `[data-menu-perfil]` → `[data-menu]` so M5's row menus reuse the open/close/Escape script.
-- [ ] 1.9 Create `e2e/harness.ts`: `abrirNavegador()` = `chromium.launch({ executablePath: '/usr/bin/chromium', args: ['--disable-gpu','--no-sandbox'] })`; `conTema(page, tema)` (sets `localStorage['kodu-tema']`, reloads); a login helper. Every later `e2e/<slice>.ts` imports this.
-- [ ] 1.10 Create `e2e/m1-admin-shell.ts`: unauthenticated → `/admin/*` redirects to login; DOCENTE → `/admin/*` redirected, `/api/admin/*` gets 403 JSON; ADMIN → shell renders both themes; promote a user's role directly in the DB mid-session and confirm their very next request is admin (no new login).
-- [ ] 1.11 Run `npx tsx e2e/m1-admin-shell.ts`; run `rg -n 'bg-white|bg-slate-' src/pages/admin src/layouts/AdminLayout.astro` (expect no output).
-- [ ] 1.12 **M1 checkpoint**: `npm run check` passes, `npm run dev` serves the gated `/admin` shell, teacher app unaffected — deliverable.
+- [x] 1.1 `src/env.d.ts`: add `identityFresh: boolean` to `App.Locals`; extend `SessionUser` (`src/lib/auth/session.ts`) with `aiAccessOverride: boolean | null`, `isDemo: boolean`.
+- [x] 1.2 `src/middleware.ts`: after `readSessionFromCookies`, add the per-request `prisma.user.findUnique`, only for gated paths (public routes skip it per design §1). **Trap**: on read failure, degrade to the JWT `role`, force `aiAccess=false`/`isDemo=false`, set `identityFresh=false` — never hard-fail the request. **Deviation** (see report): 4-column select (id/email/name/role), not 6 — `aiAccessOverride`/`isDemo` have no DB column yet (arrive in M6/M7); they travel as `null`/`false` until then.
+- [x] 1.3 `src/middleware.ts`: add `/admin` and `/api/admin` to the protected-prefix list, reusing the existing `matches()` helper (never a bare `startsWith`) — must correctly reject `/adminfoo`, `/api/adminx`.
+- [x] 1.4 Create `src/lib/auth/guards.ts`: `requireUser()` (401), `requireAdmin()` (403), `requireFreshAdmin()` (+503 if `!identityFresh`) — return a `Response` via `fail()`, matching existing route refusal.
+- [x] 1.5 Wire guards in `src/middleware.ts`: `/admin/**` non-admin → 302 to `/app` (never 404/blank); `/api/admin/**` non-admin → 403 JSON via `fail()` (never a redirect); `/api/admin/**` when `!identityFresh` → 503, no mutation (scoped to mutating methods, per design §1's "mutating /api/admin/*" wording — GET stays admin-gated but not freshness-gated).
+- [x] 1.6 Create `src/layouts/AdminLayout.astro`: header, tab row (Docentes/Motores/Dominios/Demo), `wide` container (`max-w-[110rem]`), mobile strip is `overflow-x-auto`, no hamburger/`<select>`.
+- [x] 1.7 Create `src/pages/admin/index.astro` (redirect to `/admin/usuarios`) + empty shells `src/pages/admin/{usuarios,motores,dominios,demo}.astro`.
+- [x] 1.8 `src/layouts/BaseLayout.astro`: add admin nav pill (`role === 'ADMIN'` only; bordered `bg-sutil` + brand dot, `aria-current="page"` + `border-brand-300 text-brand-700` on `/admin/*`); generalize `[data-menu-perfil]` → `[data-menu]` so M5's row menus reuse the open/close/Escape script.
+- [x] 1.9 Create `e2e/harness.ts`: `abrirNavegador()` = `chromium.launch({ executablePath: '/usr/bin/chromium', args: ['--disable-gpu','--no-sandbox'] })`; `conTema(page, tema)` (sets `localStorage['kodu-tema']`, reloads); a login helper. Every later `e2e/<slice>.ts` imports this.
+- [x] 1.10 Create `e2e/m1-admin-shell.ts`: unauthenticated → `/admin/*` redirects to login; DOCENTE → `/admin/*` redirected, `/api/admin/*` gets 403 JSON; ADMIN → shell renders both themes; promote a user's role directly in the DB mid-session and confirm their very next request is admin (no new login).
+- [x] 1.11 Run `npx tsx e2e/m1-admin-shell.ts`; run `rg -n 'bg-white|bg-slate-' src/pages/admin src/layouts/AdminLayout.astro` (expect no output).
+- [x] 1.12 **M1 checkpoint**: `npm run check` passes, `npm run dev` serves the gated `/admin` shell, teacher app unaffected — deliverable.
 
 ## Phase 2: M2 — `AiModel` data model
 
