@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
-import { findOwnedProject } from '../../../lib/projects.ts';
+import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import {
   ProviderError,
@@ -267,8 +267,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher } = parsed.data;
 
-  const project = await findOwnedProject(projectId, user.id);
+  const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
+
+  // M8 (design.md §7): un admin mandando un turno en un recurso ajeno deja
+  // la marca en el Project ANTES de gastar nada, y `actuaComoAdmin` decide
+  // si el mensaje del docente que se crea más abajo lleva `authorUserId`
+  // (nunca la respuesta de la IA — esa no la "escribió" nadie).
+  const actuaComoAdmin = await marcarSiActuaAdmin(project, user);
 
   const thread = await prisma.chatThread.findFirst({
     where: { id: threadId, projectId: project.id },
@@ -413,6 +419,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       role: 'user',
       content: message,
       attachments: attachmentUrls?.length ? JSON.stringify(attachmentUrls) : null,
+      authorUserId: actuaComoAdmin ? user.id : null,
     },
   });
 

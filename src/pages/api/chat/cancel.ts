@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
-import { findOwnedProject } from '../../../lib/projects.ts';
+import { findProjectForActor } from '../../../lib/projects.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
 
 /**
@@ -27,7 +27,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) return fail('Datos inválidos', 422);
 
-  const project = await findOwnedProject(parsed.data.projectId, user.id);
+  const project = await findProjectForActor(parsed.data.projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
 
   const thread = await prisma.chatThread.findFirst({

@@ -37,6 +37,12 @@ export interface WorkspaceMessage {
   attachments: string[];
   /** Epoch ms. Permite mostrar hace cuánto espera un turno que sigue corriendo. */
   createdAt?: number;
+  /**
+   * Nombre del admin que escribió este turno, cuando NO fue el dueño del
+   * recurso (M8, design.md §7). `null`/ausente en el caso normal — el
+   * dueño escribiendo su propio recurso nunca lleva esta marca.
+   */
+  authorName?: string | null;
 }
 
 export interface WorkspaceAsset {

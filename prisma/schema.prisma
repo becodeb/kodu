@@ -52,6 +52,12 @@ model User {
   projects     Project[]
   rules        CustomRule[]
   tokenUsage   TokenUsage[]
+  /// M8 (design.md #7): recursos ajenos donde esta cuenta actuó como el
+  /// último admin. Back-relation de Project.lastAdminActor.
+  adminActedProjects Project[]    @relation("ProjectLastAdminActor")
+  /// M8: turnos de chat que esta cuenta escribió actuando como admin sobre
+  /// un recurso que no le pertenece. Back-relation de ChatMessage.authorUser.
+  authoredMessages   ChatMessage[] @relation("ChatMessageAuthor")
 }
 
 /// Fila unica de interruptores de toda la app (design.md #9): hoy solo la
@@ -137,6 +143,13 @@ model Project {
   tokenUsage    TokenUsage[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  /// M8 (design.md #7): último admin que actuó sobre este recurso sin ser
+  /// su dueño, y cuándo. Un puntero simple, no un historial — se
+  /// sobrescribe en cada mutación hecha por un admin en nombre de otro
+  /// docente. NULL mientras el dueño es el único que lo tocó.
+  lastAdminActorId  String?
+  lastAdminActor    User?      @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
+  lastAdminActionAt DateTime?
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
@@ -218,6 +231,11 @@ model ChatMessage {
   content     String
   attachments String? // URLs de archivos o PDFs parseados
   createdAt   DateTime   @default(now())
+  /// Quién escribió este turno cuando NO fue la persona dueña del recurso
+  /// (M8, design.md #7): un admin actuando en nombre de un docente. NULL en
+  /// el caso normal, que es el dueño escribiendo su propio recurso.
+  authorUserId String?
+  authorUser   User?    @relation("ChatMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
 
   @@index([threadId, createdAt])
 }

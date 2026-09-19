@@ -271,23 +271,29 @@ export default function ChatPanel(props: ChatPanelProps) {
         )}
 
         {props.messages.map((message) => (
-          <article
-            key={message.id}
-            className={
-              message.role === 'user'
-                ? 'ml-6 rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                : 'mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
-            }
-          >
-            {renderRich(message.content)}
-            {message.attachments.length > 0 && (
-              <ul className="mt-2 space-y-1 text-xs opacity-80">
-                {message.attachments.map((url) => (
-                  <li key={url}>{url.split('/').pop()}</li>
-                ))}
-              </ul>
+          <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
+            {/* M8 (design.md §7): marca durable de que este turno lo escribió un
+                admin, no el docente dueño del recurso. Ausente en el caso normal. */}
+            {message.authorName && (
+              <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
             )}
-          </article>
+            <article
+              className={
+                message.role === 'user'
+                  ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
+                  : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
+              }
+            >
+              {renderRich(message.content)}
+              {message.attachments.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs opacity-80">
+                  {message.attachments.map((url) => (
+                    <li key={url}>{url.split('/').pop()}</li>
+                  ))}
+                </ul>
+              )}
+            </article>
+          </div>
         ))}
 
         {/* La burbuja aparece recién cuando hay algo que leer. Mientras tanto el

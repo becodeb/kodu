@@ -1042,3 +1042,203 @@ None for Phase 7. Phase 8 (M8) remains out of scope for this apply batch — it 
 - Estimated review budget impact: forecast estimated ~400 changed lines for
   M7. `review_budget_lines` is unbounded for this change per the owner, so
   this is informational only.
+
+## Phase 8: M8 — Cross-owner project access
+
+**Status**: complete. 11/11 tasks done (8.1–8.11).
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m8-proyectos-ajenos.ts` → 14/14 scenario assertions passed, both themes for the banner (admin opens a non-owned project; prompts the AI via a local SSE mock that returns a real `update_resource_code` tool call; saves a manual code edit; banner visible naming the owner in light+dark and absent on the admin's own project; attribution durable — `Project.lastAdminActorId`/`lastAdminActionAt` and `ChatMessage.authorUserId` on the docente-role message only, never the assistant reply; owner sees the attribution both in the chat bubble and on the `/app` card; a docente ajeno refused with 404 on all 9 real `findProjectForActor` call sites, resource left intact; the demo account gains zero cross-owner power; the `/admin/usuarios/[id]` link now opens the resource instead of redirecting to `/app`). Ran twice in a row to confirm the script's own cleanup is idempotent — same 14/14 both times. Regressions re-run clean: `npx tsx e2e/unidad.ts` (11/11), `npx tsx e2e/m1-admin-shell.ts` (11/11), `npx tsx e2e/m2-catalogo.ts` (7/7), `npx tsx e2e/m3-motores.ts` (14/14), `npx tsx e2e/m4-costos.ts` (17/17), `npx tsx e2e/m5-usuarios.ts` (23/23, with its 5.8 scenario updated to the new post-M8 behavior — see Deviations), `npx tsx e2e/m6-acceso.ts` (23/23), `npx tsx e2e/m7-demo.ts` (23/23) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`, then hand-run `prisma/migrations/20260923000000_atribucion_admin/migration_down.sql` against the DB (`docker exec -i kodu_db_dev psql -U kodu -d koduedu -f -`), then `npx prisma migrate resolve --rolled-back 20260923000000_atribucion_admin`. Accepted loss: any `lastAdminActorId`/`lastAdminActionAt`/`authorUserId` written between this deploy and a rollback is dropped with the columns — the underlying `Project.currentHtml`/`ChatMessage` content itself is untouched. `findOwnedProject`/`assertOwnedProject` are gone; a revert restores them from git history, no DB action needed for that half |
+
+### Completed tasks
+
+- [x] 8.1 Hand-written `prisma/migrations/20260923000000_atribucion_admin/migration.sql` (+ `migration_down.sql`): `Project.lastAdminActorId`/`lastAdminActionAt`, `ChatMessage.authorUserId`, both FKs `ON DELETE SET NULL`. Applied directly via `docker exec kodu_db_dev psql`, then `prisma migrate resolve --applied`. `prisma migrate status` confirms "Database schema is up to date!"; `prisma generate` re-run afterward and the dev server restarted (`npx astro dev stop` then `npm run dev`, never `pkill`).
+- [x] 8.2 `src/lib/projects.ts`: `Actor` interface (`{ id, role }` — `SessionUser` already has this shape structurally, no mapping needed at call sites); `findProjectForActor(projectId, actor)`; `findWorkspaceProjectForActor(projectId, actor)` (same bypass + threads/assets + the owner's `name`, needed by the banner — see Deviation 1); `marcarSiActuaAdmin(project, actor)`, a small helper not in the original design snippet that centralizes "is this actually an admin acting on someone else's resource" so the two mutation call sites (`chat/stream.ts`, `projects/[id].ts` PATCH) don't duplicate the condition — see Deviation 2. `findOwnedProject`/`assertOwnedProject`/`ProjectNotFound` deleted; confirmed zero other importers repo-wide before deleting.
+- [x] 8.3 All 9 real call sites switched (design.md said "seven", the file list actually contains 9 — see Deviation 3): `projects/[id].ts` PATCH+DELETE, `projects/[id]/threads.ts` POST+GET, `projects/[id]/screenshot.ts` POST+DELETE, `uploads/index.ts` POST, `chat/cancel.ts` POST, `chat/stream.ts` POST. Refusal copy unchanged (`"El recurso no existe o no es tuyo."`, 404) — verified for a docente on every one of the 9 in `e2e/m8-proyectos-ajenos.ts`, including that a rejected `DELETE` does NOT delete the row.
+- [x] 8.4 `src/pages/app/index.astro` — the `where: { userId: user.id }` ownership-listing clause is byte-for-byte unchanged; only `lastAdminActionAt` was added to the `select` (required by 8.7's card badge). Verified: an admin browsing `/app` still sees only their own resources (implicit in every scenario that logs in as ADMIN and never sees the docente's other projects there).
+- [x] 8.5 `src/pages/app/project/[id].astro`: swapped to `findWorkspaceProjectForActor`; `actuaComoAdminAjeno` computed and used both for the banner and to feed `authorName` per message. The actual attribution WRITES live in the two mutation call sites (`chat/stream.ts`, `projects/[id].ts` PATCH), not in the read-only Astro page — see Deviation 2 for why.
+- [x] 8.6 `src/components/admin/BannerAdmin.astro`: `role="status"`, in-flow strip, `border-brand-300 bg-brand-50 text-brand-700`, names the owner via a `<strong>`, `Volver al panel →` linking to `/admin/usuarios/{project.userId}` (the specific teacher's admin page, more useful than a bare `/admin/usuarios` per the mock's generic "Volver al panel" label).
+- [x] 8.7 `ChatPanel.tsx` renders `{authorName} (administración)` in `text-xs text-ink-500` above a bubble whose message carries a non-null `authorName`; `app/index.astro`'s project card renders `Editado por administración · {haceTiempo(lastAdminActionAt)}` (reusing the M5 `haceTiempo` formatter — no duplicate relative-time logic) while under 7 days old.
+- [x] 8.8 DB-state checks embedded directly in `e2e/m8-proyectos-ajenos.ts` (not a separate script): after the admin's chat turn, `Project.lastAdminActorId`/`lastAdminActionAt` match the acting admin and a fresh timestamp; the turn's `user`-role `ChatMessage.authorUserId` matches the admin, the `assistant`-role one stays `null`; a second mutation (the manual PATCH) strictly advances `lastAdminActionAt`; the docente-refusal battery confirms the project row is untouched after a rejected `DELETE`.
+- [x] 8.9 `e2e/m8-proyectos-ajenos.ts` created and green, both themes for the banner scenario (see filename deviation below).
+- [x] 8.10 `npm run check` → exit 0, no output.
+- [x] 8.11 M8 checkpoint: an admin can open any project and both prompt and edit it, with a visible banner and durable attribution; a docente still cannot touch anyone else's — deliverable.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `prisma/schema.prisma` | Modify | `User.adminActedProjects`/`authoredMessages` back-relations; `Project.lastAdminActorId`/`lastAdminActor`/`lastAdminActionAt`; `ChatMessage.authorUserId`/`authorUser` |
+| `prisma/migrations/20260923000000_atribucion_admin/migration.sql` | Create | The two FK columns, Spanish WHY block |
+| `prisma/migrations/20260923000000_atribucion_admin/migration_down.sql` | Create | Hand-run rollback |
+| `src/lib/projects.ts` | Modify | `Actor`, `findProjectForActor`, `findWorkspaceProjectForActor` (+ owner `name`), `marcarSiActuaAdmin`; `findOwnedProject`/`assertOwnedProject`/`ProjectNotFound` deleted |
+| `src/pages/api/projects/[id].ts` | Modify | Actor helper; `marcarSiActuaAdmin` before the PATCH update |
+| `src/pages/api/projects/[id]/threads.ts` | Modify | Actor helper (POST + GET) |
+| `src/pages/api/projects/[id]/screenshot.ts` | Modify | Actor helper (POST + DELETE) |
+| `src/pages/api/uploads/index.ts` | Modify | Actor helper |
+| `src/pages/api/chat/cancel.ts` | Modify | Actor helper |
+| `src/pages/api/chat/stream.ts` | Modify | Actor helper; `marcarSiActuaAdmin` before the DB work starts; `authorUserId` on the persisted `user`-role message |
+| `src/pages/app/project/[id].astro` | Modify | `findWorkspaceProjectForActor`; `actuaComoAdminAjeno`; `BannerAdmin`; `authorName` per message |
+| `src/pages/app/index.astro` | Modify | `lastAdminActionAt` in the `select`; the "Editado por administración" card badge. Ownership-listing `where` clause untouched (trap respected) |
+| `src/components/admin/BannerAdmin.astro` | Create | The in-flow admin-acting strip |
+| `src/components/workspace/ChatPanel.tsx` | Modify | Author label above admin-written bubbles |
+| `src/lib/workspace-types.ts` | Modify | `WorkspaceMessage.authorName?: string \| null` |
+| `e2e/m8-proyectos-ajenos.ts` | Create | Full slice verification, both themes for the banner |
+| `e2e/m5-usuarios.ts` | Modify | Scenario 5.8 updated to the new post-M8 behavior (opens the resource instead of asserting the pre-M8 redirect); its doc comment updated to point at `e2e/m8-proyectos-ajenos.ts` for the full bypass coverage |
+
+### Deviations from design
+
+1. **`findWorkspaceProjectForActor` also selects the owner's `name`**, not
+   in design's one-line signature (`design.md §7` just shows `{ … }`). The
+   banner needs "de {ownerName}" and the page would otherwise need a second
+   query just for that one field — folding it into the existing `include`
+   is the smaller change, and it's a single scalar column on an already-
+   joined relation, not a new query.
+2. **A `marcarSiActuaAdmin` helper exists; design's snippet only shows
+   `findProjectForActor`/`findWorkspaceProjectForActor`.** Task 8.5's prose
+   assigns the attribution WRITE to `project/[id].astro`, but that page is a
+   GET — it never mutates anything, and "on any mutation" (design.md §7,
+   Attribution section) is a much better fit for the two places that
+   actually write: `chat/stream.ts` (a chat turn) and `projects/[id].ts`
+   PATCH (a manual code/title edit — the "save a code edit" scenario this
+   apply batch was explicitly asked to close). Centralizing the condition
+   (`actor.role === 'ADMIN' && actor.id !== project.userId`) in one
+   function, called from both mutation sites, means it can never drift
+   between them. `project/[id].astro` itself only computes
+   `actuaComoAdminAjeno` for display (the banner, the per-message
+   `authorName`) — it never writes.
+   - A consequence worth flagging: `authorUserId` is written ONLY on the
+     `user`-role `ChatMessage` of an admin's turn, never on the `assistant`-
+     role reply. Task 8.5's literal wording ("`authorUserId` on that turn's
+     `ChatMessage`(s)", plural) could be read as both. The design's own UI
+     section ("The admin-acting banner") only ever shows the mark on the
+     docente-authored bubble ("`Ana Giménez (administración)`" — a person's
+     name over what a person wrote), and an AI reply isn't "written" by
+     anyone in that sense. `e2e/m8-proyectos-ajenos.ts` asserts this
+     explicitly (the assistant message's `authorUserId` stays `null`) so
+     the choice is visible and testable, not silently assumed.
+3. **9 real call sites, not "seven."** Design.md §7 says `findOwnedProject`
+   "is deleted in M8 and its **seven** call sites" switch, immediately
+   followed by a parenthetical that actually lists 9 (`projects/[id].ts`
+   has 2 line numbers, `screenshot.ts` has 2, `threads.ts` has 2, plus
+   `uploads/index.ts`, `chat/cancel.ts`, `chat/stream.ts` at 1 each —
+   `1+1+1+2+2+2 = 9`). The orchestrator's own launch prompt for this batch
+   independently confirmed the same 9 via a fresh `rg` before assigning the
+   work ("THE EXACT SURFACE TO CHANGE — verified, do not re-derive," listing
+   6 files with PATCH+DELETE / POST+GET / POST+DELETE pairs = 9), while
+   calling the aggregate "eight" in its own prose header. All three sources
+   (design.md's count, design.md's own list, the launch prompt's count vs.
+   its own list) disagree with each other on the NUMBER while agreeing
+   exactly on the LIST. Switched every call site the list names — that is
+   the actual scope regardless of which digit is attached to it — and
+   `e2e/m8-proyectos-ajenos.ts`'s docente-refusal battery exercises all 9
+   individually, not a sampled subset.
+4. **`e2e/m8-proyectos-ajenos.ts`, not `e2e/m8-acceso-cruzado.ts`.**
+   Task 8.9 names the latter; the orchestrator's launch prompt for this
+   batch explicitly names the former ("A new `e2e/m8-proyectos-ajenos.ts`
+   covering the Phase 8 spec scenarios"). Followed the more specific,
+   more recent instruction. No behavioral difference — same scenarios,
+   different filename.
+5. **`e2e/m5-usuarios.ts`'s scenario 5.8 changed, not just left alone.**
+   M5's own comment explicitly documented that clicking the resource link
+   as an admin redirected to `/app` "hasta M8" (until M8). Now that M8
+   exists, that assertion is actively wrong — leaving it unchanged would
+   have made M5's suite fail as a real regression, not a false one. Updated
+   the assertion to expect the resource to open (this batch's own explicit
+   verification requirement #6), and updated the file's top-of-file comment
+   to stop describing 5.8 as blocked on a future milestone.
+
+### Issues found
+
+None blocking. One thing worth flagging for whoever touches attribution
+next: `Project.lastAdminActorId`/`lastAdminActionAt` is a single pointer
+(the LAST admin action), not a log — if a second, different admin acts on
+the same resource before the owner ever looks, the owner only ever learns
+about the most recent one. This is design.md §7's own explicit choice
+("An audit-log table is out of scope; these three columns are the durable
+mark the risk register asked for"), not a shortcut taken here.
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m8-proyectos-ajenos.ts
+✔ preparado: docente dueño, docente ajeno, recursos y motor de prueba
+✔ 1. un admin puede abrir el recurso de otro docente
+✔ 2. (light) el banner de "recurso ajeno" es visible y nombra al dueño
+✔ 2. (dark) el banner de "recurso ajeno" es visible y nombra al dueño
+✔ 2b. el banner NO aparece en un recurso propio del admin
+✔ 3. el admin prompea la IA en el recurso ajeno y se genera un recurso de verdad
+✔ la marca lastAdminActorId/lastAdminActionAt queda en el Project tras el turno
+✔ el mensaje del docente (admin) queda atribuido; la respuesta de la IA no
+✔ el admin puede guardar una edición manual de código en el recurso ajeno
+✔ 4. el dueño ve, en la burbuja, que ese turno lo escribió el admin
+✔ la tarjeta del recurso en /app muestra "Editado por administración"
+✔ 5. un docente ajeno queda rechazado en los 9 call sites reales — el recurso sigue intacto
+✔ 6. la cuenta de demo no gana ningún poder cruzado sobre recursos ajenos
+✔ 7. el enlace de /admin/usuarios/[id] ahora abre el recurso en vez de rebotar a /app
+
+✔ e2e/m8-proyectos-ajenos.ts: todos los escenarios pasaron
+
+# re-run inmediato: mismo resultado, confirma que la limpieza es idempotente
+$ npx tsx e2e/m8-proyectos-ajenos.ts
+(14/14, idéntico)
+
+$ npx tsx e2e/unidad.ts        # regresión
+✔ e2e/unidad.ts: todas las pruebas pasaron (11/11)
+
+$ npx tsx e2e/m1-admin-shell.ts   # regresión
+✔ e2e/m1-admin-shell.ts: todos los escenarios pasaron (11/11)
+
+$ npx tsx e2e/m2-catalogo.ts   # regresión
+✔ e2e/m2-catalogo.ts: todos los escenarios pasaron (7/7)
+
+$ npx tsx e2e/m3-motores.ts   # regresión
+✔ e2e/m3-motores.ts: todos los escenarios pasaron (14/14)
+
+$ npx tsx e2e/m4-costos.ts   # regresión
+✔ e2e/m4-costos.ts: todos los escenarios pasaron (17/17)
+
+$ npx tsx e2e/m5-usuarios.ts   # regresión (con 5.8 actualizado para M8)
+✔ e2e/m5-usuarios.ts: todos los escenarios pasaron (23/23)
+
+$ npx tsx e2e/m6-acceso.ts   # regresión
+✔ e2e/m6-acceso.ts: todos los escenarios pasaron (23/23)
+
+$ npx tsx e2e/m7-demo.ts   # regresión
+✔ e2e/m7-demo.ts: todos los escenarios pasaron (23/23)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"AiModel\" WHERE provider LIKE 'test-m%';"
+  0 — ningún motor de prueba residual de ninguna corrida
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"User\" WHERE email LIKE '%e2e-m8%';"
+  0 — usuarios de prueba de M8 limpiados
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"Project\" WHERE title LIKE '%E2E M8%';"
+  0 — proyectos de prueba de M8 limpiados
+```
+
+### Remaining tasks
+
+None. All 8 phases (M1–M8) of `panel-admin` are complete.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M8 (final slice)
+- Boundary: starts where M7 left off on `feat/panel-admin`, ends at the M8
+  checkpoint (task 8.11).
+- Estimated review budget impact: `review_budget_lines` is unbounded for
+  this change per the owner; this slice touches 9 call sites with a
+  one-line signature change each, one new component, one migration, and
+  one new e2e file — smaller in production-code terms than M2/M5/M6
+  despite the number of files touched.

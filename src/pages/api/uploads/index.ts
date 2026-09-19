@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { prisma } from '../../../lib/db.ts';
-import { findOwnedProject } from '../../../lib/projects.ts';
+import { findProjectForActor } from '../../../lib/projects.ts';
 import {
   IMAGE_MIMES,
   PDF_MIMES,
@@ -28,7 +28,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const projectId = String(form.get('projectId') ?? '');
-  const project = await findOwnedProject(projectId, user.id);
+  const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
 
   const files = form.getAll('files').filter((entry): entry is File => entry instanceof File);

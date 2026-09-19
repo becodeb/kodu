@@ -2,27 +2,26 @@
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import Workspace from '../../../components/workspace/Workspace.tsx';
 import IndicadorConsumo from '../../../components/workspace/IndicadorConsumo.tsx';
+import BannerAdmin from '../../../components/admin/BannerAdmin.astro';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
+import { findWorkspaceProjectForActor } from '../../../lib/projects.ts';
 import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 
 const user = Astro.locals.user!;
 
-const project = await prisma.project.findFirst({
-  where: { id: Astro.params.id!, userId: user.id },
-  include: {
-    threads: { orderBy: { createdAt: 'asc' }, select: { id: true, title: true } },
-    assets: {
-      orderBy: { createdAt: 'asc' },
-      select: { id: true, filename: true, url: true, fileType: true },
-    },
-  },
-});
+// M8 (design.md §7): un ADMIN entra acá aunque no sea el dueño — es el único
+// punto que decide eso, ver src/lib/projects.ts. Un DOCENTE (incluida la
+// demo) sigue viendo exactamente el chequeo de siempre.
+const project = await findWorkspaceProjectForActor(Astro.params.id!, user);
 
 if (!project) {
   return Astro.redirect('/app', 302);
 }
+
+/** Un admin mirando el recurso de OTRA persona — nunca el propio. */
+const actuaComoAdminAjeno = user.role === 'ADMIN' && user.id !== project.userId;
 
 // Un proyecto siempre nace con un hilo, pero si alguien borró todos, creamos uno.
 const activeThread =
@@ -35,7 +34,16 @@ const activeThread =
 const messages = await prisma.chatMessage.findMany({
   where: { threadId: activeThread.id },
   orderBy: { createdAt: 'asc' },
-  select: { id: true, role: true, content: true, attachments: true, createdAt: true },
+  select: {
+    id: true,
+    role: true,
+    content: true,
+    attachments: true,
+    createdAt: true,
+    // Quién escribió el turno cuando no fue el dueño (M8, design.md §7).
+    // `null` en el caso normal — no viaja ningún nombre de más.
+    authorUser: { select: { name: true } },
+  },
 });
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
@@ -124,6 +132,12 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
     )}
   </div>
 
+  {/* M8 (design.md §7): sólo cuando el admin no es el dueño. Un docente en
+      su propio recurso — incluida la demo — nunca la ve. */}
+  {actuaComoAdminAjeno && (
+    <BannerAdmin ownerName={project.user.name} backHref={`/admin/usuarios/${project.userId}`} />
+  )}
+
   <Workspace
     client:load
     project={{
@@ -144,6 +158,7 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
       content: message.content,
       attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
       createdAt: message.createdAt.getTime(),
+      authorName: message.authorUser?.name ?? null,
     }))}
     assets={project.assets}
     siteUrl={siteUrl}

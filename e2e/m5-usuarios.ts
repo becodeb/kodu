@@ -24,10 +24,10 @@ import { calcularCostoTurno, type Precios } from '../src/lib/ai/usage.ts';
  * "Acceso a la IA" sólo puede leer "Sí · por dominio" en este entorno
  * (`ALLOWED_EMAIL_DOMAINS` vacío ⇒ todo dominio entra).
  *
- * **La escena 5.8 ("abrir y usar un recurso ajeno") depende de M8** (ver la
- * nota de dependencia cruzada al inicio de la Fase 5 en tasks.md): acá se
- * verifica que el enlace exista y apunte al recurso correcto, y que hoy — sin
- * M8 — abrirlo como admin redirige a `/app` en vez de romper o fingir éxito.
+ * **La escena 5.8 ("abrir un recurso ajeno")** verifica sólo que el enlace
+ * exista, apunte al id correcto y abra el recurso — el bypass de propiedad
+ * en sí (prompt, edición, banner, atribución) es M8 y se cubre entero en
+ * `e2e/m8-proyectos-ajenos.ts`, no acá.
  *
  * Corre con: npx tsx e2e/m5-usuarios.ts
  */
@@ -425,16 +425,16 @@ async function main(): Promise<void> {
       assert.match(textoDetalleSinPrecio, /— histórico/);
       console.log('✔ detalle: la fila histórica (fuera de la ventana de 30 días) se etiqueta en la barra, sin inventarle costo');
 
-      // 5.8 — el enlace al recurso existe y apunta al id correcto; abrirlo
-      // como admin hoy redirige a /app (sin M8 no hay bypass de dueño). Se
-      // verifica el estado real, no un flujo completo que todavía no puede
-      // existir (ver la nota de dependencia cruzada al inicio del archivo).
+      // 5.8 — el enlace al recurso existe, apunta al id correcto, y AHORA
+      // (M8 ya en main — ver e2e/m8-proyectos-ajenos.ts para la cobertura
+      // completa del bypass) abrirlo como admin abre el recurso de verdad,
+      // no rebotar a /app.
       const enlaceRecurso = page.locator(`a[href="/app/project/${proyectoSinPrecioId}"]`);
       await enlaceRecurso.waitFor();
       await enlaceRecurso.click();
-      await page.waitForURL(`${BASE_URL}/app`, { timeout: 10_000 });
-      await page.waitForLoadState('networkidle');
-      console.log('✔ detalle: el enlace al recurso existe; abrirlo como admin hoy vuelve a /app (bloqueado hasta M8, no se finge éxito)');
+      await page.waitForURL(`${BASE_URL}/app/project/${proyectoSinPrecioId}`, { timeout: 10_000 });
+      await page.waitForSelector('h1');
+      console.log('✔ detalle: el enlace al recurso existe y, como admin, ABRE el recurso ajeno (M8)');
 
       // ───────────────────────────────────────────────────────────
       // Menú de fila, sólo con teclado: Tab (simulado con foco directo) →
