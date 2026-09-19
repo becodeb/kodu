@@ -134,9 +134,26 @@ UPDATE "Project" SET "aiModelId" = '10000000-0000-0000-0000-000000000001' WHERE 
 UPDATE "Project" SET "aiModelId" = '10000000-0000-0000-0000-000000000003' WHERE "selectedModel" = 'DEEPSEEK';
 UPDATE "Project" SET "aiModelId" = '10000000-0000-0000-0000-000000000004' WHERE "selectedModel" = 'ALPHA';
 
-UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000001' WHERE "provider" = 'MINIMAX';
-UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000003' WHERE "provider" = 'DEEPSEEK';
-UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000004' WHERE "provider" = 'ALPHA';
+-- PRIMERA PASADA, la precisa. `TokenUsage.model` guarda el identificador exacto
+-- del modelo que respondio ese turno, que es mas especifico que el enum: el enum
+-- solo dice "MINIMAX", pero la cadena de respaldo (provider.ts:120-124) sirve
+-- turnos con MiniMax M2.7 cuando M3 falla, y esos turnos se graban igual como
+-- provider='MINIMAX'. Mapear solo por enum se los atribuiria a M3 y arruinaria
+-- justo la atribucion por modelo que el panel viene a mostrar. Cuando el nombre
+-- crudo coincide con un motor del catalogo, esa es la respuesta correcta.
+UPDATE "TokenUsage" t
+   SET "aiModelId" = m."id"
+  FROM "AiModel" m
+ WHERE m."providerModel" = t."model"
+   AND t."aiModelId" IS NULL;
+
+-- SEGUNDA PASADA, la de red. Lo que no matcheo por nombre exacto (un modelo que
+-- ya no esta en el catalogo, o un identificador viejo que cambio de nombre) cae
+-- al motor que representa su enum. Es una aproximacion, pero conserva el dato:
+-- mejor atribuido al proveedor correcto que huerfano.
+UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000001' WHERE "provider" = 'MINIMAX' AND "aiModelId" IS NULL;
+UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000003' WHERE "provider" = 'DEEPSEEK' AND "aiModelId" IS NULL;
+UPDATE "TokenUsage" SET "aiModelId" = '10000000-0000-0000-0000-000000000004' WHERE "provider" = 'ALPHA' AND "aiModelId" IS NULL;
 
 -- La unica relajacion de constraint de esta migracion: las filas nuevas ya no
 -- escriben en `provider` (queda como dato historico, ver schema.prisma), asi
