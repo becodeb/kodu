@@ -140,6 +140,33 @@ async function fijarSettings(datos: { demoEnabled?: boolean; demoTokenLimit?: nu
 }
 
 /**
+ * El mismo POST que el botón "Reiniciar la ronda" del panel: mueve
+ * `demoCycleStartedAt` a "ahora" sin borrar una sola fila de `TokenUsage`.
+ *
+ * Va por la API y no por Prisma directo a propósito: el servidor de desarrollo
+ * cachea `AppSettings` en proceso y sólo lo invalida desde sus propios
+ * endpoints de mutación — una escritura desde este script, que es otro
+ * proceso, le dejaría el valor viejo (misma trampa que documenta
+ * `e2e/m6-acceso.ts`).
+ */
+async function reiniciarCicloDemo(): Promise<void> {
+  const browser = await abrirNavegador();
+  try {
+    const contexto = await browser.newContext();
+    const page = await contexto.newPage();
+    await iniciarSesion(page, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+    const respuesta = await page.request.post(`${BASE_URL}/api/admin/demo/reiniciar`, { data: {} });
+    assert.ok(
+      respuesta.ok(),
+      `POST /api/admin/demo/reiniciar debe responder 200 (dio ${respuesta.status()})`,
+    );
+    await contexto.close();
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
  * "Sigue la entrada": el mismo POST que el `<form>` discreto de login.astro
  * manda. `data: {}` fuerza `Content-Type: application/json` porque
  * `page.request` (a diferencia de un navegador real enviando el <form>) no
@@ -192,11 +219,19 @@ async function limpiarEstado(): Promise<void> {
   }
   await prisma.user.deleteMany({ where: { email: DOCENTE_REAL_EMAIL } });
 
-  // El consumo simulado de la demo en esta corrida no hace falta borrarlo:
-  // no afecta a ningún otro slice y sumarlo al histórico de la cuenta
-  // compartida es justo lo que la cuenta compartida está para hacer. Lo que
-  // SÍ hay que restaurar es lo que un admin configuró (design.md §9): el
-  // interruptor y el tope, a sus valores por defecto.
+  // El consumo simulado de la demo NO se borra: sumarlo al histórico de la
+  // cuenta compartida es justo lo que la cuenta compartida está para hacer, y
+  // el costo histórico tiene que sobrevivir.
+  //
+  // Pero sí hay que reiniciar la RONDA. Ese consumo cuenta contra
+  // `demoTokenLimit` mientras siga dentro del ciclo abierto, así que sin esto
+  // el script es idempotente dos o tres corridas y después falla para siempre
+  // con 429 — que es exactamente lo que pasó: 225.000 tokens acumulados contra
+  // un tope de 200.000. Reiniciar la ronda mueve el corte sin perder una sola
+  // fila, igual que el botón del panel.
+  await reiniciarCicloDemo();
+
+  // Y se restaura lo que un admin configuró (design.md §9): el motor de prueba.
   await prisma.aiModel.deleteMany({ where: { provider: MARCA_MOTOR_PRUEBA } });
 }
 
