@@ -133,7 +133,10 @@ export default function ModelosPanel(props: ModelosPanelProps) {
     : motores;
 
   return (
-    <div className="space-y-4">
+    // El layout de admin va en `wide` (110rem) porque la tabla de docentes lo
+    // necesita. Esta lista no: son cuatro filas cortas, y estiradas a todo el
+    // ancho dejan un hueco muerto entre el nombre del motor y sus controles.
+    <div className="max-w-5xl space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-ink-500">
           {motores.length} motor{motores.length === 1 ? '' : 'es'} configurado{motores.length === 1 ? '' : 's'}.
@@ -213,7 +216,7 @@ export default function ModelosPanel(props: ModelosPanelProps) {
                   aria-label={`Marcar ${motor.displayName} como motor por defecto`}
                   className="h-3.5 w-3.5 accent-brand-600"
                 />
-                default
+                Predeterminado
               </label>
 
               <button
