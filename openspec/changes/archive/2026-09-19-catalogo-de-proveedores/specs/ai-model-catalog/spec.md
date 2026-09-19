@@ -1,13 +1,6 @@
-# AI Model Catalog Specification
+# Delta for AI Model Catalog
 
-## Purpose
-
-Models as data. The `AiModel` table replaces the compile-time
-`ModelChoice` enum: provider, encrypted key, base URL, provider-side
-model id, friendly name, admin description, pricing, order, enabled
-state and default selection, plus the teacher-facing selector copy.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: AiModel data model
 
@@ -17,6 +10,10 @@ admin-facing description, pricing (per-million input/output/cached-input
 tokens), display order, an enabled flag, and a default flag. Provider,
 encrypted API key, and base URL MUST NOT be stored on `AiModel` — they
 live on the referenced `AiProvider`.
+
+(Previously: provider, encrypted API key, and base URL were stored
+directly on `AiModel`; they now live on `AiProvider` and `AiModel`
+holds a `providerId` foreign key instead.)
 
 #### Scenario: Creating a model persists all fields
 
@@ -36,30 +33,6 @@ live on the referenced `AiProvider`.
 - AND the model creation API rejects a request missing `providerId`
 - Verification: Playwright browser check, both themes
 
-### Requirement: Pricing is one flat, approximate rate set
-
-Each model MUST carry exactly one rate set (input, output, cached-input
-per-million-token prices), not separate peak/off-peak rates, even for a
-provider whose real billing varies by hour (e.g. a provider that bills
-double during specific UTC windows). The admin-facing model form MUST
-label the pricing fields as an approximate USD rate, and the design MUST
-record the resulting margin of error rather than implying an exact
-figure.
-
-(Rationale: the owner asked for an approximate USD cost, not exact
-billing reconciliation; time-of-day rate pairs are a single-provider
-billing quirk that would add dead fields to every other provider's
-config form.)
-
-#### Scenario: Admin enters a single rate set
-
-- GIVEN an admin configures pricing for a model from a provider with
-  variable hourly rates
-- WHEN they fill the pricing fields
-- THEN the form shows one input, one output and one cached-input rate,
-  labeled as an approximate USD price, with no peak/off-peak fields
-- Verification: Playwright browser check, both themes
-
 ### Requirement: Key encryption at rest
 
 The system MUST encrypt API keys with AES-256-GCM before persisting
@@ -67,6 +40,9 @@ them on `AiProvider` and MUST NOT transmit a decrypted key to the
 browser under any request. The additional authenticated data (AAD)
 MUST be the id of the row that owns the ciphertext — the `AiProvider`
 row, not the `AiModel` rows that reference it.
+
+(Previously: the encrypted key lived on `AiModel` and the AAD was the
+`AiModel.id`; both now belong to `AiProvider`.)
 
 #### Scenario: Stored key is ciphertext
 
@@ -89,48 +65,7 @@ row, not the `AiModel` rows that reference it.
 - THEN the response includes no ciphertext for the model's provider
 - Verification: DB state inspection of response payload
 
-### Requirement: Ordering, enable/disable, single default
-
-The system MUST let an admin reorder models, toggle each one enabled or
-disabled, and hold exactly one model marked as default at any time.
-
-#### Scenario: Disabling a model removes it from the selector
-
-- GIVEN an enabled model shown in the teacher selector
-- WHEN an admin disables it
-- THEN it no longer appears in the selector
-- Verification: Playwright browser check
-
-#### Scenario: Setting a new default unsets the previous one
-
-- GIVEN model A is the current default
-- WHEN an admin sets model B as default
-- THEN exactly one row has the default flag, and it is B
-- Verification: DB state inspection
-
-### Requirement: Fallback when a project's model is disabled
-
-When an admin disables a model that a project still references, the
-system MUST repoint that project to the current default model on its
-next use (not via a bulk migration) and MUST notify the teacher once,
-quietly — a low-key workspace notice, not a modal or alarm.
-
-#### Scenario: Project silently repoints and notifies once
-
-- GIVEN a project whose selected model was just disabled
-- WHEN the teacher opens that project
-- THEN the project now uses the current default model
-- AND a quiet notice appears, e.g. "Cambiamos el motor de este proyecto
-  porque el anterior ya no está disponible."
-- Verification: Playwright browser check, both themes
-  (`[data-theme='dark']` and default)
-
-#### Scenario: Notice does not repeat
-
-- GIVEN the teacher already saw the repoint notice for a project
-- WHEN they open the same project again
-- THEN the notice does not reappear
-- Verification: Playwright browser check
+## ADDED Requirements
 
 ### Requirement: Model identity is unique per provider account
 
@@ -174,16 +109,3 @@ provider split, and a fallback chain MAY link a model on one
   and base URL
 - Verification: DB state inspection + integration check of
   `cadenaDeMotores()`
-
-### Requirement: Teacher-facing selector copy
-
-The model selector in the workspace MUST show each enabled model's
-friendly name and admin description, ordered per the admin's configured
-order, and MUST NOT expose the provider-side model id.
-
-#### Scenario: Selector renders name and description
-
-- GIVEN two enabled models with distinct friendly names and descriptions
-- WHEN a teacher opens the model selector
-- THEN both render with name and description, in configured order
-- Verification: Playwright browser check, both themes
