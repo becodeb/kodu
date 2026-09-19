@@ -1,6 +1,5 @@
 import { prisma } from '../db.ts';
 import { Prisma } from '../../generated/prisma/client.ts';
-import type { ModelChoice } from './provider.ts';
 
 /**
  * Registro de tokens por usuario y proveedor.
@@ -187,103 +186,149 @@ export async function costoPorProyecto(projectId: string): Promise<CostoPorProye
   return { tokens, costUsd };
 }
 
-export interface UsageByUser {
-  userId: string;
-  name: string;
-  email: string;
-  /** `null` en toda fila escrita después de M2 — ver el comentario de arriba. */
-  provider: ModelChoice | null;
-  promptTokens: number;
-  completionTokens: number;
-  total: number;
-  turnos: number;
-}
-
-/** Consumo agrupado por usuario y proveedor, para el panel de administración. */
-export async function usageByUser(): Promise<UsageByUser[]> {
-  const [grupos, usuarios] = await Promise.all([
-    prisma.tokenUsage.groupBy({
-      by: ['userId', 'provider'],
-      _sum: { promptTokens: true, completionTokens: true },
-      _count: { _all: true },
-    }),
-    prisma.user.findMany({ select: { id: true, name: true, email: true } }),
-  ]);
-
-  const porId = new Map(usuarios.map((u) => [u.id, u]));
-
-  return grupos
-    .map((grupo) => {
-      const promptTokens = grupo._sum.promptTokens ?? 0;
-      const completionTokens = grupo._sum.completionTokens ?? 0;
-      const usuario = porId.get(grupo.userId);
-
-      return {
-        userId: grupo.userId,
-        name: usuario?.name ?? '(usuario borrado)',
-        email: usuario?.email ?? '',
-        provider: grupo.provider,
-        promptTokens,
-        completionTokens,
-        total: promptTokens + completionTokens,
-        turnos: grupo._count._all,
-      };
-    })
-    .sort((a, b) => b.total - a.total);
-}
-
 export interface ConsumoPorModelo {
   /** `null` = fila histórica (enum viejo, sin motor del catálogo ni costo). */
   aiModelId: string | null;
   etiqueta: string;
   tokens: number;
+  /** `null` cuando ALGUNA fila del grupo no tiene costo conocido — ver abajo. */
   costUsd: Prisma.Decimal | null;
   historico: boolean;
 }
 
 /**
  * Consumo de UN docente agrupado por motor, para el gráfico de barra
- * apilada del detalle de usuario (M5). Se crea acá (task 4.5) porque
- * `TokenUsage.aiModelId` y las columnas de costo recién existen desde esta
- * migración; M5 sólo tiene que consumir esta función, no volver a leer la
- * tabla.
+ * apilada del detalle de usuario (M5).
  *
- * **Limitación conocida, para quien retome esto en M5**: a diferencia de
- * `costoPorProyecto`, acá el `_sum` de Postgres ignora los `NULL` dentro de
- * un mismo grupo en vez de anular el grupo entero. Si un motor tiene turnos
- * con precio cargado Y turnos de antes de cargarlo, el total que devuelve
- * esta función es el de las filas con precio, no `null` — una suma parcial
- * que no se distingue de una completa. No pasa en el flujo normal (una vez
- * que un admin carga el precio de un motor, todas sus filas nuevas lo llevan
- * y las viejas de ESE motor específico no existen porque el motor es nuevo),
- * pero si M5 necesita la misma garantía que `costoPorProyecto`, hay que
- * traer las filas crudas y sumarlas a mano igual que ahí.
+ * Trae las filas crudas y agrupa a mano en vez de usar `groupBy`+`_sum` de
+ * Prisma: el `_sum` de Postgres ignora los `NULL` dentro de un mismo grupo
+ * en vez de anular el grupo entero, así que un motor con turnos de antes y
+ * después de cargarle un precio mostraría una suma parcial indistinguible de
+ * una completa. Mismo criterio todo-o-nada que `costoPorProyecto` — una fila
+ * sin costo conocido alcanza para volver `null` el total de SU grupo, nunca
+ * un número que se ve completo y no lo es.
  */
 export async function consumoPorUsuario(userId: string): Promise<ConsumoPorModelo[]> {
-  const [grupos, modelos] = await Promise.all([
-    prisma.tokenUsage.groupBy({
-      by: ['aiModelId'],
+  const [filas, modelos] = await Promise.all([
+    prisma.tokenUsage.findMany({
       where: { userId },
-      _sum: { promptTokens: true, completionTokens: true, costUsd: true },
+      select: { aiModelId: true, promptTokens: true, completionTokens: true, costUsd: true },
     }),
     prisma.aiModel.findMany({ select: { id: true, displayName: true } }),
   ]);
 
   const nombrePorId = new Map(modelos.map((modelo) => [modelo.id, modelo.displayName]));
 
-  return grupos
-    .map((grupo) => {
-      const promptTokens = grupo._sum.promptTokens ?? 0;
-      const completionTokens = grupo._sum.completionTokens ?? 0;
-      const historico = grupo.aiModelId === null;
+  const grupos = new Map<string | null, { tokens: number; costUsd: Prisma.Decimal; sinPrecio: boolean }>();
+  for (const fila of filas) {
+    const previo = grupos.get(fila.aiModelId) ?? {
+      tokens: 0,
+      costUsd: new Prisma.Decimal(0),
+      sinPrecio: false,
+    };
+    previo.tokens += fila.promptTokens + fila.completionTokens;
+    if (fila.costUsd === null) previo.sinPrecio = true;
+    else previo.costUsd = previo.costUsd.add(fila.costUsd);
+    grupos.set(fila.aiModelId, previo);
+  }
 
+  return Array.from(grupos.entries())
+    .map(([aiModelId, datos]) => {
+      const historico = aiModelId === null;
       return {
-        aiModelId: grupo.aiModelId,
-        etiqueta: historico ? 'Histórico' : (nombrePorId.get(grupo.aiModelId!) ?? 'Motor eliminado'),
-        tokens: promptTokens + completionTokens,
-        costUsd: grupo._sum.costUsd,
+        aiModelId,
+        etiqueta: historico ? 'Histórico' : (nombrePorId.get(aiModelId!) ?? 'Motor eliminado'),
+        tokens: datos.tokens,
+        costUsd: datos.sinPrecio ? null : datos.costUsd,
         historico,
       };
     })
     .sort((a, b) => b.tokens - a.tokens);
+}
+
+export interface CostoTotalUsuario {
+  tokens: number;
+  /** Mismo criterio todo-o-nada que `costoPorProyecto`: una fila sin costo
+   *  conocido vuelve `null` el total entero. */
+  costUsd: Prisma.Decimal | null;
+}
+
+/** Consumo TOTAL (todo el tiempo) de un docente, para el trío de estadísticas
+ *  del detalle de usuario (M5). */
+export async function costoTotalDeUsuario(userId: string): Promise<CostoTotalUsuario> {
+  const filas = await prisma.tokenUsage.findMany({
+    where: { userId },
+    select: { promptTokens: true, completionTokens: true, costUsd: true },
+  });
+
+  if (filas.length === 0) return { tokens: 0, costUsd: null };
+
+  const tokens = filas.reduce((total, fila) => total + fila.promptTokens + fila.completionTokens, 0);
+
+  const conFilaSinPrecio = filas.some((fila) => fila.costUsd === null);
+  if (conFilaSinPrecio) return { tokens, costUsd: null };
+
+  const costUsd = filas.reduce((total, fila) => total.add(fila.costUsd!), new Prisma.Decimal(0));
+  return { tokens, costUsd };
+}
+
+export interface ConsumoDiario {
+  /** `YYYY-MM-DD`, en UTC. */
+  fecha: string;
+  tokens: number;
+}
+
+export interface ConsumoPeriodo {
+  /** Siempre `dias` casilleros, uno por día, aunque no haya uso ese día —
+   *  así el gráfico de columnas dibuja una grilla completa en vez de un
+   *  arreglo salteado. */
+  porDia: ConsumoDiario[];
+  tokens: number;
+  /** Mismo criterio todo-o-nada que `costoPorProyecto`, acotado a la ventana. */
+  costUsd: Prisma.Decimal | null;
+}
+
+/**
+ * Consumo de un docente día por día en los últimos `dias` (30 por defecto),
+ * para `GraficoColumnas.tsx` (M5). Es una ventana de tiempo, no "todo el
+ * historial" — por eso vive separada de `costoTotalDeUsuario`, que sí es
+ * all-time (design.md — "Consumption over the last 30 days").
+ */
+export async function consumoDiarioDeUsuario(userId: string, dias = 30): Promise<ConsumoPeriodo> {
+  const desde = new Date();
+  desde.setUTCHours(0, 0, 0, 0);
+  desde.setUTCDate(desde.getUTCDate() - (dias - 1));
+
+  const filas = await prisma.tokenUsage.findMany({
+    where: { userId, createdAt: { gte: desde } },
+    select: { promptTokens: true, completionTokens: true, costUsd: true, createdAt: true },
+  });
+
+  const porDiaMapa = new Map<string, number>();
+  for (let i = 0; i < dias; i++) {
+    const dia = new Date(desde);
+    dia.setUTCDate(dia.getUTCDate() + i);
+    porDiaMapa.set(dia.toISOString().slice(0, 10), 0);
+  }
+
+  let tokens = 0;
+  let costUsd = new Prisma.Decimal(0);
+  let sinPrecio = false;
+
+  for (const fila of filas) {
+    const clave = fila.createdAt.toISOString().slice(0, 10);
+    const total = fila.promptTokens + fila.completionTokens;
+    porDiaMapa.set(clave, (porDiaMapa.get(clave) ?? 0) + total);
+    tokens += total;
+    if (fila.costUsd === null) sinPrecio = true;
+    else costUsd = costUsd.add(fila.costUsd);
+  }
+
+  const porDia = Array.from(porDiaMapa.entries()).map(([fecha, tokens]) => ({ fecha, tokens }));
+
+  return {
+    porDia,
+    tokens,
+    costUsd: filas.length === 0 ? null : sinPrecio ? null : costUsd,
+  };
 }

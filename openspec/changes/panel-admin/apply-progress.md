@@ -596,3 +596,151 @@ None for Phase 4. Phases 5–8 (M5–M8) remain out of scope for this apply batc
 - Estimated review budget impact: forecast estimated ~450 changed lines for
   M4. `review_budget_lines` is unbounded for this change per the owner, so
   this is informational only.
+
+## Phase 5: M5 — Users route + detail
+
+**Status**: complete. 12/12 tasks done (5.1–5.12), with two documented scope
+cuts inside 5.1/5.3/5.4 (see Deviation 1) and one explicitly-deferred
+sub-scenario inside 5.8 (see Deviation 2) — both pre-existing cross-milestone
+dependencies the tasks author either couldn't fully resolve ahead of M6/M8 or
+didn't flag, not omissions introduced here.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m5-usuarios.ts` → all 23 scenario assertions passed, both themes; run twice in a row to confirm idempotency (same result both times). Regressions re-run clean: `npx tsx e2e/unidad.ts` (11/11), `npx tsx e2e/m1-admin-shell.ts` (11/11), `npx tsx e2e/m2-catalogo.ts` (7/7), `npx tsx e2e/m3-motores.ts` (14/14), `npx tsx e2e/m4-costos.ts` (17/17) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`. No migration ran — `prisma/schema.prisma` is byte-for-byte unchanged from M4 (see Deviation 1 for why). Rollback removes `/admin/usuarios*`, `UsuariosTabla.tsx`, `GraficoColumnas.tsx`, `GraficoBarras.tsx`, the two new API routes, `src/lib/admin/usuarios.ts`, and the three new `usage.ts` functions cleanly. Reverting also RESTORES `src/pages/app/consumo.astro` and the `usageByUser()` function this batch deleted — intentional, since a partial revert without them would leave a dangling nav-less route reference. M1–M4 surfaces are untouched by this rollback |
+
+### Completed tasks
+
+- [x] 5.1 `src/pages/api/admin/users/[id].ts` — `PATCH { role }`, 404 on missing user, 422 on empty body, 409 on demoting the last admin with the exact spec message. `aiAccessOverride` intentionally not accepted — see Deviation 1.
+- [x] 5.2 `src/pages/api/admin/users/[id]/consumo.ts` — `GET` → `{ porDia, total, porModelo }`, all `Decimal` converted to `string`/`number` before leaving the route.
+- [x] 5.3 `src/pages/admin/usuarios.astro` + `src/components/admin/UsuariosTabla.tsx` — all 7 non-deferred columns (Docente + Google glyph, Rol, Acceso a la IA, Recursos, Tokens, USD, Última actividad) plus the overflow menu. USD is unconditionally visible (never behind a reveal), `text-right tabular-nums`.
+- [x] 5.4 Overflow menu — `<details data-menu>` reusing the exact mechanism `BaseLayout.astro:126` already generalised in M1. `Hacer administrador`/`Quitar administrador` (real, calls the API) + `Ver ficha` (navigates to the detail page). Keyboard-operable natively (no custom JS): `<summary>` is focusable and opens on Enter/Space; Tab descends into the panel in document order.
+- [x] 5.5 `src/pages/admin/usuarios/[id].astro` — stat trio + both charts, rendered with **no `client:*` directive** (pure server-side SVG, zero JS shipped for the charts — the native `<title>` tooltip needs none). No charting library in `package.json` (verified by the e2e script's dependency scan).
+- [x] 5.6 `GraficoColumnas.tsx` — exact viewBox, `fill-brand-600` rects, gridline + max-value label, "Todavía no usó la IA." sentence when the user never used the IA at all (all-time, not just the 30-day window — see the code comment on `nuncaUsoLaIa` in the detail page), all-free-engine data still renders with the literal subtitle design.md specifies, single-day mode with no axis. `role="img"` + `<title>` per rect + `<table class="sr-only">` mirror, all implemented.
+- [x] 5.7 `GraficoBarras.tsx` — horizontal stacked bar, `brand-600`/`brand-300`/`brand-100` cycling if more than 3 models, width ∝ tokens, legend beneath with tokens + cost per model, same accessibility shape as 5.6.
+- [x] 5.8 Projects list in the detail view, each a real `<a href="/app/project/{id}">`. Opening one as admin today redirects to `/app` (no M8 ownership bypass) — verified explicitly, not faked (Deviation 2).
+- [x] 5.9 `src/pages/app/consumo.astro` deleted. `BaseLayout.astro`'s "Consumo de tokens" dropdown item removed. The now-orphaned `usageByUser()`/`UsageByUser` (that page's only caller) removed from `usage.ts` as dead-code cleanup, along with the now-unused `ModelChoice` import.
+- [x] 5.10 `e2e/m5-usuarios.ts` — both themes, all required scenarios (see Work Unit Evidence).
+- [x] 5.11 `npm run check` exit 0. `rg -n 'bg-white|bg-slate-' src/components/admin` — no matches.
+- [x] 5.12 M5 checkpoint — `/app/consumo.astro` is gone, its nav entry is gone, `/admin/usuarios` is the only admin-facing consumption surface — deliverable.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `src/pages/admin/usuarios.astro` | Modify | Empty shell → renders `UsuariosTabla` |
+| `src/pages/admin/usuarios/[id].astro` | Create | Detail view: header, stat trio, both charts, projects list |
+| `src/components/admin/UsuariosTabla.tsx` | Create | Table rows + per-row overflow menu (`client:load`) |
+| `src/components/admin/GraficoColumnas.tsx` | Create | 30-day SVG columns, server-rendered only |
+| `src/components/admin/GraficoBarras.tsx` | Create | Stacked SVG bar by model, server-rendered only |
+| `src/pages/api/admin/users/[id].ts` | Create | `PATCH` role + last-admin guard |
+| `src/pages/api/admin/users/[id]/consumo.ts` | Create | `GET` the two charts' raw data |
+| `src/lib/admin/usuarios.ts` | Create | `listarUsuariosAdmin()`, `obtenerUsuarioAdmin()` — all `Decimal`/`Date` converted to display-ready strings before touching a component |
+| `src/lib/ai/usage.ts` | Modify | Added `costoTotalDeUsuario()`, `consumoDiarioDeUsuario()`; rewrote `consumoPorUsuario()` to fix the documented partial-null-sum limitation (raw-row grouping instead of `groupBy`+`_sum`); removed dead `usageByUser()`/`UsageByUser` |
+| `src/lib/format/costo.ts` | Modify | Added `formatearCostoAdminUsd()` (the `≈` prefix for admin-facing approximate figures) |
+| `src/lib/format/fecha.ts` | Create | `haceTiempo()`, `fechaLarga()` |
+| `src/lib/format/tokens.ts` | Create | `formatearTokensCompacto()` ("482,1 k") |
+| `src/pages/app/consumo.astro` | Delete | Absorbed into `/admin/usuarios` |
+| `src/layouts/BaseLayout.astro` | Modify | Removed the "Consumo de tokens" dropdown item |
+| `e2e/m5-usuarios.ts` | Create | Slice verification, both themes |
+
+### Deviations from design
+
+1. **`aiAccessOverride` is NOT implemented in M5, despite task 5.1/5.3/5.4 naming it explicitly.** The column genuinely does not exist yet: `src/lib/auth/session.ts` and `src/middleware.ts` both carry M1-era comments stating it "arrives with M6's migration," and design.md's own M5 file-changes table lists no schema/migration work for M5 — only M6's section covers the `deepseekEnabled` → `aiAccessOverride` rename. Task 5.1's literal wording (`aiAccessOverride?` as an optional PATCH field) and 5.3/5.4's three-state UI description assume the column already exists, but nothing in tasks.md flags this as a cross-milestone dependency the way 5.8/M8 is explicitly flagged. Rather than either (a) silently adding a new column ahead of M6's planned rename — which would conflict with M6's migration SQL (`ALTER TABLE ... RENAME COLUMN "deepseekEnabled" TO "aiAccessOverride"` assumes the old name still exists) and would have my M5 admin decisions silently wiped by M6's `UPDATE ... SET NULL`, or (b) fabricating a working "individual permission" state with no real backing data, I implemented the part that's honestly buildable today: `role` toggle (fully real, DB-backed, last-admin guard) and a genuine two-state "Acceso a la IA" reading (`Sí · por dominio` / `No`) computed from the EXISTING `isAllowedDomain()` domain check (the same function that already gates registration and login today, per `domains.ts`) — never the fabricated `Sí · permiso individual` third state. **Recommendation for whoever runs M6**: since `aiAccessOverride` doesn't exist as a distinct column from M5, M6 can just rename `deepseekEnabled` as design.md already planned — this deviation changes nothing about M6's own migration, it just means M5 shipped without the individual-override UI, which M6 should add once the column lands.
+2. **Task 5.8's "admin opens and prompts a listed project" is implemented as a listing + real link, not a full open-and-prompt flow** — this exact deferral is already explicitly sanctioned by tasks.md's own Phase 5 preamble note (the M8 cross-dependency), not something introduced here. `e2e/m5-usuarios.ts` verifies the link exists, points at the correct project id, and that clicking it as an admin today redirects to `/app` (the existing `project/[id].astro` ownership check, unchanged) — an accurate reflection of today's state, not a stubbed-out "TODO" or a faked pass.
+3. **`consumoPorUsuario()` was rewritten** (raw-row grouping instead of `groupBy`+`_sum`) to fix the partial-null-sum limitation M4's Deviation 2 explicitly flagged and invited M5 to fix, since M5's bar-chart legend needed the same "one unpriced row nullifies the whole group's cost" guarantee `costoPorProyecto()` already has, to avoid a partial sum that looks complete.
+4. **`GraficoColumnas.tsx`/`GraficoBarras.tsx` are rendered with no `client:*` directive** — design.md requires zero-JavaScript native tooltips (`<title>` elements) and neither chart has any interactivity, so shipping them as hydrated islands would be pure waste. This also sidesteps the `Decimal`-across-serialization trap entirely for these two components, though the `.astro` page still pre-converts every figure to plain strings/numbers before passing them down, matching the established convention.
+5. **`usageByUser()`/`UsageByUser` (its only caller, `consumo.astro`) removed as part of task 5.9's cleanup**, not left as dead exported code — task 5.9 says "absorbed," and leaving an unused enum-keyed aggregation function next to its replacement would be exactly the kind of stale surface the milestone exists to remove.
+
+### Issues found
+
+None blocking. One test-script-only gotcha worth recording for future e2e authors in this repo: a keyboard-driven retry loop that (1) acts, then (2) checks a DB read for success, and retries the WHOLE action sequence on failure, is unsafe if the action isn't idempotent and the loop doesn't re-check state before acting again — a slow-to-hydrate `client:load` button can leave a `<details>` menu open with its click never having fired, and a naive retry's next `Enter` on the now-open, still-focused `<summary>` CLOSES it instead of opening it, so the following `Tab` escapes into the next row entirely (in this table, straight into that row's own name link) and an `Enter` there navigates away to a different user's detail page. Fixed by checking the DB state before every attempt (skip acting if already succeeded) and checking the `<details>` element's actual `open` property before pressing Enter to open it (never blind-toggle). Left as an explicit code comment in `e2e/m5-usuarios.ts` for whoever writes the next keyboard-only retry loop in this repo.
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m5-usuarios.ts
+✔ preparado: docente con consumo multi-día y multi-motor
+✔ preparado: docente con un solo turno (un solo día con datos)
+✔ preparado: docente con un recurso pero sin ningún turno
+✔ preparado: docente con consumo, siempre en el motor gratuito
+✔ preparado: docente con un motor sin precio + una fila histórica
+✔ tabla: fila multi-día/multi-motor con los 6 campos correctos
+✔ tabla: fila de un solo turno
+✔ tabla: fila sin ningún turno muestra "—", nunca "US$ 0,00"
+✔ tabla: fila 100% gratuita muestra "US$ 0,00" exacto, sin aproximar
+✔ tabla: motor sin precio cargado nunca se confunde con "gratis"
+✔ tabla: docente sin ningún recurso ni turno muestra "Nunca"
+✔ tabla: las mismas cifras se sostienen en tema oscuro
+✔ detalle: docente multi-día/multi-motor renderiza ambos gráficos con sus cifras
+✔ detalle: un solo turno renderiza una única columna, no una grilla vacía
+✔ detalle: sin ningún turno, la frase reemplaza a los dos gráficos (nunca uno vacío)
+✔ detalle: consumo 100% gratuito se lee como tal, no como "sin actividad"
+✔ detalle: la fila histórica (fuera de la ventana de 30 días) se etiqueta en la barra, sin inventarle costo
+✔ detalle: el enlace al recurso existe; abrirlo como admin hoy vuelve a /app (bloqueado hasta M8, no se finge éxito)
+✔ menú de fila: Tab→Enter, totalmente por teclado, promovió al docente a administrador
+✔ menú de fila: la tabla refleja el nuevo rol sin recargar la página
+✔ la promoción rige en el próximo pedido, con la cookie vieja, sin volver a loguearse
+✔ API: bajar al único administrador responde 409 con el mensaje del spec
+✔ package.json: no se agregó ninguna dependencia de gráficos
+
+✔ e2e/m5-usuarios.ts: todos los escenarios pasaron
+
+$ npx tsx e2e/unidad.ts   # regresión, no forma parte de M5
+✔ e2e/unidad.ts: todas las pruebas pasaron (11/11)
+
+$ npx tsx e2e/m1-admin-shell.ts   # regresión
+✔ e2e/m1-admin-shell.ts: todos los escenarios pasaron (11/11)
+
+$ npx tsx e2e/m2-catalogo.ts   # regresión
+✔ e2e/m2-catalogo.ts: todos los escenarios pasaron (7/7)
+
+$ npx tsx e2e/m3-motores.ts   # regresión
+✔ e2e/m3-motores.ts: todos los escenarios pasaron (14/14)
+
+$ npx tsx e2e/m4-costos.ts   # regresión
+✔ e2e/m4-costos.ts: todos los escenarios pasaron (17/17)
+
+$ rg -n 'bg-white|bg-slate-' src/components/admin
+(exit 1, no matches — expected)
+
+$ git diff --stat package.json package-lock.json
+(no output — no dependency changes)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c 'SELECT email, role FROM "User" ORDER BY "createdAt";'
+  12 filas: sólo admin@rededucativa.edu.ar es ADMIN; los 7 usuarios de
+  prueba de M5 (multi/uno/vacio/gratis/sinprecio/promover/admin-solo)
+  quedaron en DOCENTE — estado restaurado por limpiarEstado() en el finally.
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c 'SELECT count(*) FROM "TokenUsage" WHERE ...test-m5...'
+  0 filas — sin residuo de TokenUsage/AiModel/Project de M5 tras la corrida.
+```
+
+### Remaining tasks
+
+None for Phase 5. Phases 6–8 (M6–M8) remain out of scope for this apply batch.
+Recommendation for whoever picks up M6 (see Deviation 1): the
+`deepseekEnabled` → `aiAccessOverride` rename in task 6.1 can proceed exactly
+as design.md describes — M5 did not create a competing column — but M6
+should also wire `UsuariosTabla.tsx`'s "Acceso a la IA" column and overflow
+menu to the real three-state value once `aiAccessOverride` exists, since M5
+only shipped the two states buildable without it.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M5
+- Boundary: starts where M4 left off on `feat/panel-admin`, ends at the M5
+  checkpoint (task 5.12).
+- Estimated review budget impact: forecast estimated ~600 changed lines for
+  M5. `review_budget_lines` is unbounded for this change per the owner, so
+  this is informational only.

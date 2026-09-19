@@ -39,6 +39,23 @@ export function formatearCostoUsd(valor: string | number | null): string {
   return formatearMonto(numero, 4);
 }
 
+/**
+ * Igual que `formatearCostoUsd`, pero para las cifras que mira un ADMIN
+ * (`/admin/usuarios`, design.md — "The users table" / "The user detail
+ * view"): DeepSeek cobra el doble en las ventanas pico UTC y el catálogo
+ * guarda una sola tarifa plana por decisión deliberada (design.md §2), así
+ * que cualquier monto no nulo y distinto de cero es una APROXIMACIÓN, nunca
+ * un total exacto — se marca con el prefijo "≈". "US$ 0,00" (el motor
+ * gratuito sirvió todo) y "—" (precio desconocido) no son estimaciones,
+ * así que no llevan el prefijo.
+ */
+export function formatearCostoAdminUsd(valor: string | number | null): string {
+  const texto = formatearCostoUsd(valor);
+  const numero = valor === null ? null : typeof valor === 'number' ? valor : Number(valor);
+  if (numero === null || numero === 0) return texto;
+  return `≈ ${texto}`;
+}
+
 function formatearMonto(valor: number, decimales: number): string {
   const texto = valor.toLocaleString('es-AR', {
     minimumFractionDigits: decimales,

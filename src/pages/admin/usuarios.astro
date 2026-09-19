@@ -1,10 +1,12 @@
 ---
 import AdminLayout from '../../layouts/AdminLayout.astro';
+import UsuariosTabla from '../../components/admin/UsuariosTabla.tsx';
+import { listarUsuariosAdmin } from '../../lib/admin/usuarios.ts';
 
-// El middleware ya garantiza sesión + rol ADMIN en /admin/**; esto es solo
-// para el tipo. Contenido real: M5.
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const usuarios = await listarUsuariosAdmin();
 ---
 
 <AdminLayout>
-  <p class="text-sm text-ink-500">Docentes: todavía no implementado.</p>
+  <UsuariosTabla client:load initialUsuarios={usuarios} />
 </AdminLayout>
