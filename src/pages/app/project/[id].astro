@@ -1,9 +1,11 @@
 ---
 import BaseLayout from '../../../layouts/BaseLayout.astro';
 import Workspace from '../../../components/workspace/Workspace.tsx';
+import IndicadorConsumo from '../../../components/workspace/IndicadorConsumo.tsx';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
 import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 
 const user = Astro.locals.user!;
 
@@ -68,6 +70,13 @@ const motoresParaElSelector =
           },
         ]
       : [];
+
+// El consumo del recurso (design.md — "The workspace cost indicator"): se
+// calcula acá, en el frontmatter, no en el cliente — así se refresca cuando
+// la página se refresca y no anda pidiendo datos aparte. Ausente entero
+// cuando no hay ningún turno registrado (nunca un indicador en "0").
+const consumoDelRecurso = await costoPorProyecto(project.id);
+const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide>
@@ -101,6 +110,18 @@ const motoresParaElSelector =
     <h1 class="font-display truncate text-sm tracking-tight text-ink-900 uppercase">
       {project.title}
     </h1>
+
+    {/* No dentro de ChatPanel: el indicador vive en la miga de pan, a
+        distancia de la columna donde está la atención (design.md). Ausente
+        por completo cuando el recurso todavía no gastó nada. */}
+    {consumoDelRecurso.tokens > 0 && (
+      <IndicadorConsumo
+        client:load
+        tokens={consumoDelRecurso.tokens}
+        costUsd={consumoDelRecurso.costUsd?.toString() ?? null}
+        nivel={nivelDeConsumoDelRecurso}
+      />
+    )}
   </div>
 
   <Workspace

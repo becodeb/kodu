@@ -58,10 +58,25 @@ model TokenUsage {
   model            String
   promptTokens     Int          @default(0)
   completionTokens Int          @default(0)
+  /// Subconjunto de promptTokens, NO un adicional (ver src/lib/ai/provider.ts).
+  cachedInputTokens Int         @default(0)
+  /// A que recurso perteneceio el turno. NULL en todo lo historico: nunca se
+  /// backfillea, es dato que no existia antes de esta columna.
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// Congelado al momento de escribir, con los tres precios vigentes ese dia
+  /// (ver abajo). NULL cuando a ese motor le faltaba algun precio: nunca se
+  /// inventa un costo. Escala 10, no 6: ver la migracion 20260920000000.
+  costUsd                  Decimal? @db.Decimal(16, 10)
+  priceInputSnapshot       Decimal? @db.Decimal(12, 6)
+  priceOutputSnapshot      Decimal? @db.Decimal(12, 6)
+  priceCachedInputSnapshot Decimal? @db.Decimal(12, 6)
   createdAt        DateTime     @default(now())
 
   @@index([userId, provider])
   @@index([createdAt])
+  @@index([projectId])
+  @@index([userId, createdAt])
 }
 
 model Project {
@@ -80,6 +95,7 @@ model Project {
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   threads       ChatThread[]
   assets        ProjectAsset[]
+  tokenUsage    TokenUsage[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 

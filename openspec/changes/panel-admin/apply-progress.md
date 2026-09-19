@@ -459,3 +459,140 @@ None for Phase 3. Phases 4–8 (M4–M8) remain out of scope for this apply batc
 - Estimated review budget impact: forecast estimated ~500 changed lines for
   M3. `review_budget_lines` is unbounded for this change per the owner, so
   this is informational only.
+
+## Phase 4: M4 — Cost accounting + indicator
+
+**Status**: complete. 12/12 tasks done (4.1–4.12).
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`). `npx tsx e2e/unidad.ts` → 11/11 assertions passed (4 pre-existing + 7 new: cached-token double-charge, null-price never fabricates, free turn costs exactly 0, missing cached rate falls back to input rate and records that fallback in the snapshot, `Decimal(16,10)` retains a sub-cent cost that `Decimal(12,6)` would round to zero, the full 5-case display-rounding table, the `bajo/medio/alto` threshold boundaries) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m4-costos.ts` → 17/17 scenarios passed, both themes (see filename note below). Ran twice in a row to confirm the script's own cleanup is idempotent — same 17/17 both times. Regressions re-run clean: `npx tsx e2e/unidad.ts` (11/11), `npx tsx e2e/m1-admin-shell.ts` (11/11), `npx tsx e2e/m2-catalogo.ts` (7/7), `npx tsx e2e/m3-motores.ts` (14/14) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`, then hand-run `prisma/migrations/20260920000000_costo_de_turnos/migration_down.sql` against the DB (`docker exec -i kodu_db_dev psql -U kodu -d koduedu -f -`), then `npx prisma migrate resolve --rolled-back 20260920000000_costo_de_turnos`. Accepted loss: cost history written between this deploy and a rollback is dropped with the columns; `promptTokens`/`completionTokens` (M2 columns) are untouched. No seed data or M1–M3 surfaces are touched by this rollback |
+
+### Completed tasks
+
+- [x] 4.1 `prisma/schema.prisma`: `TokenUsage` gains `cachedInputTokens`, `costUsd Decimal? @db.Decimal(16,10)`, the three `Decimal(12,6)` snapshot columns, `projectId` + `project` relation (`onDelete: SetNull`), `@@index([projectId])`, `@@index([userId, createdAt])` (kept the two pre-existing indexes too). `Project` gains the `tokenUsage TokenUsage[]` back-relation the new FK requires.
+- [x] 4.2 Hand-written `prisma/migrations/20260920000000_costo_de_turnos/migration.sql` with the Spanish WHY block (the `Decimal(16,10)` floor, the `cachedInputTokens` subset relationship, why `projectId` is `SetNull`, why no historical row is ever touched). Applied directly via `docker exec kodu_db_dev psql`, then `prisma migrate resolve --applied`. `prisma migrate status` confirms "Database schema is up to date!" A `migration_down.sql` sits beside it, same convention as M2.
+- [x] 4.3 `calcularCostoTurno()` in `src/lib/ai/usage.ts` implements the exact formula, entirely in `Prisma.Decimal`: `facturables = max(promptTokens − cachedInputTokens, 0)`, `tarifaCache = precios.cachedInput ?? precios.input`, `costUsd = facturables×input/1e6 + cachedInputTokens×tarifaCache/1e6 + completionTokens×output/1e6`. `precios === null` short-circuits to an all-null result before any arithmetic runs. `src/lib/ai/provider.ts` already emitted `cachedTokens` since M2 (task 2.9) — no change needed there.
+- [x] 4.4 `UsageRecord` gained `projectId`, `cachedInputTokens`, `precios`; `recordUsage()` calls `calcularCostoTurno()` and writes all five new columns in the same `prisma.tokenUsage.create`. `stream.ts`'s single call site (the `finally` block) now passes `projectId: project.id`, `cachedInputTokens: totales.usage.cachedTokens`, `precios: proveedorUsado.precios` — no extra query, the prices ride in on the already-resolved `ProviderConfig`.
+- [x] 4.5 `costoPorProyecto(projectId)` and `consumoPorUsuario(userId)` added to `usage.ts` for M5. `costoPorProyecto` treats ANY row with `costUsd = null` inside the project as making the whole aggregate `null` (never a partial total that looks complete) — see Deviation 1. `consumoPorUsuario` groups by `aiModelId` (⇒ historical bucket when `null`) with model display names joined in; documented limitation for M5 in a code comment (see Deviation 2).
+- [x] 4.6 `src/lib/format/costo.ts` created: `formatearCostoUsd(valor: string | number | null)` implements the exact 5-case table. Deliberately takes NO `Prisma.Decimal` parameter — see Deviation 3 (bundle-safety reasoning).
+- [x] 4.7 `src/components/workspace/IndicadorConsumo.tsx` created: `<button aria-expanded>` with `onMouseEnter`/`onFocus`/`onClick` opening a `role="status"` popover, `onMouseLeave`/`onBlur`/`Escape` closing it. Reads `nivel` as a prop (computed server-side, see 4.8) rather than importing the `CONSUMO_MEDIO`/`CONSUMO_ALTO` constants itself — see Deviation 3. No occurrence of "ficha" anywhere in its copy (verified by `rg -i ficha` on the file — no matches).
+- [x] 4.8 `src/pages/app/project/[id].astro`: computes `costoPorProyecto(project.id)` and `nivelDeConsumo(...)` in the frontmatter, renders `<IndicadorConsumo client:load>` directly inside the existing breadcrumb `<div class="mb-3 flex items-center gap-3">`, after the `<h1>`, only when `consumoDelRecurso.tokens > 0`. `ml-auto` lives on the component's own root `<div>`. See Deviation 4 for why this is NOT threaded through `Workspace`'s props.
+- [x] 4.9 DB-state checks embedded in `e2e/m4-costos.ts` (direct `prisma.tokenUsage`/`prisma.aiModel` reads): a turn's `costUsd` hand-verified against the formula (`0.0019` for a specific token/price combination); editing the model's price afterward re-fetches the same row and confirms `costUsd`/`priceInputSnapshot` unchanged; a zero-priced motor writes `costUsd = 0` (`isZero()`, not `null`).
+- [x] 4.10 `e2e/m4-costos.ts` — both themes: default reading is exactly `"Consumo bajo"` with no `$` and no "ficha"; hover reveals tokens+USD and mouse-away closes it; click/tap reveals; keyboard `.focus()` reveals (Enter doesn't break it, Escape closes it); the identical keyboard-focus round trip repeated after `conTema(page, 'dark')`; a heavier resource reads `"Consumo medio"`; a resource on a price-unloaded motor shows the "sin precios" copy and never `US$ 0,00`; a resource with zero `TokenUsage` rows shows no indicator at all.
+- [x] 4.11 `e2e/unidad.ts` extended with 7 new cases (see Work Unit Evidence). `npx tsx e2e/unidad.ts` and `npm run check` both pass.
+- [x] 4.12 M4 checkpoint: cost is recorded per turn, frozen against later price edits, and visible in the workspace as a quiet level with an on-demand exact figure — deliverable.
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `prisma/schema.prisma` | Modify | `TokenUsage`: `cachedInputTokens`, `costUsd`, 3 snapshot columns, `projectId`+`project` relation, 2 new indexes (kept the 2 old ones). `Project`: `tokenUsage TokenUsage[]` back-relation. |
+| `prisma/migrations/20260920000000_costo_de_turnos/migration.sql` | Create | The 6 new columns, the FK, the 2 indexes, Spanish WHY block |
+| `prisma/migrations/20260920000000_costo_de_turnos/migration_down.sql` | Create | Hand-run rollback |
+| `src/lib/ai/usage.ts` | Modify | `Precios`/`CostoCalculado` types, `calcularCostoTurno()`, `UsageRecord` grown, `recordUsage()` now writes cost + snapshots, `CONSUMO_MEDIO`/`CONSUMO_ALTO`/`nivelDeConsumo()`, `costoPorProyecto()`, `consumoPorUsuario()` |
+| `src/lib/format/costo.ts` | Create | `formatearCostoUsd()`, the 5-case display-rounding table |
+| `src/components/workspace/IndicadorConsumo.tsx` | Create | The workspace indicator: level button + reveal popover |
+| `src/pages/app/project/[id].astro` | Modify | Computes consumption in the frontmatter; renders `IndicadorConsumo` in the breadcrumb strip |
+| `src/pages/api/chat/stream.ts` | Modify | `recordUsage()` call site passes `projectId`, `cachedInputTokens`, `precios` |
+| `e2e/unidad.ts` | Modify | +7 pure-logic cases for cost arithmetic, display rounding, thresholds |
+| `e2e/m4-costos.ts` | Create | Slice verification, both themes (see Deviation 5 for the filename) |
+
+### Deviations from design
+
+1. **`costoPorProyecto` nullifies the WHOLE aggregate if ANY row inside the project lacks a known cost**, rather than summing the known ones and silently treating the unknown ones as zero. Design's own three-state table (§6) describes "no usage" / "usage, cost genuinely zero" / "usage, price unknown" as states of an entire row set, but doesn't explicitly resolve what a MIXED project (some rows priced, some not) should show. Showing a partial sum that LOOKS complete is exactly the kind of fabrication design.md repeatedly rules out elsewhere ("nunca se inventa un costo"), so I extended that principle to the aggregate: one unpriced row makes the whole figure unknown rather than quietly wrong. Flagged here because it's a real interpretive choice, not something the spec states in so many words.
+2. **`consumoPorUsuario` (for M5) does NOT get the same all-or-nothing null treatment** — it's documented as a known limitation in a code comment instead. Postgres's `_sum` inside a `groupBy` ignores `NULL`s within a group rather than nullifying the group, and matching `costoPorProyecto`'s stricter behavior there would require pulling every raw row and summing by hand (the same technique `costoPorProyecto` uses). Since M4's own verification doesn't exercise `consumoPorUsuario` (M5 does), and building that extra plumbing for a function nothing calls yet would be scope creep ahead of the milestone that needs it, I left a comment pointing at the exact discrepancy and the fix, for whoever picks up M5.
+3. **`src/lib/format/costo.ts` takes `string | number`, never `Prisma.Decimal`, and does the final rounding with plain JS `Number`, not `Prisma.Decimal` arithmetic.** This file is imported by `IndicadorConsumo.tsx`, a `client:load` React island — importing the generated Prisma client (even just for the `Decimal` class) into that file would drag Prisma's runtime module into the browser bundle, which is unsafe/wrong regardless of whether it happens to build. Every caller already has to `.toString()` a `Decimal` before it crosses the server→client boundary anyway (the exact trap called out in the brief), so the string-only signature costs nothing. `Number()` for a single already-computed value's DISPLAY rounding is safe (float64 precision is far beyond the 2–4 decimals ever shown); `Decimal` still owns every CALCULATION and every SUM, which is where its exactness actually matters. Same reasoning is why `IndicadorConsumo.tsx` receives a pre-computed `nivel: 'bajo'|'medio'|'alto'` prop from the Astro frontmatter instead of importing `CONSUMO_MEDIO`/`CONSUMO_ALTO`/`nivelDeConsumo` from `usage.ts` itself — `usage.ts` imports `src/lib/db.ts` (the Prisma singleton), which must never reach a client bundle.
+4. **`IndicadorConsumo` is rendered directly in `project/[id].astro`'s breadcrumb markup as its own island, not threaded through `Workspace`'s props**, despite task 4.8's phrasing ("pass the project's tokens/cost to `Workspace`"). The breadcrumb `<div>` is entirely inside the `.astro` template, above and outside the `<Workspace client:load>` call — `Workspace` never renders the breadcrumb at all, so routing the data through it would mean an extra prop threaded through a component tree for no consumer, purely to satisfy a phrase. Design.md's own placement section is unambiguous and literal ("the breadcrumb strip... **Not** inside `ChatPanel`"), and the "minimal plumbing" principle the M2 sequencing note already established in this same tasks.md applies here too.
+5. **The runtime harness file is `e2e/m4-costos.ts`, not `e2e/m4-consumo.ts`** (the name both `tasks.md`'s Suggested Work Units table and `design.md`'s Testing Strategy table use). The orchestrator's launch prompt explicitly named `e2e/m4-costos.ts` as a required artifact; I followed that explicit, more specific instruction rather than the tasks/design filename. No behavioral difference — same scenarios, same location, same `npx tsx` invocation style as every other slice script.
+6. **`priceCachedInputSnapshot` stores the EFFECTIVE rate actually applied to cached tokens (`tarifaCache = precios.cachedInput ?? precios.input`), not the raw `AiModel.priceCachedInputPerMToken` column value.** When a motor has no dedicated cache rate, cached tokens are billed at the input rate — if the snapshot stored the raw (`null`) value instead, nobody could recompute `costUsd` from the three stored snapshots and get the same answer, defeating the audit-trail purpose design.md states for these columns ("recompute it after finding a typo... without guessing what was in effect that day"). Covered by the `e2e/unidad.ts` case "sin tarifa de caché propia, cae a la de entrada (y lo registra así)".
+
+### Issues found
+
+None blocking. One environment gotcha hit and resolved during this batch, worth recording for whoever runs the next milestone: after `npm run db:generate` regenerates the Prisma client on disk, the ALREADY-RUNNING `npm run dev` process keeps using the schema/DMMF it loaded at startup — Vite's HMR does not reload the generated Prisma client's runtime validation schema, so every route touching a newly-added column threw `PrismaClientValidationError: Unknown argument`. Fixed with `npx astro dev stop` + `npm run dev` (never `pkill -f 'astro dev'` per the standing instruction — that pattern matches the shell running the command itself). **Any milestone that adds a Prisma schema column should restart the dev server before running its browser checks.**
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/unidad.ts
+✔ cifrar/descifrar: ida y vuelta con el mismo AAD
+✔ descifrar: un AAD distinto (ciphertext copiado a otra fila) rechaza
+✔ cadenaDeMotores: un ciclo A→B→A no cuelga y corta en 2
+✔ cadenaDeMotores: el tope de 3 eslabones se respeta aunque la cadena siga
+✔ calcularCostoTurno: la resta de tokens cacheados NO duplica el cobro
+✔ calcularCostoTurno: precio nulo nunca fabrica un costo
+✔ calcularCostoTurno: un turno gratis da costo 0, no null
+✔ calcularCostoTurno: sin tarifa de caché propia, cae a la de entrada (y lo registra así)
+✔ calcularCostoTurno: Decimal(16,10) no pierde un costo de fracción de centavo
+✔ formatearCostoUsd: la tabla de redondeo completa
+✔ nivelDeConsumo: los tres cortes, con los bordes exactos
+
+✔ e2e/unidad.ts: todas las pruebas pasaron
+
+$ npx tsx e2e/m4-costos.ts
+✔ un turno completo escribe projectId y un costo que coincide con la fórmula
+✔ editar el precio de un motor no reescribe costos ya congelados
+✔ un turno en un motor gratuito escribe costUsd = 0, nunca NULL
+✔ un motor con precio sin cargar escribe costUsd NULL, y costoPorProyecto lo respeta (no lo inventa)
+✔ una fila con forma histórica (sin projectId/aiModelId) queda con costUsd NULL — se renderiza "histórico", nunca $0
+✔ preparado un recurso con tokens por encima del corte de "Consumo medio"
+✔ lectura por defecto: "Consumo bajo", sin moneda, sin la palabra "ficha"
+✔ el mouse (hover) revela tokens + USD
+✔ alejar el mouse cierra el popover
+✔ el tap/click también revela el popover
+✔ el foco de teclado revela el popover, sin usar el mouse
+✔ Enter sobre el botón enfocado no rompe el popover (sigue revelado)
+✔ Escape cierra el popover revelado por teclado
+✔ el indicador funciona igual en tema oscuro (foco de teclado + revelado)
+✔ un recurso con tokens por encima del corte muestra "Consumo medio"
+✔ un motor con precio sin cargar muestra el aviso de "sin precios", nunca US$ 0,00
+✔ un recurso sin uso no muestra ningún indicador (nunca "Consumo bajo" en $0)
+
+✔ e2e/m4-costos.ts: todos los escenarios pasaron
+
+$ npx tsx e2e/m1-admin-shell.ts   # regresión, no forma parte de M4
+✔ e2e/m1-admin-shell.ts: todos los escenarios pasaron (11/11)
+
+$ npx tsx e2e/m2-catalogo.ts   # regresión, no forma parte de M4
+✔ e2e/m2-catalogo.ts: todos los escenarios pasaron (7/7)
+
+$ npx tsx e2e/m3-motores.ts   # regresión, no forma parte de M4
+✔ e2e/m3-motores.ts: todos los escenarios pasaron (14/14)
+
+$ rg -n 'bg-white|bg-slate-' src/components/workspace/IndicadorConsumo.tsx src/pages/app/project/'[id].astro'
+(exit 1, no matches — expected)
+
+$ docker exec -i kodu_db_dev psql -U kodu -d koduedu -c '... AiModel ...'
+  4 filas, estado sembrado sin cambios: MiniMax M3 (default, sortOrder 0),
+  MiniMax M2.7 (sortOrder 1), DeepSeek (sortOrder 2), Alpha (disabled,
+  sortOrder 3) — exactamente 1 fila con isDefault=true.
+
+$ docker exec -i kodu_db_dev psql -U kodu -d koduedu -c '... conteos ...'
+  TokenUsage/Project/AiModel del usuario de prueba de M4: 0/0/0 tras la
+  corrida (limpiarEstado corrió en el finally). Los 14 Project restantes con
+  email "%e2e%" pertenecen a los usuarios de prueba de M2/M3 (4+10), no a M4
+  — debris preexistente de milestones anteriores, no introducido acá.
+```
+
+### Remaining tasks
+
+None for Phase 4. Phases 5–8 (M5–M8) remain out of scope for this apply batch.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M4
+- Boundary: starts where M3 left off on `feat/panel-admin`, ends at the M4
+  checkpoint (task 4.12).
+- Estimated review budget impact: forecast estimated ~450 changed lines for
+  M4. `review_budget_lines` is unbounded for this change per the owner, so
+  this is informational only.

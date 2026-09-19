@@ -1,9 +1,12 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
 import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
+import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, nivelDeConsumo } from '../src/lib/ai/usage.ts';
+import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 
 /**
  * Pruebas unitarias sin test runner (no hay uno en este repo — ver context.md).
@@ -125,6 +128,110 @@ await prueba('cadenaDeMotores: el tope de 3 eslabones se respeta aunque la caden
   } finally {
     await limpiarMotoresDePrueba();
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Costo por turno (src/lib/ai/usage.ts — M4, design.md §6)
+// ─────────────────────────────────────────────────────────────
+
+const precios = (input: string, output: string, cachedInput: string | null) => ({
+  input: new Prisma.Decimal(input),
+  output: new Prisma.Decimal(output),
+  cachedInput: cachedInput === null ? null : new Prisma.Decimal(cachedInput),
+});
+
+await prueba('calcularCostoTurno: la resta de tokens cacheados NO duplica el cobro', () => {
+  // Turno con un 90% del prompt cacheado: 10.000 prompt, 9.000 cacheados,
+  // 1.000 de completion. Tarifas: entrada $1/M, salida $2/M, caché $0.02/M
+  // (la caché cuesta bastante menos, como en el ejemplo real de DeepSeek).
+  const resultado = calcularCostoTurno(10_000, 9_000, 1_000, precios('1', '2', '0.02'));
+
+  // Correcto: SÓLO los 1.000 tokens no cacheados (10.000 − 9.000) se facturan
+  // a la tarifa de entrada completa.
+  //   facturables: 1.000 × 1 / 1e6   = 0.001
+  //   cacheados:   9.000 × 0.02 / 1e6 = 0.00018
+  //   salida:      1.000 × 2 / 1e6   = 0.002
+  //   total: 0.00318
+  const correcto = new Prisma.Decimal('0.00318');
+  assert.ok(
+    resultado.costUsd!.equals(correcto),
+    `esperaba ${correcto.toString()}, dio ${resultado.costUsd!.toString()}`,
+  );
+
+  // La cuenta INCORRECTA (el bug que este cálculo existe para evitar) factura
+  // los 10.000 prompt_tokens completos a tarifa de entrada Y ADEMÁS los 9.000
+  // cacheados a su tarifa — duplicando el cobro de la porción cacheada.
+  //   10.000 × 1/1e6 + 9.000 × 0.02/1e6 + 1.000 × 2/1e6 = 0.01218
+  const infladoPorDobleCobro = new Prisma.Decimal('0.01218');
+  assert.ok(
+    !resultado.costUsd!.equals(infladoPorDobleCobro),
+    'el resultado no debe coincidir con la cuenta que factura el prompt completo Y la caché encima (doble cobro)',
+  );
+});
+
+await prueba('calcularCostoTurno: precio nulo nunca fabrica un costo', () => {
+  const resultado = calcularCostoTurno(1_000, 0, 500, null);
+  assert.equal(resultado.costUsd, null);
+  assert.equal(resultado.priceInputSnapshot, null);
+  assert.equal(resultado.priceOutputSnapshot, null);
+  assert.equal(resultado.priceCachedInputSnapshot, null);
+});
+
+await prueba('calcularCostoTurno: un turno gratis da costo 0, no null', () => {
+  const resultado = calcularCostoTurno(1_000, 0, 500, precios('0', '0', '0'));
+  assert.ok(resultado.costUsd !== null, 'un motor con precios cargados en 0 tiene un costo CONOCIDO: cero');
+  assert.ok(resultado.costUsd!.isZero());
+});
+
+await prueba('calcularCostoTurno: sin tarifa de caché propia, cae a la de entrada (y lo registra así)', () => {
+  const resultado = calcularCostoTurno(1_000, 1_000, 0, precios('2', '5', null));
+  // Los 1.000 tokens son todos cacheados y no hay tarifa de caché cargada:
+  // se facturan a la tarifa de entrada (2), y el snapshot debe decir 2, no
+  // null — si no, nadie podría recalcular el total desde los tres snapshots.
+  assert.ok(resultado.priceCachedInputSnapshot!.equals(new Prisma.Decimal('2')));
+  assert.ok(resultado.costUsd!.equals(new Prisma.Decimal('0.002')));
+});
+
+await prueba('calcularCostoTurno: Decimal(16,10) no pierde un costo de fracción de centavo', () => {
+  // El ejemplo exacto de la migración: 200 tokens cacheados a $0.003/M,
+  // nada más. A escala 6 esto redondea a 0.000000 — el bug que la escala 10
+  // existe para evitar.
+  const resultado = calcularCostoTurno(200, 200, 0, precios('0.003', '0.6', '0.003'));
+  const esperado = new Prisma.Decimal('0.0000006');
+  assert.ok(resultado.costUsd!.greaterThan(0), 'un costo real nunca debe redondear a cero antes de guardarse');
+  assert.ok(
+    resultado.costUsd!.equals(esperado),
+    `esperaba ${esperado.toString()}, dio ${resultado.costUsd!.toString()}`,
+  );
+});
+
+// ─────────────────────────────────────────────────────────────
+// Redondeo para mostrar (src/lib/format/costo.ts — M4, design.md §2)
+// ─────────────────────────────────────────────────────────────
+
+await prueba('formatearCostoUsd: la tabla de redondeo completa', () => {
+  assert.equal(formatearCostoUsd(null), '—', 'precio nunca cargado');
+  assert.equal(formatearCostoUsd(0), 'US$ 0,00', 'costo cero con precios cargados: el motor gratuito sirvió el turno');
+  assert.equal(formatearCostoUsd(3.174), 'US$ 3,17', '>= 0.01: dos decimales');
+  assert.equal(formatearCostoUsd(0.0024), 'US$ 0,0024', '> 0 y < 0.01: cuatro decimales');
+
+  const menorAUnDiezmilesimo = formatearCostoUsd(0.00004);
+  assert.equal(menorAUnDiezmilesimo, 'menos de US$ 0,0001', 'redondea a 0,0000 pero es > 0: nunca "US$ 0,00"');
+  assert.notEqual(menorAUnDiezmilesimo, 'US$ 0,00', 'un costo real jamás debe leerse como gratis');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Umbrales del indicador (src/lib/ai/usage.ts — M4, design.md, "The
+// workspace cost indicator")
+// ─────────────────────────────────────────────────────────────
+
+await prueba('nivelDeConsumo: los tres cortes, con los bordes exactos', () => {
+  assert.equal(nivelDeConsumo(0), 'bajo');
+  assert.equal(nivelDeConsumo(CONSUMO_MEDIO - 1), 'bajo');
+  assert.equal(nivelDeConsumo(CONSUMO_MEDIO), 'medio', 'el corte es inclusivo');
+  assert.equal(nivelDeConsumo(CONSUMO_ALTO - 1), 'medio');
+  assert.equal(nivelDeConsumo(CONSUMO_ALTO), 'alto', 'el corte es inclusivo');
+  assert.equal(nivelDeConsumo(CONSUMO_ALTO * 10), 'alto');
 });
 
 await prisma.$disconnect();

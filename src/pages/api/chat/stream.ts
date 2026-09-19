@@ -634,10 +634,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
         if (totales.usage) {
           await recordUsage({
             userId: user.id,
+            projectId: project.id,
             aiModelId: proveedorUsado.id,
             model: proveedorUsado.model,
             promptTokens: totales.usage.promptTokens,
+            cachedInputTokens: totales.usage.cachedTokens,
             completionTokens: totales.usage.completionTokens,
+            precios: proveedorUsado.precios,
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 
