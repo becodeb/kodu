@@ -1,12 +1,16 @@
 import type { APIRoute } from 'astro';
 import { prisma } from '../../../lib/db.ts';
 import { hashPassword } from '../../../lib/auth/password.ts';
-import { allowedDomainsLabel, isAdminEmail, isAllowedDomain } from '../../../lib/auth/domains.ts';
+import { isAdminEmail } from '../../../lib/auth/domains.ts';
 import { firstIssue, registerSchema } from '../../../lib/auth/schemas.ts';
 import { createSessionToken, setSessionCookie } from '../../../lib/auth/session.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
 
-/** POST /api/auth/register — alta de docente restringida por dominio institucional. */
+/**
+ * POST /api/auth/register — alta de docente, abierta a cualquier dominio
+ * desde M6 (design.md §10). El dominio institucional ya no gatea el registro
+ * ni el login: gatea sólo el USO de la IA, en `/api/chat/stream`.
+ */
 export const POST: APIRoute = async ({ request, cookies }) => {
   const parsed = registerSchema.safeParse(await readBody(request));
   if (!parsed.success) {
@@ -14,14 +18,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   const { name, email, password } = parsed.data;
-
-  // Regla dura del SPEC: solo correos de dominios habilitados.
-  if (!isAllowedDomain(email)) {
-    return fail(
-      `El registro está habilitado solo para correos institucionales (${allowedDomainsLabel()}).`,
-      403,
-    );
-  }
 
   const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (existing) {
@@ -39,7 +35,8 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       select: { id: true, email: true, name: true, role: true },
     });
 
-    // aiAccessOverride/isDemo no tienen columna propia todavía (llegan en M6/M7).
+    // Una cuenta nueva arranca sin permiso individual (null: sigue la regla
+    // de dominio). `isDemo` todavía no tiene columna propia — llega en M7.
     const session = { ...user, aiAccessOverride: null, isDemo: false };
     setSessionCookie(cookies, await createSessionToken(session));
     return ok({ user: session, redirect: '/app' });

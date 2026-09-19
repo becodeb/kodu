@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { prisma } from '../../lib/db.ts';
 import { exchangeCode } from '../../lib/auth/google.ts';
-import { isAdminEmail, isAllowedDomain, normalizeEmail } from '../../lib/auth/domains.ts';
+import { isAdminEmail, normalizeEmail } from '../../lib/auth/domains.ts';
 import { createSessionToken, setSessionCookie } from '../../lib/auth/session.ts';
 import { isGoogleEnabled } from '../../lib/env.ts';
 
@@ -34,7 +34,6 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
     if (!perfil.emailVerified) return redirect('/login?error=google-sin-verificar', 302);
 
     const email = normalizeEmail(perfil.email);
-    if (!isAllowedDomain(email)) return redirect('/login?error=dominio', 302);
 
     // Se busca primero por googleId y después por correo: así una cuenta creada
     // antes con contraseña queda vinculada en vez de duplicarse.
@@ -46,7 +45,7 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
       ? await prisma.user.update({
           where: { id: existente.id },
           data: { googleId: perfil.googleId },
-          select: { id: true, email: true, name: true, role: true },
+          select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
         })
       : await prisma.user.create({
           data: {
@@ -55,11 +54,11 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
             googleId: perfil.googleId,
             role: isAdminEmail(email) ? 'ADMIN' : 'DOCENTE',
           },
-          select: { id: true, email: true, name: true, role: true },
+          select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
         });
 
-    // aiAccessOverride/isDemo no tienen columna propia todavía (llegan en M6/M7).
-    const session = { ...user, aiAccessOverride: null, isDemo: false };
+    // `isDemo` todavía no tiene columna propia (llega en M7).
+    const session = { ...user, isDemo: false };
     setSessionCookie(cookies, await createSessionToken(session));
     return redirect('/app', 302);
   } catch (error) {

@@ -744,3 +744,155 @@ only shipped the two states buildable without it.
 - Estimated review budget impact: forecast estimated ~600 changed lines for
   M5. `review_budget_lines` is unbounded for this change per the owner, so
   this is informational only.
+
+## Phase 6: M6 — Access control
+
+**Status**: complete. 11/11 tasks done (6.1–6.11). Honours M5's Deviation 1
+recommendation exactly: `deepseekEnabled` renamed to `aiAccessOverride` with
+no competing column to reconcile.
+
+### Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `npm run check` → exit 0, no output (clean `tsc --noEmit`) |
+| Runtime harness command/scenario and exact result | `npx tsx e2e/m6-acceso.ts` → all 23 scenario assertions passed, both themes; run three times in a row to confirm idempotency (same result every time). Regressions re-run clean: `npx tsx e2e/unidad.ts` (11/11), `npx tsx e2e/m1-admin-shell.ts` (11/11), `npx tsx e2e/m2-catalogo.ts` (7/7), `npx tsx e2e/m3-motores.ts` (14/14), `npx tsx e2e/m4-costos.ts` (17/17), `npx tsx e2e/m5-usuarios.ts` (23/23) |
+| Rollback boundary | `git revert` this work unit's commit(s) on `feat/panel-admin`. **Not a clean schema rollback** — the hand-written migration `20260921000000_acceso_y_ajustes` is destructive by design (it clears `deepseekEnabled`/`aiAccessOverride` to `NULL` and renames the column); reverting the commits removes the application code but the DB migration itself is not auto-reverted (matches the standing convention in this repo — migrations are forward-only, `prisma migrate resolve` marks them applied, never rolled back automatically). Rollback removes `/admin/dominios`'s real content (back to the empty shell), the two `/api/admin/domains` routes, `src/lib/settings.ts`, and the three-state UI in `UsuariosTabla.tsx` (back to the M5 two-state read). `register.ts`/`login.ts`/`callback.ts` would need the domain check restored by hand if a true behavioural rollback (not just code revert) were required — this is a real behaviour change, not a toggle |
+
+### Completed tasks
+
+- [x] 6.1 `prisma/schema.prisma` — `AppSettings` singleton, `AuthorizedDomain`, `User.deepseekEnabled` → `aiAccessOverride` (nullable, no default)
+- [x] 6.2 Hand-written migration `prisma/migrations/20260921000000_acceso_y_ajustes/migration.sql`, applied via `docker exec kodu_db_dev psql` + `prisma migrate resolve --applied` (never `prisma migrate dev`, per the trap). **Verified live**: seeded a probe row with `deepseekEnabled = true` before running the SQL; `UPDATE "User" SET "aiAccessOverride" = NULL` reported `UPDATE 13` (all 13 existing rows, including the probe); post-migration query confirmed the probe's `aiAccessOverride` is `NULL`, not `true`. Probe row deleted after verification.
+- [x] 6.3 `src/lib/settings.ts` — `leerAppSettings()`, 10s cache + `invalidarAppSettings()`
+- [x] 6.4 `src/lib/auth/domains.ts` — rewritten: `leerDominiosAutorizados()` (10s cache over `AuthorizedDomain`) + `invalidarDominios()`, `coincideDominio()` (the M2-era wildcard matcher, ported unchanged), `dominioAutorizado()` (domain-only, used by the admin table), `puedeUsarLaIa(user)` (the full three-state precedence). `isAllowedDomain()`/`allowedDomainsLabel()` removed — nothing calls them anymore.
+- [x] 6.5 Gate moved: `isAllowedDomain` check removed from `register.ts`, `login.ts`, `callback.ts`; `allowedDomains` prop removed from `AuthForm.tsx`/`login.astro`/`register.astro` (dead `error=dominio` case also removed from both pages' error maps, since `callback.ts` no longer emits it). `puedeUsarLaIa(user)` added in `stream.ts`, as the very first check after resolving `locals.user` — before body parsing, before touching the motor catalog, before anything is spent. Exact refusal copy from the spec.
+- [x] 6.6 `prisma/seed.ts` — seeds `AuthorizedDomain` from `getAllowedDomains()` only when the table is empty (idempotent, logs which branch it took)
+- [x] 6.7 `src/pages/admin/dominios.astro` (was the empty shell) + `DominiosPanel.tsx` + `src/lib/admin/dominios.ts` + `src/pages/api/admin/domains/index.ts` (`GET`/`POST`) + `src/pages/api/admin/domains/[id].ts` (`DELETE`). Both literal copy strings from the spec, switched on `dominios.length === 0`.
+- [x] 6.8 DB-state checks: `AppSettings` — exactly one row survives (verified: seed `INSERT` + schema `CHECK (id = 1)`, singleton by construction, no code path can create a second row since `id` is always `1`); a domain added via `/api/admin/domains` is visible to `puedeUsarLaIa()` on the very next call (`invalidarDominios()` fires synchronously in the same process, verified by the e2e suite's scene 8 — add reflects with no reload); every pre-existing `deepseekEnabled=true` row reads `aiAccessOverride=NULL` (verified live at migration time, see 6.2).
+- [x] 6.9 `e2e/m6-acceso.ts` — both themes, all required scenarios (see Work Unit Evidence and Issues Found for the real local mock-provider harness built for the in-flight scenario)
+- [x] 6.10 `npm run check` exit 0
+- [x] 6.11 **M6 checkpoint** — access is DB-backed and gated at AI usage, not registration — deliverable
+
+### Files changed
+
+| File | Action | What |
+|---|---|---|
+| `prisma/schema.prisma` | Modify | `AppSettings`, `AuthorizedDomain` models; `User.deepseekEnabled` → `aiAccessOverride` (nullable) |
+| `prisma/migrations/20260921000000_acceso_y_ajustes/migration.sql` | Create | Hand-written: two `CREATE TABLE`, the seed `INSERT` for `AppSettings`, the rename + `DROP NOT NULL`/`DROP DEFAULT` + `UPDATE ... SET NULL` for `User` |
+| `prisma/seed.ts` | Modify | Seeds `AuthorizedDomain` from `ALLOWED_EMAIL_DOMAINS`, idempotent, only when empty |
+| `src/lib/settings.ts` | Create | `leerAppSettings()` / `invalidarAppSettings()`, 10s cache |
+| `src/lib/auth/domains.ts` | Rewrite | DB-backed domain list + wildcard matcher + `puedeUsarLaIa()`; `isAllowedDomain()`/`allowedDomainsLabel()` removed |
+| `src/lib/auth/session.ts` | Modify | Comment updated — `aiAccessOverride` is now a real column, no longer a placeholder |
+| `src/middleware.ts` | Modify | `resolverIdentidadFresca()` selects and forwards the real `aiAccessOverride` on every gated request |
+| `src/pages/api/auth/register.ts` | Modify | Domain check removed; registration open to any domain |
+| `src/pages/api/auth/login.ts` | Modify | Domain check removed; login open to any domain; session now carries the real `aiAccessOverride` |
+| `src/pages/auth/callback.ts` | Modify | Domain check removed; `aiAccessOverride` selected and forwarded on both the existing-user and new-user paths |
+| `src/pages/api/chat/stream.ts` | Modify | `puedeUsarLaIa(user)` gate added as the very first check in `POST`, before any parsing or spend |
+| `src/components/AuthForm.tsx` | Modify | `allowedDomains` prop and its helper text removed; placeholder generalized |
+| `src/pages/login.astro` | Modify | `allowedDomainsLabel()` import/usage removed; dead `dominio` error-map entry removed |
+| `src/pages/register.astro` | Modify | Same, plus the now-false "restringido a docentes de la red educativa" subtitle rewritten |
+| `src/pages/admin/dominios.astro` | Modify | Empty shell → renders `DominiosPanel` |
+| `src/components/admin/DominiosPanel.tsx` | Create | Add/remove list, empty vs non-empty copy exactly per design.md |
+| `src/lib/admin/dominios.ts` | Create | `listarDominiosAdmin()` |
+| `src/pages/api/admin/domains/index.ts` | Create | `GET`/`POST`, pattern validation + normalization, `invalidarDominios()` on write |
+| `src/pages/api/admin/domains/[id].ts` | Create | `DELETE`, `invalidarDominios()` on write |
+| `src/lib/admin/usuarios.ts` | Modify | `accesoIa` now reflects all three real states (`textoAccesoIa()`/`accesoIaDeUsuario()`); `isAllowedDomain` swapped for `dominioAutorizado` |
+| `src/pages/api/admin/users/[id].ts` | Modify | `PATCH` now accepts `aiAccessOverride` (`.nullable().optional()`, explicit `null` distinct from omitted), returns the recomputed `accesoIa` text |
+| `src/components/admin/UsuariosTabla.tsx` | Modify | Row menu gained the tri-state items (`Habilitar la IA` / `Bloquear la IA` / `Volver a la regla del dominio`); column reads the real value |
+| `e2e/m6-acceso.ts` | Create | Full slice verification, both themes, including a real local SSE mock AI provider for the in-flight scenario |
+
+### Deviations from design
+
+1. **The test message for `/api/chat/stream` had to avoid a pre-existing, unrelated regex bug in `pideCambio()` (`stream.ts`)** — not introduced by M6, not touched by M6. `INTERROGATIVA`'s trailing `\b` fails immediately after a word ending in an accented vowel (`é`, `á`, …) followed by whitespace, because JavaScript's `\b` is defined against ASCII `\w` and treats accented letters as non-word characters — so a genuinely interrogative message like `"¿Qué día es hoy?"` is misclassified as a change request (`pideCambio()` returns `true` instead of `false`), forcing an unwanted tool-call retry. Confirmed directly in `node -e`. Worked around in `e2e/m6-acceso.ts` by using test messages that don't end a matched interrogative word in an accented vowel (`"¿Existe algo nuevo hoy?"` instead of `"¿Qué día es hoy?"`) — the M6 gate itself doesn't care about message content at all, so this only affected the harness. **Flagging, not fixing**: out of M6's scope; a real pre-existing defect for whoever next touches `stream.ts`'s Spanish message classification.
+2. **The `/api/chat/stream` access gate is placed before `readBody`, not merely "before the token-limit check"** — task 6.5 says "beside the token-limit check"; the implementation puts it earlier still (immediately after resolving `locals.user`, before even parsing the JSON body), because that is strictly "before anything is spent" and costs nothing extra (no dependency on the parsed body). The token-limit check remains exactly where it was; the access gate is simply first among the several checks in the handler, which is a strengthening, not a deviation from intent.
+
+### Issues found
+
+1. **A real local SSE mock AI provider was necessary to genuinely test "revocation doesn't cut an in-flight turn."** Rather than fabricate this scenario or skip it (both explicitly discouraged by the established convention in this repo — see M5's Deviation notes on never faking a pass), `e2e/m6-acceso.ts` starts a tiny local `node:http` server that speaks the same SSE dialect `readCompletionStream()` expects, registers it as a real `AiModel` via the admin API (so `catalogo.ts`'s 30s cache sees it immediately), and drives a real turn through the real `/api/chat/stream` pipeline with an artificial 1.5s delay mid-response. The admin's revocation call lands measurably inside that window (confirmed by direct instrumentation during debugging — see below), and the assertions are on the real HTTP responses, not simulated. Test messages are phrased as questions so `pideCambio()` returns `false` and no tool-call assembly is required from the mock (see Deviation 1) — the mock only ever needs to stream plain text.
+2. **Two Playwright-vs-real-browser gaps, not app bugs, cost debugging time and are now commented in the test file**: (a) `page.request.delete()` with no body doesn't send an `Origin` header the way a real browser's `fetch()` does for same-origin DELETEs, so `csrf.ts`'s cross-origin check (correctly) rejected it — worked around with `data: {}` to force the JSON content-type exemption path. (b) Launching a second `chromium.launch()` in the middle of the "in-flight" timing window stalled the event loop long enough to invert the intended ordering (the revoke call would sometimes land server-side *before* the first request's gate check even ran) — fixed by pre-launching and pre-authenticating both browser contexts before starting the timed section.
+3. **Under real system load on this shared machine** (confirmed via `free -h`/`ps aux` mid-debugging: ~5.3/7.9 GiB RAM used, 3 GiB swap in use, load average 3.7 on 4 cores, from several concurrent unrelated agent sessions), first-time-in-process Vite compilation of the `/admin/dominios` and `/admin/usuarios` islands occasionally exceeded a 10s retry budget. This is an environment characteristic, not an M6 defect — confirmed by reproducing the *exact same* timeout failure on the pre-existing, untouched `e2e/m2-catalogo.ts` (`Enviar` button staying disabled) on the same run, which passed cleanly on a second, unmodified re-run once other load subsided. `e2e/m6-acceso.ts`'s first-render waits were bumped to 45s and given an explicit `waitForLoadState('networkidle')` before interacting, to be robust against this without weakening what's actually being asserted.
+
+### Verification output (actual)
+
+```
+$ npm run check
+> koduedu@0.1.0 check
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx tsx e2e/m6-acceso.ts   (run 3 times in a row, identical result every time)
+✔ preparado: motor de IA de prueba dado de alta por la API de admin
+✔ preparado: lista blanca con "escuela-e2e-m6.edu.ar" y "*.edu.ar"
+✔ registro: un dominio no listado puede crear una cuenta
+✔ login: la misma cuenta, con el mismo dominio no listado, puede entrar
+✔ uso de la IA: dominio no listado y sin override → 403 con el mensaje legible del spec
+✔ uso de la IA: el grant de admin habilita a un usuario de dominio no listado, en su próximo turno
+✔ uso de la IA: dominio listado, sin override → permitido por la regla del dominio
+✔ uso de la IA: la revocación de admin bloquea a un usuario de dominio listado, sin importar el dominio
+✔ uso de la IA: lista de dominios vacía → todo el mundo puede usar la IA
+✔ uso de la IA: el comodín "*.edu.ar" matchea un subdominio real
+✔ turno en curso: revocar a mitad de camino no lo corta, termina normal
+✔ próximo turno: bloqueado, tal como pide el spec ("revocation applies to the next turn")
+✔ /admin/dominios (light): agregar un dominio lo refleja en la lista sin recargar
+✔ /admin/dominios (light): quitar un dominio lo saca de la lista sin recargar
+✔ /admin/dominios (dark): agregar un dominio lo refleja en la lista sin recargar
+✔ /admin/dominios (dark): quitar un dominio lo saca de la lista sin recargar
+✔ /admin/dominios: el copy de lista vacía es el literal de design.md
+✔ /admin/usuarios (light): "Habilitar la IA" pasa la columna a "Sí · permiso individual"
+✔ /admin/usuarios (light): "Bloquear la IA" pasa la columna a "No"
+✔ /admin/usuarios (light): "Volver a la regla del dominio" no rompe la fila
+✔ /admin/usuarios (dark): "Habilitar la IA" pasa la columna a "Sí · permiso individual"
+✔ /admin/usuarios (dark): "Bloquear la IA" pasa la columna a "No"
+✔ /admin/usuarios (dark): "Volver a la regla del dominio" no rompe la fila
+
+✔ e2e/m6-acceso.ts: todos los escenarios pasaron
+
+$ npx tsx e2e/unidad.ts        # regresión → 11/11
+$ npx tsx e2e/m1-admin-shell.ts  # regresión → 11/11
+$ npx tsx e2e/m2-catalogo.ts    # regresión → 7/7 (one transient environment-load failure reproduced and explained — see Issues Found #3 — then a clean pass on the untouched file)
+$ npx tsx e2e/m3-motores.ts    # regresión → 14/14
+$ npx tsx e2e/m4-costos.ts     # regresión → 17/17
+$ npx tsx e2e/m5-usuarios.ts   # regresión → 23/23
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT email, \"deepseekEnabled\" FROM \"User\" WHERE id = 'm6-migration-probe-id';"
+  before migration: t
+
+$ docker exec -i kodu_db_dev psql -U kodu -d koduedu < prisma/migrations/20260921000000_acceso_y_ajustes/migration.sql
+  ...
+  UPDATE 13    ← every pre-existing row, including the probe, set to NULL
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT email, \"aiAccessOverride\" FROM \"User\" WHERE id = 'm6-migration-probe-id';"
+  after migration: (null)
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FILTER (WHERE \"aiAccessOverride\" IS NOT NULL) AS non_null, count(*) AS total FROM \"User\";"
+  non_null=0, total=13
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT * FROM \"AppSettings\";"
+  exactly one row, id=1, demoEnabled=false, demoTokenLimit=200000
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"AuthorizedDomain\";"
+  0   ← clean after test teardown
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT email, \"aiAccessOverride\" FROM \"User\" WHERE email = 'admin@rededucativa.edu.ar';"
+  admin@rededucativa.edu.ar | (null)   ← untouched by the whole test run
+
+$ docker exec kodu_db_dev psql -U kodu -d koduedu -c "SELECT count(*) FROM \"AiModel\" WHERE provider = 'test-m6';"
+  0   ← no residue from the test's mock-provider AiModel row
+```
+
+### Remaining tasks
+
+None for Phase 6. Phases 7–8 (M7–M8) remain out of scope for this apply
+batch. `demo.astro` still an empty shell for M7; `AppSettings.demoEnabled`/
+`demoTokenLimit`/`demoCycleStartedAt` exist in the schema now (M6 delivered
+the table itself, per design.md §9) but nothing reads or writes them yet —
+that wiring is M7's job.
+
+### Workload / PR boundary
+
+- Mode: stacked-to-main, chained PR slice
+- Current work unit: M6
+- Boundary: starts where M5 left off on `feat/panel-admin`, ends at the M6
+  checkpoint (task 6.11).
+- Estimated review budget impact: `review_budget_lines` is unbounded for
+  this change per the owner, so this is informational only.

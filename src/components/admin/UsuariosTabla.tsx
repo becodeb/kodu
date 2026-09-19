@@ -8,15 +8,11 @@ interface Props {
 
 /**
  * La tabla de `/admin/usuarios` (design.md — "The users table";
- * specs/admin-users/spec.md).
+ * specs/ai-access-control/spec.md — "Per-user override precedence").
  *
  * El menú de acciones reusa `[data-menu]` de `BaseLayout.astro:126` — un
  * `<details>` nativo, foco/apertura/cierre por teclado sin ninguna línea de
- * JS propia (ver el comentario que ya dejó M1 en ese script). Sólo hay dos
- * acciones hoy: "Hacer/Quitar administrador" y "Ver ficha". Los ítems de
- * habilitar/bloquear el acceso individual a la IA que describe design.md NO
- * están acá — esa columna (`aiAccessOverride`) todavía no existe, ver la
- * nota completa en `src/lib/admin/usuarios.ts`.
+ * JS propia (ver el comentario que ya dejó M1 en ese script).
  */
 export default function UsuariosTabla({ initialUsuarios }: Props) {
   const [usuarios, setUsuarios] = useState(initialUsuarios);
@@ -43,6 +39,34 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
 
     setUsuarios((actuales) =>
       actuales.map((item) => (item.id === usuario.id ? { ...item, role: result.data.usuario.role } : item)),
+    );
+  }
+
+  /**
+   * `aiAccessOverride` es de tres estados y el `null` es un valor explícito
+   * ("volver a la regla del dominio"), así que el body siempre manda la
+   * clave — nunca se omite para "no tocar nada" (ver `[id].ts`). El backend
+   * devuelve `accesoIa` ya recalculado (incluida la regla de dominio cuando
+   * corresponde), así que acá no se reimplementa esa lógica.
+   */
+  async function fijarAccesoIa(usuario: FilaUsuarioAdmin, nuevo: boolean | null) {
+    setError(null);
+    setPendingId(usuario.id);
+
+    const result = await apiRequest<{
+      usuario: { id: string; aiAccessOverride: boolean | null; accesoIa: string };
+    }>(`/api/admin/users/${usuario.id}`, 'PATCH', { aiAccessOverride: nuevo });
+
+    setPendingId(null);
+
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    const { aiAccessOverride, accesoIa } = result.data.usuario;
+    setUsuarios((actuales) =>
+      actuales.map((item) => (item.id === usuario.id ? { ...item, aiAccessOverride, accesoIa } : item)),
     );
   }
 
@@ -117,7 +141,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                     >
                       ⋯
                     </summary>
-                    <div className="kodu-card absolute right-0 z-50 mt-1 w-52 overflow-hidden p-1 shadow-lg">
+                    <div className="kodu-card absolute right-0 z-50 mt-1 w-56 overflow-hidden p-1 shadow-lg">
                       <button
                         type="button"
                         disabled={pendingId === usuario.id}
@@ -126,6 +150,36 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                       >
                         {usuario.role === 'ADMIN' ? 'Quitar administrador' : 'Hacer administrador'}
                       </button>
+                      {usuario.aiAccessOverride !== true && (
+                        <button
+                          type="button"
+                          disabled={pendingId === usuario.id}
+                          onClick={() => void fijarAccesoIa(usuario, true)}
+                          className="block w-full rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil disabled:opacity-50"
+                        >
+                          Habilitar la IA
+                        </button>
+                      )}
+                      {usuario.aiAccessOverride !== false && (
+                        <button
+                          type="button"
+                          disabled={pendingId === usuario.id}
+                          onClick={() => void fijarAccesoIa(usuario, false)}
+                          className="block w-full rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil disabled:opacity-50"
+                        >
+                          Bloquear la IA
+                        </button>
+                      )}
+                      {usuario.aiAccessOverride !== null && (
+                        <button
+                          type="button"
+                          disabled={pendingId === usuario.id}
+                          onClick={() => void fijarAccesoIa(usuario, null)}
+                          className="block w-full rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil disabled:opacity-50"
+                        >
+                          Volver a la regla del dominio
+                        </button>
+                      )}
                       <a
                         href={`/admin/usuarios/${usuario.id}`}
                         className="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil"

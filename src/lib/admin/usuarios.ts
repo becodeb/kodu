@@ -1,27 +1,38 @@
 import { prisma } from '../db.ts';
 import { Prisma } from '../../generated/prisma/client.ts';
-import { isAllowedDomain } from '../auth/domains.ts';
+import { dominioAutorizado } from '../auth/domains.ts';
 import { formatearCostoAdminUsd } from '../format/costo.ts';
 import { fechaLarga, haceTiempo } from '../format/fecha.ts';
 import { costoTotalDeUsuario } from '../ai/usage.ts';
 
 /**
- * Agregados sobre `User` para `/admin/usuarios` (M5, design.md — "The users
- * table" / "The user detail view"). Todo lo que sale de acá ya está
+ * Agregados sobre `User` para `/admin/usuarios` (M5/M6, design.md — "The
+ * users table" / "The user detail view"). Todo lo que sale de acá ya está
  * convertido a `string`/`number`/`boolean`: nada de `Prisma.Decimal` ni
  * `Date` cruza hacia `UsuariosTabla.tsx`, que es una isla `client:load`
  * (mismo borde que `modelos.ts` ya resuelve para el catálogo de motores).
  *
- * **`aiAccessOverride` queda afuera a propósito.** `src/lib/auth/session.ts`
- * y `src/middleware.ts` ya documentan que esa columna todavía no existe —
- * llega con la migración de M6 — y hasta entonces no hay ningún permiso
- * INDIVIDUAL que grabar ni leer. Por eso "Acceso a la IA" acá sólo puede
- * distinguir dos de los tres estados que describe design.md
- * ("Sí · por dominio" / "No"): el tercero ("Sí · permiso individual")
- * no tiene ningún dato real detrás todavía. Es la misma clase de dependencia
- * cruzada entre milestones que tasks.md ya marca explícitamente para 5.8 y
- * M8 — acá no estaba escrita, así que queda documentada acá.
+ * `accesoIa` ya refleja los tres estados de design.md desde que
+ * `aiAccessOverride` tiene columna real (M6): `true` -> "Sí · permiso
+ * individual", `false` -> "No" (revocado, sin importar el dominio), `null`
+ * -> depende de `dominioAutorizado()`.
  */
+
+function textoAccesoIa(aiAccessOverride: boolean | null, autorizadoPorDominio: boolean): string {
+  if (aiAccessOverride === true) return 'Sí · permiso individual';
+  if (aiAccessOverride === false) return 'No';
+  return autorizadoPorDominio ? 'Sí · por dominio' : 'No';
+}
+
+/**
+ * Versión de una sola fila de `textoAccesoIa`, para cuando sólo hace falta
+ * recalcular UN usuario (ej. la respuesta de `PATCH /api/admin/users/:id`
+ * después de tocar el override) y no vale la pena traer toda la tabla.
+ */
+export async function accesoIaDeUsuario(email: string, aiAccessOverride: boolean | null): Promise<string> {
+  const autorizadoPorDominio = aiAccessOverride === null ? await dominioAutorizado(email) : false;
+  return textoAccesoIa(aiAccessOverride, autorizadoPorDominio);
+}
 
 export interface FilaUsuarioAdmin {
   id: string;
@@ -29,7 +40,9 @@ export interface FilaUsuarioAdmin {
   email: string;
   esGoogle: boolean;
   role: 'DOCENTE' | 'ADMIN';
-  /** "Sí · por dominio" | "No" — ver la nota de arriba. */
+  /** El permiso individual crudo: lo necesita el menú de la fila para saber qué ítems mostrar. */
+  aiAccessOverride: boolean | null;
+  /** "Sí · por dominio" | "Sí · permiso individual" | "No" — la razón, no sólo el veredicto. */
   accesoIa: string;
   proyectos: number;
   tokens: number;
@@ -42,7 +55,7 @@ export interface FilaUsuarioAdmin {
 export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
   const [usuarios, filasUso, proyectosPorUsuario] = await Promise.all([
     prisma.user.findMany({
-      select: { id: true, name: true, email: true, googleId: true, role: true },
+      select: { id: true, name: true, email: true, googleId: true, role: true, aiAccessOverride: true },
     }),
     prisma.tokenUsage.findMany({
       select: { userId: true, promptTokens: true, completionTokens: true, costUsd: true, createdAt: true },
@@ -74,8 +87,11 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
 
   const proyectosMapa = new Map(proyectosPorUsuario.map((fila) => [fila.userId, fila]));
 
-  return usuarios
-    .map((usuario) => {
+  // `dominioAutorizado()` tiene su propia caché de 10s (domains.ts), así que
+  // esto no es N consultas a la base: la primera llamada la llena y el resto
+  // de la tabla la reusa en memoria.
+  const filas = await Promise.all(
+    usuarios.map(async (usuario) => {
       const uso = usoPorUsuario.get(usuario.id);
       const proyectoInfo = proyectosMapa.get(usuario.id);
 
@@ -83,20 +99,26 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
         .filter((fecha): fecha is Date => fecha != null)
         .sort((a, b) => b.getTime() - a.getTime())[0];
 
+      const autorizadoPorDominio =
+        usuario.aiAccessOverride === null ? await dominioAutorizado(usuario.email) : false;
+
       return {
         id: usuario.id,
         name: usuario.name,
         email: usuario.email,
         esGoogle: usuario.googleId !== null,
         role: usuario.role,
-        accesoIa: isAllowedDomain(usuario.email) ? 'Sí · por dominio' : 'No',
+        aiAccessOverride: usuario.aiAccessOverride,
+        accesoIa: textoAccesoIa(usuario.aiAccessOverride, autorizadoPorDominio),
         proyectos: proyectoInfo?._count._all ?? 0,
         tokens: uso?.tokens ?? 0,
         costoDisplay: formatearCostoAdminUsd(uso === undefined ? null : uso.sinPrecio ? null : uso.costUsd.toString()),
         ultimaActividad: haceTiempo(ultimaActividadFecha ?? null),
       };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }),
+  );
+
+  return filas.sort((a, b) => a.name.localeCompare(b.name, 'es'));
 }
 
 export interface DetalleUsuarioAdmin {
@@ -117,13 +139,22 @@ export interface DetalleUsuarioAdmin {
 export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdmin | null> {
   const usuario = await prisma.user.findUnique({
     where: { id },
-    select: { id: true, name: true, email: true, googleId: true, role: true, createdAt: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      googleId: true,
+      role: true,
+      createdAt: true,
+      aiAccessOverride: true,
+    },
   });
   if (!usuario) return null;
 
-  const [{ tokens, costUsd }, proyectosCount] = await Promise.all([
+  const [{ tokens, costUsd }, proyectosCount, autorizadoPorDominio] = await Promise.all([
     costoTotalDeUsuario(usuario.id),
     prisma.project.count({ where: { userId: usuario.id } }),
+    usuario.aiAccessOverride === null ? dominioAutorizado(usuario.email) : Promise.resolve(false),
   ]);
 
   return {
@@ -133,7 +164,7 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
     esGoogle: usuario.googleId !== null,
     role: usuario.role,
     creadoDisplay: `se sumó el ${fechaLarga(usuario.createdAt)}`,
-    accesoIa: isAllowedDomain(usuario.email) ? 'Sí · por dominio' : 'No',
+    accesoIa: textoAccesoIa(usuario.aiAccessOverride, autorizadoPorDominio),
     tokens,
     costoDisplay: formatearCostoAdminUsd(costUsd?.toString() ?? null),
     proyectosCount,

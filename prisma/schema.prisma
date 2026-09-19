@@ -36,13 +36,44 @@ model User {
   googleId     String?      @unique
   name         String
   role         Role         @default(DOCENTE)
-  /// DeepSeek se paga por token: queda oculto salvo que un admin lo habilite
-  /// para este docente en particular.
-  deepseekEnabled Boolean   @default(false)
+  /// Permiso individual de acceso a la IA (design.md #10). `null` = sin
+  /// opinion, sigue la regla de dominio; `true` = habilitado a mano por un
+  /// admin sin importar el dominio; `false` = revocado a mano sin importar
+  /// el dominio. Hasta la migracion 20260921000000 esta columna se llamaba
+  /// `deepseekEnabled` y contestaba otra pregunta (si el docente podia usar
+  /// DeepSeek); sus valores `true` NO se heredan como permiso — la migracion
+  /// los limpia a `null`.
+  aiAccessOverride Boolean?
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
   tokenUsage   TokenUsage[]
+}
+
+/// Fila unica de interruptores de toda la app (design.md #9): hoy solo la
+/// demo (M7), pero evita que el proximo toggle en tiempo de ejecucion tenga
+/// que inventar donde vivir. Singleton, no clave-valor: se lee tipado, entero
+/// y en pocos lugares por request — ver la justificacion completa en
+/// design.md.
+model AppSettings {
+  id                 Int      @id @default(1) // CHECK (id = 1) en la migracion: jamas una segunda fila.
+  demoEnabled        Boolean  @default(false)
+  demoTokenLimit     Int      @default(200000)
+  demoCycleStartedAt DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+/// Dominios de correo que habilitan el uso de la IA (design.md #10) — NO el
+/// registro ni el login, que quedan abiertos a cualquiera desde M6. Reemplaza
+/// a `ALLOWED_EMAIL_DOMAINS` como fuente de verdad en tiempo de ejecucion; el
+/// env var solo se usa como semilla inicial (`prisma/seed.ts`).
+model AuthorizedDomain {
+  id        String   @id @default(uuid())
+  /// "rededucativa.edu.ar" o "*.edu.ar" (comodin de subdominio). Siempre en
+  /// minusculas, sin "@".
+  pattern   String   @unique
+  note      String?
+  createdAt DateTime @default(now())
 }
 
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope

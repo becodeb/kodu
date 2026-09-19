@@ -2,8 +2,6 @@ import { useState, type FormEvent } from 'react';
 
 interface AuthFormProps {
   mode: 'login' | 'register';
-  /** Dominios institucionales habilitados, para el texto de ayuda. */
-  allowedDomains: string;
   /** Ruta a la que volver despues de iniciar sesion (?next=...). */
   nextUrl?: string;
 }
@@ -18,7 +16,7 @@ interface AuthResponse {
  * Isla React de autenticacion. Habla con /api/auth/login | /api/auth/register
  * por fetch y redirige del lado del cliente cuando el backend confirma.
  */
-export default function AuthForm({ mode, allowedDomains, nextUrl }: AuthFormProps) {
+export default function AuthForm({ mode, nextUrl }: AuthFormProps) {
   const isRegister = mode === 'register';
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +73,7 @@ export default function AuthForm({ mode, allowedDomains, nextUrl }: AuthFormProp
 
       <div>
         <label className="kodu-label" htmlFor="email">
-          Email institucional
+          Email
         </label>
         <input
           id="email"
@@ -85,11 +83,8 @@ export default function AuthForm({ mode, allowedDomains, nextUrl }: AuthFormProp
           required
           disabled={pending}
           className="kodu-input"
-          placeholder={`docente${allowedDomains.split(',')[0]?.trim() ?? ''}`}
+          placeholder="docente@tuescuela.edu.ar"
         />
-        <p className="mt-1.5 text-xs text-ink-500">
-          Solo se aceptan correos de: <span className="font-medium">{allowedDomains}</span>
-        </p>
       </div>
 
       <div>

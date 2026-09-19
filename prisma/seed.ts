@@ -2,10 +2,14 @@ import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
+import { getAllowedDomains } from '../src/lib/env.ts';
 
 /**
- * Seed idempotente: crea la cuenta ADMIN inicial y las reglas globales base
- * que el SPEC (§4.2) inyecta en cada llamada a la IA.
+ * Seed idempotente: crea la cuenta ADMIN inicial, las reglas globales base
+ * que el SPEC (§4.2) inyecta en cada llamada a la IA, y siembra
+ * `AuthorizedDomain` desde `ALLOWED_EMAIL_DOMAINS` (design.md §10) — sólo la
+ * primera vez, porque un .sql no puede leer el .env y un despliegue
+ * existente no puede perder sus dominios configurados al actualizar.
  *
  * Ejecutar con: npm run db:seed
  */
@@ -53,6 +57,22 @@ async function main(): Promise<void> {
     select: { id: true, email: true },
   });
   console.log(`✔ Admin listo: ${admin.email}`);
+
+  const dominiosExistentes = await prisma.authorizedDomain.count();
+  if (dominiosExistentes === 0) {
+    const patrones = getAllowedDomains();
+    if (patrones.length > 0) {
+      await prisma.authorizedDomain.createMany({
+        data: patrones.map((pattern) => ({ pattern })),
+        skipDuplicates: true,
+      });
+      console.log(`✔ ${patrones.length} dominio(s) sembrado(s) desde ALLOWED_EMAIL_DOMAINS`);
+    } else {
+      console.log('… ALLOWED_EMAIL_DOMAINS está vacía: no se sembró ningún dominio (lista abierta)');
+    }
+  } else {
+    console.log(`… AuthorizedDomain ya tiene ${dominiosExistentes} fila(s): no se resiembra`);
+  }
 
   for (const rule of GLOBAL_RULES) {
     const existing = await prisma.customRule.findFirst({

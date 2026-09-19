@@ -31,9 +31,10 @@ function matches(pathname: string, prefixes: string[]): boolean {
  * toleran un dato viejo, las mutaciones de /api/admin no (ver
  * requireFreshAdmin).
  *
- * `aiAccessOverride` e `isDemo` todavía no tienen columna propia en la base
- * — llegan con las migraciones de M6 y M7 — así que hasta entonces viajan
- * en null/false sin importar el resultado de esta lectura.
+ * `aiAccessOverride` ya tiene columna propia desde M6 y se relee acá en cada
+ * pedido gateado. `isDemo` todavía no tiene columna propia — llega con la
+ * migración de M7 — así que hasta entonces viaja en `false` sin importar el
+ * resultado de esta lectura.
  */
 async function resolverIdentidadFresca(
   sesion: SessionUser,
@@ -41,7 +42,7 @@ async function resolverIdentidadFresca(
   try {
     const fila = await prisma.user.findUnique({
       where: { id: sesion.id },
-      select: { id: true, email: true, name: true, role: true },
+      select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
     });
 
     if (!fila) {
@@ -55,7 +56,7 @@ async function resolverIdentidadFresca(
         email: fila.email,
         name: fila.name,
         role: fila.role,
-        aiAccessOverride: null,
+        aiAccessOverride: fila.aiAccessOverride,
         isDemo: false,
       },
       fresh: true,

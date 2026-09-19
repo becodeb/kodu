@@ -2,25 +2,26 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
+import { accesoIaDeUsuario } from '../../../../lib/admin/usuarios.ts';
 
 /**
- * PATCH /api/admin/users/:id — cambia el rol de un docente (design.md —
- * "The users table"; specs/admin-users/spec.md — "Per-row overflow menu").
+ * PATCH /api/admin/users/:id — cambia el rol y/o el permiso individual de
+ * acceso a la IA de un docente (design.md — "The users table"; §10;
+ * specs/ai-access-control/spec.md — "Per-user override precedence").
  *
  * La autenticación y la frescura de la identidad ya las exige el middleware
  * (`requireFreshAdmin` en toda mutación de `/api/admin`, ver
  * `src/middleware.ts`); acá sólo queda la lógica de negocio.
  *
- * **`aiAccessOverride` queda AFUERA de este endpoint a propósito.** Esa
- * columna todavía no existe — `src/lib/auth/session.ts` y
- * `src/middleware.ts` ya documentan que llega con la migración de M6 — y
- * aceptar el campo sin escribirlo en ningún lado sería peor que no
- * aceptarlo: un admin creería que guardó un permiso que en realidad nunca
- * se persistió. Ver `src/lib/admin/usuarios.ts` para la nota completa.
+ * `aiAccessOverride: null` es un valor explícito ("volver a la regla del
+ * dominio"), no "no lo toques" — por eso el campo es `.nullable().optional()`
+ * y no simplemente opcional: hace falta distinguir "no vino en el body" de
+ * "vino, y es null".
  */
 
 const actualizarUsuarioSchema = z.object({
   role: z.enum(['DOCENTE', 'ADMIN']).optional(),
+  aiAccessOverride: z.boolean().nullable().optional(),
 });
 
 export const PATCH: APIRoute = async ({ params, request }) => {
@@ -48,9 +49,17 @@ export const PATCH: APIRoute = async ({ params, request }) => {
 
   const actualizado = await prisma.user.update({
     where: { id: existente.id },
-    data: { role: datos.role },
-    select: { id: true, role: true },
+    // `undefined` no toca la columna (Prisma estándar); `null` explícito SÍ
+    // la pisa — es justo la distinción que necesita "volver a la regla del
+    // dominio" (ver el comentario de arriba).
+    data: { role: datos.role, aiAccessOverride: datos.aiAccessOverride },
+    select: { id: true, email: true, role: true, aiAccessOverride: true },
   });
 
-  return ok({ usuario: actualizado });
+  // Se devuelve el texto ya calculado (no sólo el booleano crudo) para que
+  // la tabla no tenga que reimplementar la regla de dominio del lado del
+  // cliente ni pedir otra vuelta sólo para refrescar la columna.
+  const accesoIa = await accesoIaDeUsuario(actualizado.email, actualizado.aiAccessOverride);
+
+  return ok({ usuario: { id: actualizado.id, role: actualizado.role, aiAccessOverride: actualizado.aiAccessOverride, accesoIa } });
 };

@@ -15,6 +15,7 @@ import {
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import {
   UPDATE_RESOURCE_CODE,
   parseUpdateResourceArgs,
@@ -225,6 +226,19 @@ async function motorConCapacidad(actual: ProviderConfig, largoMensaje: number): 
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const user = locals.user!;
+
+  /**
+   * El gate de acceso a la IA vive ACÁ, no en el middleware ni en el login
+   * (design.md §10): la política de "quién puede usar la IA" decide en el
+   * punto donde se va a gastar, junto al tope por usuario más abajo. Por
+   * construcción — no por cuidado — esto también es lo que hace que revocar
+   * el acceso aplique al PRÓXIMO turno y nunca corte uno que ya está
+   * transmitiendo: el middleware relee `aiAccessOverride` en cada request
+   * nueva a esta ruta, y un turno en curso no hace una request nueva.
+   */
+  if (!(await puedeUsarLaIa(user))) {
+    return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
+  }
 
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {

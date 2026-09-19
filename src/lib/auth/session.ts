@@ -22,9 +22,9 @@ export interface SessionUser {
   role: SessionRole;
   /**
    * null = sin opinión, sigue la regla de dominio; true = acceso a la IA
-   * habilitado a mano; false = revocado a mano. Todavía no tiene columna
-   * propia en la base (llega con la migración de M6); hasta entonces viaja
-   * en null.
+   * habilitado a mano; false = revocado a mano (design.md §10). Columna real
+   * desde M6 (`User.aiAccessOverride`); se relee de la base en cada request
+   * a una ruta gateada (middleware.ts), nunca se firma en el JWT.
    */
   aiAccessOverride: boolean | null;
   /** Cuenta compartida de demo (M7). Todavía no tiene columna propia. */

@@ -1,7 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
-import { allowedDomainsLabel } from '../lib/auth/domains.ts';
 import GoogleButton from '../components/GoogleButton.astro';
 import { isGoogleEnabled } from '../lib/env.ts';
 
@@ -9,12 +8,13 @@ const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
 // Solo aceptamos redirecciones internas: evita open redirect via ?next=https://...
 const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
 
+// "dominio" salió del mapa: desde M6 el dominio ya no bloquea el login
+// (design.md §10), así que `callback.ts` no vuelve a emitir ese error.
 const ERRORES: Record<string, string> = {
   'google-cancelado': 'Cancelaste el ingreso con Google.',
   'google-state': 'El ingreso con Google expiró o no se pudo verificar. Probá de nuevo.',
   'google-sin-verificar': 'Esa cuenta de Google todavía no tiene el correo verificado.',
   'google-no-configurado': 'El ingreso con Google no está disponible en este momento.',
-  dominio: 'Ese correo no está habilitado para entrar a Kodu.',
   google: 'No pudimos completar el ingreso con Google. Probá de nuevo.',
 };
 const errorGoogle = ERRORES[Astro.url.searchParams.get('error') ?? ''];
@@ -52,7 +52,7 @@ const googleActivo = isGoogleEnabled();
         </>
       )}
 
-      <AuthForm client:load mode="login" allowedDomains={allowedDomainsLabel()} nextUrl={safeNext} />
+      <AuthForm client:load mode="login" nextUrl={safeNext} />
 
       <p class="mt-6 text-center text-sm text-ink-500">
         ¿No tenés cuenta?{' '}
