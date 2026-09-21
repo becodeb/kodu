@@ -101,6 +101,7 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     userTokenLimit: fila.userTokenLimit,
     maxInputChars: fila.maxInputChars,
     supportsVision: fila.supportsVision,
+    reasoningEffort: fila.reasoningEffort,
     precios,
   };
 }

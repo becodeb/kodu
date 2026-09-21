@@ -35,6 +35,12 @@ export interface ProviderConfig {
   /** Largo máximo de un mensaje del docente, en caracteres. */
   maxInputChars: number;
   supportsVision: boolean;
+  /**
+   * Cuánto se le deja razonar antes de contestar, para los modelos que lo
+   * soportan. `null` = no mandar el parámetro, que es lo que corresponde con
+   * cualquier proveedor que no lo conozca: mandárselo a ciegas es un 400.
+   */
+  reasoningEffort: string | null;
   /** `null` si a este motor le falta algún precio: nunca se inventa un costo. */
   precios: {
     input: Prisma.Decimal;
@@ -212,6 +218,15 @@ async function intentarUna(
         tool_choice: options.forzarHerramienta
           ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
           : 'auto',
+        // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
+        // conocen el parámetro contestan 400 si se les manda, así que el
+        // default (NULL en el catálogo) es no mandarlo.
+        //
+        // En DeepSeek va en 'none': armar un HTML es escritura larga, no
+        // razonamiento. El thinking cobra tokens y latencia a cambio de poco,
+        // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
+        // el temperature de acá abajo.
+        ...(provider.reasoningEffort ? { reasoning_effort: provider.reasoningEffort } : {}),
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de

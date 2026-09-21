@@ -245,11 +245,20 @@ model AiModel {
   isDefault           Boolean @default(false)
   sortOrder           Int     @default(0)
 
-  maxOutputTokens Int     @default(65536)
+  /// Techo de tokens de salida, NO una cuota: se cobra lo que el modelo
+  /// escribe, no esto. Alto a propósito, porque la IA reescribe el recurso
+  /// ENTERO en cada turno y no un diff: la respuesta pesa lo que pesa el
+  /// documento, siempre.
+  maxOutputTokens Int     @default(131072)
   maxInputChars   Int     @default(400000)
   supportsVision  Boolean @default(false)
   /// Tope acumulado por usuario, en tokens. 0 = sin tope.
   userTokenLimit  Int     @default(0)
+  /// Cuánto se le deja razonar antes de contestar, para los modelos que lo
+  /// soportan: "none" | "low" | "high" | "max". NULL = no mandar el parámetro,
+  /// que es lo correcto para todo proveedor que no lo conozca (mandarlo a
+  /// ciegas es un 400). Ver src/lib/ai/provider.ts.
+  reasoningEffort String?
 
   fallbackModelId String?
   fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)

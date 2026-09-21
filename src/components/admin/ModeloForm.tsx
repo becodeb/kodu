@@ -64,7 +64,8 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [adminNote, setAdminNote] = useState(motor?.adminNote ?? '');
   const [selectableByTeacher, setSelectableByTeacher] = useState(motor?.selectableByTeacher ?? true);
   const [supportsVision, setSupportsVision] = useState(motor?.supportsVision ?? false);
-  const [maxOutputTokens, setMaxOutputTokens] = useState(String(motor?.maxOutputTokens ?? 65_536));
+  const [maxOutputTokens, setMaxOutputTokens] = useState(String(motor?.maxOutputTokens ?? 131_072));
+  const [reasoningEffort, setReasoningEffort] = useState(motor?.reasoningEffort ?? '');
   const [maxInputChars, setMaxInputChars] = useState(String(motor?.maxInputChars ?? 400_000));
   const [userTokenLimit, setUserTokenLimit] = useState(String(motor?.userTokenLimit ?? 0));
   const [fallbackModelId, setFallbackModelId] = useState(motor?.fallbackModelId ?? '');
@@ -97,6 +98,7 @@ export default function ModeloForm(props: ModeloFormProps) {
       selectableByTeacher,
       supportsVision,
       maxOutputTokens: Number(maxOutputTokens),
+      reasoningEffort: reasoningEffort === '' ? null : reasoningEffort,
       maxInputChars: Number(maxInputChars),
       userTokenLimit: Number(userTokenLimit),
       fallbackModelId: fallbackModelId === '' ? null : fallbackModelId,
@@ -321,6 +323,29 @@ export default function ModeloForm(props: ModeloFormProps) {
               className="kodu-input"
             />
           </div>
+        </div>
+
+        <div>
+          <label className="kodu-label" htmlFor={`${idBase}-reasoningEffort`}>
+            Razonamiento
+          </label>
+          <select
+            id={`${idBase}-reasoningEffort`}
+            value={reasoningEffort}
+            onChange={(event) => setReasoningEffort(event.target.value)}
+            className="kodu-input"
+          >
+            <option value="">No mandar el parámetro</option>
+            <option value="none">Sin razonamiento</option>
+            <option value="low">Bajo</option>
+            <option value="high">Alto</option>
+            <option value="max">Máximo</option>
+          </select>
+          <p className="mt-1 text-xs text-ink-500">
+            Dejalo en «no mandar» salvo que sepas que el proveedor lo soporta: mandárselo a uno que
+            no lo conoce devuelve un 400. Armar un recurso es escritura larga, no razonamiento, así
+            que «sin razonamiento» suele salir más barato y más rápido.
+          </p>
         </div>
 
         <div>
