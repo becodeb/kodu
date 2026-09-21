@@ -80,6 +80,22 @@ export class ProviderError extends Error {
 }
 
 /**
+ * El proveedor rechazó la herramienta forzada, no el pedido.
+ *
+ * Los modelos de razonamiento ("thinking mode") sólo aceptan `tool_choice:
+ * "auto"`: DeepSeek contesta 400 "Thinking mode does not support this
+ * tool_choice". El pedido es válido en todo lo demás, así que no hay que
+ * hacerlo fallar ni saltar al respaldo: alcanza con repetirlo sin la
+ * obligación, que es lo único que sobra.
+ */
+export class ToolChoiceNoSoportado extends ProviderError {
+  constructor(message: string) {
+    super(message, 400, false);
+    this.name = 'ToolChoiceNoSoportado';
+  }
+}
+
+/**
  * Reintentos ante saturación del proveedor.
  *
  * El modelo gratuito estrangula bastante más los pedidos con imagen que los de
@@ -134,15 +150,37 @@ export async function requestCompletionStream(options: {
 
   const endpoint = `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
 
-  for (let intento = 0; ; intento++) {
-    try {
-      return await intentarUna(endpoint, options);
-    } catch (error) {
-      const saturado = error instanceof ProviderError && error.status === 429;
-      if (!saturado || intento >= REINTENTOS.length) throw error;
+  // La obligación de llamar la herramienta se puede aflojar sobre la marcha:
+  // ver ToolChoiceNoSoportado. Es una sola vez, y no gasta ninguno de los
+  // intentos reservados para la saturación.
+  let forzar = options.forzarHerramienta ?? false;
+  let yaAflojo = false;
+  let saturaciones = 0;
 
-      const espera = REINTENTOS[intento]!;
-      options.onReintento?.(intento + 1, espera);
+  for (;;) {
+    try {
+      return await intentarUna(endpoint, {
+        messages: options.messages,
+        provider: options.provider,
+        signal: options.signal,
+        forzarHerramienta: forzar,
+      });
+    } catch (error) {
+      if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
+        console.warn(
+          `[provider] ${provider.label} no acepta forzar la herramienta; se repite el pedido con tool_choice "auto".`,
+        );
+        forzar = false;
+        yaAflojo = true;
+        continue;
+      }
+
+      const saturado = error instanceof ProviderError && error.status === 429;
+      if (!saturado || saturaciones >= REINTENTOS.length) throw error;
+
+      const espera = REINTENTOS[saturaciones]!;
+      saturaciones += 1;
+      options.onReintento?.(saturaciones, espera);
       await esperar(espera, options.signal);
     }
   }
@@ -200,6 +238,14 @@ async function intentarUna(
       throw new ProviderError(
         `${provider.label} está saturado en este momento.`,
         429,
+      );
+    }
+
+    // Un 400 que se queja del tool_choice no es un pedido mal armado: es un
+    // modelo de razonamiento al que no se le puede imponer la herramienta.
+    if (response.status === 400 && /tool_choice/i.test(detail)) {
+      throw new ToolChoiceNoSoportado(
+        `${provider.label} no acepta forzar la herramienta. ${detail.slice(0, 200)}`.trim(),
       );
     }
 
