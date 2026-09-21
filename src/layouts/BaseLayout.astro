@@ -30,6 +30,14 @@ const pageTitle = title === 'Kodu' ? title : `${title} · Kodu`;
 // salir de PUBLIC_SITE_URL: detrás del proxy, Astro.url cree que el sitio es
 // http:// y una imagen http en una página https no la levanta ningún scraper.
 const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
+
+// La canónica sale de PUBLIC_SITE_URL por el mismo motivo que la og:image, y
+// además sin querystring: `?next=/admin` en /login son la misma página para un
+// buscador, y si cada variante se declara distinta Google elige una al azar.
+// La barra final se normaliza (salvo en la raíz) para no publicar dos URLs de
+// la misma página.
+const rutaCanonica = ruta !== '/' && ruta.endsWith('/') ? ruta.slice(0, -1) : ruta;
+const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
 ---
 
 <!doctype html>
@@ -40,9 +48,11 @@ const ogImage = new URL('/brand/og.png', getEnv().PUBLIC_SITE_URL).href;
     <meta name="description" content={description} />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/brand/kodu-icono.png" />
+    <link rel="canonical" href={canonical} />
     <meta property="og:title" content={pageTitle} />
     <meta property="og:description" content={description} />
     <meta property="og:image" content={ogImage} />
+    <meta property="og:url" content={canonical} />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
