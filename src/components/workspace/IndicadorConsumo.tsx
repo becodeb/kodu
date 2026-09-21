@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { formatearCostoUsd } from '../../lib/format/costo.ts';
 import type { NivelConsumo } from '../../lib/ai/usage.ts';
 
 /**
@@ -25,12 +24,6 @@ const ETIQUETAS: Record<NivelConsumo, string> = {
 
 export interface IndicadorConsumoProps {
   tokens: number;
-  /**
-   * Ya convertido a string en el borde servidor→cliente (design.md §2 — un
-   * `Prisma.Decimal` no sobrevive un `JSON.stringify` como número). `null`
-   * cuando ningún turno de este recurso tiene un precio cargado.
-   */
-  costUsd: string | null;
   nivel: NivelConsumo;
 }
 
@@ -44,28 +37,8 @@ function formatearTokens(tokens: number): string {
   return `${tokens.toLocaleString('es-AR')} tokens`;
 }
 
-export default function IndicadorConsumo({ tokens, costUsd, nivel }: IndicadorConsumoProps) {
+export default function IndicadorConsumo({ tokens, nivel }: IndicadorConsumoProps) {
   const [abierto, setAbierto] = useState(false);
-
-  const detalle = (() => {
-    if (costUsd === null) {
-      return <p className="text-ink-500">Sin precios registrados para estos turnos.</p>;
-    }
-
-    const esCero = Number(costUsd) === 0;
-    const monto = formatearCostoUsd(costUsd);
-
-    if (esCero) {
-      return (
-        <>
-          <p className="text-ink-900">{monto}</p>
-          <p className="text-ink-500">Los turnos se sirvieron con un motor sin costo.</p>
-        </>
-      );
-    }
-
-    return <p className="text-ink-900">≈ {monto} acumulado en este recurso</p>;
-  })();
 
   return (
     <div className="relative ml-auto shrink-0">
@@ -91,7 +64,7 @@ export default function IndicadorConsumo({ tokens, costUsd, nivel }: IndicadorCo
           className="kodu-card absolute top-full right-0 z-10 mt-2 w-56 p-3 text-xs shadow-lg"
         >
           <p className="mb-1 font-medium text-ink-900">{formatearTokens(tokens)}</p>
-          {detalle}
+          <p className="text-ink-500">Es cuánto texto procesó la IA en este recurso.</p>
         </div>
       )}
     </div>

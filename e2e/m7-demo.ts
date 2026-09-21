@@ -401,7 +401,17 @@ async function main(): Promise<void> {
 
       // ───────────────────────────────────────────────────────────
       // 5. Publicar a la galería no le saca la marca createdByDemo.
+      //
+      // Este fixture nunca ejercita la captura real del iframe, así que se
+      // escribe `screenshotUrl` directo por Prisma antes del PATCH: desde
+      // publicacion-likes-y-motores, publicar sin portada da 422 (la
+      // invariante del servidor, spec `resource-publishing`).
       // ───────────────────────────────────────────────────────────
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { screenshotUrl: 'https://example.com/demo-cover.png' },
+      });
+
       const publicado = await primerVisitante.request.patch(`${BASE_URL}/api/projects/${project.id}`, {
         data: { isInGallery: true },
       });

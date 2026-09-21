@@ -7,6 +7,7 @@ import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
+import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { pideCambio } from '../src/pages/api/chat/stream.ts';
 
 /**
@@ -379,6 +380,74 @@ await prueba('pideCambio: un pedido SIGUE siendo un pedido (la otra dirección)'
   ]) {
     assert.equal(pideCambio(pedido), true, `debería leerse como pedido: ${pedido}`);
   }
+});
+
+// ── Preguntas de las primeras iteraciones (spec ai-authoring-dialogue) ──────
+//
+// `renderPreguntas` no se exporta: se prueba a través de `buildSystemPrompt`,
+// que es lo que realmente viaja al modelo. Si la guía se arma bien pero no
+// llega al prompt, el docente igual no la ve.
+
+const MARCA_PREGUNTAS = '## Antes de construir: preguntá lo que no sabés';
+
+function contextoDePrueba(turnosPrevios: number, herramientaForzada: boolean) {
+  return {
+    globalRules: [],
+    userRules: [],
+    assets: [],
+    currentHtml: '<!DOCTYPE html><html><body></body></html>',
+    projectTitle: 'Recurso de prueba',
+    canSeeImages: false,
+    htmlEditedByTeacher: false,
+    turnosPrevios,
+    herramientaForzada,
+  };
+}
+
+await prueba('buildSystemPrompt: en el primer turno pide preguntar antes de construir', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(0, false));
+  assert.ok(
+    prompt.includes(MARCA_PREGUNTAS),
+    'el turno 1 tiene que llevar la guía de preguntas',
+  );
+  assert.ok(
+    prompt.includes('NO ADIVINES'),
+    'la guía tiene que decir explícitamente que no adivine',
+  );
+});
+
+await prueba('buildSystemPrompt: el turno 2 sigue siendo temprano (el borde)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(1, false));
+  assert.ok(
+    prompt.includes(MARCA_PREGUNTAS),
+    'turnosPrevios=1 es el último turno temprano: la guía tiene que estar',
+  );
+});
+
+await prueba('buildSystemPrompt: del turno 3 en adelante ya no pregunta', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(
+    !prompt.includes(MARCA_PREGUNTAS),
+    'con el recurso ya armado la guía sobra: el modelo tiene que editar, no interrogar',
+  );
+});
+
+await prueba('buildSystemPrompt: la herramienta forzada gana sobre las preguntas', () => {
+  // LA COLISIÓN. Forzar la herramienta le dice "escribí código ahora" y la
+  // guía le dice "podés contestar sin código". Las dos juntas en un mismo
+  // pedido son instrucciones contradictorias, así que la guía se omite.
+  const prompt = buildSystemPrompt(contextoDePrueba(0, true));
+  assert.ok(
+    !prompt.includes(MARCA_PREGUNTAS),
+    'con la herramienta forzada la guía de preguntas NO puede viajar',
+  );
+
+  // Y el turno tardío con herramienta forzada tampoco, obviamente: acá lo que
+  // se comprueba es que las dos condiciones no se pisen entre sí.
+  assert.ok(
+    !buildSystemPrompt(contextoDePrueba(5, true)).includes(MARCA_PREGUNTAS),
+    'turno tardío + herramienta forzada tampoco lleva la guía',
+  );
 });
 
 await prisma.$disconnect();

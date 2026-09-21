@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import DuplicateButton from '../components/DuplicateButton.tsx';
+import BotonLike from '../components/BotonLike.tsx';
 import { prisma } from '../lib/db.ts';
 
 /** Galería comunitaria (SPEC §5.3): sólo los recursos con el switch activo. */
@@ -8,7 +9,10 @@ const user = Astro.locals.user;
 
 const projects = await prisma.project.findMany({
   where: { isInGallery: true },
-  orderBy: { updatedAt: 'desc' },
+  // Más likes primero; a igual cantidad, el más recién tocado. El desempate
+  // importa: sin él, los recursos con cero likes salen en orden arbitrario y
+  // la galería cambia de orden sola entre dos recargas.
+  orderBy: [{ likes: { _count: 'desc' } }, { updatedAt: 'desc' }],
   take: 60,
   select: {
     id: true,
@@ -18,8 +22,24 @@ const projects = await prisma.project.findMany({
     screenshotUrl: true,
     updatedAt: true,
     user: { select: { name: true } },
+    _count: { select: { likes: true } },
   },
 });
+
+// "¿Este docente likeó estos 60?" en UNA consulta, no en 60. Es
+// `WHERE "userId" = $1 AND "projectId" IN (…)`, que cae entero sobre el
+// índice único (userId, projectId). Para un visitante anónimo la consulta ni
+// se hace.
+const likeados = user
+  ? new Set(
+      (
+        await prisma.projectLike.findMany({
+          where: { userId: user.id, projectId: { in: projects.map((p) => p.id) } },
+          select: { projectId: true },
+        })
+      ).map((fila) => fila.projectId),
+    )
+  : new Set<string>();
 ---
 
 <BaseLayout
@@ -69,12 +89,20 @@ const projects = await prisma.project.findMany({
                 <p class="mt-2 line-clamp-3 flex-1 text-sm text-ink-700">{project.description}</p>
               )}
 
-              <div class="mt-4 flex items-center gap-2 border-t border-linea pt-3">
+              <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-linea pt-3">
+                <BotonLike
+                  client:visible
+                  projectId={project.id}
+                  title={project.title}
+                  inicial={project._count.likes}
+                  likeadoInicial={likeados.has(project.id)}
+                  isLoggedIn={Boolean(user)}
+                />
                 <a
                   href={`/p/${project.slug}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="kodu-btn-primary px-2.5 py-1.5 text-xs"
+                  class="kodu-btn-primary ml-auto px-2.5 py-1.5 text-xs"
                 >
                   Probar a pantalla completa
                 </a>

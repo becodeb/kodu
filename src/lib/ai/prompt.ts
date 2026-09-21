@@ -3,10 +3,11 @@
  *
  * Orden de concatenación:
  *   1. System prompt base (formato, librerías por CDN, seguridad)
- *   2. Reglas globales activas (las cargan los ADMIN)
- *   3. Reglas activas del docente
- *   4. Assets subidos (imágenes con su URL pública, texto extraído de PDFs)
- *   5. Estado actual del recurso
+ *   2. Guía de preguntas tempranas (sólo en los primeros turnos; ver §10)
+ *   3. Reglas globales activas (las cargan los ADMIN)
+ *   4. Reglas activas del docente
+ *   5. Assets subidos (imágenes con su URL pública, texto extraído de PDFs)
+ *   6. Estado actual del recurso
  * El historial del ChatThread se agrega aparte, como mensajes.
  */
 
@@ -32,6 +33,10 @@ export interface PromptContext {
   canSeeImages: boolean;
   /** true si el docente tocó el código a mano desde la última respuesta de la IA. */
   htmlEditedByTeacher: boolean;
+  /** Turnos del DOCENTE ya guardados en este hilo, sin contar el actual. */
+  turnosPrevios: number;
+  /** Este turno viene con la herramienta forzada (`pideCambio`). Ver §10.3. */
+  herramientaForzada: boolean;
 }
 
 /**
@@ -94,6 +99,34 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 - Retroalimentación inmediata en cada actividad: correcto/incorrecto con una explicación breve.
 - Pensado para proyector y pizarra digital: tipografía grande, contraste alto (mínimo WCAG AA), áreas táctiles amplias, layout responsive.
 - Todo control interactivo debe ser operable por teclado y tener etiquetas accesibles.`;
+
+// Early = turnosPrevios <= 1: turno 1 y turno 2 del hilo. Turno 1 es el que
+// más se presta a inventar (menos información, y a menudo uno de los
+// prompts prearmados de starters.ts); turno 2 es frecuentemente la primera
+// frase libre del docente. Desde el turno 3 el recurso ya existe y viaja en
+// el prompt (renderCurrentHtml): preguntar ahí es fricción, no cuidado.
+export const TURNOS_TEMPRANOS = 1;
+
+const PREGUNTAS_TEMPRANAS = `
+
+## Antes de construir: preguntá lo que no sabés
+Recién arranca esta conversación y todavía no sabés lo suficiente sobre el curso. NO ADIVINES.
+
+- Si te falta algo que cambia de verdad lo que hay que construir (para qué grado o edad es, qué parte del tema entra, qué formato de actividad quiere), pedilo en el chat y esperá la respuesta. Hasta TRES preguntas, cortas y concretas, TODAS en el mismo mensaje.
+- Preguntá sólo lo que no podés deducir del pedido ni del recurso que ya existe. Si el docente ya lo dijo, no se lo vuelvas a preguntar.
+- Si con lo que te dijo alcanza para empezar, empezá. Las preguntas no son una excusa para no construir.
+- Nunca preguntes de a una para ir sacando datos de a poco: eso es un interrogatorio, no una consulta.`;
+
+function renderPreguntas(turnosPrevios: number, herramientaForzada: boolean): string {
+  // LA COLISION, resuelta acá y no en tiempo de ejecución: forzar la
+  // herramienta le dice al modelo "escribí código ahora" y la guía de
+  // preguntas le dice "podés contestar sin código". Dos instrucciones
+  // opuestas en un mismo pedido no se arbitran: si hay forzado, la guía NO
+  // EXISTE.
+  if (herramientaForzada) return '';
+  if (turnosPrevios > TURNOS_TEMPRANOS) return '';
+  return PREGUNTAS_TEMPRANAS;
+}
 
 function renderRules(title: string, rules: RuleContext[]): string {
   if (rules.length === 0) return '';
@@ -172,6 +205,7 @@ function renderCurrentHtml(
 export function buildSystemPrompt(context: PromptContext): string {
   return [
     BASE_PROMPT,
+    renderPreguntas(context.turnosPrevios, context.herramientaForzada),
     renderRules('Reglas institucionales (obligatorias)', context.globalRules),
     renderRules('Preferencias de este docente', context.userRules),
     renderAssets(context.assets, context.canSeeImages),

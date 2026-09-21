@@ -11,10 +11,17 @@ interface PreviewPanelProps {
   description: string;
   onMetaChange: (meta: { title?: string; description?: string }) => void;
   isInGallery: boolean;
-  onTogglePublish: (value: boolean) => void;
+  /** Sólo despublica. Publicar entra por la secuencia de captura de abajo. */
+  onDespublicar: () => void;
+  /** Vacía el guardado pendiente antes de capturar (design §3.2): si no, la
+   *  portada retrata código que todavía no se guardó. */
+  onAntesDePublicar: () => Promise<void>;
   screenshotUrl: string | null;
-  onScreenshot: (dataUrl: string) => Promise<void>;
+  /** `publicar: true` = la captura fue pedida para publicar. */
+  onScreenshot: (dataUrl: string, opciones?: { publicar?: boolean }) => Promise<void>;
   onDeleteScreenshot: () => void;
+  /** El recurso cambió después de la última portada (design §6). */
+  portadaVieja: boolean;
   saving: boolean;
   notice: string | null;
 }
@@ -30,13 +37,33 @@ const TABS: Array<[Tab, string]> = [
 export default function PreviewPanel(props: PreviewPanelProps) {
   const [tab, setTab] = useState<Tab>('preview');
   const [capturing, setCapturing] = useState(false);
+  // Cuál de los dos gatillos (portada sola, o portada-para-publicar) disparó
+  // la captura en curso: los dos comparten el mismo iframe, así que sólo uno
+  // corre a la vez, pero cada botón necesita saber si es el suyo.
+  const [capturingParaPublicar, setCapturingParaPublicar] = useState(false);
+  // Vive desde el click hasta que TODA la secuencia (captura + POST + PATCH)
+  // termina, no sólo la captura: el switch no se mueve optimistamente
+  // (design §3.2), así que mientras esto es true queda deshabilitado con
+  // "Publicando…", sin importar en qué paso de la cadena esté.
+  const [publicando, setPublicando] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // El iframe renderizó al menos una vez con el HTML actual. Sin esto la
+  // captura puede salir de un documento en blanco.
+  const [listo, setListo] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const timeoutRef = useRef<number | null>(null);
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
   // recarga al tipear en otros campos del panel.
   const srcDoc = useMemo(() => buildPreviewDocument(props.html), [props.html]);
+
+  // Un HTML nuevo es un documento nuevo por renderizar: hasta que no llegue
+  // su propio "load", una captura saldría del documento anterior o de uno en
+  // blanco.
+  useEffect(() => {
+    setListo(false);
+  }, [srcDoc]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -45,32 +72,51 @@ export default function PreviewPanel(props: PreviewPanelProps) {
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (!event.data || event.data.type !== CAPTURE_RESULT) return;
 
+      if (timeoutRef.current) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
       setCapturing(false);
 
       if (event.data.error) {
         setCaptureError(String(event.data.error));
+        if (capturingParaPublicar) setPublicando(false);
         return;
       }
 
       setCaptureError(null);
-      void props.onScreenshot(String(event.data.dataUrl));
+      const publicar = capturingParaPublicar;
+      void props
+        .onScreenshot(String(event.data.dataUrl), publicar ? { publicar: true } : undefined)
+        .finally(() => {
+          if (publicar) setPublicando(false);
+        });
     }
 
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [props]);
+  }, [props, capturingParaPublicar]);
 
-  function requestCapture() {
+  function pedirCaptura(opciones?: { publicar?: boolean }) {
     const frame = iframeRef.current?.contentWindow;
     if (!frame) return;
 
+    const publicar = !!opciones?.publicar;
     setCapturing(true);
+    setCapturingParaPublicar(publicar);
     setCaptureError(null);
+    if (publicar) setPublicando(true);
     frame.postMessage({ type: CAPTURE_REQUEST }, '*');
 
     // Si el iframe no contesta (script bloqueado, sin internet), no dejamos el
-    // botón colgado para siempre.
-    window.setTimeout(() => setCapturing(false), 15_000);
+    // botón colgado para siempre: se levanta como un error reintentable, no
+    // como un apagado silencioso.
+    if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => {
+      setCapturing(false);
+      setCaptureError('La captura tardó demasiado. Probá de nuevo.');
+      if (publicar) setPublicando(false);
+    }, 15_000);
   }
 
   async function copyUrl() {
@@ -109,12 +155,31 @@ export default function PreviewPanel(props: PreviewPanelProps) {
         <div className="ml-auto flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={requestCapture}
+            onClick={() => pedirCaptura()}
             disabled={capturing}
-            className="kodu-btn-ghost px-2.5 py-1.5 text-xs"
-            title="Guarda una foto de la vista previa como portada de la galería"
+            className="kodu-btn-ghost relative px-2.5 py-1.5 text-xs"
+            title={
+              props.portadaVieja
+                ? 'El recurso cambió después de la última portada.'
+                : 'Guarda una foto de la vista previa como portada de la galería'
+            }
           >
-            {capturing ? 'Capturando…' : props.screenshotUrl ? 'Cambiar portada' : 'Sacar portada'}
+            {capturing && !capturingParaPublicar
+              ? 'Capturando…'
+              : props.portadaVieja
+                ? 'Actualizar portada'
+                : props.screenshotUrl
+                  ? 'Cambiar portada'
+                  : 'Sacar portada'}
+            {props.portadaVieja && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-brand-600"
+                />
+                <span className="sr-only">La portada quedó desactualizada.</span>
+              </>
+            )}
           </button>
 
           {props.screenshotUrl && (
@@ -129,12 +194,21 @@ export default function PreviewPanel(props: PreviewPanelProps) {
 
           <label
             className="flex cursor-pointer items-center gap-2 rounded-lg border border-linea px-2.5 py-1.5 text-xs text-ink-700"
-            title="Publicar en la galería institucional"
+            title={props.isInGallery ? 'Publicado en la galería' : 'Publicar en la galería institucional'}
           >
             <input
               type="checkbox"
               checked={props.isInGallery}
-              onChange={(event) => props.onTogglePublish(event.target.checked)}
+              disabled={publicando || (!props.isInGallery && !listo)}
+              aria-busy={publicando}
+              onChange={(event) => {
+                if (event.target.checked) {
+                  setPublicando(true);
+                  void props.onAntesDePublicar().then(() => pedirCaptura({ publicar: true }));
+                } else {
+                  props.onDespublicar();
+                }
+              }}
               className="sr-only"
             />
             <span
@@ -149,7 +223,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
                 }`}
               />
             </span>
-            <span className="hidden sm:inline">Publicar</span>
+            <span className="hidden sm:inline">{publicando ? 'Publicando…' : 'Publicar'}</span>
           </label>
 
           <button type="button" onClick={copyUrl} className="kodu-btn-ghost px-2.5 py-1.5 text-xs">
@@ -179,6 +253,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           ref={iframeRef}
           title="Vista previa del recurso"
           srcDoc={srcDoc}
+          onLoad={() => setListo(true)}
           // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
           sandbox="allow-scripts allow-popups allow-forms allow-modals"
           className="absolute inset-0 h-full w-full border-0 bg-superficie"

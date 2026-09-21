@@ -52,6 +52,9 @@ model User {
   projects     Project[]
   rules        CustomRule[]
   tokenUsage   TokenUsage[]
+  /// "Me gusta" que este docente puso en recursos publicados de otros
+  /// (o propios) en la galeria. Back-relation de ProjectLike.user.
+  likes        ProjectLike[]
   /// M8 (design.md #7): recursos ajenos donde esta cuenta actuó como el
   /// último admin. Back-relation de Project.lastAdminActor.
   adminActedProjects Project[]    @relation("ProjectLastAdminActor")
@@ -127,6 +130,11 @@ model Project {
   slug          String         @unique
   currentHtml   String         @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
   screenshotUrl String?
+  /// Cuando se saco la portada vigente. Se compara contra `updatedAt` para
+  /// saber si quedo vieja (ver design.md §6 de publicacion-likes-y-motores).
+  /// NULL = portada sacada antes de que esta columna existiera; se trata
+  /// como FRESCA, nunca como vieja.
+  screenshotAt  DateTime?
   isInGallery   Boolean        @default(false)
   /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
   selectedModel ModelChoice    @default(MINIMAX)
@@ -150,9 +158,29 @@ model Project {
   lastAdminActorId  String?
   lastAdminActor    User?      @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
   lastAdminActionAt DateTime?
+  likes             ProjectLike[]
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
+}
+
+/// Un "me gusta" de un docente sobre un recurso publicado (galeria, M9). No
+/// hay contador desnormalizado en `Project` a proposito: la galeria lee 60
+/// filas y un contador paralelo se desincroniza (ver design.md §11).
+model ProjectLike {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  /// Un like por docente por recurso. Es TODA la regla anti-abuso que hay.
+  @@unique([userId, projectId])
+  /// El unique arranca con userId, asi que NO sirve para contar por recurso
+  /// ni para el join del `orderBy _count`. Este indice es el que sirve eso,
+  /// y de paso el borrado en cascada de un recurso.
+  @@index([projectId])
 }
 
 /// La cuenta de un proveedor de IA (design.md de

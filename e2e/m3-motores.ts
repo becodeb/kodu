@@ -29,6 +29,11 @@ const DOCENTE_EMAIL = 'docente-e2e-m3@kodu.local';
 const DOCENTE_PASSWORD = 'Docente.E2E.2026';
 
 const MINIMAX_M3_ID = '10000000-0000-0000-0000-000000000001';
+/** Respaldo ORIGINAL de la semilla para MiniMax M3 (migration.sql
+ *  20260919000000): el item 14 lo pisa temporalmente y tiene que devolverlo
+ *  a este valor, nunca a `null` — un `null` le rompe la cadena de respaldo a
+ *  cualquier otro script (p. ej. e2e/m2-catalogo.ts) que corra después. */
+const MINIMAX_M27_ID = '10000000-0000-0000-0000-000000000002';
 
 const PROVIDER_KIND = 'test-e2e';
 const PROVIDER_LABEL = 'Cuenta E2E';
@@ -74,6 +79,11 @@ async function limpiarEstado(): Promise<void> {
   await prisma.aiProvider.deleteMany({ where: { kind: PROVIDER_KIND } });
   await prisma.aiModel.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
   await prisma.aiModel.update({ where: { id: MINIMAX_M3_ID }, data: { isDefault: true } });
+  // Red de seguridad para el item 14 (advertencia de respaldo): si el script
+  // se corta a mitad de esa prueba, MiniMax M3 no puede quedar con
+  // `fallbackModelId: null` — otros scripts (e2e/m2-catalogo.ts) dependen de
+  // que apunte a MiniMax M2.7, tal como lo deja la semilla.
+  await prisma.aiModel.update({ where: { id: MINIMAX_M3_ID }, data: { fallbackModelId: MINIMAX_M27_ID } });
   await prisma.$transaction(
     Object.entries(SORT_ORDER_SEMILLA).map(([id, sortOrder]) => prisma.aiModel.update({ where: { id }, data: { sortOrder } })),
   );
@@ -225,17 +235,74 @@ async function main(): Promise<void> {
     assert.equal(motorCreado.providerId, proveedorCreado.id, 'el motor debe apuntar a la cuenta recién creada');
     console.log('✔ el motor guardado en la base apunta a la cuenta correcta, y ya no tiene columnas propias de clave');
 
-    // 2. Habilitar/deshabilitar (sobre un motor que todavía no es default).
-    // El input real es `sr-only` (el riel pintado es sólo su piel visual), así
-    // que el click "de verdad" queda tapado por el propio riel decorativo en
-    // las mismas coordenadas: se fuerza el click, que igual dispara el evento
-    // `change` nativo que React escucha.
-    const toggleHabilitado = fila.getByLabel('Habilitado');
-    await toggleHabilitado.uncheck({ force: true });
-    await assertBooleano(async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled, false, 'el motor debería quedar deshabilitado');
-    await toggleHabilitado.check({ force: true });
-    await assertBooleano(async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled, true, 'el motor debería volver a estar habilitado');
-    console.log('✔ el toggle de habilitado persiste en los dos sentidos');
+    // 2. Dos controles independientes en la misma fila (design §7,
+    //    publicacion-likes-y-motores): el Interruptor prominente ahora
+    //    escribe `selectableByTeacher`, nunca `enabled`; el chip quieto
+    //    "En servicio"/"Fuera de servicio" escribe `enabled`, sin tocar la
+    //    visibilidad para el docente. El input real es `sr-only` (el riel
+    //    pintado es sólo su piel visual), así que el click "de verdad" queda
+    //    tapado por el propio riel decorativo en las mismas coordenadas: se
+    //    fuerza el click, que igual dispara el evento `change` nativo que
+    //    React escucha.
+    const interruptorVisible = fila.getByLabel('Lo ven los docentes');
+    await interruptorVisible.uncheck({ force: true });
+    await assertBooleano(
+      async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).selectableByTeacher,
+      false,
+      'el motor debería quedar oculto para los docentes',
+    );
+    assert.equal(
+      (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled,
+      true,
+      'apagar la visibilidad NO debe tocar `enabled` (item 12)',
+    );
+    console.log('✔ el interruptor prominente escribe selectableByTeacher sin tocar enabled (item 12)');
+
+    // item 15: selectableByTeacher: false + enabled: true sobrevive un reload
+    // — la configuración estilo DeepSeek tiene que seguir siendo expresable.
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(`li:has-text("${NOMBRE_MOTOR}")`);
+    const filaTrasReload = page.locator('li').filter({ hasText: NOMBRE_MOTOR });
+    await assertBooleano(
+      async () => await filaTrasReload.getByLabel('Lo ven los docentes').isChecked(),
+      false,
+      'el interruptor debería seguir apagado tras recargar',
+    );
+    await filaTrasReload.getByRole('button', { name: 'En servicio' }).waitFor();
+    console.log('✔ selectableByTeacher: false + enabled: true sobrevive un reload (item 15)');
+
+    await filaTrasReload.getByLabel('Lo ven los docentes').check({ force: true });
+    await assertBooleano(
+      async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).selectableByTeacher,
+      true,
+      'el motor debería volver a ser visible para los docentes',
+    );
+    console.log('✔ el interruptor persiste en los dos sentidos');
+
+    // El chip "En servicio" escribe `enabled` (item 13): PATCH { enabled: false }.
+    const chipEnServicio = filaTrasReload.getByRole('button', { name: 'En servicio' });
+    const [patchApagado] = await Promise.all([
+      page.waitForResponse(
+        (res) => res.url().endsWith(`/api/admin/models/${motorCreado.id}`) && res.request().method() === 'PATCH',
+      ),
+      chipEnServicio.click(),
+    ]);
+    assert.deepEqual(JSON.parse(patchApagado.request().postData() ?? '{}'), { enabled: false });
+    await assertBooleano(
+      async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled,
+      false,
+      'el motor debería quedar fuera de servicio',
+    );
+    await filaTrasReload.getByRole('button', { name: 'Fuera de servicio' }).waitFor();
+    console.log('✔ el chip "En servicio" manda PATCH { enabled: false } (item 13)');
+
+    await filaTrasReload.getByRole('button', { name: 'Fuera de servicio' }).click();
+    await assertBooleano(
+      async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled,
+      true,
+      'el motor debería volver a estar en servicio',
+    );
+    console.log('✔ el toggle de servicio persiste en los dos sentidos');
 
     // 3. Marcarlo como default: el índice único parcial permite a lo sumo uno.
     await fila.getByLabel(`Marcar ${NOMBRE_MOTOR} como motor por defecto`).check();
@@ -281,6 +348,56 @@ async function main(): Promise<void> {
     await filaMiniMax.getByLabel('Marcar MiniMax M3 como motor por defecto').check();
     await esperarHasta(async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: MINIMAX_M3_ID } })).isDefault === true);
     console.log('✔ ADMIN: /admin/motores sigue funcional en tema light (persistencia tras recargar)');
+
+    // 6b. La advertencia de respaldo (design §7.1, item 14; spec
+    //     `ai-model-catalog` "Disabling a fallback target warns first"):
+    //     MiniMax M3 apunta a `motorCreado` como su respaldo automático.
+    //     `motorCreado` ya no es default (se lo devolvimos a MiniMax arriba),
+    //     así que apagarlo no choca con el 409 del paso 4.
+    await prisma.aiModel.update({ where: { id: MINIMAX_M3_ID }, data: { fallbackModelId: motorCreado.id } });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector(`li:has-text("${NOMBRE_MOTOR}")`);
+    const filaConRespaldo = page.locator('li').filter({ hasText: NOMBRE_MOTOR });
+    const chipConRespaldo = filaConRespaldo.getByRole('button', { name: 'En servicio' });
+
+    let patchsDisparados = 0;
+    page.on('request', (req) => {
+      if (req.url().endsWith(`/api/admin/models/${motorCreado.id}`) && req.method() === 'PATCH') patchsDisparados++;
+    });
+
+    await chipConRespaldo.click();
+    const tiraAdvertencia = filaConRespaldo.getByText(/se queda sin respaldo autom.tico/i);
+    await tiraAdvertencia.waitFor();
+    const textoTira = (await tiraAdvertencia.textContent()) ?? '';
+    assert.match(textoTira, /MiniMax M3/, 'la advertencia debe nombrar al motor que se queda sin respaldo');
+    console.log('✔ apagar un motor-respaldo de otro muestra la advertencia inline, nombrando al dependiente (item 14)');
+
+    await filaConRespaldo.getByRole('button', { name: 'Cancelar' }).click();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(patchsDisparados, 0, '"Cancelar" no debería mandar ningún PATCH');
+    assert.equal(
+      (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled,
+      true,
+      '"Cancelar" no debería haber apagado el motor',
+    );
+    console.log('✔ "Cancelar" no manda ningún PATCH y el motor sigue en servicio (item 14)');
+
+    await chipConRespaldo.click();
+    await filaConRespaldo.getByText(/se queda sin respaldo autom.tico/i).waitFor();
+    await filaConRespaldo.getByRole('button', { name: 'Sacarlo igual' }).click();
+    await assertBooleano(
+      async () => (await prisma.aiModel.findUniqueOrThrow({ where: { id: motorCreado.id } })).enabled,
+      false,
+      '"Sacarlo igual" debería apagar el motor',
+    );
+    assert.ok(patchsDisparados > 0, '"Sacarlo igual" sí debería mandar el PATCH');
+    console.log('✔ "Sacarlo igual" manda el PATCH y apaga el motor (item 14)');
+
+    // Se deshace todo para no romper el resto del script — y ESPECIALMENTE
+    // para no romper otros scripts que corran después. MiniMax M3 vuelve a
+    // su respaldo ORIGINAL de la semilla (MiniMax M2.7), no a `null`.
+    await prisma.aiModel.update({ where: { id: MINIMAX_M3_ID }, data: { fallbackModelId: MINIMAX_M27_ID } });
+    await prisma.aiModel.update({ where: { id: motorCreado.id }, data: { enabled: true } });
 
     // 7. Invariante de la clave enmascarada sobre el listado completo de motores.
     const respuestaListado = await page.request.get(`${BASE_URL}/api/admin/models`);
@@ -379,7 +496,12 @@ async function main(): Promise<void> {
     await contexto.close();
 
     // 10. El selector del docente: nombre + descripción, nunca el id interno.
-    const contextoDocente = await browser.newContext();
+    //     Desde publicacion-likes-y-motores es un listbox (design §8, item
+    //     16), no un grupo de botones segmentado: la descripción de cada
+    //     opción es texto SIEMPRE visible mientras la lista está abierta,
+    //     nunca un `title` (que sería sólo de mouse). `hasTouch` habilita
+    //     `.tap()` más abajo.
+    const contextoDocente = await browser.newContext({ hasTouch: true });
     const pageDocente = await contextoDocente.newPage();
     await iniciarSesion(pageDocente, { email: DOCENTE_EMAIL, password: DOCENTE_PASSWORD });
 
@@ -391,23 +513,72 @@ async function main(): Promise<void> {
 
     await pageDocente.goto(`${BASE_URL}/app/project/${project.id}`, { waitUntil: 'domcontentloaded' });
 
+    const disparadorSelector = pageDocente.locator('#selector-motor');
+    const listbox = pageDocente.locator('ul[role="listbox"]');
+    const opciones = pageDocente.locator('li[role="option"]');
+    const opcionMotor = opciones.filter({ hasText: NOMBRE_MOTOR });
+    const opcionMiniMax = opciones.filter({ hasText: 'MiniMax M3' });
+
     // La isla de React (`client:load`) puede tardar un instante en hidratarse
     // después de que el HTML del SSR ya está en el DOM: un click justo en ese
-    // hueco no dispara nada (el <button> existe pero todavía no tiene su
-    // onClick). Se reintenta el click hasta que el estado realmente cambie.
-    const botonSelector = pageDocente.getByRole('button', { name: NOMBRE_MOTOR });
-    await botonSelector.waitFor();
+    // hueco no dispara nada. Se reintenta abrir hasta que el listbox aparezca.
+    await disparadorSelector.waitFor();
     await esperarHasta(async () => {
-      await botonSelector.click();
-      return (await botonSelector.getAttribute('aria-pressed')) === 'true';
+      await disparadorSelector.focus();
+      await pageDocente.keyboard.press('Enter');
+      return (await listbox.count()) > 0;
     });
-    await pageDocente.waitForSelector(`button[aria-pressed="true"]:has-text("${NOMBRE_MOTOR}")`);
+
+    // La descripción vive como TEXTO adentro de la opción, nunca en un
+    // atributo `title` (que quedaría muerto para touch y teclado).
+    await opcionMotor.waitFor();
+    assert.equal(
+      await opcionMotor.getByText(DESCRIPCION_MOTOR).count(),
+      1,
+      'la descripción tiene que estar como texto dentro de la opción, no en un atributo title',
+    );
+    const tieneAtributoTitle = await opcionMotor.evaluate((el) => el.hasAttribute('title'));
+    assert.equal(tieneAtributoTitle, false, 'la opción no debe depender del atributo title para la descripción');
+    console.log('✔ el listbox muestra la descripción de cada opción como texto, nunca en un title');
+
+    // Navegar por teclado hasta la opción y elegirla con Enter — nada de
+    // mouse. `aria-activedescendant` en el `<ul>` dice cuál opción tiene el
+    // foco de teclado en este momento (no cuál está elegida todavía).
+    const idOpcionMotor = `opt-${motorCreado.id}`;
+    for (let vueltas = 0; vueltas < 20; vueltas++) {
+      if ((await listbox.getAttribute('aria-activedescendant')) === idOpcionMotor) break;
+      await pageDocente.keyboard.press('ArrowDown');
+    }
+    assert.equal(
+      await listbox.getAttribute('aria-activedescendant'),
+      idOpcionMotor,
+      'ArrowDown debería poder llegar a la opción del motor recién creado',
+    );
+    await pageDocente.keyboard.press('Enter');
+    await listbox.waitFor({ state: 'hidden' });
+    await pageDocente.waitForSelector(`#selector-motor:has-text("${NOMBRE_MOTOR}")`);
     await pageDocente.waitForSelector(`text=${DESCRIPCION_MOTOR}`);
-    console.log('✔ el selector del docente muestra nombre + descripción del motor recién creado');
+    console.log('✔ el selector se maneja por completo con teclado: Enter, ArrowDown, Enter (item 16)');
 
     const textoPagina = await pageDocente.content();
     assert.ok(!textoPagina.includes(PROVIDER_MODEL_MOTOR), 'el selector nunca debe exponer el identificador interno del proveedor');
     console.log('✔ el selector nunca expone el providerModel');
+
+    // El mismo recorrido, ahora con un tap (sin hover, sin teclado) — vuelve a
+    // MiniMax M3 y de nuevo a Motor E2E M3, probando que la opción es un
+    // target táctil completo (item 16).
+    await disparadorSelector.tap();
+    await listbox.waitFor();
+    await opcionMiniMax.tap();
+    await listbox.waitFor({ state: 'hidden' });
+    await pageDocente.waitForSelector('#selector-motor:has-text("MiniMax M3")');
+
+    await disparadorSelector.tap();
+    await listbox.waitFor();
+    await opcionMotor.tap();
+    await listbox.waitFor({ state: 'hidden' });
+    await pageDocente.waitForSelector(`#selector-motor:has-text("${NOMBRE_MOTOR}")`);
+    console.log('✔ la misma elección funciona con tap, sin pasar por hover (item 16)');
 
     // 11. Deshabilitarlo lo saca del selector (Requirement "Ordering,
     //     enable/disable, single default" — ya no es default, así que se puede).
@@ -428,12 +599,12 @@ async function main(): Promise<void> {
     await contextoAdmin2.close();
 
     await pageDocente.reload({ waitUntil: 'domcontentloaded' });
-    // Acotado al <fieldset> del selector de motor: el toggle de tema del
-    // menú de perfil también tiene aria-pressed, pero vive escondido dentro
-    // de un <details> cerrado y nunca queda "visible" para esta espera.
-    await pageDocente.waitForSelector('fieldset button[aria-pressed]');
-    const sigueEnSelector = await pageDocente.getByRole('button', { name: NOMBRE_MOTOR }).count();
+    await disparadorSelector.waitFor();
+    await disparadorSelector.click();
+    await listbox.waitFor();
+    const sigueEnSelector = await opcionMotor.count();
     assert.equal(sigueEnSelector, 0, 'un motor deshabilitado no debería seguir en el selector del docente');
+    await pageDocente.keyboard.press('Escape');
     console.log('✔ deshabilitar un motor no-default lo saca del selector del docente');
 
     // 12. Aviso quieto de repunteo (Requirement "Fallback when a project's

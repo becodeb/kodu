@@ -3,6 +3,7 @@ import { ThinkingOrb } from 'thinking-orbs';
 import AiStatus from './AiStatus.tsx';
 import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
+import SelectorDeMotor from './SelectorDeMotor.tsx';
 import { STARTERS, type Starter } from './starters.ts';
 import type {
   AiPhase,
@@ -206,34 +207,13 @@ export default function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
 
-        {/* Toggle de proveedor. El aviso del cupo va a la vista y no escondido
-            en un tooltip: elegir el modelo pago sin saber que se gasta plata es
-            justo la clase de sorpresa que no queremos darle a nadie. */}
-        <fieldset className="space-y-1.5">
-          <legend className="sr-only">Modelo de IA</legend>
-
-          <div className="flex rounded-lg bg-sutil p-0.5">
-            {props.motoresDisponibles.map((motor) => (
-              <button
-                key={motor.id}
-                type="button"
-                aria-pressed={props.model === motor.id}
-                onClick={() => props.onModelChange(motor.id)}
-                className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
-                  props.model === motor.id
-                    ? 'bg-superficie text-ink-900 shadow-sm'
-                    : 'text-ink-500 hover:text-ink-700'
-                }`}
-              >
-                {motor.displayName}
-              </button>
-            ))}
-          </div>
-
-          <p className="text-[0.7rem] leading-snug text-ink-500">
-            {props.motoresDisponibles.find((motor) => motor.id === props.model)?.description}
-          </p>
-        </fieldset>
+        {/* Selector de motor: un desplegable con la descripción siempre visible
+            mientras está abierto, no un `title` sólo de mouse (design §8). */}
+        <SelectorDeMotor
+          motores={props.motoresDisponibles}
+          model={props.model}
+          onModelChange={props.onModelChange}
+        />
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">

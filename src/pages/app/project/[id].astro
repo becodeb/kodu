@@ -5,7 +5,7 @@ import IndicadorConsumo from '../../../components/workspace/IndicadorConsumo.tsx
 import BannerAdmin from '../../../components/admin/BannerAdmin.astro';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
-import { findWorkspaceProjectForActor } from '../../../lib/projects.ts';
+import { findWorkspaceProjectForActor, portadaDesactualizada } from '../../../lib/projects.ts';
 import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 
@@ -147,7 +147,6 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
       <IndicadorConsumo
         client:load
         tokens={consumoDelRecurso.tokens}
-        costUsd={consumoDelRecurso.costUsd?.toString() ?? null}
         nivel={nivelDeConsumoDelRecurso}
       />
     )}
@@ -170,6 +169,7 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
       aiModelId,
       isInGallery: project.isInGallery,
       screenshotUrl: project.screenshotUrl,
+      portadaVieja: portadaDesactualizada(project.screenshotAt, project.updatedAt),
     }}
     threads={project.threads.length > 0 ? project.threads : [activeThread]}
     activeThreadId={activeThread.id}

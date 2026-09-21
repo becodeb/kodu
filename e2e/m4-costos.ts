@@ -296,13 +296,16 @@ async function main(): Promise<void> {
       assert.equal(await page.locator('[role="status"]').count(), 0, 'el popover no debe estar abierto al cargar');
       console.log('✔ lectura por defecto: "Consumo bajo", sin moneda, sin la palabra "ficha"');
 
-      // 7.b — hover revela tokens + USD.
+      // 7.b — hover revela tokens, nunca un monto (publicacion-likes-y-motores
+      // le saca el USD al indicador para el docente: spec `ai-cost-accounting`
+      // "No interaction reveals a dollar amount to a teacher").
       const popover = page.locator('[role="status"]');
       await revelarConReintento(() => boton.hover());
       const textoPopoverHover = (await popover.textContent()) ?? '';
       assert.match(textoPopoverHover, /tokens/i);
-      assert.match(textoPopoverHover, /US\$/, 'el popover debe revelar el monto exacto en USD');
-      console.log('✔ el mouse (hover) revela tokens + USD');
+      assert.ok(!textoPopoverHover.includes('US$'), 'el popover no debe mostrar "US$"');
+      assert.ok(!textoPopoverHover.includes('$'), 'el popover no debe mostrar ningún "$"');
+      console.log('✔ el mouse (hover) revela tokens, nunca un monto en USD');
 
       await cerrarConReintento(() => page.mouse.move(0, 0));
       console.log('✔ alejar el mouse cierra el popover');
@@ -321,14 +324,14 @@ async function main(): Promise<void> {
       await cerrarConReintento(() => page.keyboard.press('Escape'));
       console.log('✔ Escape cierra el popover revelado por teclado');
 
-      // 7.e — el mismo recorrido, en tema oscuro.
+      // 7.e — el mismo recorrido, en tema oscuro: tampoco hay monto acá.
       await conTema(page, 'dark');
       await boton.waitFor();
       await revelarConReintento(() => boton.focus());
       const textoPopoverDark = (await popover.textContent()) ?? '';
-      assert.match(textoPopoverDark, /US\$/);
+      assert.ok(!textoPopoverDark.includes('US$'), 'tampoco en tema oscuro debe verse "US$"');
       await cerrarConReintento(() => page.keyboard.press('Escape'));
-      console.log('✔ el indicador funciona igual en tema oscuro (foco de teclado + revelado)');
+      console.log('✔ el indicador funciona igual en tema oscuro (foco de teclado + revelado), sin monto');
 
       // 7.f — nivel "medio" en el recurso con más tokens.
       await page.goto(`${BASE_URL}/app/project/${proyectoMedioId}`, { waitUntil: 'domcontentloaded' });
@@ -337,7 +340,10 @@ async function main(): Promise<void> {
       assert.equal((await botonMedio.textContent())?.trim(), 'Consumo medio');
       console.log('✔ un recurso con tokens por encima del corte muestra "Consumo medio"');
 
-      // 7.g — motor sin precio: el popover explica que no hay precio, no un $0.
+      // 7.g — motor sin precio: ya no hay ningún mensaje condicionado al
+      // precio para el docente. El popover lee la MISMA línea estática que
+      // en 7.b, sin importar si el motor tiene precio cargado o no — el
+      // mensaje price-conditional que esto probaba ya no existe (Phase 8).
       await page.goto(`${BASE_URL}/app/project/${proyectoSinPrecioId}`, { waitUntil: 'domcontentloaded' });
       const botonSinPrecio = page.getByRole('button', { name: /^Consumo (bajo|medio|alto)$/ });
       await botonSinPrecio.waitFor();
@@ -347,9 +353,10 @@ async function main(): Promise<void> {
         return (await popoverSinPrecio.count()) > 0;
       });
       const textoSinPrecio = (await popoverSinPrecio.textContent()) ?? '';
-      assert.match(textoSinPrecio, /sin precio/i);
-      assert.ok(!textoSinPrecio.includes('US$ 0,00'), 'precio sin cargar no debe leerse como "gratis" (US$ 0,00)');
-      console.log('✔ un motor con precio sin cargar muestra el aviso de "sin precios", nunca US$ 0,00');
+      assert.match(textoSinPrecio, /procesó la IA en este recurso/i);
+      assert.ok(!textoSinPrecio.includes('US$'), 'un motor sin precio tampoco debe mostrar "US$"');
+      assert.ok(!/sin precio/i.test(textoSinPrecio), 'ya no existe el aviso "sin precios": la línea es siempre la misma');
+      console.log('✔ un motor sin precio cargado muestra la misma línea estática, sin ningún condicional de precio');
 
       // 7.h — sin ningún turno, el indicador está AUSENTE (nunca un "0").
       await page.goto(`${BASE_URL}/app/project/${proyectoVacioId}`, { waitUntil: 'domcontentloaded' });

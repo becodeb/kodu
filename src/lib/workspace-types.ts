@@ -23,6 +23,8 @@ export interface WorkspaceProject {
   aiModelId: string;
   isInGallery: boolean;
   screenshotUrl: string | null;
+  /** El recurso cambió después de la última portada (design §6). */
+  portadaVieja: boolean;
 }
 
 export interface WorkspaceThread {

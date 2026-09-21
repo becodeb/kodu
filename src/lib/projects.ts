@@ -75,6 +75,25 @@ export async function marcarSiActuaAdmin(
   return true;
 }
 
+/**
+ * Margen para no marcar vieja una portada por el ida y vuelta de sacarla.
+ *
+ * `updatedAt` se mueve con CUALQUIER escritura al recurso, incluida la que
+ * publica justo después de la foto (design §3.2). Ese PATCH llega uno o dos
+ * segundos más tarde que el POST de la captura, así que sin margen una
+ * portada recién sacada nace vieja y el marcador no significa nada. 5 s
+ * cubre ese viaje con aire; el debounce de 700 ms ya lo elimina `flushSave()`
+ * antes de la foto.
+ */
+export const TOLERANCIA_PORTADA_MS = 5_000;
+
+export function portadaDesactualizada(screenshotAt: Date | null, updatedAt: Date): boolean {
+  // NULL = portada anterior a esta columna. FRESCA, nunca vieja: si no, el
+  // día del deploy toda la app amanece pidiendo actualizar la portada.
+  if (!screenshotAt) return false;
+  return updatedAt.getTime() - screenshotAt.getTime() > TOLERANCIA_PORTADA_MS;
+}
+
 /** Crea el proyecto con su primer hilo de conversación, en una transacción. */
 export async function createProject(options: {
   userId: string;

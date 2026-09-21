@@ -24,6 +24,9 @@ export default function ModelosPanel(props: ModelosPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [anuncio, setAnuncio] = useState('');
   const [arrastrandoId, setArrastrandoId] = useState<string | null>(null);
+  /** Motor cuyo apagado de `enabled` dejaría a otro sin respaldo; muestra la
+   *  tira de confirmación inline en vez de un modal (design §7.1). */
+  const [confirmando, setConfirmando] = useState<string | null>(null);
 
   function formatearPrecio(motor: MotorAdmin): string {
     if (motor.priceInputPerMToken === null && motor.priceOutputPerMToken === null) {
@@ -103,6 +106,43 @@ export default function ModelosPanel(props: ModelosPanelProps) {
       setMotores(anterior);
       setError(result.error);
     }
+  }
+
+  /** Igual patrón optimista que `toggleEnabled`, pero sobre `selectableByTeacher`
+   *  (design §7): controla si el motor aparece en el selector del docente,
+   *  nunca si puede usarse como respaldo. */
+  async function alternarVisible(motor: MotorAdmin, valor: boolean) {
+    setError(null);
+    const anterior = motores;
+    setMotores((actuales) =>
+      actuales.map((item) => (item.id === motor.id ? { ...item, selectableByTeacher: valor } : item)),
+    );
+
+    const result = await apiRequest<{ motor: MotorAdmin }>(`/api/admin/models/${motor.id}`, 'PATCH', {
+      selectableByTeacher: valor,
+    });
+
+    if (!result.ok) {
+      setMotores(anterior);
+      setError(result.error);
+    }
+  }
+
+  /** Qué motores se quedan sin respaldo si éste sale de servicio (design §7.1). */
+  function respaldadosPor(id: string): MotorAdmin[] {
+    return motores.filter((item) => item.fallbackModelId === id);
+  }
+
+  function pedirFueraDeServicio(motor: MotorAdmin) {
+    // Prender siempre es seguro: nunca deja a otro motor sin respaldo.
+    if (motor.enabled) {
+      const dependientes = respaldadosPor(motor.id);
+      if (dependientes.length > 0) {
+        setConfirmando(motor.id);
+        return;
+      }
+    }
+    void toggleEnabled(motor, !motor.enabled);
   }
 
   async function marcarComoDefault(motor: MotorAdmin) {
@@ -206,12 +246,26 @@ export default function ModelosPanel(props: ModelosPanelProps) {
               <span className="w-40 shrink-0 text-xs tabular-nums text-ink-500">{formatearPrecio(motor)}</span>
 
               <Interruptor
-                checked={motor.enabled}
-                onChange={(valor) => void toggleEnabled(motor, valor)}
-                label="Habilitado"
+                checked={motor.selectableByTeacher}
+                onChange={(valor) => void alternarVisible(motor, valor)}
+                label="Lo ven los docentes"
                 srOnly
-                id={`enabled-${motor.id}`}
+                id={`visible-${motor.id}`}
               />
+
+              <button
+                type="button"
+                aria-pressed={motor.enabled}
+                onClick={() => pedirFueraDeServicio(motor)}
+                title="Un motor fuera de servicio no se usa nunca: ni a mano ni como respaldo de otro."
+                className={`shrink-0 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                  motor.enabled
+                    ? 'text-ink-500 hover:bg-sutil hover:text-ink-700'
+                    : 'bg-sutil font-medium text-ink-700'
+                }`}
+              >
+                {motor.enabled ? 'En servicio' : 'Fuera de servicio'}
+              </button>
 
               <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-ink-700">
                 <input
@@ -232,6 +286,33 @@ export default function ModelosPanel(props: ModelosPanelProps) {
               >
                 Editar
               </button>
+
+              {confirmando === motor.id && (
+                <p className="w-full rounded-lg bg-sutil px-3 py-2 text-xs text-ink-700">
+                  Si sacás {motor.displayName} de servicio,{' '}
+                  {respaldadosPor(motor.id)
+                    .map((item) => item.displayName)
+                    .join(', ')}{' '}
+                  se queda sin respaldo automático.
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmando(null);
+                      void toggleEnabled(motor, false);
+                    }}
+                    className="ml-2 font-semibold text-ink-900 underline"
+                  >
+                    Sacarlo igual
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmando(null)}
+                    className="ml-2 underline"
+                  >
+                    Cancelar
+                  </button>
+                </p>
+              )}
             </li>
           ))}
         </ol>

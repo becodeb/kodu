@@ -412,6 +412,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
     }
   }
 
+  // Hoisted desde más abajo (era `const forzar = pideCambio(message)` dentro
+  // del `ReadableStream.start`, design §10.3): es pura, así que subirla acá
+  // no cambia el comportamiento, y `buildSystemPrompt` la necesita para la
+  // regla de colisión con la guía de preguntas tempranas.
+  const forzar = pideCambio(message);
+
   const systemPrompt = buildSystemPrompt({
     globalRules,
     userRules,
@@ -420,6 +426,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
     projectTitle: project.title,
     canSeeImages: supportsVision(provider),
     htmlEditedByTeacher: codeEditedByTeacher ?? false,
+    // Sólo turnos del DOCENTE, sin contar el mensaje actual (no está en
+    // `history`) y sin contar respuestas de la IA: un turno fallido que dejó
+    // una disculpa (`role: 'assistant'`) no debe envejecer el hilo para algo
+    // que el docente nunca dijo.
+    turnosPrevios: history.filter((entry) => entry.role === 'user').length,
+    herramientaForzada: forzar,
   });
 
   const userContent = await buildUserContent(
@@ -507,9 +519,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
        *
        * El docente no tiene por qué enterarse de que un proveedor está caído ni
        * tener que elegir otro a mano: se avisa qué pasó y se sigue trabajando.
+       * `forzar` ya se calculó más arriba, antes de armar el system prompt.
        */
-      const forzar = pideCambio(message);
-
       const pedirA = (usado: ProviderConfig, intentos: number) =>
         requestCompletionStream({
           messages,

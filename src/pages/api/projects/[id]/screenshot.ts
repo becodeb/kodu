@@ -30,13 +30,19 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
 
   await prisma.project.update({
     where: { id: project.id },
-    data: { screenshotUrl: stored.url },
+    data: { screenshotUrl: stored.url, screenshotAt: new Date() },
   });
 
   return ok({ screenshotUrl: stored.url });
 };
 
-/** DELETE /api/projects/:id/screenshot — descarta la captura antes de publicar. */
+/**
+ * DELETE /api/projects/:id/screenshot — descarta la captura.
+ *
+ * Borrar la portada de un recurso publicado lo dejaria publicado y sin foto,
+ * que es exactamente lo que la invariante prohibe (design §3.1). Se
+ * despublica en el mismo update, y se avisa: no es un efecto oculto.
+ */
 export const DELETE: APIRoute = async ({ params, locals }) => {
   const user = locals.user!;
   const project = await findProjectForActor(params.id!, user);
@@ -44,8 +50,8 @@ export const DELETE: APIRoute = async ({ params, locals }) => {
 
   await prisma.project.update({
     where: { id: project.id },
-    data: { screenshotUrl: null },
+    data: { screenshotUrl: null, screenshotAt: null, isInGallery: false },
   });
 
-  return ok({ screenshotUrl: null });
+  return ok({ screenshotUrl: null, despublicado: project.isInGallery });
 };

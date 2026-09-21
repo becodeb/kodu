@@ -31,6 +31,14 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
     return fail('No hay nada para actualizar.', 422);
   }
 
+  // LA INVARIANTE (proposal §1): no puede existir un recurso publicado sin
+  // portada. El cliente ya saca la captura antes de publicar, pero esa
+  // secuencia se puede saltear, se puede cortar a la mitad y puede correr
+  // contra el iframe; este rechazo es lo unico que hace VERDADERA la frase.
+  if (parsed.data.isInGallery === true && !project.screenshotUrl) {
+    return fail('Para publicar hace falta una portada. Sacá una captura del recurso y volvé a intentar.', 422);
+  }
+
   // M8 (design.md §7): un admin editando el código/título de un recurso
   // ajeno deja la marca ANTES del update, para que un fallo del update no
   // deje una marca huérfana sin cambio real detrás.
@@ -47,6 +55,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
       isInGallery: true,
       aiModelId: true,
       screenshotUrl: true,
+      screenshotAt: true,
       updatedAt: true,
     },
   });

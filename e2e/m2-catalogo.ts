@@ -84,7 +84,10 @@ async function main(): Promise<void> {
     console.log('✔ el recurso se asigna al motor por defecto sembrado (MiniMax M3) al abrirse');
 
     // El selector del chat muestra el motor por su nombre, nunca su id interno.
-    await page.waitForSelector('button[aria-pressed="true"]:has-text("MiniMax M3")');
+    // Desde publicacion-likes-y-motores el selector es un listbox
+    // (`#selector-motor`, design §8), no el grupo de botones segmentado
+    // anterior — el disparador cerrado ya muestra el `displayName` elegido.
+    await page.waitForSelector('#selector-motor:has-text("MiniMax M3")');
     console.log('✔ el selector del chat muestra "MiniMax M3" como motor activo');
 
     // 2. Un docente manda un mensaje: el turno recorre la cadena de motores

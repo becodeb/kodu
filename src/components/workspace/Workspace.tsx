@@ -48,6 +48,10 @@ export default function Workspace(props: WorkspaceProps) {
   const [description, setDescription] = useState(props.project.description ?? '');
   const [isInGallery, setIsInGallery] = useState(props.project.isInGallery);
   const [screenshotUrl, setScreenshotUrl] = useState(props.project.screenshotUrl);
+  // El recurso cambió después de la última portada (design §6). Semilla del
+  // SSR; de acá en más sólo la mueve el contenido: la IA devolviendo código,
+  // una edición manual, o una nueva captura.
+  const [portadaVieja, setPortadaVieja] = useState(props.project.portadaVieja);
   const [model, setModel] = useState<string>(props.project.aiModelId);
 
   const [threads, setThreads] = useState(props.threads);
@@ -351,6 +355,8 @@ export default function Workspace(props: WorkspaceProps) {
           // La versión de la IA pasa a ser la vigente: lo que el docente había
           // escrito a mano ya quedó incorporado en este HTML.
           codeEditedByTeacher.current = false;
+          // La IA cambió el recurso: si ya había portada, quedó vieja (design §6).
+          if (screenshotUrl) setPortadaVieja(true);
         } else if (event.type === 'error') {
           setError(event.message);
           setFailedMessage(message);
@@ -459,29 +465,63 @@ export default function Workspace(props: WorkspaceProps) {
     setPendingAssets((current) => [...current, ...result.data.assets]);
   }
 
-  async function handleScreenshot(dataUrl: string) {
+  /**
+   * Único escritor de la secuencia de captura (design §3.2, §3.3): guarda la
+   * portada y, sólo cuando `opciones.publicar` lo pide, sigue con el PATCH
+   * que publica. El switch de PreviewPanel nunca se mueve hasta que esto
+   * termina — ver `publicando` allá.
+   */
+  async function handleScreenshot(dataUrl: string, opciones?: { publicar?: boolean }) {
     setSaving(true);
-    const result = await apiRequest<{ screenshotUrl: string }>(
+    const guardada = await apiRequest<{ screenshotUrl: string }>(
       `/api/projects/${projectId}/screenshot`,
       'POST',
       { dataUrl },
     );
     setSaving(false);
 
-    if (!result.ok) {
-      setError(result.error);
+    if (!guardada.ok) {
+      setError(guardada.error);
       return;
     }
 
-    setScreenshotUrl(result.data.screenshotUrl);
-    flashNotice('Captura guardada');
+    setScreenshotUrl(guardada.data.screenshotUrl);
+    setPortadaVieja(false);
+
+    if (!opciones?.publicar) {
+      flashNotice('Portada guardada');
+      return;
+    }
+
+    if (await patchProject({ isInGallery: true })) {
+      setIsInGallery(true);
+      flashNotice('Publicado en la galería');
+    }
+    // patchProject ya dejó el error en pantalla si falló; el switch queda
+    // como estaba, nunca se mueve optimistamente.
+  }
+
+  /** Sólo despublica: un PATCH, un gesto, sin captura (design §3.2). */
+  function handleDespublicar() {
+    setIsInGallery(false);
+    void patchProject({ isInGallery: false }).then((okResult) => {
+      if (okResult) flashNotice('Quitado de la galería');
+    });
   }
 
   async function handleDeleteScreenshot() {
-    const result = await apiRequest(`/api/projects/${projectId}/screenshot`, 'DELETE');
+    const result = await apiRequest<{ screenshotUrl: null; despublicado: boolean }>(
+      `/api/projects/${projectId}/screenshot`,
+      'DELETE',
+    );
     if (result.ok) {
       setScreenshotUrl(null);
-      flashNotice('Captura borrada');
+      if (result.data.despublicado) {
+        setIsInGallery(false);
+        flashNotice('Portada borrada. El recurso salió de la galería.');
+      } else {
+        flashNotice('Captura borrada');
+      }
     } else {
       setError(result.error);
     }
@@ -521,11 +561,9 @@ export default function Workspace(props: WorkspaceProps) {
           setFichaAbierta(false);
           setTitle(datos.title);
           setDescription(datos.description);
-          setIsInGallery(datos.isInGallery);
           void patchProject({
             title: datos.title,
             description: datos.description || null,
-            isInGallery: datos.isInGallery,
           }).then((okResult) => {
             if (okResult) flashNotice('Ficha guardada');
           });
@@ -587,6 +625,9 @@ export default function Workspace(props: WorkspaceProps) {
           // Sólo llega acá la edición manual: el HTML que manda la IA se aplica
           // con setHtml directo, sin pasar por este callback.
           codeEditedByTeacher.current = true;
+          // El docente cambió el recurso a mano: si ya había portada, quedó
+          // vieja (design §6).
+          if (screenshotUrl) setPortadaVieja(true);
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
@@ -605,15 +646,12 @@ export default function Workspace(props: WorkspaceProps) {
           }
         }}
         isInGallery={isInGallery}
-        onTogglePublish={(value) => {
-          setIsInGallery(value);
-          void patchProject({ isInGallery: value }).then((okResult) => {
-            if (okResult) flashNotice(value ? 'Publicado en la galería' : 'Quitado de la galería');
-          });
-        }}
+        onDespublicar={handleDespublicar}
+        onAntesDePublicar={flushSave}
         screenshotUrl={screenshotUrl}
         onScreenshot={handleScreenshot}
         onDeleteScreenshot={() => void handleDeleteScreenshot()}
+        portadaVieja={portadaVieja}
         saving={saving}
         notice={notice}
       />
