@@ -205,9 +205,16 @@ function renderCurrentHtml(
 export function buildSystemPrompt(context: PromptContext): string {
   return [
     BASE_PROMPT,
-    renderPreguntas(context.turnosPrevios, context.herramientaForzada),
     renderRules('Reglas institucionales (obligatorias)', context.globalRules),
     renderRules('Preferencias de este docente', context.userRules),
+    // Las preguntas van DESPUES de las reglas y no antes, por el cache de
+    // prefijo de los proveedores: cobran la entrada ya cacheada mucho mas
+    // barata (DeepSeek, 0.006 contra 0.3 por millon) pero solo mientras el
+    // principio del prompt sea identico byte a byte. Esta seccion aparece en
+    // los dos primeros turnos y despues desaparece, asi que arriba partia el
+    // prefijo en dos y tiraba el cache de BASE_PROMPT + reglas justo cuando la
+    // conversacion se pone larga. Abajo, ese bloque queda intacto siempre.
+    renderPreguntas(context.turnosPrevios, context.herramientaForzada),
     renderAssets(context.assets, context.canSeeImages),
     renderCurrentHtml(context.currentHtml, context.projectTitle, context.htmlEditedByTeacher),
   ].join('');
