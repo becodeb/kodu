@@ -103,6 +103,7 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     maxInputChars: fila.maxInputChars,
     supportsVision: fila.supportsVision,
     reasoningEffort: fila.reasoningEffort,
+    reasoningParam: fila.reasoningParam,
     precios,
   };
 }

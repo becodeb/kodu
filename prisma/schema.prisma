@@ -268,6 +268,11 @@ model AiModel {
   /// que es lo correcto para todo proveedor que no lo conozca (mandarlo a
   /// ciegas es un 400). Ver src/lib/ai/provider.ts.
   reasoningEffort String?
+  /// Con qué nombre viaja el razonamiento, porque no hay uno solo:
+  ///   "reasoning_effort" → DeepSeek, dialecto OpenAI. Manda el nivel tal cual.
+  ///   "thinking"         → MiniMax M3. Manda {type: "enabled"|"disabled"}.
+  /// NULL = usar "reasoning_effort". Sólo importa si reasoningEffort no es NULL.
+  reasoningParam  String?
 
   fallbackModelId String?
   fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)

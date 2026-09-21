@@ -33,6 +33,8 @@ export interface MotorAdmin {
   userTokenWindowHours: number;
   /** "none" | "low" | "high" | "max", o null = no mandar el parámetro. */
   reasoningEffort: string | null;
+  /** "reasoning_effort" (default) o "thinking". */
+  reasoningParam: string | null;
   fallbackModelId: string | null;
 }
 
@@ -58,6 +60,7 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     userTokenLimit: fila.userTokenLimit,
     userTokenWindowHours: fila.userTokenWindowHours,
     reasoningEffort: fila.reasoningEffort,
+    reasoningParam: fila.reasoningParam,
     fallbackModelId: fila.fallbackModelId,
   };
 }

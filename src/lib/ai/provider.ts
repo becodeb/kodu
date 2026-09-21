@@ -43,6 +43,8 @@ export interface ProviderConfig {
    * cualquier proveedor que no lo conozca: mandárselo a ciegas es un 400.
    */
   reasoningEffort: string | null;
+  /** Con qué nombre viaja: "reasoning_effort" (default) o "thinking". */
+  reasoningParam: string | null;
   /** `null` si a este motor le falta algún precio: nunca se inventa un costo. */
   precios: {
     input: Prisma.Decimal;
@@ -194,6 +196,28 @@ export async function requestCompletionStream(options: {
   }
 }
 
+/**
+ * El razonamiento, con el nombre que espera cada proveedor.
+ *
+ * No hay un parámetro universal: DeepSeek habla el dialecto OpenAI y toma
+ * `reasoning_effort` con el nivel; MiniMax M3 toma `thinking: {type}`. Mandarle
+ * el de uno al otro es un 400, así que el catálogo guarda cuál usa cada motor.
+ *
+ * Sin `reasoningEffort` cargado no se manda NADA, que es lo único seguro con un
+ * proveedor cuyo dialecto no conocemos.
+ */
+export function razonamiento(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    // MiniMax no tiene niveles: o piensa o no piensa. Cualquier nivel que no
+    // sea "none" se interpreta como prendido.
+    return { thinking: { type: provider.reasoningEffort === 'none' ? 'disabled' : 'enabled' } };
+  }
+
+  return { reasoning_effort: provider.reasoningEffort };
+}
+
 async function intentarUna(
   endpoint: string,
   options: {
@@ -228,7 +252,7 @@ async function intentarUna(
         // razonamiento. El thinking cobra tokens y latencia a cambio de poco,
         // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
         // el temperature de acá abajo.
-        ...(provider.reasoningEffort ? { reasoning_effort: provider.reasoningEffort } : {}),
+        ...razonamiento(provider),
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de

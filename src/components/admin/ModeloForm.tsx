@@ -66,6 +66,7 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [supportsVision, setSupportsVision] = useState(motor?.supportsVision ?? false);
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(motor?.maxOutputTokens ?? 131_072));
   const [reasoningEffort, setReasoningEffort] = useState(motor?.reasoningEffort ?? '');
+  const [reasoningParam, setReasoningParam] = useState(motor?.reasoningParam ?? 'reasoning_effort');
   const [maxInputChars, setMaxInputChars] = useState(String(motor?.maxInputChars ?? 400_000));
   const [userTokenLimit, setUserTokenLimit] = useState(String(motor?.userTokenLimit ?? 0));
   const [userTokenWindowHours, setUserTokenWindowHours] = useState(String(motor?.userTokenWindowHours ?? 0));
@@ -100,6 +101,7 @@ export default function ModeloForm(props: ModeloFormProps) {
       supportsVision,
       maxOutputTokens: Number(maxOutputTokens),
       reasoningEffort: reasoningEffort === '' ? null : reasoningEffort,
+      reasoningParam: reasoningEffort === '' ? null : reasoningParam,
       maxInputChars: Number(maxInputChars),
       userTokenLimit: Number(userTokenLimit),
       userTokenWindowHours: Number(userTokenWindowHours),
@@ -374,6 +376,27 @@ export default function ModeloForm(props: ModeloFormProps) {
             no lo conoce devuelve un 400. Armar un recurso es escritura larga, no razonamiento, así
             que «sin razonamiento» suele salir más barato y más rápido.
           </p>
+
+          {reasoningEffort !== '' && (
+            <div className="mt-2">
+              <label className="kodu-label" htmlFor={`${idBase}-reasoningParam`}>
+                Cómo se lo manda
+              </label>
+              <select
+                id={`${idBase}-reasoningParam`}
+                value={reasoningParam}
+                onChange={(event) => setReasoningParam(event.target.value)}
+                className="kodu-input"
+              >
+                <option value="reasoning_effort">reasoning_effort (DeepSeek, dialecto OpenAI)</option>
+                <option value="thinking">thinking (MiniMax M3)</option>
+              </select>
+              <p className="mt-1 text-xs text-ink-500">
+                Cada proveedor le puso otro nombre al mismo parámetro. Si elegís el equivocado, el
+                proveedor contesta 400 y el turno se pierde.
+              </p>
+            </div>
+          )}
         </div>
 
         <div>

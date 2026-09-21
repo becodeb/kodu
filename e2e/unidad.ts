@@ -8,6 +8,7 @@ import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts'
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
+import { razonamiento, type ProviderConfig } from '../src/lib/ai/provider.ts';
 import { pideCambio } from '../src/pages/api/chat/stream.ts';
 
 /**
@@ -506,6 +507,59 @@ await prueba('consumedTokens: la ventana deja afuera lo viejo y el 0 suma todo',
 });
 
 await limpiarMotoresDePrueba();
+
+// ── El razonamiento y su dialecto ──────────────────────────────────────────
+//
+// Cada proveedor le puso otro nombre al mismo parámetro. Mandarle el de uno al
+// otro es un 400 y el turno se pierde, así que el mapeo se prueba.
+
+function config(extra: Partial<ProviderConfig>): ProviderConfig {
+  return {
+    id: 'x', label: 'x', apiKey: 'k', baseUrl: 'http://localhost:0', model: 'm',
+    maxTokens: 1, userTokenLimit: 0, userTokenWindowHours: 0, maxInputChars: 1,
+    supportsVision: false, reasoningEffort: null, reasoningParam: null,
+    precios: null, ...extra,
+  };
+}
+
+await prueba('razonamiento: sin nivel cargado no se manda NADA', () => {
+  assert.deepEqual(razonamiento(config({})), {});
+  // Ni siquiera con el dialecto elegido: sin nivel no hay nada que decir.
+  assert.deepEqual(razonamiento(config({ reasoningParam: 'thinking' })), {});
+});
+
+await prueba('razonamiento: dialecto OpenAI manda el nivel tal cual', () => {
+  assert.deepEqual(
+    razonamiento(config({ reasoningEffort: 'none', reasoningParam: 'reasoning_effort' })),
+    { reasoning_effort: 'none' },
+  );
+  assert.deepEqual(
+    razonamiento(config({ reasoningEffort: 'high', reasoningParam: 'reasoning_effort' })),
+    { reasoning_effort: 'high' },
+  );
+  // Sin dialecto explícito cae a este, que es el default histórico.
+  assert.deepEqual(razonamiento(config({ reasoningEffort: 'max' })), { reasoning_effort: 'max' });
+});
+
+await prueba('razonamiento: MiniMax no tiene niveles, sólo prendido o apagado', () => {
+  assert.deepEqual(
+    razonamiento(config({ reasoningEffort: 'none', reasoningParam: 'thinking' })),
+    { thinking: { type: 'disabled' } },
+  );
+  // Cualquier nivel que no sea "none" es prendido: MiniMax no distingue.
+  for (const nivel of ['low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamiento(config({ reasoningEffort: nivel, reasoningParam: 'thinking' })),
+      { thinking: { type: 'enabled' } },
+      `${nivel} tiene que mandar thinking enabled`,
+    );
+  }
+  // Y nunca el nombre del otro dialecto, que es lo que devuelve el 400.
+  assert.equal(
+    'reasoning_effort' in razonamiento(config({ reasoningEffort: 'none', reasoningParam: 'thinking' })),
+    false,
+  );
+});
 
 await prisma.$disconnect();
 
