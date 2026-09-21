@@ -1,0 +1,16 @@
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+DO
+ALTER TABLE
+UPDATE 2
+NOTICE:  relation "ProjectLike" already exists, skipping
+CREATE TABLE
+NOTICE:  relation "ProjectLike_userId_projectId_key" already exists, skipping
+CREATE INDEX
+NOTICE:  relation "ProjectLike_projectId_idx" already exists, skipping
+CREATE INDEX
+NOTICE:  column "screenshotAt" of relation "Project" already exists, skipping
+DO
+ALTER TABLE
+UPDATE 0
