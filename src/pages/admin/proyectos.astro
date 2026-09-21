@@ -1,0 +1,12 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import ProyectosTabla from '../../components/admin/ProyectosTabla.tsx';
+import { listarProyectosAdmin } from '../../lib/admin/proyectos.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const proyectos = await listarProyectosAdmin();
+---
+
+<AdminLayout title="Recursos">
+  <ProyectosTabla client:load initialProyectos={proyectos} />
+</AdminLayout>
