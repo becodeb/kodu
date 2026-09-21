@@ -35,6 +35,7 @@ const crearMotorSchema = z.object({
   reasoningEffort: z.enum(['none', 'low', 'high', 'max']).nullable().optional(),
   maxInputChars: z.coerce.number().int().positive().max(2_000_000).optional(),
   userTokenLimit: z.coerce.number().int().min(0).optional(),
+  userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
 });
 
@@ -84,6 +85,7 @@ export const POST: APIRoute = async ({ request }) => {
     supportsVision: datos.supportsVision ?? false,
     maxOutputTokens: datos.maxOutputTokens ?? 131_072,
     reasoningEffort: datos.reasoningEffort ?? null,
+    userTokenWindowHours: datos.userTokenWindowHours ?? 0,
     maxInputChars: datos.maxInputChars ?? 400_000,
     userTokenLimit: datos.userTokenLimit ?? 0,
     fallbackModelId: datos.fallbackModelId ?? null,

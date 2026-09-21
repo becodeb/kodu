@@ -99,6 +99,7 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     model: fila.providerModel,
     maxTokens: fila.maxOutputTokens,
     userTokenLimit: fila.userTokenLimit,
+    userTokenWindowHours: fila.userTokenWindowHours,
     maxInputChars: fila.maxInputChars,
     supportsVision: fila.supportsVision,
     reasoningEffort: fila.reasoningEffort,

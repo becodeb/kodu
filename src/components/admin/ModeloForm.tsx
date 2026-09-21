@@ -68,6 +68,7 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [reasoningEffort, setReasoningEffort] = useState(motor?.reasoningEffort ?? '');
   const [maxInputChars, setMaxInputChars] = useState(String(motor?.maxInputChars ?? 400_000));
   const [userTokenLimit, setUserTokenLimit] = useState(String(motor?.userTokenLimit ?? 0));
+  const [userTokenWindowHours, setUserTokenWindowHours] = useState(String(motor?.userTokenWindowHours ?? 0));
   const [fallbackModelId, setFallbackModelId] = useState(motor?.fallbackModelId ?? '');
   const [precioEntrada, setPrecioEntrada] = useState(motor?.priceInputPerMToken ?? '');
   const [precioCacheada, setPrecioCacheada] = useState(motor?.priceCachedInputPerMToken ?? '');
@@ -101,6 +102,7 @@ export default function ModeloForm(props: ModeloFormProps) {
       reasoningEffort: reasoningEffort === '' ? null : reasoningEffort,
       maxInputChars: Number(maxInputChars),
       userTokenLimit: Number(userTokenLimit),
+      userTokenWindowHours: Number(userTokenWindowHours),
       fallbackModelId: fallbackModelId === '' ? null : fallbackModelId,
       priceInputPerMToken: precioEntrada.trim() === '' ? null : Number(precioEntrada),
       priceCachedInputPerMToken: precioCacheada.trim() === '' ? null : Number(precioCacheada),
@@ -322,7 +324,33 @@ export default function ModeloForm(props: ModeloFormProps) {
               onChange={(event) => setUserTokenLimit(event.target.value)}
               className="kodu-input"
             />
+            <p className="mt-1 text-xs text-ink-500">
+              {Number(userTokenLimit) === 0
+                ? 'Sin tope: este motor no le corta a nadie.'
+                : Number(userTokenWindowHours) > 0
+                  ? `Se mide sobre las últimas ${userTokenWindowHours} h y se repone solo.`
+                  : 'Acumulado de por vida: al llegar, ese docente no puede usar más este motor.'}
+            </p>
           </div>
+        </div>
+
+        <div>
+          <label className="kodu-label" htmlFor={`${idBase}-userTokenWindowHours`}>
+            Ventana del tope, en horas (0 = de por vida)
+          </label>
+          <input
+            id={`${idBase}-userTokenWindowHours`}
+            type="number"
+            min={0}
+            max={8760}
+            value={userTokenWindowHours}
+            onChange={(event) => setUserTokenWindowHours(event.target.value)}
+            className="kodu-input"
+          />
+          <p className="mt-1 text-xs text-ink-500">
+            Es una ventana móvil, no un ciclo que se reinicia a una hora fija: se suman las últimas
+            N horas. El cupo se va liberando de a poco solo, sin que nadie tenga que resetear nada.
+          </p>
         </div>
 
         <div>

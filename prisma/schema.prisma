@@ -252,8 +252,17 @@ model AiModel {
   maxOutputTokens Int     @default(131072)
   maxInputChars   Int     @default(400000)
   supportsVision  Boolean @default(false)
-  /// Tope acumulado por usuario, en tokens. 0 = sin tope.
+  /// Tope por usuario, en tokens. 0 = sin tope.
   userTokenLimit  Int     @default(0)
+  /// La ventana sobre la que se mide `userTokenLimit`, en horas. 0 = desde
+  /// siempre (el comportamiento viejo: un tope de por vida que no se repone).
+  ///
+  /// Es una ventana MOVIL, no un ciclo que se reinicia: se suman las últimas N
+  /// horas contra `TokenUsage.createdAt`. Así no hace falta ningún trabajo
+  /// programado que resetee contadores, no hay estado que se pueda corromper,
+  /// y el cupo se va liberando de a poco en vez de volver todo junto a
+  /// medianoche.
+  userTokenWindowHours Int @default(0)
   /// Cuánto se le deja razonar antes de contestar, para los modelos que lo
   /// soportan: "none" | "low" | "high" | "max". NULL = no mandar el parámetro,
   /// que es lo correcto para todo proveedor que no lo conozca (mandarlo a

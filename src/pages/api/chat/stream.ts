@@ -399,14 +399,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // El tope por usuario se chequea ANTES de gastar: avisar después de consumir
   // no sirve de nada. Se ofrece el otro motor, que es la salida real.
   if (provider.userTokenLimit > 0) {
-    const usados = await consumedTokens(user.id, provider.id);
+    const usados = await consumedTokens(user.id, provider.id, provider.userTokenWindowHours);
     if (usados >= provider.userTokenLimit) {
       const otro = await motorConCapacidad(provider, 0);
       return fail(
-        `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}. ` +
+        `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}` +
+          // Con ventana el tope se repone solo, así que decirlo cambia por
+          // completo el mensaje: no es "andá a pedir permiso", es "esperá".
+          (provider.userTokenWindowHours > 0
+            ? ` (se mide sobre las últimas ${provider.userTokenWindowHours} horas y se va reponiendo solo). `
+            : '. ') +
           (otro
-            ? `Cambiá el modelo a ${otro.label}, o pedile más cupo a la administración.`
-            : 'Pedile más cupo a la administración.'),
+            ? `Podés seguir ahora mismo cambiando el modelo a ${otro.label}.`
+            : provider.userTokenWindowHours > 0
+              ? 'Probá de nuevo más tarde, o pedile más cupo a la administración.'
+              : 'Pedile más cupo a la administración.'),
         429,
       );
     }

@@ -32,6 +32,8 @@ export interface ProviderConfig {
   maxTokens: number;
   /** Tope de tokens por usuario. 0 = sin tope. */
   userTokenLimit: number;
+  /** Ventana móvil sobre la que se mide el tope, en horas. 0 = desde siempre. */
+  userTokenWindowHours: number;
   /** Largo máximo de un mensaje del docente, en caracteres. */
   maxInputChars: number;
   supportsVision: boolean;

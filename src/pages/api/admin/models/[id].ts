@@ -37,6 +37,7 @@ const actualizarMotorSchema = z.object({
   reasoningEffort: z.enum(['none', 'low', 'high', 'max']).nullable().optional(),
   maxInputChars: z.coerce.number().int().positive().max(2_000_000).optional(),
   userTokenLimit: z.coerce.number().int().min(0).optional(),
+  userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
 });
 
@@ -84,6 +85,7 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.selectableByTeacher !== undefined) cambios.selectableByTeacher = datos.selectableByTeacher;
   if (datos.maxOutputTokens !== undefined) cambios.maxOutputTokens = datos.maxOutputTokens;
   if (datos.reasoningEffort !== undefined) cambios.reasoningEffort = datos.reasoningEffort;
+  if (datos.userTokenWindowHours !== undefined) cambios.userTokenWindowHours = datos.userTokenWindowHours;
   if (datos.maxInputChars !== undefined) cambios.maxInputChars = datos.maxInputChars;
   if (datos.supportsVision !== undefined) cambios.supportsVision = datos.supportsVision;
   if (datos.userTokenLimit !== undefined) cambios.userTokenLimit = datos.userTokenLimit;

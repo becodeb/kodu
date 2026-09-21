@@ -29,6 +29,8 @@ export interface MotorAdmin {
   maxInputChars: number;
   supportsVision: boolean;
   userTokenLimit: number;
+  /** Ventana móvil del tope, en horas. 0 = desde siempre. */
+  userTokenWindowHours: number;
   /** "none" | "low" | "high" | "max", o null = no mandar el parámetro. */
   reasoningEffort: string | null;
   fallbackModelId: string | null;
@@ -54,6 +56,7 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     maxInputChars: fila.maxInputChars,
     supportsVision: fila.supportsVision,
     userTokenLimit: fila.userTokenLimit,
+    userTokenWindowHours: fila.userTokenWindowHours,
     reasoningEffort: fila.reasoningEffort,
     fallbackModelId: fila.fallbackModelId,
   };

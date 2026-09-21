@@ -130,9 +130,25 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
 }
 
 /** Tokens acumulados por un usuario en UN motor puntual (prompt + respuesta). */
-export async function consumedTokens(userId: string, aiModelId: string): Promise<number> {
+export async function consumedTokens(
+  userId: string,
+  aiModelId: string,
+  /**
+   * Ventana móvil en horas. 0 = desde siempre, que es el comportamiento
+   * histórico: un tope de por vida que nunca se repone.
+   *
+   * Móvil y no un ciclo que se reinicia a propósito: no hace falta un trabajo
+   * programado, no hay contador que se pueda corromper, y el cupo se libera de
+   * a poco en lugar de volver todo junto a una hora fija. La consulta la cubre
+   * el índice `[userId, createdAt]` que ya existe.
+   */
+  ventanaHoras = 0,
+): Promise<number> {
+  const desde =
+    ventanaHoras > 0 ? new Date(Date.now() - ventanaHoras * 60 * 60 * 1000) : null;
+
   const total = await prisma.tokenUsage.aggregate({
-    where: { userId, aiModelId },
+    where: { userId, aiModelId, ...(desde ? { createdAt: { gte: desde } } : {}) },
     _sum: { promptTokens: true, completionTokens: true },
   });
 

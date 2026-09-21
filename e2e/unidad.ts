@@ -5,7 +5,7 @@ import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
 import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
-import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, nivelDeConsumo } from '../src/lib/ai/usage.ts';
+import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { pideCambio } from '../src/pages/api/chat/stream.ts';
@@ -449,6 +449,63 @@ await prueba('buildSystemPrompt: la herramienta forzada gana sobre las preguntas
     'turno tardío + herramienta forzada tampoco lleva la guía',
   );
 });
+
+// ── El tope por docente y su ventana móvil ─────────────────────────────────
+//
+// Acá un error no se ve: o el tope no corta nunca, o deja a un docente sin el
+// motor para siempre. Se prueba contra filas reales con `createdAt` viejo,
+// porque lo único que importa es el corte por fecha.
+
+await prueba('consumedTokens: la ventana deja afuera lo viejo y el 0 suma todo', async () => {
+  const usuario = await prisma.user.create({
+    data: { email: `ventana-${randomUUID()}@test.local`, name: 'Prueba ventana' },
+  });
+  const motorId = await crearMotorDePrueba({ providerModel: `ventana-${randomUUID()}` });
+  const hace = (horas: number) => new Date(Date.now() - horas * 60 * 60 * 1000);
+
+  try {
+    await prisma.tokenUsage.createMany({
+      data: [
+        // Dentro de una ventana de 5 h.
+        { userId: usuario.id, aiModelId: motorId, model: 'x', promptTokens: 100, completionTokens: 50, createdAt: hace(1) },
+        { userId: usuario.id, aiModelId: motorId, model: 'x', promptTokens: 200, completionTokens: 25, createdAt: hace(4) },
+        // Afuera.
+        { userId: usuario.id, aiModelId: motorId, model: 'x', promptTokens: 9_000, completionTokens: 9_000, createdAt: hace(6) },
+        { userId: usuario.id, aiModelId: motorId, model: 'x', promptTokens: 7_000, completionTokens: 7_000, createdAt: hace(72) },
+      ],
+    });
+
+    assert.equal(
+      await consumedTokens(usuario.id, motorId, 5),
+      375,
+      'la ventana de 5 h sólo puede contar los dos turnos recientes (100+50+200+25)',
+    );
+
+    assert.equal(
+      await consumedTokens(usuario.id, motorId, 0),
+      32_375,
+      '0 horas significa desde siempre: tiene que sumar los cuatro turnos',
+    );
+
+    assert.equal(
+      await consumedTokens(usuario.id, motorId),
+      32_375,
+      'sin argumento se comporta como antes de este cambio, para no romper a nadie',
+    );
+
+    // El borde: un turno justo del otro lado de la ventana no entra.
+    assert.equal(
+      await consumedTokens(usuario.id, motorId, 5) < await consumedTokens(usuario.id, motorId, 7),
+      true,
+      'agrandar la ventana tiene que hacer entrar el turno de hace 6 h',
+    );
+  } finally {
+    await prisma.tokenUsage.deleteMany({ where: { userId: usuario.id } });
+    await prisma.user.delete({ where: { id: usuario.id } });
+  }
+});
+
+await limpiarMotoresDePrueba();
 
 await prisma.$disconnect();
 
