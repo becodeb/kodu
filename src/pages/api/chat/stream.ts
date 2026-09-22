@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
+import { aplicarKit, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import {
   ProviderError,
   readCompletionStream,
@@ -175,6 +176,26 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
 }
 
 /**
+ * Aplica el kit de diseño (T2, "Kit aplicado por el servidor") a un HTML que
+ * acaba de llegar del modelo, ANTES de mandarlo al cliente (`send({ type:
+ * 'code', ... })`) y de persistirlo. Un solo paso por acá para las tres
+ * fuentes de HTML de un turno (el resultado de `update_resource_code` y las
+ * dos rutas de `rescatarHtmlDelTexto`), así T3 (vista previa en vivo) y T9
+ * (varias versiones) reusan la misma función en vez de repetir la llamada a
+ * `aplicarKit` con su propio criterio de tema previo.
+ *
+ * `temaPrevio` es el tema que YA tenía el recurso ANTES de este turno (no el
+ * del HTML nuevo): si el modelo no declaró `<meta name="kodu-tema">` en esta
+ * respuesta, el recurso no se queda sin kit, hereda el que ya tenía.
+ *
+ * Exportada sólo para `e2e/unidad.ts` (mismo criterio que `pideCambio` más
+ * abajo): nadie más fuera de este módulo la usa todavía.
+ */
+export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
+  return aplicarKit(html, { temaPrevio });
+}
+
+/**
  * Arma el contenido del mensaje del docente.
  *
  * Con `AI_VISION` prendido las imágenes viajan como partes `image_url` en
@@ -287,6 +308,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
+
+  // El tema QUE YA TENÍA el recurso antes de este turno (T2): se lee UNA
+  // sola vez, acá, sobre el HTML con el que arrancó el turno. `project` es
+  // una copia local — nada más abajo reasigna `project.currentHtml` — así
+  // que esta lectura sigue representando "el tema previo" durante todo el
+  // turno, aunque el modelo no repita el meta en su respuesta.
+  const temaProyecto = temaDe(project.currentHtml);
 
   // M8 (design.md §7): un admin mandando un turno en un recurso ajeno deja
   // la marca en el Project ANTES de gastar nada, y `actuaComoAdmin` decide
@@ -662,9 +690,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
             const result = parseUpdateResourceArgs(event.arguments, event.truncated);
 
             if (result.ok) {
-              generatedHtml = result.html;
+              const html = aplicarKitAlTurno(result.html, temaProyecto);
+              generatedHtml = html;
               codeProblem = null;
-              send({ type: 'code', html: result.html });
+              send({ type: 'code', html });
             } else {
               codeProblem = CODE_PROBLEMS[result.reason];
               send({ type: 'error', message: codeProblem });
@@ -689,9 +718,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
           if (rescatado) {
             console.warn(`[chat/stream] el HTML vino en el texto; se rescata a los ${transcurrido()}`);
-            generatedHtml = rescatado.html;
+            const html = aplicarKitAlTurno(rescatado.html, temaProyecto);
+            generatedHtml = html;
             assistantText = rescatado.resto;
-            send({ type: 'code', html: rescatado.html });
+            send({ type: 'code', html });
           }
         }
 
@@ -719,9 +749,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
           if (!generatedHtml && !codeProblem) {
             const rescatado = rescatarHtmlDelTexto(assistantText);
             if (rescatado) {
-              generatedHtml = rescatado.html;
+              const html = aplicarKitAlTurno(rescatado.html, temaProyecto);
+              generatedHtml = html;
               assistantText = rescatado.resto;
-              send({ type: 'code', html: rescatado.html });
+              send({ type: 'code', html });
             }
           }
         }

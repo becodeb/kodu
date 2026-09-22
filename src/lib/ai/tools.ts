@@ -20,7 +20,7 @@ export const RESOURCE_TOOLS = [
           html: {
             type: 'string',
             description:
-              'El documento HTML5 completo autoportante con CSS (Tailwind CDN) y JS embebido.',
+              'El documento HTML5 completo autoportante, con CSS y JS embebido. Declará el tema del kit en el <head> con <meta name="kodu-tema" content="ID">: el sistema agrega Tailwind configurado, tipografías e íconos por vos.',
           },
         },
         required: ['html'],
