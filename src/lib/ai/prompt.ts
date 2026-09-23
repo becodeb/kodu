@@ -1,14 +1,16 @@
 /**
  * Armado del contexto que se manda a DeepSeek en cada turno (SPEC §4.2).
  *
- * Orden de concatenación:
+ * Orden de concatenación de `buildSystemPrompt`:
  *   1. System prompt base (formato, librerías por CDN, seguridad)
- *   2. Guía de preguntas tempranas (sólo en los primeros turnos; ver §10)
- *   3. Reglas globales activas (las cargan los ADMIN)
- *   4. Reglas activas del docente
+ *   2. Reglas globales activas (las cargan los ADMIN)
+ *   3. Reglas activas del docente
+ *   4. Guía de preguntas tempranas (sólo en los primeros turnos; ver §10)
  *   5. Assets subidos (imágenes con su URL pública, texto extraído de PDFs)
- *   6. Estado actual del recurso
- * El historial del ChatThread se agrega aparte, como mensajes.
+ * El historial del ChatThread se agrega aparte, como mensajes, y el estado
+ * actual del recurso (HTML, título, si el docente lo tocó a mano) viaja en
+ * el ÚLTIMO mensaje del usuario, no acá: ver `buildCurrentResourceBlock` y
+ * el comentario en `buildSystemPrompt` sobre por qué.
  */
 
 import { plegarKit } from './kit.ts';
@@ -29,12 +31,8 @@ export interface PromptContext {
   globalRules: RuleContext[];
   userRules: RuleContext[];
   assets: AssetContext[];
-  currentHtml: string;
-  projectTitle: string;
   /** true si el modelo configurado puede VER las imágenes adjuntas. */
   canSeeImages: boolean;
-  /** true si el docente tocó el código a mano desde la última respuesta de la IA. */
-  htmlEditedByTeacher: boolean;
   /** Turnos del DOCENTE ya guardados en este hilo, sin contar el actual. */
   turnosPrevios: number;
   /** Este turno viene con la herramienta forzada (`pideCambio`). Ver §10.3. */
@@ -66,7 +64,7 @@ const BASE_PROMPT = `Sos el motor de generación de KoduEdu, una plataforma dond
 - Sin imports de módulos locales, sin bundlers, sin pasos de build, sin frameworks que requieran compilación.
 
 ## REGLA MÁS IMPORTANTE: se EDITA lo que ya existe, no se reescribe
-El recurso que te pasan abajo es trabajo del docente y de turnos anteriores. Ya funciona. Tu tarea es **modificarlo**, no reemplazarlo por tu propia versión.
+El recurso actual viaja en tu último mensaje de usuario, antes del pedido del docente: es trabajo suyo y de turnos anteriores. Ya funciona. Tu tarea es **modificarlo**, no reemplazarlo por tu propia versión.
 
 - Copiá el documento actual TAL CUAL y aplicá únicamente el cambio pedido. Todo lo que el docente no mencionó tiene que quedar idéntico: mismos textos, mismos colores, mismas funciones, mismos ids y nombres de clases, mismo orden de las secciones.
 - Si te piden tocar una parte, no aproveches para "mejorar" el resto. Un cambio pedido = un cambio hecho.
@@ -163,7 +161,8 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 // más se presta a inventar (menos información, y a menudo uno de los
 // prompts prearmados de starters.ts); turno 2 es frecuentemente la primera
 // frase libre del docente. Desde el turno 3 el recurso ya existe y viaja en
-// el prompt (renderCurrentHtml): preguntar ahí es fricción, no cuidado.
+// el último mensaje del usuario (buildCurrentResourceBlock): preguntar ahí
+// es fricción, no cuidado.
 export const TURNOS_TEMPRANOS = 1;
 
 const PREGUNTAS_TEMPRANAS = `
@@ -232,7 +231,24 @@ function renderAssets(assets: AssetContext[], canSeeImages: boolean): string {
   return section;
 }
 
-function renderCurrentHtml(
+/**
+ * Arma el bloque del "estado actual del recurso" (HTML, título, si el
+ * docente lo tocó a mano) para pegarlo ANTES del texto del docente, en el
+ * ÚLTIMO mensaje de usuario — ya no viaja en el system prompt.
+ *
+ * Por qué ahí y no en el system prompt (T1, "html-fuera-del-system"): el
+ * HTML es lo único que cambia en CADA turno. Si viajara en el system
+ * prompt, ese mensaje sería distinto turno a turno y el cache de prefijo
+ * del proveedor se cortaría justo ahí — cobran la entrada ya cacheada mucho
+ * más barata (DeepSeek, 0.006 contra 0.3 por millón) pero sólo mientras el
+ * principio del pedido sea idéntico byte a byte, así que el historial
+ * completo (hasta 40 mensajes) se pagaba a precio lleno en cada turno. Con
+ * el HTML acá, en el último mensaje, el system prompt y el historial quedan
+ * byte a byte iguales entre turnos del mismo hilo (salvo que cambien
+ * reglas, assets o la guía de preguntas tempranas) y el proveedor los
+ * cachea solo.
+ */
+export function buildCurrentResourceBlock(
   currentHtml: string,
   projectTitle: string,
   htmlEditedByTeacher: boolean,
@@ -251,7 +267,7 @@ function renderCurrentHtml(
     ? `${htmlPlegado.slice(0, MAX_HTML_CHARS)}\n<!-- …código truncado por longitud -->`
     : htmlPlegado;
 
-  let section = `\n\n## Estado actual del recurso "${projectTitle}"\n`;
+  let section = `## Estado actual del recurso "${projectTitle}"\n`;
 
   // El docente puede pegar o escribir HTML en la pestaña "Código". Ese texto ya
   // está acá abajo, pero hay que decirlo explícitamente: si no, el modelo sigue
@@ -282,8 +298,12 @@ export function buildSystemPrompt(context: PromptContext): string {
     // los dos primeros turnos y despues desaparece, asi que arriba partia el
     // prefijo en dos y tiraba el cache de BASE_PROMPT + reglas justo cuando la
     // conversacion se pone larga. Abajo, ese bloque queda intacto siempre.
+    //
+    // El estado actual del recurso (HTML, título, editado a mano) YA NO va
+    // acá al final: viaja en el último mensaje de usuario, ver
+    // `buildCurrentResourceBlock`. Así este system prompt entero queda
+    // estable turno a turno, no sólo hasta acá.
     renderPreguntas(context.turnosPrevios, context.herramientaForzada),
     renderAssets(context.assets, context.canSeeImages),
-    renderCurrentHtml(context.currentHtml, context.projectTitle, context.htmlEditedByTeacher),
   ].join('');
 }
