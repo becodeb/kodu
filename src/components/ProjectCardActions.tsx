@@ -77,10 +77,10 @@ export default function ProjectCardActions({ projectId, title }: ProjectCardActi
         onClick={borrar}
         disabled={pending}
         aria-label={`Borrar ${title}`}
-        className={`group/borrar flex h-8 items-center justify-end overflow-hidden rounded-full transition-all duration-200 ease-out disabled:opacity-60 ${
+        className={`group/borrar flex h-8 items-center justify-end overflow-hidden rounded-full transition-all duration-200 ease-out disabled:opacity-60 max-sm:h-10 ${
           armado
             ? 'w-[6.5rem] bg-red-600 text-white'
-            : 'w-8 bg-red-50 text-red-600 hover:w-[6rem] hover:bg-red-100'
+            : 'w-8 bg-red-50 text-red-600 hover:w-[6rem] hover:bg-red-100 max-sm:w-10'
         }`}
       >
         {/* El texto ocupa lugar sólo cuando el botón ya se ensanchó, así no
@@ -93,7 +93,7 @@ export default function ProjectCardActions({ projectId, title }: ProjectCardActi
           {etiqueta}
         </span>
 
-        <span className="grid h-8 w-8 shrink-0 place-items-center">
+        <span className="grid h-8 w-8 shrink-0 place-items-center max-sm:h-10 max-sm:w-10">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M2.5 4h11M6.5 4V2.75c0-.41.34-.75.75-.75h1.5c.41 0 .75.34.75.75V4M12.5 4l-.6 8.4a1.25 1.25 0 0 1-1.25 1.1H5.35a1.25 1.25 0 0 1-1.25-1.1L3.5 4M6.75 6.75v4M9.25 6.75v4"

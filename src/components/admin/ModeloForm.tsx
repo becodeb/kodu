@@ -158,7 +158,7 @@ export default function ModeloForm(props: ModeloFormProps) {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-provider`}>
               Cuenta de proveedor
@@ -242,7 +242,7 @@ export default function ModeloForm(props: ModeloFormProps) {
           <legend className="px-1 text-sm font-medium text-ink-700">
             Precio aproximado (USD por millón de tokens)
           </legend>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div>
               <label className="kodu-label text-xs" htmlFor={`${idBase}-precioEntrada`}>
                 Entrada (sin caché)
@@ -289,7 +289,7 @@ export default function ModeloForm(props: ModeloFormProps) {
           {preview && <p className="text-xs text-ink-700">{preview}</p>}
         </fieldset>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-maxOutputTokens`}>
               Tokens máx. de salida
