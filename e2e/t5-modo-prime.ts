@@ -285,6 +285,16 @@ async function main(): Promise<void> {
     );
     console.log('✔ escena 1: interruptor general apagado → nadie tiene prime (probado con un admin)');
 
+    // El PATCH del recurso tampoco guarda un motor que esta persona no podría
+    // elegir en el selector: ni uno exclusivo sin prime, ni un id inexistente
+    // (antes de este chequeo, ese caso terminaba en un 500 por la FK).
+    const patchMotor = (aiModelId: string) =>
+      adminPage.request.patch(`${BASE_URL}/api/projects/${proyectoAdmin.id}`, { data: { aiModelId } });
+    assert.equal((await patchMotor(modelIdPrime)).status(), 422, 'sin prime, el PATCH rechaza el motor prime-only');
+    assert.equal((await patchMotor('no-existe')).status(), 422, 'un id inexistente es un 422, no un 500');
+    assert.equal((await patchMotor(modelIdNormal)).status(), 200, 'un motor elegible se guarda');
+    console.log('✔ escena 1b: el PATCH del recurso sólo guarda motores elegibles');
+
     // ───────────────────────────────────────────────────────────
     // Prende el interruptor general. `demoEnabled` también: la escena 2b
     // necesita "seguir la entrada" a la demo (POST /api/auth/demo da 404
