@@ -26,7 +26,7 @@ const GLOBAL_RULES = [
   {
     title: 'Librerías permitidas por CDN',
     content:
-      'Usá únicamente estas librerías, siempre por CDN: Tailwind CSS (cdn.tailwindcss.com), KaTeX para fórmulas matemáticas, Chart.js para gráficos, canvas-confetti para refuerzos positivos y Lucide Icons para iconografía. No incorpores otras dependencias externas.',
+      'Usá únicamente estas librerías, siempre por CDN desde jsdelivr o unpkg: KaTeX para fórmulas matemáticas, Chart.js para gráficos y canvas-confetti sólo al terminar una actividad. Tailwind CSS, las tipografías y los íconos Lucide ya vienen con el kit de KoduEdu (<meta name="kodu-tema">): no los cargues aparte. No incorpores otras dependencias externas.',
   },
   {
     title: 'Estándar pedagógico',
