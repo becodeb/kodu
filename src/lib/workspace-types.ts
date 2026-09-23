@@ -111,4 +111,11 @@ export type AiPhase =
    * lo que encontró el lint antes de entregarle el recurso al docente. La
    * vista previa sigue mostrando el primer pase mientras dura esta fase.
    */
-  | 'revisando';
+  | 'revisando'
+  /**
+   * T8 ("Revisión visual con captura"): el turno ya terminó y está
+   * esperando el iframe, sacando la captura y mirándola con el modelo. La
+   * vista previa sigue mostrando el HTML final del turno hasta que, si
+   * corresponde, llega una versión mejorada.
+   */
+  | 'mirando';

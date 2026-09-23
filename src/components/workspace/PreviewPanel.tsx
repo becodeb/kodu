@@ -1,5 +1,15 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument } from '../../lib/preview.ts';
+import {
+  Suspense,
+  forwardRef,
+  lazy,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
 import { aplicarKit, temaDe } from '../../lib/ai/kit.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
@@ -9,6 +19,33 @@ const PARTIAL_RENDER_MIN_MS = 1_000;
 /** Margen para que el JIT de Tailwind del kit (corre solo, async, apenas
  *  carga el documento) ya haya pintado antes de mostrar el frame. */
 const PARTIAL_SWAP_DELAY_MS = 150;
+
+/**
+ * T8 ("Revisión visual con captura"): margen antes de capturar para el
+ * modelo, más largo que `PARTIAL_SWAP_DELAY_MS`. Ahí alcanza con esperar al
+ * JIT de Tailwind (todo local); acá el documento FINAL también puede estar
+ * esperando la hoja de Google Fonts del kit, que pide red — un texto en la
+ * fuente del sistema en la captura le mentiría al modelo sobre cómo se ve
+ * de verdad el recurso.
+ */
+const CAPTURE_SETTLE_MS = 600;
+/** Cuánto se espera la respuesta del puente antes de rendirse. */
+const CAPTURE_TIMEOUT_MS = 15_000;
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+export interface PreviewPanelHandle {
+  /**
+   * Pide una captura de la vista previa ACTUAL (T8): espera a que el
+   * iframe haya cargado el HTML vigente más el margen de asentado, y
+   * resuelve con el data URL o con un error — nunca tira. Independiente de
+   * la captura de portada de más abajo (`pedirCaptura`): cada pedido lleva
+   * su propio `id`, así que pueden estar los dos en el aire sin cruzarse.
+   */
+  capturar(opciones: OpcionesCaptura): Promise<{ dataUrl: string } | { error: string }>;
+}
 
 interface PreviewPanelProps {
   html: string;
@@ -45,7 +82,7 @@ const TABS: Array<[Tab, string]> = [
 ];
 
 /** Panel derecho: visor, editor de código y ficha del recurso. */
-export default function PreviewPanel(props: PreviewPanelProps) {
+const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function PreviewPanel(props, ref) {
   const [tab, setTab] = useState<Tab>('preview');
   const [capturing, setCapturing] = useState(false);
   // Cuál de los dos gatillos (portada sola, o portada-para-publicar) disparó
@@ -62,8 +99,23 @@ export default function PreviewPanel(props: PreviewPanelProps) {
   // El iframe renderizó al menos una vez con el HTML actual. Sin esto la
   // captura puede salir de un documento en blanco.
   const [listo, setListo] = useState(false);
+  // Espejo de `listo` en un ref (T8, `capturar` más abajo): esa función no
+  // se vuelve a crear en cada render (ver `useCallback`/`useImperativeHandle`
+  // al final), así que no puede cerrar sobre el `listo` de un render viejo —
+  // necesita leer el valor VIGENTE en el momento en que la llaman, y eso es
+  // exactamente para lo que sirve un ref.
+  const listoRef = useRef(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timeoutRef = useRef<number | null>(null);
+  // Contador compartido por los DOS pedidos de captura de este componente
+  // (`pedirCaptura` para la portada, `capturar` para T8): cada uno arma su
+  // propio `id` a partir de acá, así que aunque los dos estén en el aire a
+  // la vez, cada uno reconoce SU respuesta y ninguno le roba la del otro.
+  const proximoIdCapturaRef = useRef(0);
+  // El `id` que espera el pedido de portada en curso, o `null`. El listener
+  // de más abajo ignora cualquier `CAPTURE_RESULT` que no lo lleve — incluido
+  // el de una captura de `capturar()` (T8) que esté corriendo al mismo tiempo.
+  const pendingIdRef = useRef<string | null>(null);
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
   // recarga al tipear en otros campos del panel.
@@ -189,6 +241,7 @@ export default function PreviewPanel(props: PreviewPanelProps) {
   // blanco.
   useEffect(() => {
     setListo(false);
+    listoRef.current = false;
   }, [srcDoc]);
 
   useEffect(() => {
@@ -197,6 +250,12 @@ export default function PreviewPanel(props: PreviewPanelProps) {
       // se valida por la ventana que emitió, no por el origen.
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (!event.data || event.data.type !== CAPTURE_RESULT) return;
+      // El `id` distingue ESTE pedido (portada) de cualquier otro que esté
+      // en el aire al mismo tiempo (T8, `capturar()`): sin este chequeo, la
+      // respuesta de una revisión visual terminaría subiéndose como si
+      // fuera la portada del recurso.
+      if (pendingIdRef.current === null || event.data.id !== pendingIdRef.current) return;
+      pendingIdRef.current = null;
 
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
@@ -228,11 +287,13 @@ export default function PreviewPanel(props: PreviewPanelProps) {
     if (!frame) return;
 
     const publicar = !!opciones?.publicar;
+    const id = String(++proximoIdCapturaRef.current);
+    pendingIdRef.current = id;
     setCapturing(true);
     setCapturingParaPublicar(publicar);
     setCaptureError(null);
     if (publicar) setPublicando(true);
-    frame.postMessage({ type: CAPTURE_REQUEST }, '*');
+    frame.postMessage({ type: CAPTURE_REQUEST, id }, '*');
 
     // Si el iframe no contesta (script bloqueado, sin internet), no dejamos el
     // botón colgado para siempre: se levanta como un error reintentable, no
@@ -244,6 +305,53 @@ export default function PreviewPanel(props: PreviewPanelProps) {
       if (publicar) setPublicando(false);
     }, 15_000);
   }
+
+  /**
+   * T8 ("Revisión visual con captura"): captura ad-hoc para mandarle al
+   * modelo, totalmente aparte del flujo de portada de arriba (propio `id`,
+   * propio listener de una sola vez, sin tocar `capturing`/`captureError`/
+   * `publicando`). Nunca tira: cualquier problema vuelve como `{ error }`.
+   */
+  const capturar = useCallback(
+    async (opciones: OpcionesCaptura): Promise<{ dataUrl: string } | { error: string }> => {
+      const limite = Date.now() + CAPTURE_TIMEOUT_MS;
+      while (!listoRef.current) {
+        if (Date.now() >= limite) return { error: 'La vista previa no terminó de cargar.' };
+        await esperar(50);
+      }
+
+      // Margen de asentado (fuentes, JIT) ANTES de pedir la captura: ver el
+      // comentario de CAPTURE_SETTLE_MS más arriba.
+      await esperar(CAPTURE_SETTLE_MS);
+
+      const frame = iframeRef.current?.contentWindow;
+      if (!frame) return { error: 'La vista previa no está lista.' };
+
+      return new Promise((resolve) => {
+        const id = String(++proximoIdCapturaRef.current);
+
+        const timeout = window.setTimeout(() => {
+          window.removeEventListener('message', onMessage);
+          resolve({ error: 'La captura tardó demasiado.' });
+        }, CAPTURE_TIMEOUT_MS);
+
+        function onMessage(event: MessageEvent) {
+          if (event.source !== iframeRef.current?.contentWindow) return;
+          if (!event.data || event.data.type !== CAPTURE_RESULT || event.data.id !== id) return;
+          window.clearTimeout(timeout);
+          window.removeEventListener('message', onMessage);
+          if (event.data.error) resolve({ error: String(event.data.error) });
+          else resolve({ dataUrl: String(event.data.dataUrl) });
+        }
+
+        window.addEventListener('message', onMessage);
+        frame.postMessage({ type: CAPTURE_REQUEST, id, opciones }, '*');
+      });
+    },
+    [],
+  );
+
+  useImperativeHandle(ref, () => ({ capturar }), [capturar]);
 
   async function copyUrl() {
     try {
@@ -379,7 +487,10 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           ref={iframeRef}
           title="Vista previa del recurso"
           srcDoc={srcDoc}
-          onLoad={() => setListo(true)}
+          onLoad={() => {
+            setListo(true);
+            listoRef.current = true;
+          }}
           // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
           sandbox="allow-scripts allow-popups allow-forms allow-modals"
           data-kodu-frente={parcialListoParaMostrar ? 'false' : 'true'}
@@ -469,4 +580,6 @@ export default function PreviewPanel(props: PreviewPanelProps) {
 
     </section>
   );
-}
+});
+
+export default PreviewPanel;

@@ -29,6 +29,12 @@ const PHASES: Record<
   // "weaving" y no un estado nuevo de la librería: es la misma sensación de
   // "todavía trabajando sobre el recurso" que "Armando el recurso".
   revisando: { state: 'weaving', label: 'Revisando detalles' },
+  // T8 ("Revisión visual con captura"): el turno ya terminó, y antes de
+  // soltar el control el sistema mira una foto del resultado. Misma
+  // sensación que "revisando" — "weaving", no un estado nuevo — pero una
+  // etiqueta propia: acá no hay ningún lint corriendo, hay un modelo
+  // mirando una imagen.
+  mirando: { state: 'weaving', label: 'Mirando cómo quedó' },
 };
 
 function formatearTiempo(segundos: number): string {

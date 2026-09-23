@@ -17,6 +17,7 @@ import {
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { resolverCapacidades, resolverVelocidadEfectiva } from '../../../lib/ai/capacidades.ts';
+import { aplicaRevisionVisual } from '../../../lib/ai/revision-visual.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -197,8 +198,9 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
  * del HTML nuevo): si el modelo no declaró `<meta name="kodu-tema">` en esta
  * respuesta, el recurso no se queda sin kit, hereda el que ya tenía.
  *
- * Exportada sólo para `e2e/unidad.ts` (mismo criterio que `pideCambio` más
- * abajo): nadie más fuera de este módulo la usa todavía.
+ * Exportada para `e2e/unidad.ts` (mismo criterio que `pideCambio` más abajo)
+ * y, desde T8, para `visual-review.ts` — mismo paso, misma razón: el HTML
+ * que devuelve esa llamada también pasa por acá antes de persistirse.
  */
 export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
   return aplicarKit(html, { temaPrevio });
@@ -338,9 +340,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * llamada al proveedor más abajo, cadena de respaldo y re-pedido forzado
    * incluidos, para que la misma velocidad rija todo el turno.
    *
-   * Hook para T7/T8: cuando lleguen, la revisión automática (combinada con
-   * `capacidades.autoReviewForAll`) y la revisión visual van a leer
-   * `velocidadEfectiva === 'deep'` desde ACÁ para decidir si corren —
+   * T7/T8 leen esta misma variable para decidir si corren: la revisión
+   * automática (combinada con `capacidades.autoReviewForAll`, ver
+   * `revisarYCorregir` más abajo) y `aplicaRevisionVisual` (T8, en el
+   * `finally`, para el flag `revisionVisualDisponible` del evento "done") —
    * "A fondo suma razonamiento, revisión automática y revisión visual".
    */
   const velocidadEfectiva = resolverVelocidadEfectiva(
@@ -1173,7 +1176,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
           // devuelto el documento igual, letra por letra). Una falla acá
           // nunca puede tirar abajo el turno: ya está guardado y respondido,
           // esto es sólo la posibilidad de deshacerlo después.
-          if (generatedHtml && generatedHtml !== htmlAlInicioDelTurno) {
+          //
+          // T8 ("Revisión visual con captura"): el mismo booleano es una de
+          // las condiciones de `aplicaRevisionVisual` de acá abajo — sin
+          // cambio en el recurso no hay nada nuevo que mirar.
+          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
+
+          if (cambioElHtml) {
             try {
               await prisma.projectSnapshot.create({
                 data: {
@@ -1202,12 +1211,30 @@ export const POST: APIRoute = async ({ request, locals }) => {
             }
           }
 
+          // T8 ("Revisión visual con captura"): el SERVIDOR decide si
+          // corresponde ofrecerla — nunca el cliente por su cuenta (ver la
+          // tarea). Se calcula acá, al final del turno, con lo que ya se
+          // sabe de esta vuelta completa: la velocidad efectiva, si el
+          // motor USADO ve imágenes, y si el turno cambió el recurso. El
+          // cliente recién arranca el segundo pedido
+          // (`/api/chat/visual-review`) después de leer este "done".
+          const revisionVisualDisponible = aplicaRevisionVisual({
+            velocidadEfectiva,
+            motorVeImagenes: supportsVision(proveedorUsado),
+            cambioElRecurso: cambioElHtml,
+            // Hook para T9 ("Varias versiones"): este turno siempre genera
+            // una sola versión, así que nunca es el motivo de que no se
+            // ofrezca.
+            huboVariasVersiones: false,
+          });
+
           send({
             type: 'done',
             messageId: saved.id,
             userMessageId: mensajeDocenteGuardado.id,
             codeUpdated: Boolean(generatedHtml),
             content: finalText,
+            revisionVisualDisponible,
           });
         } catch (error) {
           console.error('[chat/stream] no se pudo persistir el turno:', error);

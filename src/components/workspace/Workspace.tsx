@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
-import PreviewPanel from './PreviewPanel.tsx';
+import PreviewPanel, { type PreviewPanelHandle } from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
-import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
+import { apiRequest, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
+import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
@@ -130,6 +131,11 @@ export default function Workspace(props: WorkspaceProps) {
   /** Para poder cortar el turno desde el botón "Detener". */
   const abortador = useRef<AbortController | null>(null);
   const resumeTimer = useRef<number | null>(null);
+
+  /** T8 ("Revisión visual con captura"): para pedirle una captura a
+   *  PreviewPanel desde `ejecutarRevisionVisual`, sin que ese componente
+   *  tenga que saber nada de turnos ni de streaming. */
+  const previewRef = useRef<PreviewPanelHandle>(null);
 
   /** Cuándo arrancó el turno en curso (epoch ms), para el cronómetro. */
   const [turnoDesde, setTurnoDesde] = useState<number | null>(null);
@@ -385,6 +391,12 @@ export default function Workspace(props: WorkspaceProps) {
     // llegue: por eso se reasigna entero en vez de acumularse con `||`.
     const htmlAlInicioDelTurno = html;
     let cambioElHtml = false;
+    // T8 ("Revisión visual con captura"): el HTML con el que terminó este
+    // turno (el de "código" más reciente) y si el servidor ofreció mirarlo.
+    // Se leen recién DESPUÉS del `for await`, nunca adentro: la revisión
+    // visual arranca sólo una vez que el turno normal terminó del todo.
+    let ultimoHtmlDelTurno: string | null = null;
+    let ofreceRevisionVisual = false;
 
     try {
       abortador.current = new AbortController();
@@ -435,6 +447,10 @@ export default function Workspace(props: WorkspaceProps) {
           // T4: se recalcula en cada "code" del turno (reintento, salto de
           // motor); sólo el último importa, igual que `html` mismo.
           cambioElHtml = event.html !== htmlAlInicioDelTurno;
+          // T8: mismo criterio, para tener a mano el HTML final del turno
+          // sin depender del estado `html` (que además todavía no se pudo
+          // haber vuelto a renderizar en este punto del loop).
+          ultimoHtmlDelTurno = event.html;
           setAiPhase('coding');
           // La versión de la IA pasa a ser la vigente: lo que el docente había
           // escrito a mano ya quedó incorporado en este HTML.
@@ -474,7 +490,21 @@ export default function Workspace(props: WorkspaceProps) {
             },
           ]);
           if (event.codeUpdated) flashNotice('Recurso actualizado');
+          // T8: guardado para leer DESPUÉS del loop (ver más abajo) — nunca
+          // se arranca la revisión visual desde acá adentro, el turno
+          // normal tiene que terminar de escribir su mensaje primero.
+          ofreceRevisionVisual = Boolean(event.revisionVisualDisponible);
         }
+      }
+
+      // T8 ("Revisión visual con captura"): el turno normal ya terminó
+      // (mensaje guardado, "done" procesado) y el servidor dijo que
+      // correspondía mirarlo. Sigue siendo EL MISMO turno para el docente:
+      // `isStreaming`/`turnoDesde` no se tocan acá (siguen como están hasta
+      // el `finally` de abajo), así que el compositor sigue deshabilitado,
+      // "Detener" sigue andando y el cronómetro no se reinicia.
+      if (ofreceRevisionVisual && ultimoHtmlDelTurno) {
+        await ejecutarRevisionVisual(ultimoHtmlDelTurno);
       }
     } catch (error) {
       // Un abort es el docente tocando "Detener": no es una falla que reportar.
@@ -492,6 +522,60 @@ export default function Workspace(props: WorkspaceProps) {
       // — los otros dos casos (`code`, `code_reset`) ya lo limpiaron arriba,
       // así que esto es un no-op en esos casos.
       setPartialHtml(null);
+    }
+  }
+
+  /**
+   * T8 ("Revisión visual con captura"): el paso final y opcional de un
+   * turno "A fondo" que cambió el recurso con un motor que ve imágenes —
+   * `handleSend` la llama después de procesar el "done" del turno normal,
+   * sólo cuando ese "done" trajo `revisionVisualDisponible: true`.
+   *
+   * Discreta: nunca toca el chat (ni mensaje nuevo, ni error visible). Si
+   * algo no sale bien — la captura falla, el servidor rechaza el pedido, el
+   * docente aprieta "Detener" — se loguea y se sale en silencio, dejando el
+   * HTML que ya había dejado el turno. `isStreaming`/`turnoDesde` los
+   * maneja `handleSend` (no se tocan acá): para el docente sigue siendo el
+   * mismo turno, con el mismo cronómetro.
+   */
+  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<void> {
+    setAiPhase('mirando');
+
+    const capturado = await previewRef.current?.capturar({ formato: 'jpeg', calidad: 0.85, altoMax: 1_600 });
+    if (!capturado || 'error' in capturado) {
+      if (capturado) console.warn('[revisión visual] no se pudo capturar la vista previa:', capturado.error);
+      return;
+    }
+
+    abortador.current = new AbortController();
+    try {
+      for await (const event of streamVisualReview(
+        { projectId, dataUrl: capturado.dataUrl, fingerprint: fingerprintHtml(htmlCapturado) },
+        abortador.current.signal,
+      )) {
+        if (event.type === 'code') {
+          // Mismo tratamiento que un "code" del turno normal: la vista
+          // previa cambia, la portada vieja queda marcada, y lo que el
+          // docente hubiera escrito a mano ya quedó incorporado.
+          setHtml(event.html);
+          codeEditedByTeacher.current = false;
+          if (screenshotUrl) setPortadaVieja(true);
+          flashNotice('Recurso actualizado');
+        } else if (event.type === 'error') {
+          // Nunca visible: el turno que trajo esta oferta ya había
+          // terminado bien (ver el comentario grande de más arriba).
+          console.warn('[revisión visual]', event.message);
+        }
+        // "done" no necesita hacer nada especial: sólo marca que terminó.
+      }
+    } catch (error) {
+      // Un abort es el docente tocando "Detener" durante esta fase: se deja
+      // el HTML del turno tal cual, sin ningún aviso.
+      if ((error as Error)?.name !== 'AbortError') {
+        console.warn('[revisión visual] se cortó la conexión:', error);
+      }
+    } finally {
+      abortador.current = null;
     }
   }
 
@@ -776,6 +860,7 @@ export default function Workspace(props: WorkspaceProps) {
       <div className={`min-h-0 ${vistaMovil === 'recurso' ? 'flex' : 'hidden'} lg:flex`}>
 
       <PreviewPanel
+        ref={previewRef}
         html={html}
         partialHtml={partialHtml}
         onHtmlChange={(value) => {

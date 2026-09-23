@@ -79,13 +79,65 @@ export type StreamEvent =
   /** `userMessageId` (T4) es el id REAL del mensaje "user" que este turno
    *  guardó — el cliente lo agregó de forma optimista con un id local, y
    *  necesita el real para poder reconocer este mensaje puntual más tarde
-   *  (por ejemplo, si el docente pide deshacer este turno). */
-  | { type: 'done'; messageId: string; userMessageId: string; codeUpdated: boolean; content: string }
+   *  (por ejemplo, si el docente pide deshacer este turno).
+   *  `revisionVisualDisponible` (T8): el SERVIDOR decidió que corresponde
+   *  ofrecer la revisión visual de este turno — el cliente nunca lo decide
+   *  solo (ver odd/tasks/modo-prime.md). Ausente/`false` en cualquier otro
+   *  caso, incluidos todos los turnos de antes de T8. */
+  | {
+      type: 'done';
+      messageId: string;
+      userMessageId: string;
+      codeUpdated: boolean;
+      content: string;
+      revisionVisualDisponible?: boolean;
+    }
   /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
    *  falló pero otro de la cadena tiene lugar para el pedido.
    *  `registerUrl` llega cuando la cuenta de demo agotó su tope (M7): nunca
    *  un error mudo, siempre con una salida real. */
   | { type: 'error'; message: string; fallbackModel?: string; fallbackLabel?: string; registerUrl?: string };
+
+/**
+ * Lee el body de una `Response` de streaming como una secuencia de eventos
+ * SSE ya parseados (sin tipar: cada llamador sabe qué forma esperar).
+ * Compartido por `streamChat` y `streamVisualReview` (T8): las dos hablan el
+ * mismo protocolo de transporte (`data: <json>\n\n`, tolerante a fragmentos
+ * cortados por el chunking de red), sólo cambia el VOCABULARIO de eventos.
+ */
+async function* leerEventosSse(response: Response): AsyncGenerator<unknown> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    let separator = buffer.indexOf('\n\n');
+    while (separator !== -1) {
+      const rawEvent = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      separator = buffer.indexOf('\n\n');
+
+      const data = rawEvent
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trim())
+        .join('');
+
+      if (!data) continue;
+
+      try {
+        yield JSON.parse(data);
+      } catch {
+        // fragmento corrupto: seguimos con el próximo evento
+      }
+    }
+  }
+}
 
 /**
  * Consume el SSE de /api/chat/stream.
@@ -139,35 +191,47 @@ export async function* streamChat(payload: {
     return;
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
+  for await (const evento of leerEventosSse(response)) {
+    yield evento as StreamEvent;
+  }
+}
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+/**
+ * T8 ("Revisión visual con captura"): vocabulario reducido a propósito —
+ * ver el comentario grande en `src/pages/api/chat/visual-review.ts`. Nunca
+ * hay un mensaje de chat detrás de esto (discreto), así que no hace falta
+ * `messageId` ni `content`.
+ */
+export type VisualReviewEvent =
+  | { type: 'code'; html: string }
+  | { type: 'done'; codeUpdated: boolean }
+  /** Sólo por una respuesta HTTP que no llegó a abrir el SSE (permiso,
+   *  huella que no coincide, imagen inválida, tope de tokens): una falla
+   *  DEL MODELO adentro del SSE nunca llega como esto, siempre termina en
+   *  un "done" silencioso (ver el endpoint). */
+  | { type: 'error'; message: string };
 
-    buffer += decoder.decode(value, { stream: true });
+export async function* streamVisualReview(
+  payload: { projectId: string; dataUrl: string; fingerprint: string },
+  signal?: AbortSignal,
+): AsyncGenerator<VisualReviewEvent> {
+  const response = await fetch('/api/chat/visual-review', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  });
 
-    let separator = buffer.indexOf('\n\n');
-    while (separator !== -1) {
-      const rawEvent = buffer.slice(0, separator);
-      buffer = buffer.slice(separator + 2);
-      separator = buffer.indexOf('\n\n');
+  if (!response.ok || !response.body) {
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    yield {
+      type: 'error',
+      message: error?.error ?? `El servidor rechazó el pedido (error ${response.status}).`,
+    };
+    return;
+  }
 
-      const data = rawEvent
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim())
-        .join('');
-
-      if (!data) continue;
-
-      try {
-        yield JSON.parse(data) as StreamEvent;
-      } catch {
-        // fragmento corrupto: seguimos con el próximo evento
-      }
-    }
+  for await (const evento of leerEventosSse(response)) {
+    yield evento as VisualReviewEvent;
   }
 }
