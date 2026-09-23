@@ -105,4 +105,10 @@ export type AiPhase =
   /** Está redactando la explicación en el chat. */
   | 'writing'
   /** Está escribiendo el código del recurso. */
-  | 'coding';
+  | 'coding'
+  /**
+   * T7 ("Revisión automática"): terminó el primer pase y está corrigiendo
+   * lo que encontró el lint antes de entregarle el recurso al docente. La
+   * vista previa sigue mostrando el primer pase mientras dura esta fase.
+   */
+  | 'revisando';

@@ -410,6 +410,11 @@ export default function Workspace(props: WorkspaceProps) {
         } else if (event.type === 'notice') {
           // No es un error: el turno sigue vivo, sólo está esperando.
           flashNotice(event.message);
+        } else if (event.type === 'phase') {
+          // T7: por ahora sólo 'revisando'. La vista previa NO se toca acá
+          // (sigue mostrando el último "code" recibido): esta pasada nunca
+          // manda code_delta, sólo un "code" al final si corrige algo.
+          setAiPhase(event.phase);
         } else if (event.type === 'code_start') {
           // Llega apenas arranca el tool call. Sin esto el chat seguía diciendo
           // "escribiéndote la respuesta" durante todo el rato en que en realidad

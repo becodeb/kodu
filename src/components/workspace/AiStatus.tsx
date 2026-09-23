@@ -24,6 +24,11 @@ const PHASES: Record<
   thinking: { state: 'solving', label: 'Pensando cómo resolverlo' },
   writing: { state: 'composing', label: 'Escribiéndote la respuesta' },
   coding: { state: 'weaving', label: 'Armando el recurso' },
+  // T7 ("Revisión automática"): el recurso ya está armado (la vista previa
+  // muestra el primer pase) y se está corrigiendo lo que encontró el lint.
+  // "weaving" y no un estado nuevo de la librería: es la misma sensación de
+  // "todavía trabajando sobre el recurso" que "Armando el recurso".
+  revisando: { state: 'weaving', label: 'Revisando detalles' },
 };
 
 function formatearTiempo(segundos: number): string {

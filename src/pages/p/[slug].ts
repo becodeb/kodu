@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { prisma } from '../../lib/db.ts';
+import { ALLOWED_CDNS } from '../../lib/cdn-allowlist.ts';
 
 /**
  * GET /p/:slug — vista pública del recurso (SPEC §5.4).
@@ -14,15 +15,12 @@ import { prisma } from '../../lib/db.ts';
  * origen, así que sin restricciones podría hacer `fetch('/api/...')` con la
  * cookie de sesión de quien lo esté mirando. La CSP corta eso: permite los CDN
  * didácticos y bloquea cualquier conexión o envío de formulario hacia la app.
+ *
+ * `ALLOWED_CDNS` vive en `src/lib/cdn-allowlist.ts` (T7, odd/tasks/modo-prime.md):
+ * la revisión automática usa la misma lista para avisar en el editor lo que
+ * esta CSP va a bloquear al publicar. Mismo orden y mismos orígenes que
+ * siempre — el string de la CSP que arma este archivo no cambió.
  */
-
-const ALLOWED_CDNS = [
-  'https://cdn.tailwindcss.com',
-  'https://cdn.jsdelivr.net',
-  'https://unpkg.com',
-  'https://fonts.googleapis.com',
-  'https://fonts.gstatic.com',
-];
 
 const CSP = [
   `default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ${ALLOWED_CDNS.join(' ')}`,

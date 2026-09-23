@@ -66,6 +66,14 @@ export type StreamEvent =
   /** El parcial que se venía acumulando quedó obsoleto (reintento, cambio de
    *  motor, re-pedido forzado): hay que tirar el buffer y esperar uno nuevo. */
   | { type: 'code_reset' }
+  /**
+   * T7 ("Revisión automática"): cambio de fase que no es ninguno de los
+   * eventos de arriba. Por ahora sólo `'revisando'` (terminó el primer
+   * pase, está corrigiendo lo que encontró el lint antes de entregar el
+   * recurso) — la vista previa sigue mostrando el `code` anterior mientras
+   * dura, nunca se manda un `code_delta` de esta pasada.
+   */
+  | { type: 'phase'; phase: 'revisando' }
   /** Algo que el docente tiene que saber pero que no cortó el turno. */
   | { type: 'notice'; message: string }
   /** `userMessageId` (T4) es el id REAL del mensaje "user" que este turno

@@ -1,9 +1,10 @@
 import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
-import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
+import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
 import { aplicarKit, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
+import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
   ProviderError,
   readCompletionStream,
@@ -850,6 +851,193 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       }
 
+      /**
+       * T7 ("Revisión automática (lint + una corrección) y turnos
+       * progresivos", odd/tasks/modo-prime.md). Se llama sólo cuando el
+       * primer pase dejó HTML y la política del turno la pide (A fondo o
+       * `autoReviewForAll` — ver el llamador, más abajo).
+       *
+       * El primer pase YA se mandó por SSE (`send({type:'code'...})`, dentro
+       * de `consumir`/los rescates de arriba) — acá además se PERSISTE de
+       * una, sin esperar al `finally` del turno: si el docente recarga
+       * mientras esto corre, tiene que encontrar el primer pase, no una
+       * pantalla esperando algo que puede tardar (decisión del dueño,
+       * "Progresivo"). El snapshot de deshacer (T4) no se toca acá: sigue
+       * viviendo en el `finally`, comparado contra `htmlAlInicioDelTurno` —
+       * esta función sólo decide qué HTML termina en `generatedHtml` (y por
+       * lo tanto en `Project.currentHtml`) al final del turno, nunca cuántas
+       * instantáneas se crean.
+       *
+       * Nunca vuelve a tirar: cualquier problema de la corrección (error de
+       * red, JSON inválido, truncado, el docente cancelando el turno) se
+       * loguea y se sale en silencio, dejando el primer pase tal cual llegó
+       * — nunca un error visible que tape un resultado que ya estaba bien.
+       *
+       * `const` con función flecha y NO `function` con nombre a propósito:
+       * TypeScript no arrastra el chequeo `if (!project) return fail(...)`
+       * de más arriba adentro de una función declarada con `function` (el
+       * hoisting le impide asumir que ese chequeo ya corrió), pero sí lo
+       * hace para una función flecha asignada a un `const` — que es
+       * exactamente lo que esta función necesita para usar `project.id` sin
+       * un chequeo redundante.
+       */
+      const revisarYCorregir = async (): Promise<void> => {
+        if (!generatedHtml) return;
+        const primeraPasada = generatedHtml;
+
+        try {
+          // El HTML de arranque de un proyecto (`DEFAULT_HTML`, sin tema ni
+          // contenido real) no cuenta como "el docente ya tenía algo": se
+          // normaliza a `null` para que `revisarHtml` trate este turno como
+          // un recurso NUEVO (informa todo, no sólo el diff) — mismo
+          // criterio que describe la tarea.
+          const anteriorParaRevision =
+            htmlAlInicioDelTurno === DEFAULT_HTML || htmlAlInicioDelTurno.trim().length === 0
+              ? null
+              : htmlAlInicioDelTurno;
+
+          const hallazgos = revisarHtml(primeraPasada, { anterior: anteriorParaRevision });
+          if (hallazgos.length === 0) return;
+
+          console.log(
+            `[chat/stream] revisión automática: ${hallazgos.length} hallazgo(s) (${hallazgos
+              .map((h) => h.codigo)
+              .join(', ')}) a los ${transcurrido()}`,
+          );
+
+          try {
+            await prisma.project.update({ where: { id: project.id }, data: { currentHtml: primeraPasada } });
+          } catch (error) {
+            console.error('[chat/stream] no se pudo persistir el primer pase antes de revisar:', error);
+          }
+
+          send({ type: 'phase', phase: 'revisando' });
+
+          const mensajeHallazgos = [
+            'Revisión automática antes de entregarle el recurso al docente. Corregí SÓLO esto, sin cambiar nada más del recurso:',
+            ...hallazgos.map((hallazgo, indice) => {
+              const ejemplos =
+                hallazgo.ejemplos && hallazgo.ejemplos.length > 0
+                  ? ` Ejemplos: ${hallazgo.ejemplos.join(', ')}.`
+                  : '';
+              return `${indice + 1}. ${hallazgo.instruccion}${ejemplos}`;
+            }),
+          ].join('\n');
+
+          // El prompt de sistema se arma EXACTAMENTE como siempre
+          // (`buildSystemPrompt`), pero con el primer pase como "el recurso
+          // actual": la REGLA MÁS IMPORTANTE ("se EDITA lo que ya existe")
+          // sigue rigiendo también para esta llamada, así que el modelo no
+          // reescribe de cero para corregir dos degradados. Sin historial:
+          // es un pedido mecánico y autocontenido, no una conversación.
+          const systemPromptRevision = buildSystemPrompt({
+            globalRules,
+            userRules,
+            assets: assetContexts,
+            currentHtml: primeraPasada,
+            projectTitle: project.title,
+            canSeeImages: supportsVision(proveedorUsado),
+            htmlEditedByTeacher: false,
+            turnosPrevios: history.filter((entry) => entry.role === 'user').length,
+            herramientaForzada: true,
+          });
+
+          let htmlCorregido: string | null = null;
+          let motivoFalla: string | null = null;
+          const totalesRevision: { usage: MotorTokenUsage | null } = { usage: null };
+
+          try {
+            const respuestaRevision = await requestCompletionStream({
+              messages: [
+                { role: 'system', content: systemPromptRevision },
+                { role: 'user', content: mensajeHallazgos },
+              ],
+              provider: proveedorUsado,
+              signal: request.signal,
+              forzarHerramienta: true,
+              // Mecánico, no creativo: razonamiento OFF para esta llamada
+              // puntual, sin importar la velocidad efectiva del turno —
+              // misma vía que usa T6 (`razonamientoEfectivo(proveedor,
+              // 'fast')` ya da "reasoning_effort: none"/"thinking:
+              // disabled" según el dialecto del motor, o nada si no tiene
+              // uno configurado).
+              velocidad: 'fast',
+            });
+
+            for await (const event of readCompletionStream(respuestaRevision)) {
+              // A propósito NUNCA se reenvían `code_start`/`code_delta` de
+              // esta llamada: la vista previa tiene que seguir mostrando el
+              // primer pase completo hasta que la corrección termine — de
+              // otro modo, reconstruir el documento desde cero se vería
+              // como un retroceso, no como una corrección (ver la tarea).
+              if (event.type === 'usage') {
+                totalesRevision.usage = event.usage;
+                continue;
+              }
+              if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
+                const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
+                if (resultado.ok) {
+                  htmlCorregido = aplicarKitAlTurno(resultado.html, temaProyecto);
+                } else {
+                  motivoFalla = resultado.reason;
+                }
+              }
+            }
+          } catch (error) {
+            motivoFalla = (error as Error).message;
+          }
+
+          // Se registra como una llamada aparte (mismo motor, mismos
+          // precios): sumarlo a `totales.usage` del turno principal
+          // pisaría/perdería el consumo del primer pase, porque más abajo
+          // sólo se graba UNA vez con el último valor recibido.
+          if (totalesRevision.usage) {
+            await recordUsage({
+              userId: user.id,
+              projectId: project.id,
+              aiModelId: proveedorUsado.id,
+              model: proveedorUsado.model,
+              promptTokens: totalesRevision.usage.promptTokens,
+              cachedInputTokens: totalesRevision.usage.cachedTokens,
+              completionTokens: totalesRevision.usage.completionTokens,
+              precios: proveedorUsado.precios,
+            }).catch((error) =>
+              console.error('[chat/stream] no se pudo registrar el consumo de la corrección:', error),
+            );
+          }
+
+          if (!htmlCorregido) {
+            console.warn(
+              `[chat/stream] la corrección automática no se aplicó (${motivoFalla ?? 'sin HTML'}); queda el primer pase`,
+            );
+            return;
+          }
+
+          const hallazgosRestantes = revisarHtml(htmlCorregido, { anterior: anteriorParaRevision });
+          if (hallazgosRestantes.length > 0) {
+            console.warn(
+              `[chat/stream] tras la corrección quedan ${hallazgosRestantes.length} hallazgo(s) (${hallazgosRestantes
+                .map((h) => h.codigo)
+                .join(', ')}); no se reintenta una segunda vez`,
+            );
+          }
+
+          generatedHtml = htmlCorregido;
+          descartarCodeDelta();
+          send({ type: 'code', html: htmlCorregido });
+
+          try {
+            await prisma.project.update({ where: { id: project.id }, data: { currentHtml: htmlCorregido } });
+          } catch (error) {
+            console.error('[chat/stream] no se pudo persistir la corrección automática:', error);
+          }
+        } catch (error) {
+          // Red de seguridad: nada de acá tiene que poder tirar abajo un
+          // turno cuyo primer pase ya está bien.
+          console.error('[chat/stream] revisión automática: falla inesperada, se deja el primer pase:', error);
+        }
+      };
+
       try {
         await consumir(upstream);
 
@@ -908,6 +1096,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
               send({ type: 'code', html });
             }
           }
+        }
+
+        // T7: A fondo suma revisión automática, y lo mismo vale para
+        // cualquiera a quien el admin se la prendió "para todos" — misma
+        // combinación que ya anticipaba el comentario de `autoReviewForAll`
+        // en `capacidades.ts`. `velocidadEfectiva` ya es `null` (nunca
+        // 'deep') para quien no tiene permiso de elegir velocidad, así que
+        // esto nunca se dispara por accidente para un docente común sin la
+        // bandera "para todos".
+        if (generatedHtml && (velocidadEfectiva === 'deep' || capacidades.autoReviewForAll)) {
+          await revisarYCorregir();
         }
       } catch (error) {
         console.error('[chat/stream]', error);
