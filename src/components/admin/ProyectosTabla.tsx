@@ -155,7 +155,7 @@ export default function ProyectosTabla({ initialProyectos }: Props) {
             : 'Ningún recurso coincide con lo que buscaste.'}
         </div>
       ) : (
-        <div className="kodu-card overflow-x-auto">
+        <div className="kodu-card relative overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-linea text-xs text-ink-500 uppercase">
               <tr>
