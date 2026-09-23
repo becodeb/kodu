@@ -57,7 +57,7 @@ Ruta por tarea: todas **delegadas** a un escritor (disparador: tocan 2+ archivos
 - [x] **T5 — Modo prime y funciones para todos (panel).** `AppSettings.primeEnabled`, `autoReviewForAll`, `deepModeForAll`, `versionsForAll`; `User.primeAccess`; `AiModel.primeOnly`; `resolverCapacidades()`; página `/admin/generacion`; interruptor en la ficha del usuario; casilla en el formulario de modelos; catálogo y `normalizarMotor` filtrando modelos prime en el servidor.
 - [x] **T6 — Velocidad Rápido / A fondo.** Control discreto en el compositor sólo para quien lo tiene; `speed` validado en el servidor; razonamiento apagado en Rápido y al menos `high` en A fondo según el dialecto del modelo; fases en `AiStatus`.
 - [x] **T7 — Revisión automática (lint + una corrección) y turnos progresivos.** `src/lib/ai/revision.ts`; política: A fondo o `autoReviewForAll`; el HTML de la primera pasada se guarda y se muestra antes de corregir; una sola corrección por turno; uso de tokens registrado por llamada.
-- [ ] **T8 — Revisión visual con captura (A fondo + modelo con visión).** Captura con el puente existente de `src/lib/preview.ts`, `POST /api/chat/visual-review` (SSE), llamada con la imagen, el resultado reemplaza la vista previa al llegar.
+- [x] **T8 — Revisión visual con captura (A fondo + modelo con visión).** Captura con el puente existente de `src/lib/preview.ts`, `POST /api/chat/visual-review` (SSE), llamada con la imagen, el resultado reemplaza la vista previa al llegar.
 - [ ] **T9 — Varias versiones al crear (prime o `versionsForAll`).** Hasta 3 generaciones en paralelo con enfoques distintos, la 1 se transmite en vivo, las demás aparecen al terminar, selector de versión en el mensaje, `POST /api/projects/[id]/variant`.
 - [ ] **T10 — Verificación de punta a punta y documentación.** Recorrido en navegador del flujo completo en desarrollo, README actualizado, reporte final.
 
@@ -99,6 +99,10 @@ Motor mock para T4+: queda un `AiProvider` (`kind: "kodu-mock-t3"`) y un `AiMode
 
 | T7 | `93d80ac` | `npm run check` OK (re-corrido por el orquestador); `npx tsx e2e/unidad-revision.ts` 34/34 (re-corrido: OK), con los falsos positivos (© ® ™, gradientes SVG, emojis en comentarios, el propio bloque del kit) y el diff "sólo lo que introdujo el turno"; `unidad.ts` 50/50, `unidad-kit.ts` 24/24, `unidad-html-parcial.ts` 15/15; `npx tsx e2e/t7-revision-automatica.ts` 6 escenas: A fondo → SSE `code → phase → code → done`, la corrección lleva sólo sistema + un mensaje sintético con tool forzada y razonamiento "none", queda persistida la corregida y un deshacer vuelve al arranque; Rápido → 1 llamada; docente común con `autoReviewForAll` → corrige; edición que no agrega emojis a un recurso que ya tenía → no corrige; corrección con 500 → queda el primer pase sin error visible; UI real: "Revisando detalles" con el primer pase visible y una segunda pestaña que ve el primer pase persistido; regresión t3–t6 OK | assess (desde `808ce05`): **medium**, `slice_budget_reached`; preflight → `stop rdd_disabled`. Verificación del escritor + control del orquestador (lectura del diff de `stream.ts`: la puerta sólo se abre con A fondo o `autoReviewForAll`) |
 
+| T8 | `e85549f` | `npm run check` OK; `npx tsx e2e/unidad-revision-visual.ts` 19/19 (re-corrido por el orquestador: OK); `unidad.ts` 50/50 y demás suites unitarias OK; `npx tsx e2e/t8-revision-visual.ts` 8 escenas: el pedido lleva `image_url` `data:image/…`, la instrucción de crítica y `tool_choice: auto`; un HTML cambiado se aplica y persiste; "Sin cambios." no toca nada; Rápido y motor sin visión → `revisionVisualDisponible: false`; huella vieja → 409 sin llamar al motor; un resultado con emojis nuevos se descarta; "Detener" deja el HTML del turno; navegador real con "Mirando cómo quedó" y la imagen enviada guardada; regresión t3–t7 OK (t5 falló una vez por un timeout del diálogo de admin y pasó al reintentar) | assess (desde `dd16be5`): **medium**, `slice_budget_reached`; preflight → `stop rdd_disabled`. Verificación del escritor + control del orquestador (la imagen que recibe el modelo muestra el recurso con tipografía e íconos del kit) |
+
+Notas T8: el servidor decide si corresponde (`revisionVisualDisponible` en el `done`) y el cliente sólo ejecuta: captura con el puente de `src/lib/preview.ts` (JPEG, alto acotado), `POST /api/chat/visual-review` `{ projectId, dataUrl, fingerprint }` con respuesta SSE `code?` + `done`. La imagen no se guarda. No crea mensajes de chat. La máquina de desarrollo estaba muy cargada (varias sesiones en paralelo): algunas escenas tardías de `m9` se colgaron por memoria, no por código.
+
 Notas T7: la lista de CDN permitidos vive ahora en `src/lib/cdn-allowlist.ts` y la usan la CSP de `/p/` y el lint (misma CSP resultante). La corrección se registra como una fila de `TokenUsage` aparte del primer pase. No se probó de punta a punta el caso de corrección truncada (mismo camino de código que el 500).
 
 Notas T6: el control son dos íconos en el pie del compositor (rayo = Rápido, lupa = A fondo) con `title` explicativo; el cliente recibe `velocidadPorDefecto` ('a_fondo' para prime, 'rapido' para quien lo tiene por "para todos"). En el cable: `speed: 'fast' | 'deep'`; override de razonamiento por dialecto en `razonamientoEfectivo()`.
@@ -113,7 +117,7 @@ Notas T1: `e2e/unidad-kit.ts` es una suite aparte porque `e2e/unidad.ts` necesit
 
 ## Próximo paso
 
-T8. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
+T9. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
 
 ---
 
