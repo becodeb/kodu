@@ -55,7 +55,7 @@ Ruta por tarea: todas **delegadas** a un escritor (disparador: tocan 2+ archivos
 - [x] **T3 — Vista previa que se arma mientras la IA escribe (para todos).** Deltas del tool call desde `provider.ts`, evento `code_delta` en el SSE, decodificador de JSON parcial en el cliente, iframe doble búfer que aplica el kit al HTML parcial. Pruebas del decodificador y chequeo en navegador.
 - [x] **T4 — Deshacer cambios de la IA (para todos).** Tabla `ProjectSnapshot`, `ChatMessage.undoneAt`, instantánea por turno, `POST /api/projects/[id]/undo`, botón en el último mensaje que cambió el código, historial del modelo sin turnos deshechos, poda a 20 instantáneas por proyecto.
 - [x] **T5 — Modo prime y funciones para todos (panel).** `AppSettings.primeEnabled`, `autoReviewForAll`, `deepModeForAll`, `versionsForAll`; `User.primeAccess`; `AiModel.primeOnly`; `resolverCapacidades()`; página `/admin/generacion`; interruptor en la ficha del usuario; casilla en el formulario de modelos; catálogo y `normalizarMotor` filtrando modelos prime en el servidor.
-- [ ] **T6 — Velocidad Rápido / A fondo.** Control discreto en el compositor sólo para quien lo tiene; `speed` validado en el servidor; razonamiento apagado en Rápido y al menos `high` en A fondo según el dialecto del modelo; fases en `AiStatus`.
+- [x] **T6 — Velocidad Rápido / A fondo.** Control discreto en el compositor sólo para quien lo tiene; `speed` validado en el servidor; razonamiento apagado en Rápido y al menos `high` en A fondo según el dialecto del modelo; fases en `AiStatus`.
 - [ ] **T7 — Revisión automática (lint + una corrección) y turnos progresivos.** `src/lib/ai/revision.ts`; política: A fondo o `autoReviewForAll`; el HTML de la primera pasada se guarda y se muestra antes de corregir; una sola corrección por turno; uso de tokens registrado por llamada.
 - [ ] **T8 — Revisión visual con captura (A fondo + modelo con visión).** Captura con el puente existente de `src/lib/preview.ts`, `POST /api/chat/visual-review` (SSE), llamada con la imagen, el resultado reemplaza la vista previa al llegar.
 - [ ] **T9 — Varias versiones al crear (prime o `versionsForAll`).** Hasta 3 generaciones en paralelo con enfoques distintos, la 1 se transmite en vivo, las demás aparecen al terminar, selector de versión en el mensaje, `POST /api/projects/[id]/variant`.
@@ -95,6 +95,10 @@ Motor mock para T4+: queda un `AiProvider` (`kind: "kodu-mock-t3"`) y un `AiMode
 
 | T5 | `c72ffec`, `528ddda` | `npm run check` OK; `npx tsx e2e/unidad.ts` 40/40 (re-corrido por el orquestador: OK); `m1-admin-shell` 11/11 (7 pestañas), `m3-motores` 35/35, `m5-usuarios` 23/23, `m7-demo` 22/22; `npx tsx e2e/t5-modo-prime.ts` todas las escenas (re-corrido por el orquestador con la escena 1b nueva: OK) | assess (desde `f57cf11`): **high** (`hot_path` auth en `session.ts`); preflight → `stop rdd_disabled`. Verificador independiente (solo lectura): sin bloqueantes; un should-fix previo a T5 (el PATCH del recurso aceptaba cualquier `aiModelId`: sin riesgo real porque cada lectura normaliza, pero un id inválido daba 500) corregido en `528ddda` con 422 y cubierto por la escena 1b |
 
+| T6 | `6e02636` | `npm run check` OK; `npx tsx e2e/unidad.ts` (+10 pruebas; re-corrido por el orquestador: OK); `npx tsx e2e/t6-velocidad.ts` 7 escenas: prime+Rápido → `reasoning_effort:"none"`, prime+A fondo → `"high"` (sube desde "low"), docente sin marcar mandando `speed:"deep"` → sigue "low", control ausente para él y sin "prime" en la página, presente para el marcado con "A fondo" por defecto y la elección sobrevive a recargar, el pie no se parte a 1024 px, con `deepModeForAll` el docente común lo ve con "Rápido" por defecto; regresión de t3, t4, t5 y m1: OK | assess (desde `06d6d99`): **medium**, `slice_budget_reached`; preflight → `stop rdd_disabled`. Verificación del escritor + control del orquestador (captura revisada) |
+
+Notas T6: el control son dos íconos en el pie del compositor (rayo = Rápido, lupa = A fondo) con `title` explicativo; el cliente recibe `velocidadPorDefecto` ('a_fondo' para prime, 'rapido' para quien lo tiene por "para todos"). En el cable: `speed: 'fast' | 'deep'`; override de razonamiento por dialecto en `razonamientoEfectivo()`.
+
 Notas T5: `resolverCapacidades` devuelve `{ prime, puedeElegirVelocidad, puedePedirVersiones, autoReviewForAll, puedeUsarModelosPrime }`; el cliente sólo recibe `CapacidadesEditor { puedeElegirVelocidad, puedePedirVersiones }`, sin la palabra "prime". `primeAccess` nunca viaja en el JWT: se relee de la base en cada request con puerta, como `aiAccessOverride`. Los modelos exclusivos se saltean también como eslabones de la cadena de respaldo. Queda para T10: confirmar con un build de producción que ningún comentario con "prime" llega al bundle del cliente.
 
 Notas T4: "turno en curso" usa el mismo criterio que el cliente y `/api/chat/cancel` (el mensaje más nuevo del hilo es del docente), generalizado a todos los hilos del proyecto porque `currentHtml` es por proyecto. El escritor encontró y arregló un defecto previo: la burbuja optimista del docente tenía un id local que nunca se reconciliaba con el de la base; ahora el evento `done` trae `userMessageId`. No se ejercitó el deshacer de un admin sobre un recurso ajeno.
@@ -105,7 +109,7 @@ Notas T1: `e2e/unidad-kit.ts` es una suite aparte porque `e2e/unidad.ts` necesit
 
 ## Próximo paso
 
-T6. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
+T7. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
 
 ---
 
