@@ -115,3 +115,9 @@ by one explorer). TDD: off — the repo has no unit test runner; checks are
   latter is a product/copy decision I didn't make unilaterally. It doesn't
   overlap anything and doesn't reintroduce the zoom-out bug (innerWidth
   still matches viewport). At 390px it's a single line.
+- Parent re-check: A/B capture of `main` vs this branch on the same data at 1280
+  and 1024 — `app` and `project` byte-identical; `usuarios`/`proyectos` differ only
+  in the relative-time column (the branch differs from itself there too); `home`
+  only in the typing caret. Note: `/tmp/kshots/ws.mjs` creates an empty project on
+  every run, so compare A/B, never against an older baseline.
+- Next step: owner tests on a phone, then decides merge and push.
