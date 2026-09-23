@@ -4,10 +4,12 @@ import PreviewPanel from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
+import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
   MotorPublico,
+  Speed,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceProject,
@@ -36,9 +38,10 @@ interface WorkspaceProps {
   /**
    * T5 (odd/tasks/modo-prime.md): lo único que este docente puede hacer que
    * un docente común no puede — nunca la palabra "prime" ni ninguna bandera
-   * de `AppSettings` (ver `workspace-types.ts`). Todavía sin consumir acá:
-   * T6 ("Velocidad") y T9 ("Varias versiones") van a leer esto (o pasarlo a
-   * `ChatPanel`) cuando construyan sus propios controles.
+   * de `AppSettings` (ver `workspace-types.ts`). T6 ("Velocidad") ya lo
+   * consume (`puedeElegirVelocidad`, `velocidadPorDefecto`); T9 ("Varias
+   * versiones") va a leer `puedePedirVersiones` de acá cuando construya su
+   * propio control.
    */
   capacidades: CapacidadesEditor;
 }
@@ -63,6 +66,29 @@ export default function Workspace(props: WorkspaceProps) {
   // una edición manual, o una nueva captura.
   const [portadaVieja, setPortadaVieja] = useState(props.project.portadaVieja);
   const [model, setModel] = useState<string>(props.project.aiModelId);
+
+  /**
+   * T6 ("Velocidad Rápido / A fondo"): arranca en el default de ESTA cuenta
+   * (`velocidadPorDefecto`, nunca la palabra "prime") — el mismo valor en el
+   * render del servidor y en la primera pasada del cliente, para no pelearse
+   * con la hidratación. La preferencia guardada en este navegador (si la
+   * hay) se aplica recién después, en el `useEffect` de abajo, que sólo
+   * corre en el cliente.
+   */
+  const [speed, setSpeed] = useState<Speed>(props.capacidades.velocidadPorDefecto === 'a_fondo' ? 'deep' : 'fast');
+
+  useEffect(() => {
+    const guardada = leerVelocidadGuardada();
+    if (guardada) setSpeed(guardada);
+    // Sólo al montar: es la misma lectura de "preferencia de este navegador"
+    // que hace `conTema` con el tema, una sola vez al abrir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleSpeedChange(nuevaVelocidad: Speed) {
+    setSpeed(nuevaVelocidad);
+    guardarVelocidad(nuevaVelocidad);
+  }
 
   const [threads, setThreads] = useState(props.threads);
   const [activeThreadId, setActiveThreadId] = useState(props.activeThreadId);
@@ -371,6 +397,9 @@ export default function Workspace(props: WorkspaceProps) {
           model,
           attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
           codeEditedByTeacher: codeEditedByTeacher.current,
+          // T6: el servidor la ignora sin `puedeElegirVelocidad`, así que
+          // siempre es seguro mandar la actual.
+          speed,
         },
         abortador.current.signal,
       )) {
@@ -733,6 +762,9 @@ export default function Workspace(props: WorkspaceProps) {
         }
         onSend={(message) => void handleSend(message)}
         onUndo={(messageId) => void handleUndo(messageId)}
+        puedeElegirVelocidad={props.capacidades.puedeElegirVelocidad}
+        speed={speed}
+        onSpeedChange={handleSpeedChange}
       />
       </div>
 

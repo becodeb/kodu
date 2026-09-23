@@ -4,16 +4,17 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
 import { cadenaDeMotores, invalidarCatalogo, motoresParaDocente, normalizarMotor } from '../src/lib/ai/catalogo.ts';
-import { resolverCapacidades } from '../src/lib/ai/capacidades.ts';
+import { resolverCapacidades, resolverVelocidadEfectiva } from '../src/lib/ai/capacidades.ts';
 import type { SettingsParaCapacidades, UsuarioParaCapacidades } from '../src/lib/ai/capacidades.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
-import { razonamiento, type ProviderConfig } from '../src/lib/ai/provider.ts';
+import { razonamiento, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
+import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
 import type { WorkspaceMessage } from '../src/lib/workspace-types.ts';
 
 /**
@@ -882,6 +883,123 @@ await prueba('cadenaDeMotores: un eslabón primeOnly se saltea sin prime, pero l
   } finally {
     await limpiarMotoresDePrueba();
   }
+});
+
+// ── T6: velocidad Rápido / A fondo (odd/tasks/modo-prime.md — "Velocidad
+// Rápido / A fondo") ────────────────────────────────────────────────────
+
+await prueba('resolverCapacidades: velocidadPorDefecto es "a_fondo" con prime y "rapido" sin prime', () => {
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: true }))
+      .velocidadPorDefecto,
+    'a_fondo',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ isDemo: true }), settingsDePrueba({ primeEnabled: true }))
+      .velocidadPorDefecto,
+    'a_fondo',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true, deepModeForAll: true }))
+      .velocidadPorDefecto,
+    'rapido',
+    'deepModeForAll da el CONTROL pero el default sigue siendo "rapido": A fondo encarece, y ese interruptor no es prime',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba()).velocidadPorDefecto,
+    'rapido',
+    'sin nada prendido el default también es "rapido" (aunque acá ni siquiera hay control para mostrarlo)',
+  );
+});
+
+await prueba('resolverVelocidadEfectiva: sin el permiso, la pedida se IGNORA — nunca fuerza nada', () => {
+  assert.equal(resolverVelocidadEfectiva(false, 'deep', 'a_fondo'), null);
+  assert.equal(resolverVelocidadEfectiva(false, 'fast', 'rapido'), null);
+  assert.equal(
+    resolverVelocidadEfectiva(false, undefined, 'a_fondo'),
+    null,
+    'sin permiso y sin pedido tampoco cae a un default: null es "no pisar nada"',
+  );
+});
+
+await prueba('resolverVelocidadEfectiva: con el permiso, la pedida manda si vino', () => {
+  assert.equal(resolverVelocidadEfectiva(true, 'fast', 'a_fondo'), 'fast');
+  assert.equal(resolverVelocidadEfectiva(true, 'deep', 'rapido'), 'deep');
+});
+
+await prueba('resolverVelocidadEfectiva: con el permiso y sin pedido, manda el default de la cuenta', () => {
+  assert.equal(resolverVelocidadEfectiva(true, undefined, 'a_fondo'), 'deep');
+  assert.equal(resolverVelocidadEfectiva(true, undefined, 'rapido'), 'fast');
+});
+
+await prueba('razonamientoEfectivo: sin velocidad (null) es EXACTAMENTE razonamiento(provider)', () => {
+  // Ningún permiso, o nada que resolver: ni fuerza "none" en Rápido ni "high"
+  // en A fondo — manda tal cual lo que ya tenía configurado el motor, el
+  // comportamiento de siempre para quien no tiene puedeElegirVelocidad.
+  for (const extra of [
+    {},
+    { reasoningEffort: 'low', reasoningParam: 'reasoning_effort' },
+    { reasoningEffort: 'none', reasoningParam: 'thinking' },
+  ]) {
+    const provider = config(extra);
+    assert.deepEqual(razonamientoEfectivo(provider, null), razonamiento(provider));
+  }
+});
+
+await prueba('razonamientoEfectivo: dialecto desconocido no manda nada en ninguna velocidad', () => {
+  const provider = config({}); // reasoningEffort null: dialecto desconocido
+  assert.deepEqual(razonamientoEfectivo(provider, 'fast'), {});
+  assert.deepEqual(razonamientoEfectivo(provider, 'deep'), {});
+});
+
+await prueba('razonamientoEfectivo: reasoning_effort, Rápido siempre "none" sin importar lo configurado', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoEfectivo(config({ reasoningEffort: nivel, reasoningParam: 'reasoning_effort' }), 'fast'),
+      { reasoning_effort: 'none' },
+      `configurado en "${nivel}", Rápido tiene que mandar "none"`,
+    );
+  }
+});
+
+await prueba('razonamientoEfectivo: reasoning_effort, A fondo al menos "high" sin bajar un nivel más alto', () => {
+  const casos: Array<[string, string]> = [
+    ['none', 'high'],
+    ['low', 'high'],
+    ['high', 'high'],
+    ['max', 'max'], // ya estaba más alto que "high": A fondo no lo achica
+  ];
+  for (const [configurado, esperado] of casos) {
+    assert.deepEqual(
+      razonamientoEfectivo(config({ reasoningEffort: configurado, reasoningParam: 'reasoning_effort' }), 'deep'),
+      { reasoning_effort: esperado },
+      `configurado en "${configurado}", A fondo tiene que dar "${esperado}"`,
+    );
+  }
+});
+
+await prueba('razonamientoEfectivo: thinking, Rápido apaga y A fondo prende sin importar el nivel', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoEfectivo(config({ reasoningEffort: nivel, reasoningParam: 'thinking' }), 'fast'),
+      { thinking: { type: 'disabled' } },
+      `configurado en "${nivel}", Rápido tiene que apagar el thinking`,
+    );
+    assert.deepEqual(
+      razonamientoEfectivo(config({ reasoningEffort: nivel, reasoningParam: 'thinking' }), 'deep'),
+      { thinking: { type: 'enabled' } },
+      `configurado en "${nivel}", A fondo tiene que prender el thinking`,
+    );
+  }
+});
+
+await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) son válidas', () => {
+  assert.equal(esVelocidadValida('fast'), true);
+  assert.equal(esVelocidadValida('deep'), true);
+  assert.equal(esVelocidadValida('rapido'), false, 'ese es el vocabulario de Capacidades, no el de localStorage');
+  assert.equal(esVelocidadValida('a_fondo'), false);
+  assert.equal(esVelocidadValida(null), false);
+  assert.equal(esVelocidadValida(''), false);
 });
 
 await prisma.$disconnect();

@@ -15,11 +15,13 @@
  * no tiene que poder enterarse de que existe, ni leyendo el código fuente
  * de la página). Los consumidores server-side (`stream.ts`,
  * `project/[id].astro`, y T6/T7/T9 más adelante) leen de acá el campo que
- * les toca; el editor sólo recibe los dos campos genéricos
- * (`puedeElegirVelocidad`, `puedePedirVersiones`), armados aparte en
- * `project/[id].astro` como `CapacidadesEditor` (`workspace-types.ts`) —
- * nunca este objeto entero.
+ * les toca; el editor sólo recibe los campos genéricos
+ * (`puedeElegirVelocidad`, `velocidadPorDefecto`, `puedePedirVersiones`),
+ * armados aparte en `project/[id].astro` como `CapacidadesEditor`
+ * (`workspace-types.ts`) — nunca este objeto entero.
  */
+
+import type { Speed } from './provider.ts';
 
 export interface UsuarioParaCapacidades {
   role: 'DOCENTE' | 'ADMIN';
@@ -48,6 +50,17 @@ export interface Capacidades {
    * admin prendió "A fondo para todos" (capa 1, `deepModeForAll`).
    */
   puedeElegirVelocidad: boolean;
+  /**
+   * T6: qué velocidad mostrar seleccionada en este navegador cuando todavía
+   * no eligió ninguna (nada guardado en su `localStorage`). `'a_fondo'` para
+   * quien tiene prime de verdad; `'rapido'` para quien sólo tiene el control
+   * por `deepModeForAll` (capa 1, "lo que no encarece va para todos" — A
+   * fondo SÍ encarece, así que no es lo que se le prende por default a
+   * alguien que no eligió prime para esa cuenta). Vocabulario en español y
+   * distinto del `Speed` del proveedor a propósito: esto es sólo una
+   * preferencia de UI, nunca la palabra "prime" — ver `CapacidadesEditor`.
+   */
+  velocidadPorDefecto: 'a_fondo' | 'rapido';
   /**
    * T9 ("Varias versiones al crear"): puede pedir varias versiones. Mismo
    * criterio que `puedeElegirVelocidad`, con `versionsForAll` en vez de
@@ -88,8 +101,33 @@ export function resolverCapacidades(
   return {
     prime,
     puedeElegirVelocidad: prime || settings.deepModeForAll,
+    velocidadPorDefecto: prime ? 'a_fondo' : 'rapido',
     puedePedirVersiones: prime || settings.versionsForAll,
     autoReviewForAll: settings.autoReviewForAll,
     puedeUsarModelosPrime: prime,
   };
+}
+
+/**
+ * T6 ("Velocidad Rápido / A fondo"): qué velocidad rige ESTE turno —
+ * capacidad × pedido × default, en ese orden.
+ *
+ * Sin `puedeElegirVelocidad`, la velocidad pedida se IGNORA por completo
+ * (decisiones del dueño: "un docente sin prime... no puede forzar por API
+ * ni velocidad"): da `null`, que para `razonamientoEfectivo`
+ * (`lib/ai/provider.ts`) significa "no pisar nada", así el motor manda
+ * exactamente el razonamiento que ya tenía configurado, como si T6 no
+ * existiera. Nunca se cae a `'fast'`/`'deep'` por default en este caso —
+ * eso SÍ sería pisarlo, aunque coincida por casualidad con lo configurado.
+ *
+ * Con el permiso, la velocidad PEDIDA manda si vino en el body; si no, se
+ * usa el default de esta cuenta (`velocidadPorDefecto`, ver `Capacidades`).
+ */
+export function resolverVelocidadEfectiva(
+  puedeElegirVelocidad: boolean,
+  velocidadPedida: Speed | undefined,
+  velocidadPorDefecto: 'a_fondo' | 'rapido',
+): Speed | null {
+  if (!puedeElegirVelocidad) return null;
+  return velocidadPedida ?? (velocidadPorDefecto === 'a_fondo' ? 'deep' : 'fast');
 }

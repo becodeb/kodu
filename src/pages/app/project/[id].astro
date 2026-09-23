@@ -126,12 +126,13 @@ const motoresParaElSelector =
 const consumoDelRecurso = await costoPorProyecto(project.id);
 const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
 
-// T5: SÓLO estos dos campos cruzan al cliente — nunca `capacidades` entero
+// T5/T6: SÓLO estos campos cruzan al cliente — nunca `capacidades` entero
 // (que tiene `prime`, `autoReviewForAll` y `puedeUsarModelosPrime`). Armado
 // a mano, campo por campo, para que agregar una clave a `Capacidades` el día
 // de mañana no la filtre acá sin querer.
 const capacidadesEditor: CapacidadesEditor = {
   puedeElegirVelocidad: capacidades.puedeElegirVelocidad,
+  velocidadPorDefecto: capacidades.velocidadPorDefecto,
   puedePedirVersiones: capacidades.puedePedirVersiones,
 };
 ---

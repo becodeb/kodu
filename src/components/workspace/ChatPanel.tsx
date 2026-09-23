@@ -9,6 +9,7 @@ import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
 import type {
   AiPhase,
   MotorPublico,
+  Speed,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceThread,
@@ -47,6 +48,10 @@ interface ChatPanelProps {
   onSend: (message: string) => void;
   /** T4: deshace el turno que cerró el mensaje "assistant" con este id. */
   onUndo: (messageId: string) => void;
+  /** T6 ("Velocidad Rápido / A fondo"): sólo quien lo tiene ve el control. */
+  puedeElegirVelocidad: boolean;
+  speed: Speed;
+  onSpeedChange: (speed: Speed) => void;
 }
 
 /**
@@ -369,6 +374,10 @@ export default function ChatPanel(props: ChatPanelProps) {
             phase={props.aiPhase}
             variant="inline"
             desde={props.turnoDesde}
+            // T6: el control queda deshabilitado mientras corre el turno, así
+            // que `props.speed` no puede haber cambiado desde que arrancó —
+            // es la velocidad de ESTE turno, no la de un próximo pedido.
+            aFondo={props.puedeElegirVelocidad && props.speed === 'deep'}
             onDetener={props.onDetener}
           />
         )}
@@ -469,6 +478,54 @@ export default function ChatPanel(props: ChatPanelProps) {
           >
             {props.uploading ? 'Subiendo…' : 'Adjuntar'}
           </button>
+
+          {/* T6 ("Velocidad Rápido / A fondo"): discreto a propósito — sólo
+              íconos (el `title` explica cada uno), sin la palabra "prime" ni
+              ningún cartel. Ausente por completo sin el permiso: un docente
+              sin prime ni "A fondo para todos" no ve nada acá. */}
+          {props.puedeElegirVelocidad && (
+            <div
+              role="group"
+              aria-label="Velocidad de la respuesta"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-linea bg-superficie p-1"
+            >
+              <button
+                type="button"
+                aria-pressed={props.speed === 'fast'}
+                disabled={props.isStreaming}
+                onClick={() => props.onSpeedChange('fast')}
+                title="Rápido: responde directo."
+                className={`grid h-6 w-6 place-items-center rounded-md transition-colors ${
+                  props.speed === 'fast'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-ink-500 hover:bg-sutil hover:text-ink-900'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14 2 6 13h5l-1 9 8-11h-5Z" fill="currentColor" />
+                </svg>
+                <span className="sr-only">Rápido</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={props.speed === 'deep'}
+                disabled={props.isStreaming}
+                onClick={() => props.onSpeedChange('deep')}
+                title="A fondo: piensa antes de escribir y revisa el resultado; tarda más."
+                className={`grid h-6 w-6 place-items-center rounded-md transition-colors ${
+                  props.speed === 'deep'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-ink-500 hover:bg-sutil hover:text-ink-900'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="9.5" cy="9.5" r="6.5" stroke="currentColor" strokeWidth="2" />
+                  <path d="M14.5 14.5 20 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <span className="sr-only">A fondo</span>
+              </button>
+            </div>
+          )}
 
           <button
             type="submit"

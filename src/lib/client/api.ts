@@ -1,3 +1,5 @@
+import type { Speed } from '../workspace-types.ts';
+
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
  * el navegador manda la cookie de sesión y el header Origin que Astro exige
@@ -92,6 +94,9 @@ export async function* streamChat(payload: {
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
+  /** T6 ("Velocidad Rápido / A fondo"). El servidor la ignora sin el permiso
+   *  (`puedeElegirVelocidad`), así que siempre es seguro mandarla. */
+  speed?: Speed;
 }, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',

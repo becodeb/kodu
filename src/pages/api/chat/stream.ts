@@ -15,7 +15,7 @@ import {
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
-import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
+import { resolverCapacidades, resolverVelocidadEfectiva } from '../../../lib/ai/capacidades.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -63,6 +63,13 @@ const schema = z.object({
   model: z.string().min(1).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
+  /**
+   * T6 ("Velocidad Rápido / A fondo"): lo que eligió el docente en el
+   * compositor. Server-side, `resolverVelocidadEfectiva` (`lib/ai/capacidades.ts`)
+   * lo IGNORA por completo sin `puedeElegirVelocidad` — mandarlo desde acá no
+   * alcanza para forzar nada sin el permiso.
+   */
+  speed: z.enum(['fast', 'deep']).optional(),
 });
 
 /** Cuántos mensajes del hilo se reenvían como historial. */
@@ -321,7 +328,25 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
 
-  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher } = parsed.data;
+  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, speed } = parsed.data;
+
+  /**
+   * T6: la velocidad efectiva de ESTE turno — capacidad × pedido × default
+   * (ver `resolverVelocidadEfectiva`). `null` = sin pisar nada, el
+   * razonamiento configurado de siempre; se lo pasamos tal cual a cada
+   * llamada al proveedor más abajo, cadena de respaldo y re-pedido forzado
+   * incluidos, para que la misma velocidad rija todo el turno.
+   *
+   * Hook para T7/T8: cuando lleguen, la revisión automática (combinada con
+   * `capacidades.autoReviewForAll`) y la revisión visual van a leer
+   * `velocidadEfectiva === 'deep'` desde ACÁ para decidir si corren —
+   * "A fondo suma razonamiento, revisión automática y revisión visual".
+   */
+  const velocidadEfectiva = resolverVelocidadEfectiva(
+    capacidades.puedeElegirVelocidad,
+    speed,
+    capacidades.velocidadPorDefecto,
+  );
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -660,6 +685,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           provider: usado,
           signal: request.signal,
           forzarHerramienta: forzar,
+          velocidad: velocidadEfectiva,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             // T3: un reintento arranca un pedido nuevo — cualquier parcial
@@ -867,6 +893,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             provider: proveedorUsado,
             signal: request.signal,
             forzarHerramienta: true,
+            velocidad: velocidadEfectiva,
           });
 
           await consumir(reintento);

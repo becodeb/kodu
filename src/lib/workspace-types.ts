@@ -21,9 +21,18 @@ export interface MotorPublico {
  * (`src/lib/ai/capacidades.ts`, server-only), quedándose SÓLO con estos dos
  * campos — nunca ese objeto entero.
  */
+/** T6 ("Velocidad Rápido / A fondo"): la elección de ESTE turno. Mismo
+ *  vocabulario que espera `/api/chat/stream` en el body (`speed`). */
+export type Speed = 'fast' | 'deep';
+
 export interface CapacidadesEditor {
   /** T6 ("Velocidad Rápido / A fondo"): puede elegir velocidad en el compositor. */
   puedeElegirVelocidad: boolean;
+  /**
+   * T6: qué velocidad mostrar seleccionada mientras este navegador no eligió
+   * ninguna todavía (nada en `localStorage`) — nunca la palabra "prime".
+   */
+  velocidadPorDefecto: 'a_fondo' | 'rapido';
   /** T9 ("Varias versiones al crear"): puede pedir varias versiones. */
   puedePedirVersiones: boolean;
 }
