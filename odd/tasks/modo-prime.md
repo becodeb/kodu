@@ -58,7 +58,7 @@ Ruta por tarea: todas **delegadas** a un escritor (disparador: tocan 2+ archivos
 - [x] **T6 — Velocidad Rápido / A fondo.** Control discreto en el compositor sólo para quien lo tiene; `speed` validado en el servidor; razonamiento apagado en Rápido y al menos `high` en A fondo según el dialecto del modelo; fases en `AiStatus`.
 - [x] **T7 — Revisión automática (lint + una corrección) y turnos progresivos.** `src/lib/ai/revision.ts`; política: A fondo o `autoReviewForAll`; el HTML de la primera pasada se guarda y se muestra antes de corregir; una sola corrección por turno; uso de tokens registrado por llamada.
 - [x] **T8 — Revisión visual con captura (A fondo + modelo con visión).** Captura con el puente existente de `src/lib/preview.ts`, `POST /api/chat/visual-review` (SSE), llamada con la imagen, el resultado reemplaza la vista previa al llegar.
-- [ ] **T9 — Varias versiones al crear (prime o `versionsForAll`).** Hasta 3 generaciones en paralelo con enfoques distintos, la 1 se transmite en vivo, las demás aparecen al terminar, selector de versión en el mensaje, `POST /api/projects/[id]/variant`.
+- [x] **T9 — Varias versiones al crear (prime o `versionsForAll`).** Hasta 3 generaciones en paralelo con enfoques distintos, la 1 se transmite en vivo, las demás aparecen al terminar, selector de versión en el mensaje, `POST /api/projects/[id]/variant`.
 - [ ] **T10 — Verificación de punta a punta y documentación.** Recorrido en navegador del flujo completo en desarrollo, README actualizado, reporte final.
 
 ## Criterios de aceptación
@@ -101,6 +101,10 @@ Motor mock para T4+: queda un `AiProvider` (`kind: "kodu-mock-t3"`) y un `AiMode
 
 | T8 | `e85549f` | `npm run check` OK; `npx tsx e2e/unidad-revision-visual.ts` 19/19 (re-corrido por el orquestador: OK); `unidad.ts` 50/50 y demás suites unitarias OK; `npx tsx e2e/t8-revision-visual.ts` 8 escenas: el pedido lleva `image_url` `data:image/…`, la instrucción de crítica y `tool_choice: auto`; un HTML cambiado se aplica y persiste; "Sin cambios." no toca nada; Rápido y motor sin visión → `revisionVisualDisponible: false`; huella vieja → 409 sin llamar al motor; un resultado con emojis nuevos se descarta; "Detener" deja el HTML del turno; navegador real con "Mirando cómo quedó" y la imagen enviada guardada; regresión t3–t7 OK (t5 falló una vez por un timeout del diálogo de admin y pasó al reintentar) | assess (desde `dd16be5`): **medium**, `slice_budget_reached`; preflight → `stop rdd_disabled`. Verificación del escritor + control del orquestador (la imagen que recibe el modelo muestra el recurso con tipografía e íconos del kit) |
 
+| T9 | `8007b6e` | `npm run check` OK; `npx tsx e2e/unidad-versiones.ts` 22/22 (re-corrido por el orquestador: OK); resto de suites unitarias OK; migración aplicada en dev; `npx tsx e2e/t9-varias-versiones.ts` 9 escenas: 3 llamadas concurrentes (llegan con 8–13 ms de diferencia), sólo la v1 transmite parciales, eventos `variant` de anuncio y listo, `currentHtml` en la v1 hasta elegir, una v2 que falla deja chips 1 y 3, A fondo + versiones → sin revisión visual y cada versión con su corrección T7, sin capacidad o con recurso no vacío → 1 llamada, endpoint `/variant` (elegir, 404, 422, 409 con turno en curso), deshacer vuelve al arranque, el turno siguiente borra las versiones y los chips, recorrido en navegador real; el pie del compositor con los cuatro controles sigue en una línea a 1024 px; regresión t3–t8 OK | assess (desde `77fcf6a`): **medium**, `slice_budget_reached`; preflight → `stop rdd_disabled`. Verificación del escritor + control del orquestador (captura de los chips revisada) |
+
+Notas T9: las versiones se guardan en la tabla `ResourceVariant` (no en `ChatMessage`) y el HTML no viaja por SSE: elegir llama a `POST /api/projects/[id]/variant`, como deshacer. Los chips muestran el estado "lista" apenas cada versión termina, pero se pueden tocar recién cuando cierra el turno (antes no existe el mensaje en la base). El mensaje del chat de un turno con versiones es fijo. No se probó elegir versión como admin sobre un recurso ajeno ni la interacción con los topes de tokens.
+
 Notas T8: el servidor decide si corresponde (`revisionVisualDisponible` en el `done`) y el cliente sólo ejecuta: captura con el puente de `src/lib/preview.ts` (JPEG, alto acotado), `POST /api/chat/visual-review` `{ projectId, dataUrl, fingerprint }` con respuesta SSE `code?` + `done`. La imagen no se guarda. No crea mensajes de chat. La máquina de desarrollo estaba muy cargada (varias sesiones en paralelo): algunas escenas tardías de `m9` se colgaron por memoria, no por código.
 
 Notas T7: la lista de CDN permitidos vive ahora en `src/lib/cdn-allowlist.ts` y la usan la CSP de `/p/` y el lint (misma CSP resultante). La corrección se registra como una fila de `TokenUsage` aparte del primer pase. No se probó de punta a punta el caso de corrección truncada (mismo camino de código que el 500).
@@ -117,7 +121,7 @@ Notas T1: `e2e/unidad-kit.ts` es una suite aparte porque `e2e/unidad.ts` necesit
 
 ## Próximo paso
 
-T9. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
+T10. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
 
 ---
 
