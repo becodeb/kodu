@@ -2,6 +2,7 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import GraficoColumnas from '../../../components/admin/GraficoColumnas.tsx';
 import GraficoBarras from '../../../components/admin/GraficoBarras.tsx';
+import AccesoPrimeSwitch from '../../../components/admin/AccesoPrimeSwitch.tsx';
 import { prisma } from '../../../lib/db.ts';
 import { obtenerUsuarioAdmin } from '../../../lib/admin/usuarios.ts';
 import { consumoDiarioDeUsuario, consumoPorUsuario } from '../../../lib/ai/usage.ts';
@@ -64,9 +65,12 @@ const porModelo = porModeloRaw.map((fila) => ({
         )}
       </p>
     </div>
-    <p class="rounded-lg border border-linea bg-sutil px-3 py-1.5 text-sm text-ink-700">
-      {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} · Acceso a la IA: {usuario.accesoIa}
-    </p>
+    <div class="flex flex-wrap items-center gap-3">
+      <p class="rounded-lg border border-linea bg-sutil px-3 py-1.5 text-sm text-ink-700">
+        {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} · Acceso a la IA: {usuario.accesoIa}
+      </p>
+      <AccesoPrimeSwitch client:load userId={usuario.id} initialPrimeAccess={usuario.primeAccess} />
+    </div>
   </div>
 
   <div class="kodu-card mb-6 grid grid-cols-1 divide-y divide-linea sm:grid-cols-3 sm:divide-x sm:divide-y-0">

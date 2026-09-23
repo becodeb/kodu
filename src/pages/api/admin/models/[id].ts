@@ -40,6 +40,7 @@ const actualizarMotorSchema = z.object({
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  primeOnly: z.boolean().optional(),
 });
 
 export const PATCH: APIRoute = async ({ params, request }) => {
@@ -58,6 +59,22 @@ export const PATCH: APIRoute = async ({ params, request }) => {
 
   if (datos.fallbackModelId === existente.id) {
     return fail('Un motor no puede ser su propio respaldo.', 422);
+  }
+
+  // T5 (odd/tasks/modo-prime.md): un motor no puede ser el predeterminado y
+  // exclusivo de prime a la vez — el predeterminado tiene que poder usarlo
+  // cualquier docente, con o sin prime. Se calcula el estado RESULTANTE
+  // (lo que llega en el PATCH, o si no vino, lo que ya tenía la fila) para
+  // cubrir los tres caminos al conflicto: marcar primeOnly en el default
+  // vigente, marcar isDefault en un motor ya primeOnly, o mandar los dos
+  // juntos en el mismo PATCH.
+  const primeOnlyResultante = datos.primeOnly ?? existente.primeOnly;
+  const isDefaultResultante = datos.isDefault ?? existente.isDefault;
+  if (primeOnlyResultante && isDefaultResultante) {
+    return fail(
+      'Un motor no puede ser el predeterminado y exclusivo de prime a la vez: el predeterminado tiene que poder usarlo cualquier docente.',
+      422,
+    );
   }
 
   // Pre-check explícito: sin esto, repuntear a una cuenta inexistente caería
@@ -92,6 +109,7 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.supportsVision !== undefined) cambios.supportsVision = datos.supportsVision;
   if (datos.userTokenLimit !== undefined) cambios.userTokenLimit = datos.userTokenLimit;
   if (datos.fallbackModelId !== undefined) cambios.fallbackModelId = datos.fallbackModelId;
+  if (datos.primeOnly !== undefined) cambios.primeOnly = datos.primeOnly;
   if (datos.priceInputPerMToken !== undefined) {
     cambios.priceInputPerMToken = precioADecimal(datos.priceInputPerMToken);
   }

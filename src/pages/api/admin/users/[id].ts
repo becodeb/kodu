@@ -5,9 +5,10 @@ import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { accesoIaDeUsuario } from '../../../../lib/admin/usuarios.ts';
 
 /**
- * PATCH /api/admin/users/:id — cambia el rol y/o el permiso individual de
- * acceso a la IA de un docente (design.md — "The users table"; §10;
- * specs/ai-access-control/spec.md — "Per-user override precedence").
+ * PATCH /api/admin/users/:id — cambia el rol, el permiso individual de
+ * acceso a la IA, y/o el acceso prime de un docente (design.md — "The users
+ * table"; §10; specs/ai-access-control/spec.md — "Per-user override
+ * precedence"; T5 odd/tasks/modo-prime.md para `primeAccess`).
  *
  * La autenticación y la frescura de la identidad ya las exige el middleware
  * (`requireFreshAdmin` en toda mutación de `/api/admin`, ver
@@ -16,12 +17,14 @@ import { accesoIaDeUsuario } from '../../../../lib/admin/usuarios.ts';
  * `aiAccessOverride: null` es un valor explícito ("volver a la regla del
  * dominio"), no "no lo toques" — por eso el campo es `.nullable().optional()`
  * y no simplemente opcional: hace falta distinguir "no vino en el body" de
- * "vino, y es null".
+ * "vino, y es null". `primeAccess` no tiene ese problema: no hay ninguna
+ * "regla de dominio" de la que volver, así que un boolean simple alcanza.
  */
 
 const actualizarUsuarioSchema = z.object({
   role: z.enum(['DOCENTE', 'ADMIN']).optional(),
   aiAccessOverride: z.boolean().nullable().optional(),
+  primeAccess: z.boolean().optional(),
 });
 
 export const PATCH: APIRoute = async ({ params, request }) => {
@@ -60,9 +63,11 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     where: { id: existente.id },
     // `undefined` no toca la columna (Prisma estándar); `null` explícito SÍ
     // la pisa — es justo la distinción que necesita "volver a la regla del
-    // dominio" (ver el comentario de arriba).
-    data: { role: datos.role, aiAccessOverride: datos.aiAccessOverride },
-    select: { id: true, email: true, role: true, aiAccessOverride: true },
+    // dominio" (ver el comentario de arriba). `primeAccess` es un boolean
+    // simple: `undefined` no toca, cualquier otra cosa no puede llegar acá
+    // (Zod ya la rechazó).
+    data: { role: datos.role, aiAccessOverride: datos.aiAccessOverride, primeAccess: datos.primeAccess },
+    select: { id: true, email: true, role: true, aiAccessOverride: true, primeAccess: true },
   });
 
   // Se devuelve el texto ya calculado (no sólo el booleano crudo) para que
@@ -70,5 +75,13 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   // cliente ni pedir otra vuelta sólo para refrescar la columna.
   const accesoIa = await accesoIaDeUsuario(actualizado.email, actualizado.aiAccessOverride);
 
-  return ok({ usuario: { id: actualizado.id, role: actualizado.role, aiAccessOverride: actualizado.aiAccessOverride, accesoIa } });
+  return ok({
+    usuario: {
+      id: actualizado.id,
+      role: actualizado.role,
+      aiAccessOverride: actualizado.aiAccessOverride,
+      primeAccess: actualizado.primeAccess,
+      accesoIa,
+    },
+  });
 };

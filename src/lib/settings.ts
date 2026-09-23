@@ -8,6 +8,11 @@ import type { AppSettings } from '../generated/prisma/client.ts';
  * un TTL más corto porque `demoEnabled` (M7) se consulta en cada carga de
  * `/login`, no sólo en el chat.
  *
+ * T5 (odd/tasks/modo-prime.md) suma cuatro campos (`primeEnabled` y los tres
+ * "para todos") a esta misma fila: no hace falta otro lector ni otro caché,
+ * `resolverCapacidades` (`lib/ai/capacidades.ts`) los toma de la misma
+ * lectura que ya hacía cada request gateado.
+ *
  * `specs/app-settings/spec.md` exige que un cambio se refleje "en el
  * siguiente request", nunca atado a la vida del JWT: por eso la caché es
  * corta y de proceso, nunca viaja en la cookie de sesión.

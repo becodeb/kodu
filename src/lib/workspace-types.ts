@@ -13,6 +13,21 @@ export interface MotorPublico {
   supportsVision: boolean;
 }
 
+/**
+ * Lo que el editor le puede ofrecer a ESTE docente (T5, odd/tasks/modo-prime.md
+ * — "Discreto" en las decisiones del dueño: la palabra "prime" y cualquier
+ * bandera de `AppSettings` NUNCA cruzan al cliente, sólo lo que puede hacer).
+ * Lo arma `project/[id].astro` a partir de `Capacidades`
+ * (`src/lib/ai/capacidades.ts`, server-only), quedándose SÓLO con estos dos
+ * campos — nunca ese objeto entero.
+ */
+export interface CapacidadesEditor {
+  /** T6 ("Velocidad Rápido / A fondo"): puede elegir velocidad en el compositor. */
+  puedeElegirVelocidad: boolean;
+  /** T9 ("Varias versiones al crear"): puede pedir varias versiones. */
+  puedePedirVersiones: boolean;
+}
+
 export interface WorkspaceProject {
   id: string;
   title: string;

@@ -38,6 +38,10 @@ function matches(pathname: string, prefixes: string[]): boolean {
  * sin ningún re-login: no cambia `isDemo` en sí (la cuenta sigue siendo la
  * cuenta de demo), lo que cambia es que el gate de `stream.ts` vuelve a leer
  * `demoEnabled` en ese pedido nuevo.
+ *
+ * `primeAccess` (T5, odd/tasks/modo-prime.md) se suma acá con el mismo
+ * criterio: un admin que desmarca una cuenta espera que deje de gastar
+ * presupuesto de API en el próximo pedido, no 168 horas después.
  */
 async function resolverIdentidadFresca(
   sesion: SessionUser,
@@ -45,7 +49,15 @@ async function resolverIdentidadFresca(
   try {
     const fila = await prisma.user.findUnique({
       where: { id: sesion.id },
-      select: { id: true, email: true, name: true, role: true, aiAccessOverride: true, isDemo: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        aiAccessOverride: true,
+        isDemo: true,
+        primeAccess: true,
+      },
     });
 
     if (!fila) {
@@ -61,6 +73,7 @@ async function resolverIdentidadFresca(
         role: fila.role,
         aiAccessOverride: fila.aiAccessOverride,
         isDemo: fila.isDemo,
+        primeAccess: fila.primeAccess,
       },
       fresh: true,
     };

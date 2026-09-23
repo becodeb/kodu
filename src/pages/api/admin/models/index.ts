@@ -38,6 +38,9 @@ const crearMotorSchema = z.object({
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  /** T5 (odd/tasks/modo-prime.md): un motor nuevo nunca nace default, así
+   *  que acá no hay conflicto que validar — eso sólo puede pasar en el PATCH. */
+  primeOnly: z.boolean().optional(),
 });
 
 /** GET /api/admin/models — el listado completo, en el orden configurado. */
@@ -91,6 +94,7 @@ export const POST: APIRoute = async ({ request }) => {
     maxInputChars: datos.maxInputChars ?? 400_000,
     userTokenLimit: datos.userTokenLimit ?? 0,
     fallbackModelId: datos.fallbackModelId ?? null,
+    primeOnly: datos.primeOnly ?? false,
     sortOrder,
   };
 

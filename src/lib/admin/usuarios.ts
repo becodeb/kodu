@@ -44,6 +44,9 @@ export interface FilaUsuarioAdmin {
   aiAccessOverride: boolean | null;
   /** "Sí · por dominio" | "Sí · permiso individual" | "No" — la razón, no sólo el veredicto. */
   accesoIa: string;
+  /** T5 (odd/tasks/modo-prime.md): cuenta marcada a mano como una de las
+   *  vías a prime. Pinta el marcador discreto de la fila. */
+  primeAccess: boolean;
   proyectos: number;
   tokens: number;
   /** Ya formateado: "≈ US$ 1,24" | "US$ 0,00" | "—". */
@@ -63,7 +66,15 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
   const [usuarios, filasUso, proyectosPorUsuario] = await Promise.all([
     prisma.user.findMany({
       where: { isDemo: false },
-      select: { id: true, name: true, email: true, googleId: true, role: true, aiAccessOverride: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        googleId: true,
+        role: true,
+        aiAccessOverride: true,
+        primeAccess: true,
+      },
     }),
     prisma.tokenUsage.findMany({
       select: { userId: true, promptTokens: true, completionTokens: true, costUsd: true, createdAt: true },
@@ -118,6 +129,7 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
         role: usuario.role,
         aiAccessOverride: usuario.aiAccessOverride,
         accesoIa: textoAccesoIa(usuario.aiAccessOverride, autorizadoPorDominio),
+        primeAccess: usuario.primeAccess,
         proyectos: proyectoInfo?._count._all ?? 0,
         tokens: uso?.tokens ?? 0,
         costoDisplay: formatearCostoAdminUsd(uso === undefined ? null : uso.sinPrecio ? null : uso.costUsd.toString()),
@@ -138,6 +150,8 @@ export interface DetalleUsuarioAdmin {
   /** "se sumó el 4 de marzo". */
   creadoDisplay: string;
   accesoIa: string;
+  /** T5: para el interruptor "Acceso prime" de la ficha. */
+  primeAccess: boolean;
   tokens: number;
   costoDisplay: string;
   proyectosCount: number;
@@ -158,6 +172,7 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
       createdAt: true,
       aiAccessOverride: true,
       isDemo: true,
+      primeAccess: true,
     },
   });
   if (!usuario || usuario.isDemo) return null;
@@ -176,6 +191,7 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
     role: usuario.role,
     creadoDisplay: `se sumó el ${fechaLarga(usuario.createdAt)}`,
     accesoIa: textoAccesoIa(usuario.aiAccessOverride, autorizadoPorDominio),
+    primeAccess: usuario.primeAccess,
     tokens,
     costoDisplay: formatearCostoAdminUsd(costUsd?.toString() ?? null),
     proyectosCount,

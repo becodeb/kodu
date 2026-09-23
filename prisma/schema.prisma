@@ -48,6 +48,13 @@ model User {
   /// Ver el indice unico parcial en la migracion 20260922000000: a lo sumo
   /// una fila en true, igual que AiModel.isDefault.
   isDemo       Boolean      @default(false)
+  /// T5 (odd/tasks/modo-prime.md, "Modo prime y funciones para todos"):
+  /// cuenta marcada a mano por un admin como una de las tres vías a prime
+  /// (las otras dos son `role === ADMIN` e `isDemo`). Sólo importa cuando
+  /// `AppSettings.primeEnabled` también está prendido — ver
+  /// `src/lib/ai/capacidades.ts`. Boolean simple (no tri-estado como
+  /// `aiAccessOverride`): acá no hay una "regla de dominio" de la que volver.
+  primeAccess  Boolean      @default(false)
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
@@ -73,6 +80,18 @@ model AppSettings {
   demoEnabled        Boolean  @default(false)
   demoTokenLimit     Int      @default(200000)
   demoCycleStartedAt DateTime @default(now())
+  /// T5 (odd/tasks/modo-prime.md): interruptor general de modo prime. Sin
+  /// esto en `true`, nadie tiene prime aunque sea ADMIN, la demo, o una
+  /// cuenta marcada (`User.primeAccess`) — ver `src/lib/ai/capacidades.ts`.
+  primeEnabled       Boolean  @default(false)
+  /// Los tres interruptores "para todos" de la capa 1 (decisiones del
+  /// dueño: "lo que no encarece va para todos"; lo que sigue SÍ encarece,
+  /// por eso son interruptores del admin y no el comportamiento por
+  /// defecto). Cada uno amplía lo que ya da prime, nunca lo reemplaza —
+  /// ver `resolverCapacidades`.
+  autoReviewForAll   Boolean  @default(false)
+  deepModeForAll     Boolean  @default(false)
+  versionsForAll     Boolean  @default(false)
   updatedAt          DateTime @updatedAt
 }
 
@@ -281,6 +300,14 @@ model AiModel {
   fallbackModelId String?
   fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)
   respaldoDe      AiModel[] @relation("Respaldo")
+
+  /// T5 (odd/tasks/modo-prime.md): motor que sólo una cuenta con prime puede
+  /// ver, elegir o recibir como eslabón de respaldo — filtrado en
+  /// `src/lib/ai/catalogo.ts` (server-side; el filtro del cliente es sólo
+  /// cosmético). No puede coexistir con `isDefault: true` (se valida en
+  /// `/api/admin/models`): el motor predeterminado tiene que poder usarlo
+  /// cualquier docente.
+  primeOnly Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

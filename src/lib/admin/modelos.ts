@@ -36,6 +36,9 @@ export interface MotorAdmin {
   /** "reasoning_effort" (default) o "thinking". */
   reasoningParam: string | null;
   fallbackModelId: string | null;
+  /** T5 (odd/tasks/modo-prime.md): exclusivo de cuentas con prime. Nunca
+   *  coexiste con `isDefault: true` (validado en el endpoint). */
+  primeOnly: boolean;
 }
 
 export function serializarMotor(fila: AiModel & { provider: AiProvider }): MotorAdmin {
@@ -62,6 +65,7 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     reasoningEffort: fila.reasoningEffort,
     reasoningParam: fila.reasoningParam,
     fallbackModelId: fila.fallbackModelId,
+    primeOnly: fila.primeOnly,
   };
 }
 

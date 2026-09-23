@@ -8,6 +8,9 @@ import { getEnv } from '../../../lib/env.ts';
 import { findWorkspaceProjectForActor, portadaDesactualizada } from '../../../lib/projects.ts';
 import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
+import { leerAppSettings } from '../../../lib/settings.ts';
+import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
+import type { CapacidadesEditor } from '../../../lib/workspace-types.ts';
 
 const user = Astro.locals.user!;
 
@@ -53,13 +56,24 @@ const messages = await prisma.chatMessage.findMany({
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
 
+// T5 (odd/tasks/modo-prime.md): qué puede este docente en este turno. Se
+// resuelve UNA vez acá, server-side, y se usa para filtrar el catálogo
+// abajo Y para armar `capacidadesEditor` (sólo los dos campos genéricos que
+// cruzan al cliente — nunca "prime" ni AppSettings, ver workspace-types.ts).
+const settings = await leerAppSettings();
+const capacidades = resolverCapacidades(user, settings);
+
 // Los motores que puede elegir un docente, ya en el orden que configuró un
-// admin (M3 los administra; acá sólo se leen).
-const motoresDisponibles = await motoresParaDocente();
+// admin (M3 los administra; acá sólo se leen). Filtrado server-side por
+// prime (T5): un motor `primeOnly` no aparece acá para quien no tiene prime.
+const motoresDisponibles = await motoresParaDocente(capacidades.prime);
 
 // El motor vigente del proyecto puede no existir más, estar apagado, o el
 // proyecto puede ser nuevo y no tener ninguno todavía: `normalizarMotor` cae
-// al default vigente en cualquiera de esos casos (design.md §5).
+// al default vigente en cualquiera de esos casos (design.md §5). T5: un
+// motor `primeOnly` guardado en el proyecto de alguien que se quedó sin
+// prime (el interruptor general se apagó, o le sacaron la marca) cae por
+// este MISMO camino, como cualquier motor apagado o inexistente.
 //
 // `motorOriginal` se guarda ANTES de pisar `aiModelId`: separa dos casos que
 // persisten igual (M2, ya probado por e2e/m2-catalogo.ts) pero que NO avisan
@@ -70,7 +84,7 @@ const motoresDisponibles = await motoresParaDocente();
 //    (`motorOriginal` no null) → repunteo real, spec `ai-model-catalog`
 //    ("Fallback when a project's model is disabled") pide avisar.
 const motorOriginal = project.aiModelId;
-const motorVigente = await normalizarMotor(project.aiModelId);
+const motorVigente = await normalizarMotor(project.aiModelId, capacidades.prime);
 const aiModelId = motorVigente?.id ?? project.aiModelId ?? '';
 const motorCambio = !!motorVigente && motorVigente.id !== motorOriginal;
 
@@ -111,6 +125,15 @@ const motoresParaElSelector =
 // cuando no hay ningún turno registrado (nunca un indicador en "0").
 const consumoDelRecurso = await costoPorProyecto(project.id);
 const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
+
+// T5: SÓLO estos dos campos cruzan al cliente — nunca `capacidades` entero
+// (que tiene `prime`, `autoReviewForAll` y `puedeUsarModelosPrime`). Armado
+// a mano, campo por campo, para que agregar una clave a `Capacidades` el día
+// de mañana no la filtre acá sin querer.
+const capacidadesEditor: CapacidadesEditor = {
+  puedeElegirVelocidad: capacidades.puedeElegirVelocidad,
+  puedePedirVersiones: capacidades.puedePedirVersiones,
+};
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide>
@@ -193,5 +216,6 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
     authorName={user.name}
     motoresDisponibles={motoresParaElSelector}
     initialNotice={avisoDeMotorRepunteado}
+    capacidades={capacidadesEditor}
   />
 </BaseLayout>

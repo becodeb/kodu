@@ -15,6 +15,7 @@ import {
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -259,9 +260,17 @@ async function buildUserContent(
  * Usa la cadena (no la lista completa del catálogo) a propósito: es la misma
  * lista de motores que ya sabemos que están habilitados y con clave, así que
  * la sugerencia nunca apunta a algo que después no puede contestar.
+ *
+ * `prime` (T5) viaja igual que en el resto del catálogo: sin ella, la
+ * sugerencia podría ofrecerle a un docente sin prime un motor que nunca
+ * podría usar.
  */
-async function motorConCapacidad(actual: ProviderConfig, largoMensaje: number): Promise<ProviderConfig | null> {
-  const cadena = await cadenaDeMotores(actual.id);
+async function motorConCapacidad(
+  actual: ProviderConfig,
+  largoMensaje: number,
+  prime: boolean,
+): Promise<ProviderConfig | null> {
+  const cadena = await cadenaDeMotores(actual.id, prime);
   return cadena.find((motor) => motor.id !== actual.id && motor.maxInputChars >= largoMensaje) ?? null;
 }
 
@@ -290,14 +299,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * M6, esto es lo que hace que apagar la demo aplique al PRÓXIMO turno y
    * nunca corte uno que ya está transmitiendo — el middleware relee
    * `AppSettings` en cada request nueva, un turno en curso no hace una.
+   *
+   * `settings` se lee ACÁ, sin importar si es la demo o no (antes sólo se
+   * leía para la demo): T5 (odd/tasks/modo-prime.md) necesita las mismas
+   * `AppSettings` para `resolverCapacidades`, y las dos lecturas comparten
+   * la misma caché de 10s (`lib/settings.ts`) — una sola lectura por turno
+   * alcanza para las dos cosas.
    */
-  let demoSettings: Awaited<ReturnType<typeof leerAppSettings>> | null = null;
-  if (user.isDemo) {
-    demoSettings = await leerAppSettings();
-    if (!demoSettings.demoEnabled) {
-      return fail('La demo está cerrada por el momento.', 403);
-    }
+  const settings = await leerAppSettings();
+  if (user.isDemo && !settings.demoEnabled) {
+    return fail('La demo está cerrada por el momento.', 403);
   }
+
+  // T5: qué puede este turno — entre otras cosas, si el catálogo de abajo
+  // puede resolver, listar o usar como respaldo un motor `primeOnly` para
+  // esta cuenta. Server-only: nunca viaja al cliente.
+  const capacidades = resolverCapacidades(user, settings);
 
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {
@@ -343,7 +360,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * cae al default vigente. Async porque el catálogo vive en la base, con
    * caché de 30s (ver `lib/ai/catalogo.ts`).
    */
-  const provider = await normalizarMotor(model ?? project.aiModelId);
+  const provider = await normalizarMotor(model ?? project.aiModelId, capacidades.prime);
   if (!provider) {
     return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);
   }
@@ -398,7 +415,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // el HTML del recurso y el historial. Se avisa acá, con el número y con la
   // salida concreta, en vez de dejar que la API lo rechace con su propio error.
   if (message.length > provider.maxInputChars) {
-    const otro = await motorConCapacidad(provider, message.length);
+    const otro = await motorConCapacidad(provider, message.length, capacidades.prime);
 
     return fail(
       `Tu mensaje tiene ${message.length.toLocaleString('es-AR')} caracteres y ${provider.label} ` +
@@ -426,9 +443,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * llegar a él. Eso se acota después, a mano, con el purgado de
    * `/admin/demo`, no acá.
    */
-  if (user.isDemo && demoSettings) {
+  if (user.isDemo) {
     const consumidos = await consumoDeLaDemo();
-    if (consumidos >= demoSettings.demoTokenLimit) {
+    if (consumidos >= settings.demoTokenLimit) {
       return fail(
         'La demo ya usó todo el crédito de esta ronda. Si querés seguir armando recursos, creá tu cuenta: es gratis y tus recursos quedan guardados.',
         429,
@@ -442,7 +459,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (provider.userTokenLimit > 0) {
     const usados = await consumedTokens(user.id, provider.id, provider.userTokenWindowHours);
     if (usados >= provider.userTokenLimit) {
-      const otro = await motorConCapacidad(provider, 0);
+      const otro = await motorConCapacidad(provider, 0, capacidades.prime);
       return fail(
         `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}` +
           // Con ventana el tope se repone solo, así que decirlo cambia por
@@ -661,7 +678,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * enterarse de que un proveedor está caído ni elegir otro a mano; se le
        * avisa qué pasó y se sigue trabajando.
        */
-      const motores = await cadenaDeMotores(provider.id);
+      const motores = await cadenaDeMotores(provider.id, capacidades.prime);
       let upstream: Response | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;

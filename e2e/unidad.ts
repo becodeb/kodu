@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
-import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
+import { cadenaDeMotores, invalidarCatalogo, motoresParaDocente, normalizarMotor } from '../src/lib/ai/catalogo.ts';
+import { resolverCapacidades } from '../src/lib/ai/capacidades.ts';
+import type { SettingsParaCapacidades, UsuarioParaCapacidades } from '../src/lib/ai/capacidades.ts';
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
@@ -119,7 +121,7 @@ await prueba('cadenaDeMotores: un ciclo A→B→A no cuelga y corta en 2', async
     await prisma.aiModel.update({ where: { id: idA }, data: { fallbackModelId: idB } });
     invalidarCatalogo();
 
-    const cadena = await cadenaDeMotores(idA);
+    const cadena = await cadenaDeMotores(idA, false);
 
     assert.equal(cadena.length, 2, 'el ciclo tiene que cortar apenas se repite un id, no seguir para siempre');
     assert.deepEqual(
@@ -188,7 +190,7 @@ await prueba('cadenaDeMotores: la cadena puede cruzar dos cuentas de proveedor d
     });
     invalidarCatalogo();
 
-    const cadena = await cadenaDeMotores(idA);
+    const cadena = await cadenaDeMotores(idA, false);
 
     assert.equal(cadena.length, 2, `esperaba a A y B, los dos con clave utilizable, dio ${cadena.length}`);
     assert.deepEqual(
@@ -214,7 +216,7 @@ await prueba('cadenaDeMotores: el tope de 3 eslabones se respeta aunque la caden
     const idA = await crearMotorDePrueba({ providerModel: 'cap-a', fallbackModelId: idB });
     invalidarCatalogo();
 
-    const cadena = await cadenaDeMotores(idA);
+    const cadena = await cadenaDeMotores(idA, false);
 
     assert.equal(cadena.length, 3, 'la cadena tiene 5 eslabones posibles; el tope duro es 3');
     assert.deepEqual(
@@ -680,6 +682,206 @@ await prueba('mensajeParaDeshacer: nunca ofrece deshacer un mensaje "user"', () 
   // No debería pasar en la práctica (el servidor sólo marca `canUndo` en
   // mensajes "assistant"), pero la función no tiene que confiar en eso.
   assert.equal(mensajeParaDeshacer([mensajeDePrueba({ id: 'u1', role: 'user', canUndo: true })]), null);
+});
+
+// ── T5: resolverCapacidades (odd/tasks/modo-prime.md — "Modo prime y
+// funciones para todos") ────────────────────────────────────────────────
+
+function usuarioDePrueba(overrides: Partial<UsuarioParaCapacidades> = {}): UsuarioParaCapacidades {
+  return { role: 'DOCENTE', isDemo: false, primeAccess: false, ...overrides };
+}
+
+function settingsDePrueba(overrides: Partial<SettingsParaCapacidades> = {}): SettingsParaCapacidades {
+  return { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false, ...overrides };
+}
+
+await prueba('resolverCapacidades: tabla de verdad completa de `prime`', () => {
+  // Interruptor general apagado: nadie tiene prime, ni siquiera un admin.
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: false })).prime,
+    false,
+    'admin, interruptor apagado',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ isDemo: true }), settingsDePrueba({ primeEnabled: false })).prime,
+    false,
+    'demo, interruptor apagado',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ primeAccess: true }), settingsDePrueba({ primeEnabled: false })).prime,
+    false,
+    'marcado, interruptor apagado',
+  );
+
+  // Prendido: los tres caminos lo dan, cada uno solo (sin que hagan falta los otros dos).
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: true })).prime,
+    true,
+    'admin, interruptor prendido',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ isDemo: true }), settingsDePrueba({ primeEnabled: true })).prime,
+    true,
+    'demo, interruptor prendido',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ primeAccess: true }), settingsDePrueba({ primeEnabled: true })).prime,
+    true,
+    'marcado, interruptor prendido',
+  );
+
+  // Prendido pero ninguno de los tres caminos: sin prime.
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true })).prime,
+    false,
+    'docente común, interruptor prendido',
+  );
+});
+
+await prueba('resolverCapacidades: puedeElegirVelocidad = prime OR deepModeForAll', () => {
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: true }))
+      .puedeElegirVelocidad,
+    true,
+    'prime solo ya alcanza',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true, deepModeForAll: true }))
+      .puedeElegirVelocidad,
+    true,
+    'deepModeForAll solo alcanza, sin prime',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true })).puedeElegirVelocidad,
+    false,
+    'ninguno de los dos: no',
+  );
+});
+
+await prueba('resolverCapacidades: puedePedirVersiones = prime OR versionsForAll', () => {
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ isDemo: true }), settingsDePrueba({ primeEnabled: true }))
+      .puedePedirVersiones,
+    true,
+    'prime solo ya alcanza',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true, versionsForAll: true }))
+      .puedePedirVersiones,
+    true,
+    'versionsForAll solo alcanza, sin prime',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ primeEnabled: true })).puedePedirVersiones,
+    false,
+    'ninguno de los dos: no',
+  );
+});
+
+await prueba('resolverCapacidades: autoReviewForAll viaja crudo, sin mezclarse con prime', () => {
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: true, autoReviewForAll: false }))
+      .autoReviewForAll,
+    false,
+    'ni un admin con prime lo prende solo',
+  );
+  assert.equal(
+    resolverCapacidades(usuarioDePrueba(), settingsDePrueba({ autoReviewForAll: true })).autoReviewForAll,
+    true,
+    'la bandera sola alcanza, sin prime ni interruptor general',
+  );
+});
+
+await prueba('resolverCapacidades: puedeUsarModelosPrime es siempre igual a `prime`', () => {
+  const casos: Array<[UsuarioParaCapacidades, SettingsParaCapacidades]> = [
+    [usuarioDePrueba({ role: 'ADMIN' }), settingsDePrueba({ primeEnabled: true })],
+    [usuarioDePrueba(), settingsDePrueba({ primeEnabled: true })],
+    [usuarioDePrueba({ primeAccess: true }), settingsDePrueba({ primeEnabled: false })],
+  ];
+  for (const [usuario, settings] of casos) {
+    const capacidades = resolverCapacidades(usuario, settings);
+    assert.equal(capacidades.puedeUsarModelosPrime, capacidades.prime);
+  }
+});
+
+// ── T5: el catálogo filtra motores `primeOnly` (odd/tasks/modo-prime.md) ──
+
+await prueba('motoresParaDocente: un motor primeOnly se oculta sin prime y aparece con prime', async () => {
+  await limpiarMotoresDePrueba();
+  try {
+    const idNormal = await crearMotorDePrueba({ providerModel: 'prime-normal' });
+    await prisma.aiModel.update({ where: { id: idNormal }, data: { selectableByTeacher: true } });
+    const idPrime = await crearMotorDePrueba({ providerModel: 'prime-solo' });
+    await prisma.aiModel.update({ where: { id: idPrime }, data: { selectableByTeacher: true, primeOnly: true } });
+    invalidarCatalogo();
+
+    const sinPrime = await motoresParaDocente(false);
+    assert.ok(sinPrime.some((m) => m.id === idNormal), 'el motor normal tiene que verse sin prime');
+    assert.ok(!sinPrime.some((m) => m.id === idPrime), 'el motor prime-only NO tiene que verse sin prime');
+
+    const conPrime = await motoresParaDocente(true);
+    assert.ok(conPrime.some((m) => m.id === idPrime), 'el motor prime-only tiene que verse con prime');
+  } finally {
+    await limpiarMotoresDePrueba();
+  }
+});
+
+await prueba('normalizarMotor: un motor primeOnly guardado cae al default cuando el pedido no tiene prime', async () => {
+  await limpiarMotoresDePrueba();
+  // El índice único parcial de `isDefault` permite CERO o UNA fila en true
+  // en TODA la tabla (no sólo entre las de prueba): hay que soltar el
+  // default real que dejó la semilla antes de poder poner el propio acá, y
+  // devolverlo en el `finally` — mismo cuidado que ya toma e2e/m3-motores.ts.
+  const defaultOriginal = await prisma.aiModel.findFirst({ where: { isDefault: true }, select: { id: true } });
+  try {
+    const idDefault = await crearMotorDePrueba({ providerModel: 'prime-default' });
+    if (defaultOriginal) {
+      await prisma.aiModel.update({ where: { id: defaultOriginal.id }, data: { isDefault: false } });
+    }
+    await prisma.aiModel.update({ where: { id: idDefault }, data: { isDefault: true } });
+    const idPrime = await crearMotorDePrueba({ providerModel: 'prime-guardado' });
+    await prisma.aiModel.update({ where: { id: idPrime }, data: { primeOnly: true } });
+    invalidarCatalogo();
+
+    const sinPrime = await normalizarMotor(idPrime, false);
+    assert.equal(sinPrime?.id, idDefault, 'sin prime, el motor guardado cae al default, igual que uno apagado');
+
+    const conPrime = await normalizarMotor(idPrime, true);
+    assert.equal(conPrime?.id, idPrime, 'con prime, el motor prime-only guardado se usa tal cual');
+  } finally {
+    await limpiarMotoresDePrueba();
+    if (defaultOriginal) {
+      await prisma.aiModel.update({ where: { id: defaultOriginal.id }, data: { isDefault: true } });
+    }
+    invalidarCatalogo();
+  }
+});
+
+await prueba('cadenaDeMotores: un eslabón primeOnly se saltea sin prime, pero la cadena sigue', async () => {
+  await limpiarMotoresDePrueba();
+  try {
+    const idC = await crearMotorDePrueba({ providerModel: 'cadena-c' });
+    const idB = await crearMotorDePrueba({ providerModel: 'cadena-b-prime', fallbackModelId: idC });
+    await prisma.aiModel.update({ where: { id: idB }, data: { primeOnly: true } });
+    const idA = await crearMotorDePrueba({ providerModel: 'cadena-a', fallbackModelId: idB });
+    invalidarCatalogo();
+
+    const sinPrime = await cadenaDeMotores(idA, false);
+    assert.deepEqual(
+      sinPrime.map((m) => m.id),
+      [idA, idC],
+      'sin prime, B se saltea pero la cadena sigue hasta C',
+    );
+
+    const conPrime = await cadenaDeMotores(idA, true);
+    assert.deepEqual(
+      conPrime.map((m) => m.id),
+      [idA, idB, idC],
+      'con prime, la cadena completa entra',
+    );
+  } finally {
+    await limpiarMotoresDePrueba();
+  }
 });
 
 await prisma.$disconnect();

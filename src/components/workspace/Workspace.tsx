@@ -6,6 +6,7 @@ import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import type {
   AiPhase,
+  CapacidadesEditor,
   MotorPublico,
   WorkspaceAsset,
   WorkspaceMessage,
@@ -32,6 +33,14 @@ interface WorkspaceProps {
    * avisos del chat: no es un modal ni una alarma.
    */
   initialNotice: string | null;
+  /**
+   * T5 (odd/tasks/modo-prime.md): lo único que este docente puede hacer que
+   * un docente común no puede — nunca la palabra "prime" ni ninguna bandera
+   * de `AppSettings` (ver `workspace-types.ts`). Todavía sin consumir acá:
+   * T6 ("Velocidad") y T9 ("Varias versiones") van a leer esto (o pasarlo a
+   * `ChatPanel`) cuando construyan sus propios controles.
+   */
+  capacidades: CapacidadesEditor;
 }
 
 /**

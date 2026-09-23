@@ -108,9 +108,20 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                 <td className="px-4 py-3">
                   <a
                     href={`/admin/usuarios/${usuario.id}`}
-                    className="block font-medium text-ink-900 hover:text-brand-600"
+                    className="flex items-center gap-1.5 font-medium text-ink-900 hover:text-brand-600"
                   >
                     {usuario.name}
+                    {/* T5 (odd/tasks/modo-prime.md): marcador discreto de "para el
+                        admin" — nunca la etiqueta completa "prime" en la interfaz
+                        del docente, pero acá SÍ, porque este panel es justo donde
+                        un admin decide a quién marcar. No corre índice de columna:
+                        vive adentro de la celda del nombre, igual que la marca de
+                        Google de abajo. */}
+                    {usuario.primeAccess && (
+                      <span title="Tiene acceso prime" aria-label="Acceso prime" className="text-brand-600">
+                        ★
+                      </span>
+                    )}
                   </a>
                   <span className="flex items-center gap-1.5 text-xs text-ink-500">
                     {usuario.email}
