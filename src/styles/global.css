@@ -201,3 +201,20 @@
     transition: none;
   }
 }
+
+/* T4 (odd/tasks/responsive-celulares.md): iOS Safari hace zoom automático al
+   enfocar un control con font-size < 16px. Medido: el select y el textarea
+   del workspace quedaban en 12–14px.
+   Esta regla va SIN @layer a propósito: en Tailwind v4 el CSS sin capa le
+   gana a cualquier utilidad (text-sm, text-xs, …) sea cual sea el orden de
+   las clases en el HTML, así que 16px queda firme aunque el control tenga
+   puesta una utilidad de tamaño de texto. Sólo en pantalla táctil y angosta
+   (`pointer: coarse` + `max-width` por debajo de `lg`): el desktop con mouse
+   no se toca. */
+@media (pointer: coarse) and (max-width: 1023px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
