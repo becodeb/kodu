@@ -341,9 +341,25 @@ async function main(): Promise<void> {
     assert.equal(segundoPedido.messages.length, 2, 'sólo system + el mensaje sintético, sin historial');
     assert.equal(segundoPedido.messages[0]!.role, 'system');
     assert.equal(segundoPedido.messages[1]!.role, 'user');
+    // T1 ("html-fuera-del-system"): el bloque del recurso actual (el primer
+    // pase, `primeraPasada`) va ANTES del preámbulo de la revisión, no en el
+    // system prompt — de ahí `includes` y no `startsWith`, y las dos
+    // aserciones nuevas que prueban dónde quedó cada cosa.
     assert.ok(
-      segundoPedido.messages[1]!.content.startsWith('Revisión automática antes de entregarle el recurso al docente'),
-      'el mensaje sintético tiene que empezar con el preámbulo esperado',
+      segundoPedido.messages[1]!.content.startsWith('## Estado actual del recurso'),
+      'el mensaje sintético tiene que empezar con el bloque del recurso actual (T1)',
+    );
+    assert.ok(
+      segundoPedido.messages[1]!.content.includes('Revisión automática antes de entregarle el recurso al docente'),
+      'el mensaje sintético tiene que llevar el preámbulo esperado, después del bloque del recurso',
+    );
+    assert.ok(
+      segundoPedido.messages[1]!.content.includes('data-marca="a"'),
+      'el HTML del primer pase tiene que viajar en el mensaje sintético (T1), no en el system prompt',
+    );
+    assert.ok(
+      !segundoPedido.messages[0]!.content.includes('data-marca="a"'),
+      'el HTML del primer pase NO puede viajar en el system prompt',
     );
     assert.ok(/1\.\s/.test(segundoPedido.messages[1]!.content) && /2\.\s/.test(segundoPedido.messages[1]!.content));
     assert.ok(
@@ -351,7 +367,7 @@ async function main(): Promise<void> {
       'el pedido del docente original NO puede viajar en la corrección',
     );
     assert.deepEqual(segundoPedido.tool_choice, { type: 'function', function: { name: 'update_resource_code' } });
-    console.log('✔ escena A (3/6): el segundo pedido lleva sólo el mensaje sintético con los hallazgos, sin historial');
+    console.log('✔ escena A (3/6): el segundo pedido lleva el bloque del recurso + el mensaje sintético con los hallazgos, sin historial');
 
     const primerPedido = mock.llamadas[0]!.body as { reasoning_effort?: string };
     assert.equal(primerPedido.reasoning_effort, 'high', 'A fondo tiene que subir el razonamiento del primer pase');

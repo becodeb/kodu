@@ -37,7 +37,7 @@ history is the part that grows and is not.
 
 - [x] T1 — Move the current-resource block to the final user turn in all call sites;
   update wording; keep truncation/accounting correct. Check: `npm run check`.
-- [ ] T2 — Prove it with the mock provider: across two consecutive turns where the HTML
+- [x] T2 — Prove it with the mock provider: across two consecutive turns where the HTML
   changes, the system message and history are byte-identical; existing e2e that inspect
   the prompt still pass. Check: the new/updated `npx tsx e2e/<slice>.ts`.
 
@@ -85,6 +85,49 @@ history is the part that grows and is not.
   `npm run check`: clean. Commit `3599cac613c335c69c8ecb2a98b04bf9c0b8f51d`
   on `feat/html-fuera-del-system`.
 
+- T2 done: new `e2e/html-fuera-del-system.ts` (dev stack: `docker compose up -d
+  db` + `npm run dev`, mock provider on 4790, reuses the shared "kodu-mock-t3"
+  AiProvider/AiModel like the other e2e scripts). Sends 4 consecutive turns
+  in the same project/thread, each with a different generated HTML
+  (`data-marca="t1".."t4"`), speed "fast"/no auto-review/no versions so
+  exactly one provider call happens per turn, then inspects
+  `mock.llamadas[i].body` directly (the mock already recorded full request
+  bodies; no change needed to `e2e/mock-proveedor.ts`). Verified: (1) the
+  system message is byte-identical between turns of the same
+  "early-questions regime" (turn1≡turn2, turn3≡turn4 — comparing across the
+  regime boundary would conflate T1 with the pre-existing early-questions
+  toggle, so the test avoids that); (2) the system message never contains
+  `## Estado actual del recurso` or `data-marca=`, in any of the 4 turns;
+  (3) the final user message of every turn starts with the resource block
+  and carries the correct previous-turn HTML marker, with the teacher's text
+  after it; (4) no history message (live request or persisted `ChatMessage`
+  row, checked via Prisma) ever contains the resource block or HTML.
+  Cleanup: dev server stopped via `npx astro dev stop`; the mock provider
+  is stopped per-script in its own `finally` (`mock.detener()`), so nothing
+  was left listening — verified with `ss -ltnp` after the last run.
+
+  Also ran the existing e2e that exercise chat/versions/revision/visual
+  review (the call sites T1 touched): `e2e/unidad.ts` (unit tests, including
+  the two rewritten `buildSystemPrompt`/`buildCurrentResourceBlock` tests
+  from T1) — pass. `e2e/t9-varias-versiones.ts` (T9, versions + their own
+  correction pass) — pass with NO changes needed (`matchVersion` in that
+  script matches on the system-prompt directive text, untouched by T1).
+  `e2e/t8-revision-visual.ts` (T8, visual review) — pass with NO changes
+  needed (its assertions use `.find(p => p.type === ...)`, not positional
+  indexing, so the resource block folded into the existing text part didn't
+  break them). `e2e/t7-revision-automatica.ts` (T7, auto-correction) —
+  FAILED once on first run: escena A asserted
+  `segundoPedido.messages[1].content.startsWith('Revisión automática...')`,
+  which broke because that message now starts with the resource block
+  instead. Fixed by changing that assertion to `.includes(...)` and adding
+  three new assertions that directly prove the move for this call site: the
+  message now starts with `## Estado actual del recurso`, it contains
+  `data-marca="a"` (the first pass's HTML), and the system message
+  (`messages[0]`) does NOT contain it. Re-ran full `t7` after the fix — all
+  6 escenas pass. Also ran `e2e/t4-deshacer.ts` (undo, persisted-content
+  invariant) as an extra check since it directly asserts persisted
+  `ChatMessage.content` equals the teacher's raw text — pass, no changes.
+
 ## Next step
 
-T2.
+None — T1 and T2 both done. Delivery (push/PR) is the user's decision.
