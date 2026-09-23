@@ -43,6 +43,11 @@ const messages = await prisma.chatMessage.findMany({
     // Quién escribió el turno cuando no fue el dueño (M8, design.md §7).
     // `null` en el caso normal — no viaja ningún nombre de más.
     authorUser: { select: { name: true } },
+    // T4 (odd/tasks/modo-prime.md): sólo si tiene instantánea y si ya se
+    // deshizo. Igual que en threads.ts, el `select` anidado trae nada más
+    // que el `id` de la instantánea — nunca su `html`.
+    undoneAt: true,
+    snapshot: { select: { id: true } },
   },
 });
 
@@ -180,6 +185,8 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
       attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
       createdAt: message.createdAt.getTime(),
       authorName: message.authorUser?.name ?? null,
+      undoneAt: message.undoneAt ? message.undoneAt.getTime() : null,
+      canUndo: message.snapshot !== null && message.undoneAt === null,
     }))}
     assets={project.assets}
     siteUrl={siteUrl}

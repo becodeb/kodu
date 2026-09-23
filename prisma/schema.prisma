@@ -159,6 +159,10 @@ model Project {
   lastAdminActor    User?      @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
   lastAdminActionAt DateTime?
   likes             ProjectLike[]
+  /// T4 (odd/tasks/modo-prime.md, "Deshacer cambios de la IA"): instantáneas
+  /// para volver atrás, podadas a las 20 más nuevas por stream.ts.
+  /// Back-relation de ProjectSnapshot.project.
+  snapshots         ProjectSnapshot[]
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
@@ -312,8 +316,41 @@ model ChatMessage {
   /// el caso normal, que es el dueño escribiendo su propio recurso.
   authorUserId String?
   authorUser   User?    @relation("ChatMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  /// T4 (odd/tasks/modo-prime.md): cuándo se deshizo este mensaje. `NULL` =
+  /// sigue vigente. Deshacer un turno marca A LA VEZ el mensaje "assistant"
+  /// que lo cierra y el pedido "user" del docente que lo disparó, así el
+  /// modelo deja de ver el turno ENTERO (ver el filtro de historial en
+  /// stream.ts) y no sólo la mitad.
+  undoneAt     DateTime?
+  /// La instantánea de "el HTML de antes de este turno", sólo en mensajes
+  /// "assistant" que cambiaron el recurso. Relación 1:1 opcional — la FK
+  /// vive del lado de ProjectSnapshot (`chatMessageId` es `@unique` ahí).
+  snapshot     ProjectSnapshot?
 
   @@index([threadId, createdAt])
+}
+
+/// Instantánea del HTML de un recurso justo ANTES de un turno de la IA que lo
+/// cambió (T4, odd/tasks/modo-prime.md — "Deshacer cambios de la IA, para
+/// todos, con varios niveles"). Cuelga del mensaje "assistant" que cierra ese
+/// turno (`chatMessageId`, único: a lo sumo una instantánea por turno), así
+/// "deshacer ESTE turno" es simplemente "restaurar `html` y borrar esta
+/// fila". `stream.ts` la crea cuando el turno cambia el recurso y poda las
+/// más viejas, dejando a lo sumo 20 por proyecto: deshacer alcanza varios
+/// niveles hacia atrás, pero no infinitos.
+model ProjectSnapshot {
+  id            String      @id @default(uuid())
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  chatMessageId String      @unique
+  chatMessage   ChatMessage @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
+  /// El HTML tal cual estaba INMEDIATAMENTE ANTES de este turno (no el que
+  /// dejó el turno: ese es `Project.currentHtml`, o la instantánea del turno
+  /// que sigue).
+  html          String
+  createdAt     DateTime    @default(now())
+
+  @@index([projectId, createdAt])
 }
 
 model CustomRule {

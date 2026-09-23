@@ -66,7 +66,11 @@ export type StreamEvent =
   | { type: 'code_reset' }
   /** Algo que el docente tiene que saber pero que no cortó el turno. */
   | { type: 'notice'; message: string }
-  | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
+  /** `userMessageId` (T4) es el id REAL del mensaje "user" que este turno
+   *  guardó — el cliente lo agregó de forma optimista con un id local, y
+   *  necesita el real para poder reconocer este mensaje puntual más tarde
+   *  (por ejemplo, si el docente pide deshacer este turno). */
+  | { type: 'done'; messageId: string; userMessageId: string; codeUpdated: boolean; content: string }
   /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
    *  falló pero otro de la cadena tiene lugar para el pedido.
    *  `registerUrl` llega cuando la cuenta de demo agotó su tope (M7): nunca

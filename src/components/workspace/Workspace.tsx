@@ -320,12 +320,19 @@ export default function Workspace(props: WorkspaceProps) {
 
     const attachmentUrls = pendingAssets.map((asset) => asset.url);
 
+    // Id provisorio: todavía no existe la fila del lado del servidor. Se
+    // reemplaza por el id real (T4) apenas llega "done" — sin eso, un
+    // "Deshacer" posterior sobre ESTE turno nunca podría reconocer a este
+    // mensaje puntual en pantalla (el id que compara `undoneMessageIds` no
+    // sería el mismo que quedó acá).
+    const localUserMessageId = `local-${Date.now()}`;
+
     // En un reintento el mensaje ya está en la lista: repetirlo haría creer que
     // se mandó dos veces.
     if (!isRetry) {
       setMessages((current) => [
         ...current,
-        { id: `local-${Date.now()}`, role: 'user', content: message, attachments: attachmentUrls },
+        { id: localUserMessageId, role: 'user', content: message, attachments: attachmentUrls },
       ]);
     }
     setPendingAssets([]);
@@ -336,6 +343,13 @@ export default function Workspace(props: WorkspaceProps) {
     // con el texto — no hace falta guardarlo en un estado, sólo lo que ya se
     // pudo decodificar de él (`partialHtml`).
     let rawArgsBuffer = '';
+    // T4 ("Deshacer cambios de la IA"): el HTML con el que arranca ESTE
+    // turno, para saber en vivo (sin esperar a la próxima carga del hilo) si
+    // terminó cambiando el recurso — mismo criterio que usa el servidor para
+    // decidir si crea una instantánea. Sólo importa el ÚLTIMO "code" que
+    // llegue: por eso se reasigna entero en vez de acumularse con `||`.
+    const htmlAlInicioDelTurno = html;
+    let cambioElHtml = false;
 
     try {
       abortador.current = new AbortController();
@@ -375,6 +389,9 @@ export default function Workspace(props: WorkspaceProps) {
         } else if (event.type === 'code') {
           // El código nunca entra al chat: va derecho al visor.
           setHtml(event.html);
+          // T4: se recalcula en cada "code" del turno (reintento, salto de
+          // motor); sólo el último importa, igual que `html` mismo.
+          cambioElHtml = event.html !== htmlAlInicioDelTurno;
           setAiPhase('coding');
           // La versión de la IA pasa a ser la vigente: lo que el docente había
           // escrito a mano ya quedó incorporado en este HTML.
@@ -394,8 +411,24 @@ export default function Workspace(props: WorkspaceProps) {
           if (event.registerUrl) setRegisterUrl(event.registerUrl);
         } else if (event.type === 'done') {
           setMessages((current) => [
-            ...current,
-            { id: event.messageId, role: 'assistant', content: event.content, attachments: [] },
+            // T4: el mensaje del docente pasa a tener su id REAL — de acá en
+            // más, un "Deshacer" que lo marque en `undoneMessageIds` lo va a
+            // poder encontrar. En un reintento no hay ningún `local-...` que
+            // reemplazar (esta llamada nunca agregó uno) y el `map` no toca
+            // nada, así que es un no-op seguro en ese caso.
+            ...current.map((existente) =>
+              existente.id === localUserMessageId ? { ...existente, id: event.userMessageId } : existente,
+            ),
+            {
+              id: event.messageId,
+              role: 'assistant',
+              content: event.content,
+              attachments: [],
+              // Si este turno cambió el recurso, el servidor le creó
+              // instantánea (mismo criterio, ver stream.ts) — se puede
+              // ofrecer para deshacer sin esperar a releer el hilo.
+              canUndo: cambioElHtml,
+            },
           ]);
           if (event.codeUpdated) flashNotice('Recurso actualizado');
         }
@@ -452,6 +485,51 @@ export default function Workspace(props: WorkspaceProps) {
         { id: result.data.messageId!, role: 'assistant', content: result.data.content!, attachments: [] },
       ]);
     }
+  }
+
+  /**
+   * Deshace el turno de la IA que cerró `messageId` (T4). `ChatPanel` sólo
+   * ofrece el botón en el más nuevo deshacible (`mensajeParaDeshacer`), así
+   * que acá no hace falta volver a decidir cuál es.
+   */
+  async function handleUndo(messageId: string) {
+    // Si el docente tocó el código a mano DESPUÉS de este turno, deshacer se
+    // lo lleva puesto: se avisa antes de mandar el pedido, no después.
+    if (
+      codeEditedByTeacher.current &&
+      !window.confirm('Vas a perder los cambios que hiciste a mano en el código después de este pedido.')
+    ) {
+      return;
+    }
+
+    const result = await apiRequest<{ currentHtml: string; undoneMessageIds: string[] }>(
+      `/api/projects/${projectId}/undo`,
+      'POST',
+      { messageId },
+    );
+
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    // Se aplica igual que el código que manda la IA (no como una edición a
+    // mano vía `onHtmlChange`): si no, el PRÓXIMO turno vería
+    // `codeEditedByTeacher: true` sin que el docente haya tocado nada.
+    setHtml(result.data.currentHtml);
+    codeEditedByTeacher.current = false;
+    if (screenshotUrl) setPortadaVieja(true);
+
+    const ahora = Date.now();
+    setMessages((current) =>
+      current.map((message) =>
+        result.data.undoneMessageIds.includes(message.id)
+          ? { ...message, undoneAt: ahora, canUndo: false }
+          : message,
+      ),
+    );
+
+    flashNotice('Deshecho');
   }
 
   async function handleNewThread() {
@@ -645,6 +723,7 @@ export default function Workspace(props: WorkspaceProps) {
           setPendingAssets((current) => current.filter((asset) => asset.id !== assetId))
         }
         onSend={(message) => void handleSend(message)}
+        onUndo={(messageId) => void handleUndo(messageId)}
       />
       </div>
 

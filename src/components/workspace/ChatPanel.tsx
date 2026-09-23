@@ -5,6 +5,7 @@ import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
 import SelectorDeMotor from './SelectorDeMotor.tsx';
 import { STARTERS, type Starter } from './starters.ts';
+import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
 import type {
   AiPhase,
   MotorPublico,
@@ -44,6 +45,8 @@ interface ChatPanelProps {
   onAttach: (files: File[]) => void;
   onRemovePending: (assetId: string) => void;
   onSend: (message: string) => void;
+  /** T4: deshace el turno que cerró el mensaje "assistant" con este id. */
+  onUndo: (messageId: string) => void;
 }
 
 /**
@@ -73,6 +76,10 @@ export default function ChatPanel(props: ChatPanelProps) {
   const [arrastrando, setArrastrando] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // T4: el único mensaje que puede ofrecer "Deshacer" ahora mismo — nunca
+  // mientras hay un turno corriendo, aunque técnicamente ya sea deshacible.
+  const idParaDeshacer = props.isStreaming ? null : mensajeParaDeshacer(props.messages);
 
   // Autoscroll mientras llega el stream.
   useEffect(() => {
@@ -250,31 +257,65 @@ export default function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        {props.messages.map((message) => (
-          <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
-            {/* M8 (design.md §7): marca durable de que este turno lo escribió un
-                admin, no el docente dueño del recurso. Ausente en el caso normal. */}
-            {message.authorName && (
-              <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
-            )}
-            <article
-              className={
-                message.role === 'user'
-                  ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                  : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
-              }
-            >
-              {renderRich(message.content)}
-              {message.attachments.length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs opacity-80">
-                  {message.attachments.map((url) => (
-                    <li key={url}>{url.split('/').pop()}</li>
-                  ))}
-                </ul>
+        {props.messages.map((message) => {
+          // T4: el par que deshizo un "Deshacer" (el pedido y la respuesta
+          // de ESE turno) sigue a la vista, pero apagado — no desaparece, no
+          // es un secreto, es historia vieja.
+          const deshecho = message.undoneAt != null;
+
+          return (
+            <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
+              {/* M8 (design.md §7): marca durable de que este turno lo escribió un
+                  admin, no el docente dueño del recurso. Ausente en el caso normal. */}
+              {message.authorName && (
+                <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
               )}
-            </article>
-          </div>
-        ))}
+              <article
+                className={
+                  (message.role === 'user'
+                    ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
+                    : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900') +
+                  (deshecho ? ' opacity-50' : '')
+                }
+              >
+                {renderRich(message.content)}
+                {message.attachments.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-xs opacity-80">
+                    {message.attachments.map((url) => (
+                      <li key={url}>{url.split('/').pop()}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+
+              {deshecho && <p className="mt-0.5 px-1 text-xs text-ink-500">Deshecho</p>}
+
+              {/* Sólo en el mensaje más nuevo que todavía se puede deshacer
+                  (T4), y sólo cuando no hay ningún turno corriendo: un click
+                  a mitad de un pedido nuevo no tiene "antes" claro al que
+                  volver. */}
+              {message.id === idParaDeshacer && (
+                <button
+                  type="button"
+                  onClick={() => props.onUndo(message.id)}
+                  className="kodu-btn-ghost mt-1 px-2.5 py-1.5 text-xs"
+                  title="Deshacer este cambio de la IA"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 5 3 8l3 3M3 8h7V4"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Deshacer
+                </button>
+              )}
+            </div>
+          );
+        })}
 
         {/* La burbuja aparece recién cuando hay algo que leer. Mientras tanto el
             estado vive abajo, sobre el blanco, y no como una caja gris vacía. */}

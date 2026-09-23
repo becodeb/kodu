@@ -11,6 +11,8 @@ import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
 import { razonamiento, type ProviderConfig } from '../src/lib/ai/provider.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
+import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
+import type { WorkspaceMessage } from '../src/lib/workspace-types.ts';
 
 /**
  * Pruebas unitarias sin test runner (no hay uno en este repo — ver context.md).
@@ -629,6 +631,55 @@ await prueba('aplicarKitAlTurno: aplica el kit y usa el tema previo como respald
   // Sin tema previo y sin meta nuevo no hay de dónde sacar el tema: el HTML
   // vuelve sin tocar, igual que `aplicarKit` a secas.
   assert.equal(aplicarKitAlTurno(sinMeta, null), sinMeta);
+});
+
+// ── T4: deshacer cambios de la IA ───────────────────────────────────────
+// (odd/tasks/modo-prime.md — "Deshacer cambios de la IA")
+
+function mensajeDePrueba(
+  overrides: Partial<WorkspaceMessage> & Pick<WorkspaceMessage, 'id' | 'role'>,
+): WorkspaceMessage {
+  return { content: '', attachments: [], ...overrides };
+}
+
+await prueba('mensajeParaDeshacer: sin ningún mensaje deshacible, no ofrece nada', () => {
+  assert.equal(mensajeParaDeshacer([]), null);
+  assert.equal(
+    mensajeParaDeshacer([
+      mensajeDePrueba({ id: 'u1', role: 'user' }),
+      mensajeDePrueba({ id: 'a1', role: 'assistant' }), // sin canUndo: no cambió el recurso
+    ]),
+    null,
+  );
+});
+
+await prueba('mensajeParaDeshacer: elige el más nuevo con canUndo, no el primero que aparece', () => {
+  const mensajes = [
+    mensajeDePrueba({ id: 'u1', role: 'user' }),
+    mensajeDePrueba({ id: 'a1', role: 'assistant', canUndo: true }),
+    mensajeDePrueba({ id: 'u2', role: 'user' }),
+    mensajeDePrueba({ id: 'a2', role: 'assistant', canUndo: true }),
+  ];
+  assert.equal(mensajeParaDeshacer(mensajes), 'a2');
+});
+
+await prueba('mensajeParaDeshacer: deshecho el más nuevo, el turno anterior pasa a ser el candidato solo', () => {
+  // Así es como queda la lista justo después de deshacer "a2" (Workspace.tsx
+  // marca `canUndo: false` a la vez que pone `undoneAt`): sin ninguna regla
+  // nueva, el escaneo tiene que encontrar "a1" solo.
+  const mensajes = [
+    mensajeDePrueba({ id: 'u1', role: 'user' }),
+    mensajeDePrueba({ id: 'a1', role: 'assistant', canUndo: true }),
+    mensajeDePrueba({ id: 'u2', role: 'user', undoneAt: Date.now() }),
+    mensajeDePrueba({ id: 'a2', role: 'assistant', canUndo: false, undoneAt: Date.now() }),
+  ];
+  assert.equal(mensajeParaDeshacer(mensajes), 'a1');
+});
+
+await prueba('mensajeParaDeshacer: nunca ofrece deshacer un mensaje "user"', () => {
+  // No debería pasar en la práctica (el servidor sólo marca `canUndo` en
+  // mensajes "assistant"), pero la función no tiene que confiar en eso.
+  assert.equal(mensajeParaDeshacer([mensajeDePrueba({ id: 'u1', role: 'user', canUndo: true })]), null);
 });
 
 await prisma.$disconnect();

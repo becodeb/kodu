@@ -316,6 +316,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // turno, aunque el modelo no repita el meta en su respuesta.
   const temaProyecto = temaDe(project.currentHtml);
 
+  // T4 ("Deshacer cambios de la IA"): el HTML con el que arrancó ESTE turno,
+  // para poder comparar al final contra lo que terminó persistido y decidir
+  // si hace falta una instantánea. Mismo fundamento que `temaProyecto` de
+  // arriba: `project` es una copia local que nadie reasigna, así que esta
+  // lectura sigue siendo válida durante todo el turno.
+  const htmlAlInicioDelTurno = project.currentHtml;
+
   // M8 (design.md §7): un admin mandando un turno en un recurso ajeno deja
   // la marca en el Project ANTES de gastar nada, y `actuaComoAdmin` decide
   // si el mensaje del docente que se crea más abajo lleva `authorUserId`
@@ -366,8 +373,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
     // Los ÚLTIMOS N mensajes: se piden en orden descendente y se dan vuelta.
     // Con `asc` + `take` se mandarían los primeros, que es justo lo contrario de
     // lo que necesita el contexto en una conversación larga.
+    //
+    // `undoneAt: null` (T4): un turno deshecho no existió para el modelo —se
+    // excluye ACÁ, en el origen, y no con un filtro más abajo— así que tanto
+    // los mensajes que arma `messages` como `turnosPrevios` (que cuenta sobre
+    // este mismo array) quedan consistentes solos, sin ningún criterio
+    // duplicado.
     prisma.chatMessage.findMany({
-      where: { threadId: thread.id },
+      where: { threadId: thread.id, undoneAt: null },
       orderBy: { createdAt: 'desc' },
       take: HISTORY_LIMIT,
       select: { role: true, content: true },
@@ -478,7 +491,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
   // pierde lo que escribió.
-  await prisma.chatMessage.create({
+  //
+  // Se guarda el `id` (T4): el cliente agrega este mensaje a su estado de
+  // forma optimista, ANTES de que exista la fila (con un id local que no
+  // significa nada para el servidor). Sin mandar acá el id real, el cliente
+  // nunca podría reconocer más tarde a ESTE mensaje puntual si el docente
+  // deshace el turno — el id que compara `undoneMessageIds` no sería el
+  // mismo que el que quedó en pantalla.
+  const mensajeDocenteGuardado = await prisma.chatMessage.create({
     data: {
       threadId: thread.id,
       role: 'user',
@@ -486,6 +506,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       attachments: attachmentUrls?.length ? JSON.stringify(attachmentUrls) : null,
       authorUserId: actuaComoAdmin ? user.id : null,
     },
+    select: { id: true },
   });
 
   const messages: ChatMessage[] = [
@@ -691,7 +712,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
             data: { threadId: thread.id, role: 'assistant', content: `No pude completar el pedido. ${detalle}` },
             select: { id: true },
           });
-          send({ type: 'done', messageId: saved.id, codeUpdated: false, content: `No pude completar el pedido. ${detalle}` });
+          send({
+            type: 'done',
+            messageId: saved.id,
+            userMessageId: mensajeDocenteGuardado.id,
+            codeUpdated: false,
+            content: `No pude completar el pedido. ${detalle}`,
+          });
         } catch (dbError) {
           console.error('[chat/stream] no se pudo registrar el fallo del proveedor:', dbError);
         }
@@ -897,9 +924,45 @@ export const POST: APIRoute = async ({ request, locals }) => {
             select: { id: true },
           });
 
+          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
+          // cambió el recurso — comparado contra el HTML con el que arrancó,
+          // no contra si el modelo llamó o no a la herramienta (podría haber
+          // devuelto el documento igual, letra por letra). Una falla acá
+          // nunca puede tirar abajo el turno: ya está guardado y respondido,
+          // esto es sólo la posibilidad de deshacerlo después.
+          if (generatedHtml && generatedHtml !== htmlAlInicioDelTurno) {
+            try {
+              await prisma.projectSnapshot.create({
+                data: {
+                  projectId: project.id,
+                  chatMessageId: saved.id,
+                  html: htmlAlInicioDelTurno,
+                },
+              });
+
+              // Poda a las 20 más nuevas (design del dueño: "varios niveles",
+              // no infinitos). Se poda DESPUÉS de crear, así la recién creada
+              // ya cuenta en el orden.
+              const viejas = await prisma.projectSnapshot.findMany({
+                where: { projectId: project.id },
+                orderBy: { createdAt: 'desc' },
+                skip: 20,
+                select: { id: true },
+              });
+              if (viejas.length > 0) {
+                await prisma.projectSnapshot.deleteMany({
+                  where: { id: { in: viejas.map((vieja) => vieja.id) } },
+                });
+              }
+            } catch (error) {
+              console.error('[chat/stream] no se pudo guardar la instantánea para deshacer:', error);
+            }
+          }
+
           send({
             type: 'done',
             messageId: saved.id,
+            userMessageId: mensajeDocenteGuardado.id,
             codeUpdated: Boolean(generatedHtml),
             content: finalText,
           });

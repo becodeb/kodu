@@ -45,6 +45,20 @@ export interface WorkspaceMessage {
    * dueño escribiendo su propio recurso nunca lleva esta marca.
    */
   authorName?: string | null;
+  /**
+   * T4 ("Deshacer cambios de la IA"): epoch ms de cuándo se deshizo este
+   * mensaje, o `null`/ausente si sigue vigente. Deshacer marca a la vez el
+   * mensaje de la IA y el pedido del docente que lo disparó, así que los DOS
+   * mensajes del par quedan con esto puesto.
+   */
+  undoneAt?: number | null;
+  /**
+   * T4: si este mensaje puntual se puede pedir deshacer ahora mismo (tiene
+   * instantánea y `undoneAt` sigue en `null`). Sólo tiene sentido en
+   * mensajes "assistant"; `mensajeParaDeshacer` (src/lib/client/undo.ts) es
+   * quien decide, con esto, cuál es "el más nuevo deshacible".
+   */
+  canUndo?: boolean;
 }
 
 export interface WorkspaceAsset {

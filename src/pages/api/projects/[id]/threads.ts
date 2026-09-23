@@ -64,7 +64,19 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   const messages = await prisma.chatMessage.findMany({
     where: { threadId: thread.id },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, role: true, content: true, attachments: true, createdAt: true },
+    select: {
+      id: true,
+      role: true,
+      content: true,
+      attachments: true,
+      createdAt: true,
+      // T4: sólo si tiene instantánea y si ya se deshizo — el `select`
+      // anidado trae nada más que el `id` de la instantánea (nunca su
+      // `html`, que puede pesar lo que pesa el recurso entero) sólo para
+      // poder contestar "¿existe?".
+      undoneAt: true,
+      snapshot: { select: { id: true } },
+    },
   });
 
   // Se devuelve tambien el HTML porque el editor usa este endpoint para
@@ -79,6 +91,11 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
       content: message.content,
       attachments: message.attachments ? (JSON.parse(message.attachments) as string[]) : [],
       createdAt: message.createdAt.getTime(),
+      undoneAt: message.undoneAt ? message.undoneAt.getTime() : null,
+      // T4: si HOY se puede pedir deshacer este mensaje puntual (tiene
+      // instantánea y todavía no se deshizo). El cliente decide, con esto,
+      // cuál es "el más nuevo deshacible" — acá no hace falta saber cuál es.
+      canUndo: message.snapshot !== null && message.undoneAt === null,
     })),
   });
 };
