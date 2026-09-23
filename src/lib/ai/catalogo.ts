@@ -47,8 +47,16 @@ export function invalidarCatalogo(): void {
   cache = null;
 }
 
-/** Un motor sirve sólo si están prendidos los dos: el motor y su cuenta. */
-function utilizable(fila: FilaConProveedor): boolean {
+/**
+ * Un motor sirve sólo si están prendidos los dos: el motor y su cuenta —
+ * y, si es `primeOnly` (T5, odd/tasks/modo-prime.md), sólo para un pedido
+ * con prime. `prime` es del CALLER (qué puede este pedido, no del motor), así
+ * que viaja como parámetro en vez de leerse de algún lado acá adentro: este
+ * módulo no sabe nada de usuarios ni de `AppSettings`, sólo filtra con lo que
+ * le pasan — ver `resolverCapacidades` en `lib/ai/capacidades.ts`.
+ */
+function utilizable(fila: FilaConProveedor, prime: boolean): boolean {
+  if (fila.primeOnly && !prime) return false;
   return fila.enabled && fila.provider.enabled;
 }
 
@@ -127,14 +135,20 @@ export async function resolverMotor(modelId: string | null): Promise<ProviderCon
  * El índice único parcial de `isDefault` permite CERO filas en true (nunca
  * más de una, pero puede no haber ninguna), así que este resolver tiene que
  * poder arreglárselas sin default: cae al habilitado de menor `sortOrder`.
+ *
+ * `prime` importa sobre todo para esa segunda rama: un motor `isDefault`
+ * nunca es `primeOnly` (se valida en `/api/admin/models`), pero la caída al
+ * de menor `sortOrder` SÍ podría aterrizar en uno prime-only si no se
+ * filtrara acá — un docente sin prime se quedaría, por accidente, con un
+ * motor que nunca debería poder usar.
  */
-export async function motorPorDefecto(): Promise<ProviderConfig | null> {
+export async function motorPorDefecto(prime: boolean): Promise<ProviderConfig | null> {
   const filas = await filasDelCatalogo();
 
-  const porDefecto = filas.find((fila) => fila.isDefault && utilizable(fila));
+  const porDefecto = filas.find((fila) => fila.isDefault && utilizable(fila, prime));
   if (porDefecto) return construirConfig(porDefecto);
 
-  const [habilitado] = filas.filter(utilizable).sort((a, b) => a.sortOrder - b.sortOrder);
+  const [habilitado] = filas.filter((fila) => utilizable(fila, prime)).sort((a, b) => a.sortOrder - b.sortOrder);
   if (!habilitado) {
     console.error('[catalogo] no hay ningún motor habilitado — el chat va a contestar 503');
     return null;
@@ -153,14 +167,20 @@ export async function motorPorDefecto(): Promise<ProviderConfig | null> {
  * avisarle al docente — eso lo hace quien la llama
  * (`src/pages/app/project/[id].astro`: persiste el repunteo y arma el aviso
  * quieto de una sola vez, ver `specs/ai-model-catalog/spec.md`).
+ *
+ * T5 (odd/tasks/modo-prime.md): un motor `primeOnly` pedido por (o guardado
+ * en el proyecto de) alguien sin prime cae al default EXACTAMENTE por el
+ * mismo camino que un motor apagado o inexistente — no hay un tercer caso
+ * especial. `prime` lo resuelve `resolverCapacidades` (`lib/ai/capacidades.ts`)
+ * antes de llamar acá; esta función no sabe nada de usuarios.
  */
-export async function normalizarMotor(modelId: string | null): Promise<ProviderConfig | null> {
+export async function normalizarMotor(modelId: string | null, prime: boolean): Promise<ProviderConfig | null> {
   const filas = await filasDelCatalogo();
   const fila = modelId ? filas.find((candidata) => candidata.id === modelId) : undefined;
 
-  if (fila && utilizable(fila)) return construirConfig(fila);
+  if (fila && utilizable(fila, prime)) return construirConfig(fila);
 
-  return motorPorDefecto();
+  return motorPorDefecto(prime);
 }
 
 /**
@@ -176,12 +196,17 @@ export async function normalizarMotor(modelId: string | null): Promise<ProviderC
  * usa el default como último recurso — aunque tampoco tenga clave: es mejor
  * que `requestCompletionStream` explique "sin clave" a que no haya ningún
  * motor para intentar.
+ *
+ * T5: un eslabón `primeOnly` para un pedido sin prime sigue exactamente ese
+ * mismo criterio — no entra a la cadena, pero la traversal SÍ sigue por su
+ * `fallbackModelId` hacia el próximo eslabón. Nunca es "la cadena se corta
+ * acá", siempre "se saltea este paso".
  */
-export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderConfig[]> {
+export async function cadenaDeMotores(desdeId: string | null, prime: boolean): Promise<ProviderConfig[]> {
   const filas = await filasDelCatalogo();
   const porId = new Map(filas.map((fila) => [fila.id, fila]));
 
-  let actualId = desdeId ?? (await motorPorDefecto())?.id ?? null;
+  let actualId = desdeId ?? (await motorPorDefecto(prime))?.id ?? null;
   const cadena: ProviderConfig[] = [];
   const visitados = new Set<string>();
 
@@ -190,7 +215,7 @@ export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderC
     const fila = porId.get(actualId);
     if (!fila) break;
 
-    if (utilizable(fila)) {
+    if (utilizable(fila, prime)) {
       const config = construirConfig(fila);
       if (tieneClaveUtilizable(config)) cadena.push(config);
     }
@@ -199,7 +224,7 @@ export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderC
   }
 
   if (cadena.length === 0) {
-    const porDefecto = await motorPorDefecto();
+    const porDefecto = await motorPorDefecto(prime);
     if (porDefecto) cadena.push(porDefecto);
   }
 
@@ -211,12 +236,17 @@ export async function cadenaDeMotores(desdeId: string | null): Promise<ProviderC
  * `provider`/`providerModel` (identificadores internos), sin claves ni
  * precios. Ya en el orden configurado (`filasDelCatalogo` ordena por
  * `sortOrder`).
+ *
+ * T5: un motor `primeOnly` nunca aparece acá para un pedido sin prime — esta
+ * es la lista que arma el selector del docente en `project/[id].astro`, así
+ * que filtrar acá (server-side) es lo que hace que el filtro del cliente sea
+ * sólo cosmético, nunca la única defensa.
  */
-export async function motoresParaDocente(): Promise<MotorPublico[]> {
+export async function motoresParaDocente(prime: boolean): Promise<MotorPublico[]> {
   const filas = await filasDelCatalogo();
 
   return filas
-    .filter((fila) => utilizable(fila) && fila.selectableByTeacher)
+    .filter((fila) => utilizable(fila, prime) && fila.selectableByTeacher)
     .map((fila) => ({
       id: fila.id,
       displayName: fila.displayName,

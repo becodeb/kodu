@@ -5,9 +5,13 @@ import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
 import SelectorDeMotor from './SelectorDeMotor.tsx';
 import { STARTERS, type Starter } from './starters.ts';
+import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
+import { mensajeParaVersiones } from '../../lib/client/versiones.ts';
 import type {
   AiPhase,
   MotorPublico,
+  Speed,
+  VersionEnCurso,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceThread,
@@ -44,6 +48,74 @@ interface ChatPanelProps {
   onAttach: (files: File[]) => void;
   onRemovePending: (assetId: string) => void;
   onSend: (message: string) => void;
+  /** T4: deshace el turno que cerró el mensaje "assistant" con este id. */
+  onUndo: (messageId: string) => void;
+  /** T6 ("Velocidad Rápido / A fondo"): sólo quien lo tiene ve el control. */
+  puedeElegirVelocidad: boolean;
+  speed: Speed;
+  onSpeedChange: (speed: Speed) => void;
+  /**
+   * T9 ("Varias versiones al crear un recurso"): el interruptor sólo se
+   * ofrece con las dos condiciones juntas — el permiso Y el recurso todavía
+   * en blanco (crear, no editar).
+   */
+  puedePedirVersiones: boolean;
+  esRecursoInicial: boolean;
+  versiones: boolean;
+  onVersionesChange: (activo: boolean) => void;
+  /** T9: progreso del turno de versiones EN CURSO — `null` si no hay uno. */
+  versionesEnCurso: VersionEnCurso[] | null;
+  /** T9: elige la versión `index` del mensaje `messageId`. */
+  onElegirVersion: (messageId: string, index: number) => void;
+}
+
+/**
+ * T9: la fila de chips "Versión 1 · 2 · 3" — usada tanto para el progreso EN
+ * CURSO (todavía sin mensaje: `activa` fija en 1, `onElegir` ausente, nada
+ * es clickeable) como para el mensaje ya cerrado (`onElegir` presente,
+ * clickeable en cualquier índice que exista). Chica y muda a propósito
+ * (decisiones del dueño, "Discreto"): nunca la palabra "prime".
+ */
+function FilaVersiones(props: {
+  variantes: Array<{ index: number; ready: boolean }>;
+  activa: number | null;
+  onElegir: ((index: number) => void) | null;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Versiones generadas"
+      className="mt-1 flex flex-wrap items-center gap-1 px-1 text-xs text-ink-500"
+    >
+      <span>Versión</span>
+      {props.variantes.map((variante, posicion) => {
+        const esActiva = props.activa === variante.index;
+        const clicable = variante.ready && props.onElegir !== null;
+
+        return (
+          <span key={variante.index} className="inline-flex items-center gap-1">
+            {posicion > 0 && <span aria-hidden="true">·</span>}
+            <button
+              type="button"
+              disabled={!clicable}
+              aria-pressed={esActiva}
+              onClick={clicable ? () => props.onElegir!(variante.index) : undefined}
+              className={`rounded-full border px-2 py-0.5 font-medium transition-colors ${
+                esActiva
+                  ? 'border-brand-600 bg-brand-600 text-white'
+                  : variante.ready
+                    ? 'border-linea bg-superficie text-ink-700 hover:border-brand-300 hover:text-brand-700'
+                    : 'border-transparent text-ink-500/50'
+              }`}
+            >
+              {variante.index}
+              {!variante.ready && <span className="sr-only"> (generando)</span>}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -73,6 +145,15 @@ export default function ChatPanel(props: ChatPanelProps) {
   const [arrastrando, setArrastrando] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // T4: el único mensaje que puede ofrecer "Deshacer" ahora mismo — nunca
+  // mientras hay un turno corriendo, aunque técnicamente ya sea deshacible.
+  const idParaDeshacer = props.isStreaming ? null : mensajeParaDeshacer(props.messages);
+
+  // T9: el único mensaje que puede mostrar la fila de chips ahora mismo —
+  // a diferencia de "Deshacer", acá SÍ importa mientras `isStreaming` es
+  // `true` (el próximo turno ya la tapa: ver `mensajeParaVersiones`).
+  const idParaVersiones = mensajeParaVersiones(props.messages);
 
   // Autoscroll mientras llega el stream.
   useEffect(() => {
@@ -250,31 +331,80 @@ export default function ChatPanel(props: ChatPanelProps) {
           </div>
         )}
 
-        {props.messages.map((message) => (
-          <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
-            {/* M8 (design.md §7): marca durable de que este turno lo escribió un
-                admin, no el docente dueño del recurso. Ausente en el caso normal. */}
-            {message.authorName && (
-              <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
-            )}
-            <article
-              className={
-                message.role === 'user'
-                  ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                  : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
-              }
-            >
-              {renderRich(message.content)}
-              {message.attachments.length > 0 && (
-                <ul className="mt-2 space-y-1 text-xs opacity-80">
-                  {message.attachments.map((url) => (
-                    <li key={url}>{url.split('/').pop()}</li>
-                  ))}
-                </ul>
+        {props.messages.map((message) => {
+          // T4: el par que deshizo un "Deshacer" (el pedido y la respuesta
+          // de ESE turno) sigue a la vista, pero apagado — no desaparece, no
+          // es un secreto, es historia vieja.
+          const deshecho = message.undoneAt != null;
+
+          return (
+            <div key={message.id} className={message.role === 'user' ? 'ml-6' : 'mr-6'}>
+              {/* M8 (design.md §7): marca durable de que este turno lo escribió un
+                  admin, no el docente dueño del recurso. Ausente en el caso normal. */}
+              {message.authorName && (
+                <p className="mb-0.5 px-1 text-xs text-ink-500">{message.authorName} (administración)</p>
               )}
-            </article>
-          </div>
-        ))}
+              <article
+                className={
+                  (message.role === 'user'
+                    ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
+                    : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900') +
+                  (deshecho ? ' opacity-50' : '')
+                }
+              >
+                {renderRich(message.content)}
+                {message.attachments.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-xs opacity-80">
+                    {message.attachments.map((url) => (
+                      <li key={url}>{url.split('/').pop()}</li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+
+              {deshecho && <p className="mt-0.5 px-1 text-xs text-ink-500">Deshecho</p>}
+
+              {/* Sólo en el mensaje más nuevo que todavía se puede deshacer
+                  (T4), y sólo cuando no hay ningún turno corriendo: un click
+                  a mitad de un pedido nuevo no tiene "antes" claro al que
+                  volver. */}
+              {message.id === idParaDeshacer && (
+                <button
+                  type="button"
+                  onClick={() => props.onUndo(message.id)}
+                  className="kodu-btn-ghost mt-1 px-2.5 py-1.5 text-xs"
+                  title="Deshacer este cambio de la IA"
+                >
+                  {/* El trazo es `undo-2` de Lucide: una flecha que vuelve, no
+                      el "Enter" que se leía con el trazo anterior. */}
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Deshacer
+                </button>
+              )}
+
+              {/* T9 ("Varias versiones al crear un recurso"): sólo en el
+                  mensaje "assistant" de un turno de versiones, y sólo
+                  mientras sigue siendo el último de la lista (ver
+                  `mensajeParaVersiones` — desaparece apenas el docente manda
+                  el próximo mensaje, la elección queda hecha). */}
+              {message.id === idParaVersiones && message.variants && (
+                <FilaVersiones
+                  variantes={message.variants.map((variante) => ({ index: variante.index, ready: true }))}
+                  activa={message.chosenVariant ?? 1}
+                  onElegir={(index) => props.onElegirVersion(message.id, index)}
+                />
+              )}
+            </div>
+          );
+        })}
 
         {/* La burbuja aparece recién cuando hay algo que leer. Mientras tanto el
             estado vive abajo, sobre el blanco, y no como una caja gris vacía. */}
@@ -282,6 +412,16 @@ export default function ChatPanel(props: ChatPanelProps) {
           <article className="mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
             <StreamedText text={props.streamingText} render={renderRich} />
           </article>
+        )}
+
+        {/* T9: progreso de un turno de versiones EN CURSO — todavía no hay
+            mensaje "assistant" al que colgarle la fila de arriba (recién
+            existe cuando el turno entero termina), así que se muestra
+            aparte, con las mismas chips pero ninguna clickeable. */}
+        {props.isStreaming && props.versionesEnCurso && props.versionesEnCurso.length > 0 && (
+          <div className="mr-6">
+            <FilaVersiones variantes={props.versionesEnCurso} activa={1} onElegir={null} />
+          </div>
         )}
 
         {props.error && (
@@ -326,6 +466,10 @@ export default function ChatPanel(props: ChatPanelProps) {
             phase={props.aiPhase}
             variant="inline"
             desde={props.turnoDesde}
+            // T6: el control queda deshabilitado mientras corre el turno, así
+            // que `props.speed` no puede haber cambiado desde que arrancó —
+            // es la velocidad de ESTE turno, no la de un próximo pedido.
+            aFondo={props.puedeElegirVelocidad && props.speed === 'deep'}
             onDetener={props.onDetener}
           />
         )}
@@ -426,6 +570,89 @@ export default function ChatPanel(props: ChatPanelProps) {
           >
             {props.uploading ? 'Subiendo…' : 'Adjuntar'}
           </button>
+
+          {/* T6 ("Velocidad Rápido / A fondo"): discreto a propósito — sólo
+              íconos (el `title` explica cada uno), sin la palabra "prime" ni
+              ningún cartel. Ausente por completo sin el permiso: un docente
+              sin prime ni "A fondo para todos" no ve nada acá. */}
+          {props.puedeElegirVelocidad && (
+            <div
+              role="group"
+              aria-label="Velocidad de la respuesta"
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-linea bg-superficie p-1"
+            >
+              <button
+                type="button"
+                aria-pressed={props.speed === 'fast'}
+                disabled={props.isStreaming}
+                onClick={() => props.onSpeedChange('fast')}
+                title="Rápido: responde directo."
+                className={`grid h-6 w-6 place-items-center rounded-md transition-colors ${
+                  props.speed === 'fast'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-ink-500 hover:bg-sutil hover:text-ink-900'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M14 2 6 13h5l-1 9 8-11h-5Z" fill="currentColor" />
+                </svg>
+                <span className="sr-only">Rápido</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={props.speed === 'deep'}
+                disabled={props.isStreaming}
+                onClick={() => props.onSpeedChange('deep')}
+                title="A fondo: piensa antes de escribir y revisa el resultado; tarda más."
+                className={`grid h-6 w-6 place-items-center rounded-md transition-colors ${
+                  props.speed === 'deep'
+                    ? 'bg-brand-600 text-white'
+                    : 'text-ink-500 hover:bg-sutil hover:text-ink-900'
+                }`}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="9.5" cy="9.5" r="6.5" stroke="currentColor" strokeWidth="2" />
+                  <path d="M14.5 14.5 20 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <span className="sr-only">A fondo</span>
+              </button>
+            </div>
+          )}
+
+          {/* T9 ("Varias versiones al crear un recurso"): compacto, mismo
+              criterio de discreción que la velocidad de arriba — sólo
+              íconos, con un "×3" chico cuando está prendido, sin la palabra
+              "prime". Ausente salvo con las dos condiciones juntas: el
+              permiso Y el recurso todavía en blanco (crear, no editar). */}
+          {props.puedePedirVersiones && props.esRecursoInicial && (
+            <button
+              type="button"
+              aria-pressed={props.versiones}
+              disabled={props.isStreaming}
+              onClick={() => props.onVersionesChange(!props.versiones)}
+              title="Varias versiones: arma tres propuestas distintas para que elijas una"
+              className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border px-1.5 text-xs font-semibold transition-colors ${
+                props.versiones
+                  ? 'border-brand-600 bg-brand-600 text-white'
+                  : 'border-linea bg-superficie text-ink-500 hover:bg-sutil hover:text-ink-900'
+              }`}
+            >
+              {/* Mismo trazo que `copy` de Lucide: dos rectángulos
+                  superpuestos ("varias copias distintas"). */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+                <path
+                  d="M5 15V5a2 2 0 0 1 2-2h10"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {props.versiones && <span>×3</span>}
+              <span className="sr-only">Varias versiones</span>
+            </button>
+          )}
 
           <button
             type="submit"

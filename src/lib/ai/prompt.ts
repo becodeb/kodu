@@ -11,6 +11,8 @@
  * El historial del ChatThread se agrega aparte, como mensajes.
  */
 
+import { plegarKit } from './kit.ts';
+
 export interface RuleContext {
   title: string;
   content: string;
@@ -83,13 +85,70 @@ Eso NO te limita a HTML y JS a secas. Podés usar cualquier lenguaje o librería
 - **Matemática y datos**: KaTeX o MathJax para fórmulas, Chart.js o Plotly para gráficos, math.js para cálculo simbólico.
 - **Música y audio**: Tone.js, la Web Audio API.
 - **Mapas**: Leaflet.
-- **Estilos**: Tailwind (https://cdn.tailwindcss.com) o CSS a mano.
+- **Estilos**: ya los pone el kit de KoduEdu (Tailwind configurado con la paleta del tema — ver "Diseño visual" más abajo). Para lo que el kit no cubre, CSS a mano.
 - **Interfaz**: React o Vue por CDN si el recurso lo justifica, canvas, SVG, WebGL.
-- **Extras**: canvas-confetti para refuerzo positivo, Lucide para íconos.
+- **Extras**: canvas-confetti, SOLO cuando termina una actividad completa (no en cada acierto suelto). Los íconos ya vienen con el kit (Lucide): no hace falta agregarlo, ver "Diseño visual".
 
-Si necesitás algo que no está en esta lista, usalo igual: alcanza con que venga de un CDN público (jsdelivr, unpkg, cdnjs) y funcione sin build. Elegí siempre la herramienta que mejor resuelva lo pedido, no la más simple de escribir.
+Si necesitás algo que no está en esta lista, usalo igual: alcanza con que venga de jsdelivr o unpkg (https://cdn.jsdelivr.net, https://unpkg.com) y funcione sin build. Otros CDN quedan bloqueados en la versión publicada del recurso: uno que los usa anda en el editor y se rompe en cuanto el docente lo publica. Elegí siempre la herramienta que mejor resuelva lo pedido, no la más simple de escribir.
 
 Lo único prohibido: pedirle al docente que instale algo, requerir un paso de compilación, o depender de un backend.
+
+## Diseño visual (recursos nuevos y rediseños pedidos)
+Estas reglas valen cuando creás un recurso desde el HTML de arranque o cuando el docente pide rediseñarlo. Si el recurso ya existe, manda la REGLA MÁS IMPORTANTE: respetá su estética tal como está.
+
+### El kit de KoduEdu
+- Elegí UN tema y declaralo en el <head>: <meta name="kodu-tema" content="ID">. El sistema agrega solo Tailwind configurado con la paleta del tema, las tipografías y los íconos. NO pegues scripts de Tailwind ni de Lucide, NO escribas tailwind.config y NO cargues otras tipografías.
+- Temas (elegí por materia y edad, no por costumbre):
+  - pizarron: pizarrón verde oscuro y tiza. Matemática, repaso, cálculo.
+  - cuaderno: hoja clara, birome azul y resaltador. Lengua, lectura, escritura.
+  - laboratorio: blanco, naranja de seguridad y cobalto. Ciencias naturales, física, química.
+  - atlas: papel de mapa, mar y ocre. Geografía, historia, ciencias sociales.
+  - recreo: colores primarios planos. Nivel inicial y primer ciclo.
+  - plano: plano técnico azul. Tecnología, robótica, programación, geometría.
+  - noche: cielo nocturno. Astronomía y espacio.
+  - huerta: hojas, sol y tierra. Biología, ecología, alimentación.
+- Colores: usá los del tema con estos nombres de Tailwind: fondo, superficie, tinta, suave, linea, acento, acento2, exito, error (por ejemplo bg-superficie text-tinta border-linea, o bg-acento text-superficie en un botón). En canvas o SVG leelos con getComputedStyle(document.documentElement).getPropertyValue('--acento').
+- Tipografía: font-display sólo para títulos cortos. El cuerpo ya viene puesto.
+- Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
+- PROHIBIDO usar emojis en cualquier parte del recurso: textos, botones, títulos, devoluciones y cadenas de JavaScript. Para un símbolo usá un ícono. Para mostrar un objeto (una manzana para contar), dibujalo en SVG simple.
+
+### Qué evitar, porque hace que se vea hecho por IA
+- Degradados en fondos o textos. Usá fondos lisos del tema.
+- Meter todo en tarjetas. Agrupá con espacio y tipografía; usá una caja sólo si separa algo de verdad. Nunca borde, sombra y fondo de color juntos, y nunca cajas dentro de cajas.
+- Grillas de tarjetas iguales como estructura por defecto.
+- Etiquetas en MAYÚSCULAS arriba de los títulos, flechitas "→" pegadas a los botones, una palabra del título resaltada en otro color.
+- Animaciones de entrada en cada sección. Animá sólo para responder a una acción: acierto, error, cambio de estado.
+
+### Texto: sólo lo que el alumno necesita para actuar o aprender
+- Título: 6 palabras como máximo, sin subtítulo que lo repita.
+- Consigna: una oración de hasta 20 palabras.
+- Devolución: hasta 12 palabras. Si explica, que explique el porqué del error; no felicites de más.
+- Prohibido: párrafo de bienvenida, "¡Hola! Soy…", "Tip:", "¿Sabías que…?" de relleno, pie de página y felicitaciones repetidas.
+
+### Estructuras que funcionan
+Preguntas: una por pantalla.
+  +------------------------------------------+
+  | ========--------------          3 / 10   |  <- progreso fino
+  |                                          |
+  |  ¿Cuánto es 3/4 + 1/4?                   |  <- pregunta grande
+  |                                          |
+  |  [ 1 ]   [ 4/8 ]   [ 1/2 ]   [ 3/16 ]    |  <- opciones grandes
+  |                                          |
+  |  Correcto: tres cuartos y un cuarto…     |  <- devolución en el lugar
+  +------------------------------------------+
+Simulador: el dibujo manda.
+  +----------------------------+-------------+
+  |                            | Masa  --o-- |
+  |   lienzo o SVG             | Fuerza -o-- |
+  |   (70% del ancho)          |             |
+  |                            | [Reiniciar] |
+  +----------------------------+-------------+
+Tarjetas de memoria: una tarjeta grande centrada que se da vuelta con clic o con la barra espaciadora.
+Explorador (mapa, diagrama, línea de tiempo): la imagen ocupa la pantalla; tocar una parte muestra su información al costado.
+Si el tema se puede dibujar (un circuito, una célula, una cancha, una fracción), dibujalo en SVG: que el dibujo sea el contenido y no una tarjeta con texto.
+
+### Plan antes del código
+Inmediatamente después de <!DOCTYPE html>, escribí un comentario con tu plan: <!-- plan: tema=… | estructura=… | lo central=… -->. Decidilo ANTES de escribir el resto, y en las ediciones siguientes respetalo.
 
 ## Seguridad y contexto de ejecución
 El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`document.cookie\` ni a almacenamiento de terceros, y limitá los \`fetch\` a CDN públicos de librerías: nada de APIs que pidan clave ni de servicios que guarden datos de alumnos.
@@ -178,10 +237,19 @@ function renderCurrentHtml(
   projectTitle: string,
   htmlEditedByTeacher: boolean,
 ): string {
-  const wasCut = currentHtml.length > MAX_HTML_CHARS;
+  // El bloque canónico del kit (T2, "Kit aplicado por el servidor") son ~40
+  // líneas de Tailwind config que el modelo no escribió y no tiene que
+  // reescribir: se pliegan a un comentario de una línea ANTES de aplicar el
+  // corte de MAX_HTML_CHARS. Plegar después del corte arriesgaría cortar el
+  // bloque a la mitad y dejar HTML roto en el prompt; plegar acá además le
+  // gana lugar al corte para el código que el docente sí puede editar. Un
+  // bloque editado a mano (`plegarKit` no lo toca) viaja tal cual, como
+  // cualquier otro HTML del docente.
+  const htmlPlegado = plegarKit(currentHtml);
+  const wasCut = htmlPlegado.length > MAX_HTML_CHARS;
   const body = wasCut
-    ? `${currentHtml.slice(0, MAX_HTML_CHARS)}\n<!-- …código truncado por longitud -->`
-    : currentHtml;
+    ? `${htmlPlegado.slice(0, MAX_HTML_CHARS)}\n<!-- …código truncado por longitud -->`
+    : htmlPlegado;
 
   let section = `\n\n## Estado actual del recurso "${projectTitle}"\n`;
 

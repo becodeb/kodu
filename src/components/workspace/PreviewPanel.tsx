@@ -1,10 +1,58 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument } from '../../lib/preview.ts';
+import {
+  Suspense,
+  forwardRef,
+  lazy,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
+import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
+/** T3, "Progresivo": a lo sumo un re-render del parcial por segundo. */
+const PARTIAL_RENDER_MIN_MS = 1_000;
+/** Margen para que el JIT de Tailwind del kit (corre solo, async, apenas
+ *  carga el documento) ya haya pintado antes de mostrar el frame. */
+const PARTIAL_SWAP_DELAY_MS = 150;
+
+/**
+ * T8 ("Revisión visual con captura"): margen antes de capturar para el
+ * modelo, más largo que `PARTIAL_SWAP_DELAY_MS`. Ahí alcanza con esperar al
+ * JIT de Tailwind (todo local); acá el documento FINAL también puede estar
+ * esperando la hoja de Google Fonts del kit, que pide red — un texto en la
+ * fuente del sistema en la captura le mentiría al modelo sobre cómo se ve
+ * de verdad el recurso.
+ */
+const CAPTURE_SETTLE_MS = 600;
+/** Cuánto se espera la respuesta del puente antes de rendirse. */
+const CAPTURE_TIMEOUT_MS = 15_000;
+
+function esperar(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+export interface PreviewPanelHandle {
+  /**
+   * Pide una captura de la vista previa ACTUAL (T8): espera a que el
+   * iframe haya cargado el HTML vigente más el margen de asentado, y
+   * resuelve con el data URL o con un error — nunca tira. Independiente de
+   * la captura de portada de más abajo (`pedirCaptura`): cada pedido lleva
+   * su propio `id`, así que pueden estar los dos en el aire sin cruzarse.
+   */
+  capturar(opciones: OpcionesCaptura): Promise<{ dataUrl: string } | { error: string }>;
+}
+
 interface PreviewPanelProps {
   html: string;
+  /** HTML parcial del turno en curso (T3), ya decodificado pero SIN el kit
+   *  aplicado — este componente aplica el kit y decide cuándo mostrarlo.
+   *  `null` cuando no hay ningún turno escribiendo código. */
+  partialHtml: string | null;
   onHtmlChange: (html: string) => void;
   publicUrl: string;
   title: string;
@@ -34,7 +82,7 @@ const TABS: Array<[Tab, string]> = [
 ];
 
 /** Panel derecho: visor, editor de código y ficha del recurso. */
-export default function PreviewPanel(props: PreviewPanelProps) {
+const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function PreviewPanel(props, ref) {
   const [tab, setTab] = useState<Tab>('preview');
   const [capturing, setCapturing] = useState(false);
   // Cuál de los dos gatillos (portada sola, o portada-para-publicar) disparó
@@ -51,18 +99,158 @@ export default function PreviewPanel(props: PreviewPanelProps) {
   // El iframe renderizó al menos una vez con el HTML actual. Sin esto la
   // captura puede salir de un documento en blanco.
   const [listo, setListo] = useState(false);
+  // Espejo de `listo` en un ref (T8, `capturar` más abajo): esa función no
+  // se vuelve a crear en cada render (ver `useCallback`/`useImperativeHandle`
+  // al final), así que no puede cerrar sobre el `listo` de un render viejo —
+  // necesita leer el valor VIGENTE en el momento en que la llaman, y eso es
+  // exactamente para lo que sirve un ref.
+  const listoRef = useRef(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timeoutRef = useRef<number | null>(null);
+  // Contador compartido por los DOS pedidos de captura de este componente
+  // (`pedirCaptura` para la portada, `capturar` para T8): cada uno arma su
+  // propio `id` a partir de acá, así que aunque los dos estén en el aire a
+  // la vez, cada uno reconoce SU respuesta y ninguno le roba la del otro.
+  const proximoIdCapturaRef = useRef(0);
+  // El `id` que espera el pedido de portada en curso, o `null`. El listener
+  // de más abajo ignora cualquier `CAPTURE_RESULT` que no lo lleve — incluido
+  // el de una captura de `capturar()` (T8) que esté corriendo al mismo tiempo.
+  const pendingIdRef = useRef<string | null>(null);
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
   // recarga al tipear en otros campos del panel.
   const srcDoc = useMemo(() => buildPreviewDocument(props.html), [props.html]);
+
+  // ───────────────────────────────────────────────────────────
+  // T3: vista previa que se arma mientras la IA escribe ("Progresivo" en
+  // Decisiones del dueño). Doble búfer de dos iframes ocultos-uno-visible-uno:
+  // el HTML parcial se carga SIEMPRE en el que no se ve, y sólo se muestra
+  // una vez que cargó — así el frame visible nunca muestra un documento a
+  // medio pintar. Cuando llega el HTML final, se vuelve al iframe de siempre
+  // (con el puente de captura, sin tocar nada de lo de arriba).
+  // ───────────────────────────────────────────────────────────
+
+  // El tema previo (T2, mismo criterio que `aplicarKitAlTurno` en
+  // stream.ts): si el parcial todavía no declaró su propio tema, se usa el
+  // que ya tenía el recurso antes de este turno como respaldo.
+  const temaPrevio = useMemo(() => temaDe(props.html), [props.html]);
+
+  // El kit recién se aplica (y se empieza a mostrar) una vez que hay `<body`:
+  // antes de eso el documento no tiene nada para pintar todavía.
+  //
+  // `aplicarKitConRedDeSeguridad` y no `aplicarKit` a secas (T11, "Red de
+  // seguridad: tema por defecto"): es pura y barata, así que correrla acá
+  // también no cuesta nada, y evita que la vista previa en vivo muestre un
+  // instante de clases de Tailwind sin estilos (si el modelo todavía no
+  // escribió el meta) para después "saltar" al tema por defecto recién
+  // cuando el turno termina y el servidor aplica el mismo respaldo
+  // (`aplicarKitAlTurno` en stream.ts) — la vista previa queda consistente
+  // con lo que termina guardado.
+  const kitParcial = useMemo(() => {
+    if (props.partialHtml == null || !/<body[\s>]/i.test(props.partialHtml)) return null;
+    return aplicarKitConRedDeSeguridad(props.partialHtml, { temaPrevio });
+  }, [props.partialHtml, temaPrevio]);
+
+  const hayParcial = props.partialHtml != null;
+
+  const [dobleBufer, setDobleBufer] = useState<{ frente: 0 | 1; srcDocs: [string, string] }>({
+    frente: 0,
+    srcDocs: ['', ''],
+  });
+  const ultimoRenderRef = useRef(0);
+  const ultimoValorRef = useRef<string | null>(null);
+  const timerParcialRef = useRef<number | null>(null);
+  const swapTimerRef = useRef<number | null>(null);
+
+  // Throttle de a lo sumo un render por segundo, quedándose con el ÚLTIMO
+  // valor (no el primero) cuando llegan varios mientras se espera. La
+  // primera vez dispara enseguida (borde de arranque: `ultimoRenderRef`
+  // arranca en 0, así que "pasaron más de 1000ms" es cierto de entrada) —
+  // quedarse en blanco un segundo entero apenas hay algo que mostrar se ve
+  // peor que un re-render de más.
+  useEffect(() => {
+    ultimoValorRef.current = kitParcial;
+    if (kitParcial == null) return;
+
+    function disparar() {
+      ultimoRenderRef.current = Date.now();
+      timerParcialRef.current = null;
+      const valor = ultimoValorRef.current;
+      if (valor == null) return;
+
+      setDobleBufer((actual) => {
+        const detras: 0 | 1 = actual.frente === 0 ? 1 : 0;
+        const srcDocs: [string, string] = [...actual.srcDocs];
+        srcDocs[detras] = valor;
+        return { ...actual, srcDocs };
+      });
+    }
+
+    const transcurrido = Date.now() - ultimoRenderRef.current;
+    if (transcurrido >= PARTIAL_RENDER_MIN_MS) {
+      disparar();
+    } else if (timerParcialRef.current == null) {
+      timerParcialRef.current = window.setTimeout(disparar, PARTIAL_RENDER_MIN_MS - transcurrido);
+    }
+    // Si ya hay un timer pendiente no hace falta programar otro: cuando
+    // dispare, lee `ultimoValorRef.current`, que para entonces ya tiene este
+    // valor más nuevo.
+  }, [kitParcial]);
+
+  // Turno nuevo o recién terminado: se limpia el búfer entero, para no
+  // arrastrar el HTML de un turno viejo ni un timer colgado al siguiente.
+  useEffect(() => {
+    if (hayParcial) return;
+    setDobleBufer({ frente: 0, srcDocs: ['', ''] });
+    ultimoRenderRef.current = 0;
+    ultimoValorRef.current = null;
+    if (timerParcialRef.current != null) {
+      window.clearTimeout(timerParcialRef.current);
+      timerParcialRef.current = null;
+    }
+    if (swapTimerRef.current != null) {
+      window.clearTimeout(swapTimerRef.current);
+      swapTimerRef.current = null;
+    }
+  }, [hayParcial]);
+
+  useEffect(() => {
+    return () => {
+      if (timerParcialRef.current != null) window.clearTimeout(timerParcialRef.current);
+      if (swapTimerRef.current != null) window.clearTimeout(swapTimerRef.current);
+    };
+  }, []);
+
+  /**
+   * El frame de atrás terminó de cargar: se muestra, con un margen corto para
+   * que el JIT de Tailwind del kit (corre solo, async, apenas carga el
+   * documento) ya haya pintado — sin esto se ve un flash sin estilos apenas
+   * se muestra. `contenido` viene del render que armó ESTE `onLoad`: si está
+   * vacío es el placeholder inicial (todo iframe con `srcDoc=""` dispara
+   * "load" igual), no hay nada que mostrar todavía.
+   */
+  function alCargarParcial(indice: 0 | 1, contenido: string) {
+    return () => {
+      if (!contenido) return;
+      if (swapTimerRef.current != null) window.clearTimeout(swapTimerRef.current);
+      swapTimerRef.current = window.setTimeout(() => {
+        swapTimerRef.current = null;
+        setDobleBufer((actual) => (actual.frente === indice ? actual : { ...actual, frente: indice }));
+      }, PARTIAL_SWAP_DELAY_MS);
+    };
+  }
+
+  // Recién se muestra el doble búfer una vez que el frame de adelante tiene
+  // contenido real: si no, con el turno recién arrancado (buffer todavía
+  // `['','']`) se vería un iframe en blanco tapando al de siempre.
+  const parcialListoParaMostrar = hayParcial && dobleBufer.srcDocs[dobleBufer.frente] !== '';
 
   // Un HTML nuevo es un documento nuevo por renderizar: hasta que no llegue
   // su propio "load", una captura saldría del documento anterior o de uno en
   // blanco.
   useEffect(() => {
     setListo(false);
+    listoRef.current = false;
   }, [srcDoc]);
 
   useEffect(() => {
@@ -71,6 +259,12 @@ export default function PreviewPanel(props: PreviewPanelProps) {
       // se valida por la ventana que emitió, no por el origen.
       if (event.source !== iframeRef.current?.contentWindow) return;
       if (!event.data || event.data.type !== CAPTURE_RESULT) return;
+      // El `id` distingue ESTE pedido (portada) de cualquier otro que esté
+      // en el aire al mismo tiempo (T8, `capturar()`): sin este chequeo, la
+      // respuesta de una revisión visual terminaría subiéndose como si
+      // fuera la portada del recurso.
+      if (pendingIdRef.current === null || event.data.id !== pendingIdRef.current) return;
+      pendingIdRef.current = null;
 
       if (timeoutRef.current) {
         window.clearTimeout(timeoutRef.current);
@@ -102,11 +296,13 @@ export default function PreviewPanel(props: PreviewPanelProps) {
     if (!frame) return;
 
     const publicar = !!opciones?.publicar;
+    const id = String(++proximoIdCapturaRef.current);
+    pendingIdRef.current = id;
     setCapturing(true);
     setCapturingParaPublicar(publicar);
     setCaptureError(null);
     if (publicar) setPublicando(true);
-    frame.postMessage({ type: CAPTURE_REQUEST }, '*');
+    frame.postMessage({ type: CAPTURE_REQUEST, id }, '*');
 
     // Si el iframe no contesta (script bloqueado, sin internet), no dejamos el
     // botón colgado para siempre: se levanta como un error reintentable, no
@@ -118,6 +314,53 @@ export default function PreviewPanel(props: PreviewPanelProps) {
       if (publicar) setPublicando(false);
     }, 15_000);
   }
+
+  /**
+   * T8 ("Revisión visual con captura"): captura ad-hoc para mandarle al
+   * modelo, totalmente aparte del flujo de portada de arriba (propio `id`,
+   * propio listener de una sola vez, sin tocar `capturing`/`captureError`/
+   * `publicando`). Nunca tira: cualquier problema vuelve como `{ error }`.
+   */
+  const capturar = useCallback(
+    async (opciones: OpcionesCaptura): Promise<{ dataUrl: string } | { error: string }> => {
+      const limite = Date.now() + CAPTURE_TIMEOUT_MS;
+      while (!listoRef.current) {
+        if (Date.now() >= limite) return { error: 'La vista previa no terminó de cargar.' };
+        await esperar(50);
+      }
+
+      // Margen de asentado (fuentes, JIT) ANTES de pedir la captura: ver el
+      // comentario de CAPTURE_SETTLE_MS más arriba.
+      await esperar(CAPTURE_SETTLE_MS);
+
+      const frame = iframeRef.current?.contentWindow;
+      if (!frame) return { error: 'La vista previa no está lista.' };
+
+      return new Promise((resolve) => {
+        const id = String(++proximoIdCapturaRef.current);
+
+        const timeout = window.setTimeout(() => {
+          window.removeEventListener('message', onMessage);
+          resolve({ error: 'La captura tardó demasiado.' });
+        }, CAPTURE_TIMEOUT_MS);
+
+        function onMessage(event: MessageEvent) {
+          if (event.source !== iframeRef.current?.contentWindow) return;
+          if (!event.data || event.data.type !== CAPTURE_RESULT || event.data.id !== id) return;
+          window.clearTimeout(timeout);
+          window.removeEventListener('message', onMessage);
+          if (event.data.error) resolve({ error: String(event.data.error) });
+          else resolve({ dataUrl: String(event.data.dataUrl) });
+        }
+
+        window.addEventListener('message', onMessage);
+        frame.postMessage({ type: CAPTURE_REQUEST, id, opciones }, '*');
+      });
+    },
+    [],
+  );
+
+  useImperativeHandle(ref, () => ({ capturar }), [capturar]);
 
   async function copyUrl() {
     try {
@@ -253,12 +496,43 @@ export default function PreviewPanel(props: PreviewPanelProps) {
           ref={iframeRef}
           title="Vista previa del recurso"
           srcDoc={srcDoc}
-          onLoad={() => setListo(true)}
+          onLoad={() => {
+            setListo(true);
+            listoRef.current = true;
+          }}
           // Sin allow-same-origin: el recurso no puede tocar la sesión del docente.
           sandbox="allow-scripts allow-popups allow-forms allow-modals"
-          className="absolute inset-0 h-full w-full border-0 bg-superficie"
-          inert={tab !== 'preview'}
+          data-kodu-frente={parcialListoParaMostrar ? 'false' : 'true'}
+          className={`absolute inset-0 h-full w-full border-0 bg-superficie ${
+            parcialListoParaMostrar ? 'pointer-events-none opacity-0' : ''
+          }`}
+          inert={tab !== 'preview' || parcialListoParaMostrar}
         />
+
+        {/* T3: doble búfer para la vista previa que se arma mientras la IA
+            escribe. Dos iframes SIN el puente de captura (preview.ts) y con
+            sandbox más chico: un script a medio escribir puede tirar errores
+            sueltos y acá se ignoran a propósito — nada escucha `message` de
+            estos frames. Ocupan el mismo lugar que el iframe de arriba
+            (mismo `absolute inset-0`), así que alternar entre los tres no
+            mueve el layout del panel. */}
+        {([0, 1] as const).map((indice) => {
+          const esFrente = parcialListoParaMostrar && dobleBufer.frente === indice;
+          return (
+            <iframe
+              key={indice}
+              title={`Vista previa parcial ${indice + 1}`}
+              srcDoc={dobleBufer.srcDocs[indice]}
+              onLoad={alCargarParcial(indice, dobleBufer.srcDocs[indice])}
+              sandbox="allow-scripts"
+              data-kodu-frente={esFrente ? 'true' : 'false'}
+              className={`absolute inset-0 h-full w-full border-0 bg-superficie ${
+                esFrente ? '' : 'pointer-events-none opacity-0'
+              }`}
+              inert={tab !== 'preview' || !esFrente}
+            />
+          );
+        })}
 
         {tab === 'code' && (
           <div className="absolute inset-0 z-10 overflow-auto bg-sutil">
@@ -315,4 +589,6 @@ export default function PreviewPanel(props: PreviewPanelProps) {
 
     </section>
   );
-}
+});
+
+export default PreviewPanel;

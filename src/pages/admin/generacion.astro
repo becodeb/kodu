@@ -1,0 +1,12 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import GeneracionPanel from '../../components/admin/GeneracionPanel.tsx';
+import { resumenGeneracion } from '../../lib/admin/generacion.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const resumen = await resumenGeneracion();
+---
+
+<AdminLayout title="Generación">
+  <GeneracionPanel client:load initial={resumen} />
+</AdminLayout>

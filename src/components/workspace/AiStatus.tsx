@@ -24,6 +24,17 @@ const PHASES: Record<
   thinking: { state: 'solving', label: 'Pensando cómo resolverlo' },
   writing: { state: 'composing', label: 'Escribiéndote la respuesta' },
   coding: { state: 'weaving', label: 'Armando el recurso' },
+  // T7 ("Revisión automática"): el recurso ya está armado (la vista previa
+  // muestra el primer pase) y se está corrigiendo lo que encontró el lint.
+  // "weaving" y no un estado nuevo de la librería: es la misma sensación de
+  // "todavía trabajando sobre el recurso" que "Armando el recurso".
+  revisando: { state: 'weaving', label: 'Revisando detalles' },
+  // T8 ("Revisión visual con captura"): el turno ya terminó, y antes de
+  // soltar el control el sistema mira una foto del resultado. Misma
+  // sensación que "revisando" — "weaving", no un estado nuevo — pero una
+  // etiqueta propia: acá no hay ningún lint corriendo, hay un modelo
+  // mirando una imagen.
+  mirando: { state: 'weaving', label: 'Mirando cómo quedó' },
 };
 
 function formatearTiempo(segundos: number): string {
@@ -42,11 +53,21 @@ interface AiStatusProps {
    * desde cero mostraría un tiempo que no es.
    */
   desde?: number | null;
+  /**
+   * T6 ("Velocidad Rápido / A fondo"): este turno corre con el razonamiento
+   * prendido. La espera de "Pensando" es bastante más larga que de costumbre
+   * — el cronómetro ya lo muestra, pero la etiqueta también cambia para que
+   * se lea como una espera esperable y no como que la app se colgó.
+   */
+  aFondo?: boolean;
   onDetener?: () => void;
 }
 
-export default function AiStatus({ phase, variant = 'bubble', desde, onDetener }: AiStatusProps) {
+export default function AiStatus({ phase, variant = 'bubble', desde, aFondo, onDetener }: AiStatusProps) {
   const activo = phase === 'idle' ? null : PHASES[phase];
+  // Sólo la fase "thinking" es el rato de razonamiento propiamente dicho: una
+  // vez que empieza a escribir (writing/coding), A fondo ya terminó de pensar.
+  const etiqueta = phase === 'thinking' && aFondo ? 'Pensando a fondo' : activo?.label;
 
   const [segundos, setSegundos] = useState(0);
   // El cronómetro mide el TURNO entero, no cada fase: al docente le importa
@@ -86,9 +107,9 @@ export default function AiStatus({ phase, variant = 'bubble', desde, onDetener }
     >
       {/* La librería sólo trae dos tamaños afinados, 20 y 64: acá va siempre el
           de 20, que es el que se lee como parte de un renglón de texto. */}
-      <ThinkingOrb state={activo.state} size={20} theme="auto" aria-label={activo.label} />
+      <ThinkingOrb state={activo.state} size={20} theme="auto" aria-label={etiqueta} />
 
-      <span className="t-shimmer">{activo.label}</span>
+      <span className="t-shimmer">{etiqueta}</span>
 
       <span className="tabular-nums text-ink-500 opacity-70" aria-hidden="true">
         {formatearTiempo(segundos)}

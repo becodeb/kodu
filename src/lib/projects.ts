@@ -1,5 +1,6 @@
 import { prisma } from './db.ts';
 import { buildProjectSlug } from './slug.ts';
+import { DEFAULT_HTML } from './ai/versiones.ts';
 
 /**
  * Acceso a proyectos con el chequeo de propiedad incorporado.
@@ -10,8 +11,12 @@ import { buildProjectSlug } from './slug.ts';
  * puede, a propósito (M8, design.md §7).
  */
 
-export const DEFAULT_HTML =
-  "<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>";
+/** Re-exportada desde `ai/versiones.ts` (T9, odd/tasks/modo-prime.md): ese
+ *  módulo es isomórfico (también lo importa el cliente) y no puede arrastrar
+ *  Prisma, así que la constante vive ahí y este módulo —que sí importa
+ *  Prisma— la reusa en vez de duplicarla. Cualquier import existente de
+ *  `DEFAULT_HTML` desde acá sigue andando igual. */
+export { DEFAULT_HTML };
 
 /** Quien pide el recurso. `locals.user` ya tiene esta forma — no hace falta mapear nada. */
 export interface Actor {
@@ -73,6 +78,30 @@ export async function marcarSiActuaAdmin(
   });
 
   return true;
+}
+
+/**
+ * ¿Hay un turno de la IA en curso en ESTE proyecto, en cualquiera de sus
+ * hilos? Mismo criterio en los lugares que lo necesitan (T4 "Deshacer" y T9
+ * "Varias versiones" del lado del servidor; el cliente y
+ * `/api/chat/cancel` del lado de cuándo hay que ofrecer "Detener"): el
+ * último mensaje de un hilo es del docente ⇒ la IA todavía no le contestó
+ * ese turno. Se mira TODOS los hilos del proyecto, no sólo uno, porque
+ * `currentHtml` es del proyecto entero y cualquier hilo puede estar a mitad
+ * de un turno.
+ */
+export async function hayTurnoEnCurso(projectId: string): Promise<boolean> {
+  const hilos = await prisma.chatThread.findMany({ where: { projectId }, select: { id: true } });
+  const ultimosPorHilo = await Promise.all(
+    hilos.map((hilo) =>
+      prisma.chatMessage.findFirst({
+        where: { threadId: hilo.id },
+        orderBy: { createdAt: 'desc' },
+        select: { role: true },
+      }),
+    ),
+  );
+  return ultimosPorHilo.some((mensaje) => mensaje?.role === 'user');
 }
 
 /**

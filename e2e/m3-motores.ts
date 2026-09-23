@@ -425,7 +425,7 @@ async function main(): Promise<void> {
     // de 30s: ese invalidarCatalogo() del servidor nunca llega acá. Hay que
     // invalidar también el caché de ESTE proceso antes de cada lectura.
     invalidarCatalogo();
-    const selectorTrasApagar = await motoresParaDocente();
+    const selectorTrasApagar = await motoresParaDocente(false);
     assert.ok(
       !selectorTrasApagar.some((motor) => motor.id === motorCreado.id),
       'el motor debería desaparecer del selector del docente mientras su cuenta está apagada',
@@ -439,7 +439,7 @@ async function main(): Promise<void> {
     console.log('✔ nuevo — la cascada: apagar/re-habilitar la cuenta funciona sin tocar el enabled propio del motor');
 
     invalidarCatalogo();
-    const selectorTrasReHabilitar = await motoresParaDocente();
+    const selectorTrasReHabilitar = await motoresParaDocente(false);
     assert.ok(
       selectorTrasReHabilitar.some((motor) => motor.id === motorCreado.id),
       're-habilitar la cuenta debería devolver al motor al selector del docente',
