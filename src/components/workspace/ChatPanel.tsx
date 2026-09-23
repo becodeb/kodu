@@ -301,11 +301,13 @@ export default function ChatPanel(props: ChatPanelProps) {
                   className="kodu-btn-ghost mt-1 px-2.5 py-1.5 text-xs"
                   title="Deshacer este cambio de la IA"
                 >
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  {/* El trazo es `undo-2` de Lucide: una flecha que vuelve, no
+                      el "Enter" que se leía con el trazo anterior. */}
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
-                      d="M6 5 3 8l3 3M3 8h7V4"
+                      d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"
                       stroke="currentColor"
-                      strokeWidth="1.4"
+                      strokeWidth="2"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
