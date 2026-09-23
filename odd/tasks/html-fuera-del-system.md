@@ -128,6 +128,9 @@ history is the part that grows and is not.
   invariant) as an extra check since it directly asserts persisted
   `ChatMessage.content` equals the teacher's raw text — pass, no changes.
 
+  Commit `c570860d2c82ed7c1d05eda95acc5cd6ab40c1a2` on
+  `feat/html-fuera-del-system`.
+
 ## Next step
 
 None — T1 and T2 both done. Delivery (push/PR) is the user's decision.
