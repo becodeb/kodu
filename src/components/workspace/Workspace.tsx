@@ -3,6 +3,7 @@ import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, uploadFiles } from '../../lib/client/api.ts';
+import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import type {
   AiPhase,
   MotorPublico,
@@ -66,6 +67,15 @@ export default function Workspace(props: WorkspaceProps) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [aiPhase, setAiPhase] = useState<AiPhase>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * HTML parcial del recurso mientras la IA todavía lo está escribiendo (T3,
+   * "Progresivo"): se deriva de los `code_delta` acumulados con
+   * `htmlParcialDeArgumentos`. `null` cuando no hay ningún turno escribiendo
+   * código en este momento — PreviewPanel usa esto para decidir si mostrar el
+   * iframe de doble búfer o el HTML ya confirmado.
+   */
+  const [partialHtml, setPartialHtml] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -321,6 +331,11 @@ export default function Workspace(props: WorkspaceProps) {
     setPendingAssets([]);
 
     let assistantText = '';
+    // Buffer crudo de los `code_delta` del turno en curso (T3): se acumula
+    // acá y se decodifica en cada tanda, igual que `assistantText` de abajo
+    // con el texto — no hace falta guardarlo en un estado, sólo lo que ya se
+    // pudo decodificar de él (`partialHtml`).
+    let rawArgsBuffer = '';
 
     try {
       abortador.current = new AbortController();
@@ -348,6 +363,15 @@ export default function Workspace(props: WorkspaceProps) {
           // "escribiéndote la respuesta" durante todo el rato en que en realidad
           // ya estaba armando el código.
           setAiPhase('coding');
+        } else if (event.type === 'code_delta') {
+          // T3: se va armando la vista previa mientras la IA todavía escribe.
+          rawArgsBuffer += event.delta;
+          setPartialHtml(htmlParcialDeArgumentos(rawArgsBuffer));
+        } else if (event.type === 'code_reset') {
+          // El parcial que se venía mostrando quedó obsoleto (reintento,
+          // cambio de motor, re-pedido forzado): se tira y se espera uno nuevo.
+          rawArgsBuffer = '';
+          setPartialHtml(null);
         } else if (event.type === 'code') {
           // El código nunca entra al chat: va derecho al visor.
           setHtml(event.html);
@@ -357,6 +381,10 @@ export default function Workspace(props: WorkspaceProps) {
           codeEditedByTeacher.current = false;
           // La IA cambió el recurso: si ya había portada, quedó vieja (design §6).
           if (screenshotUrl) setPortadaVieja(true);
+          // El HTML final reemplaza al parcial: PreviewPanel vuelve al iframe
+          // de siempre (con el puente de captura incluido).
+          rawArgsBuffer = '';
+          setPartialHtml(null);
         } else if (event.type === 'error') {
           setError(event.message);
           setFailedMessage(message);
@@ -384,6 +412,10 @@ export default function Workspace(props: WorkspaceProps) {
       setAiPhase('idle');
       setStreamingText('');
       setTurnoDesde(null);
+      // Red de seguridad (T3): cubre `done` sin `code` previo, error y abort
+      // — los otros dos casos (`code`, `code_reset`) ya lo limpiaron arriba,
+      // así que esto es un no-op en esos casos.
+      setPartialHtml(null);
     }
   }
 
@@ -620,6 +652,7 @@ export default function Workspace(props: WorkspaceProps) {
 
       <PreviewPanel
         html={html}
+        partialHtml={partialHtml}
         onHtmlChange={(value) => {
           setHtml(value);
           // Sólo llega acá la edición manual: el HTML que manda la IA se aplica

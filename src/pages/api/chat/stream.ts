@@ -512,6 +512,66 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       };
 
+      /**
+       * Vista previa progresiva (T3, "Progresivo" en Decisiones del dueño):
+       * los deltas crudos de `update_resource_code` se acumulan y se mandan
+       * agrupados, no uno por delta — un delta de red puede ser de unos
+       * pocos bytes, y un frame SSE por cada uno multiplicaría el tráfico
+       * sin agregarle nada al docente (que igual no puede seguir un HTML que
+       * cambia más rápido que una vez por segundo, ver PreviewPanel). Se
+       * manda cuando pasan ~200ms desde el último envío O cuando el buffer
+       * junta unos pocos KB, lo que llegue primero.
+       */
+      const CODE_DELTA_BATCH_MS = 200;
+      const CODE_DELTA_BATCH_BYTES = 4_096;
+
+      let codeDeltaBuffer = '';
+      let codeDeltaTimer: ReturnType<typeof setTimeout> | null = null;
+
+      function limpiarTimerCodeDelta() {
+        if (codeDeltaTimer) {
+          clearTimeout(codeDeltaTimer);
+          codeDeltaTimer = null;
+        }
+      }
+
+      function flushCodeDelta() {
+        limpiarTimerCodeDelta();
+        if (!codeDeltaBuffer) return;
+        send({ type: 'code_delta', delta: codeDeltaBuffer });
+        codeDeltaBuffer = '';
+      }
+
+      /** Tira el buffer sin mandarlo: para cuando lo que sigue YA lo
+       *  reemplaza (el `code` final, con el documento entero). */
+      function descartarCodeDelta() {
+        limpiarTimerCodeDelta();
+        codeDeltaBuffer = '';
+      }
+
+      /**
+       * El parcial que el cliente venía armando dejó de valer: un reintento
+       * por saturación, el salto al siguiente motor de la cadena, o el
+       * re-pedido forzado arrancan un tool call NUEVO que no tiene nada que
+       * ver con lo que se venía mostrando. Sin este aviso el iframe de vista
+       * previa seguiría mezclando el HTML viejo con el que llega ahora.
+       */
+      function reiniciarCodeDelta() {
+        descartarCodeDelta();
+        send({ type: 'code_reset' });
+      }
+
+      function encolarCodeDelta(delta: string) {
+        codeDeltaBuffer += delta;
+        if (codeDeltaBuffer.length >= CODE_DELTA_BATCH_BYTES) {
+          flushCodeDelta();
+          return;
+        }
+        if (!codeDeltaTimer) {
+          codeDeltaTimer = setTimeout(flushCodeDelta, CODE_DELTA_BATCH_MS);
+        }
+      }
+
       // Un byte apenas arranca: a partir de acá la conexión ya tiene tráfico y
       // ningún intermediario la puede dar por muerta.
       try {
@@ -564,6 +624,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
           forzarHerramienta: forzar,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
+            // T3: un reintento arranca un pedido nuevo — cualquier parcial
+            // que el cliente tuviera del intento anterior queda obsoleto.
+            reiniciarCodeDelta();
             send({
               type: 'notice',
               message: `${usado.label} está saturado. Reintentando (${intento} de ${intentos})…`,
@@ -589,6 +652,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
               console.warn(
                 `[chat/stream] ${motores[indice - 1]!.label} no respondió a los ${transcurrido()}; se pasa a ${motor.label}`,
               );
+              // T3: se va a pedir de nuevo desde cero con otro motor.
+              reiniciarCodeDelta();
               send({
                 type: 'notice',
                 message: `${motores[indice - 1]!.label} no respondió después de varios intentos. Sigo con ${motor.label}.`,
@@ -676,6 +741,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
             continue;
           }
 
+          if (event.type === 'tool_delta') {
+            // Sólo interesa el tool call que escribe el recurso (T3): otra
+            // herramienta que algún día se agregue no tiene por qué
+            // alimentar la vista previa en vivo.
+            if (event.name === UPDATE_RESOURCE_CODE) encolarCodeDelta(event.delta);
+            continue;
+          }
+
           if (event.type === 'usage') {
             totales.usage = event.usage;
             continue;
@@ -688,6 +761,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
           if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
             const result = parseUpdateResourceArgs(event.arguments, event.truncated);
+
+            // El código final reemplaza al parcial: se descarta el buffer sin
+            // mandarlo (mandarlo primero sería un frame de más justo antes
+            // del documento entero).
+            descartarCodeDelta();
 
             if (result.ok) {
               const html = aplicarKitAlTurno(result.html, temaProyecto);
@@ -721,12 +799,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
             const html = aplicarKitAlTurno(rescatado.html, temaProyecto);
             generatedHtml = html;
             assistantText = rescatado.resto;
+            descartarCodeDelta();
             send({ type: 'code', html });
           }
         }
 
         if (forzar && !generatedHtml && !codeProblem) {
           console.warn(`[chat/stream] no aplicó el cambio; se re-pide a los ${transcurrido()}`);
+          // T3: el re-pedido forzado es un tool call nuevo de cero.
+          reiniciarCodeDelta();
           send({ type: 'notice', message: 'Se quedó a mitad de camino. Se lo vuelvo a pedir…' });
 
           const reintento = await requestCompletionStream({
@@ -752,6 +833,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               const html = aplicarKitAlTurno(rescatado.html, temaProyecto);
               generatedHtml = html;
               assistantText = rescatado.resto;
+              descartarCodeDelta();
               send({ type: 'code', html });
             }
           }
@@ -760,6 +842,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
         console.error('[chat/stream]', error);
         send({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' });
       } finally {
+        // T3: no debe quedar un timer de batching de code_delta corriendo
+        // después de este punto.
+        limpiarTimerCodeDelta();
+
         // El consumo se registra aunque el turno se haya cortado: los tokens ya
         // se gastaron igual.
         // Campo por campo y sin spread: `usage` se completa dentro de `consumir`,

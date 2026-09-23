@@ -317,6 +317,16 @@ export type StreamEvent =
    *  tool call completo (que puede tardar minutos en un recurso grande), así que
    *  es lo único que permite avisarle al docente qué está pasando mientras tanto. */
   | { type: 'tool_start'; name: string }
+  /**
+   * Fragmento crudo de los `arguments` del tool call, según va llegando (T3,
+   * "Progresivo" en odd/tasks/modo-prime.md: cada resultado parcial se
+   * muestra apenas existe). `index` es el mismo índice que usa el proveedor
+   * para identificar el tool call; `name` es el nombre conocido HASTA ESTE
+   * momento (normalmente ya está, porque llega en el mismo delta que abre el
+   * tool call). Quien consume esto decide qué hacer con cada uno —
+   * `stream.ts` sólo reenvía los que corresponden a `update_resource_code`.
+   */
+  | { type: 'tool_delta'; index: number; name: string; delta: string }
   /** `truncated` avisa que el modelo llegó al tope de tokens con el tool call a
    *  medio escribir: el JSON de `arguments` está cortado y no se puede parsear. */
   | { type: 'tool'; name: string; arguments: string; truncated: boolean }
@@ -432,6 +442,16 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
             }
             if (typeof toolCall.function?.arguments === 'string') {
               pending.args += toolCall.function.arguments;
+
+              // El delta crudo (T3): se emite ADEMÁS del acumulado de
+              // arriba, nunca en su reemplazo — `flushToolCalls` sigue
+              // leyendo `pending.args` completo al final, así que este yield
+              // no cambia en nada el comportamiento existente. Vacío no se
+              // anuncia: no hay nada nuevo que mostrar y sólo ensuciaría el
+              // SSE con frames sin contenido.
+              if (toolCall.function.arguments.length > 0) {
+                yield { type: 'tool_delta', index, name: pending.name, delta: toolCall.function.arguments };
+              }
             }
 
             toolCalls.set(index, pending);

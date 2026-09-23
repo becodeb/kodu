@@ -57,6 +57,13 @@ export type StreamEvent =
   | { type: 'code'; html: string }
   /** La IA empezó a escribir el recurso; el HTML todavía no llegó. */
   | { type: 'code_start' }
+  /** Fragmento crudo del HTML que se está escribiendo (T3, "Progresivo"):
+   *  se acumula y se decodifica con `htmlParcialDeArgumentos` para ir
+   *  pintando la vista previa mientras la IA todavía escribe. */
+  | { type: 'code_delta'; delta: string }
+  /** El parcial que se venía acumulando quedó obsoleto (reintento, cambio de
+   *  motor, re-pedido forzado): hay que tirar el buffer y esperar uno nuevo. */
+  | { type: 'code_reset' }
   /** Algo que el docente tiene que saber pero que no cortó el turno. */
   | { type: 'notice'; message: string }
   | { type: 'done'; messageId: string; codeUpdated: boolean; content: string }
