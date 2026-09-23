@@ -2,7 +2,12 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
-import { buildSystemPrompt, type AssetContext, type RuleContext } from '../../../lib/ai/prompt.ts';
+import {
+  buildCurrentResourceBlock,
+  buildSystemPrompt,
+  type AssetContext,
+  type RuleContext,
+} from '../../../lib/ai/prompt.ts';
 import { aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
@@ -232,6 +237,12 @@ export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): stri
 /**
  * Arma el contenido del mensaje del docente.
  *
+ * `resourceBlock` (T1, "html-fuera-del-system") va SIEMPRE primero, antes del
+ * texto del docente: es el bloque que antes armaba `buildSystemPrompt` al
+ * final del system prompt (`buildCurrentResourceBlock`, ver ahí por qué se
+ * movió acá). Lo que se PERSISTE en `ChatMessage` sigue siendo el `message`
+ * crudo del docente, sin este bloque — se arma en el caller, no acá.
+ *
  * Con `AI_VISION` prendido las imágenes viajan como partes `image_url` en
  * base64. Detalle que importa: si este mensaje no trae adjuntos, igual se le
  * mandan las imágenes del proyecto. Sin eso, la imagen sólo existía para el
@@ -246,22 +257,25 @@ async function buildUserContent(
   attachmentUrls: string[],
   projectImageUrls: string[],
   motor: ProviderConfig,
+  resourceBlock: string,
 ): Promise<string | ContentPart[]> {
+  const mensaje = `${resourceBlock}\n\n${message}`;
+
   const own = attachmentUrls.length > 0;
   // Las del mensaje mandan; si no hay, las del proyecto (las últimas, acotadas
   // para no inflar el pedido sin necesidad).
   const candidates = own ? attachmentUrls : projectImageUrls.slice(-MAX_CONTEXT_IMAGES);
 
-  if (candidates.length === 0) return message;
+  if (candidates.length === 0) return mensaje;
 
   const names = candidates.map((url) => url.split('/').pop() ?? url).join(', ');
 
   if (!supportsVision(motor)) {
     return own
-      ? `${message}
+      ? `${mensaje}
 
 [El docente adjuntó a este mensaje: ${names}. No podés ver su contenido.]`
-      : message;
+      : mensaje;
   }
 
   const images = (
@@ -269,14 +283,14 @@ async function buildUserContent(
   ).filter((dataUrl): dataUrl is string => dataUrl !== null);
 
   if (images.length === 0) {
-    return own ? `${message}
+    return own ? `${mensaje}
 
-[El docente adjuntó: ${names}, pero no se pudieron leer.]` : message;
+[El docente adjuntó: ${names}, pero no se pudieron leer.]` : mensaje;
   }
 
   const preface = own
-    ? message
-    : `${message}
+    ? mensaje
+    : `${mensaje}
 
 [Adjunto de nuevo las imágenes que el docente ya había subido a este recurso: ${names}.]`;
 
@@ -410,22 +424,27 @@ async function generarVersionSecundaria(args: {
     ].join('\n');
 
     // Mismo criterio que `revisarYCorregir`: el system prompt "de siempre",
-    // pero con la primera pasada como "el recurso actual" — la REGLA MÁS
-    // IMPORTANTE ("se EDITA lo que ya existe") sigue rigiendo, así el
-    // modelo no reescribe de cero para corregir un par de hallazgos. Sin
-    // historial: es un pedido mecánico y autocontenido.
+    // y la primera pasada como "el recurso actual" viaja en el mensaje de
+    // usuario (T1, "html-fuera-del-system") — la REGLA MÁS IMPORTANTE ("se
+    // EDITA lo que ya existe") sigue rigiendo, así el modelo no reescribe
+    // de cero para corregir un par de hallazgos. Sin historial: es un
+    // pedido mecánico y autocontenido.
     const systemPromptRevision = buildSystemPrompt({
-      ...args.promptBase,
-      currentHtml: primeraPasada,
+      globalRules: args.promptBase.globalRules,
+      userRules: args.promptBase.userRules,
+      assets: args.promptBase.assets,
       canSeeImages: supportsVision(args.provider),
-      htmlEditedByTeacher: false,
+      turnosPrevios: args.promptBase.turnosPrevios,
       herramientaForzada: true,
     });
 
     const respuestaRevision = await requestCompletionStream({
       messages: [
         { role: 'system', content: systemPromptRevision },
-        { role: 'user', content: mensajeHallazgos },
+        {
+          role: 'user',
+          content: `${buildCurrentResourceBlock(primeraPasada, args.promptBase.projectTitle, false)}\n\n${mensajeHallazgos}`,
+        },
       ],
       provider: args.provider,
       signal: args.signal,
@@ -715,10 +734,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     globalRules,
     userRules,
     assets: assetContexts,
-    currentHtml: project.currentHtml,
-    projectTitle: project.title,
     canSeeImages: supportsVision(provider),
-    htmlEditedByTeacher: codeEditedByTeacher ?? false,
     // Sólo turnos del DOCENTE, sin contar el mensaje actual (no está en
     // `history`) y sin contar respuestas de la IA: un turno fallido que dejó
     // una disculpa (`role: 'assistant'`) no debe envejecer el hilo para algo
@@ -727,11 +743,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
     herramientaForzada: forzar,
   });
 
+  // T1 ("html-fuera-del-system"): el estado actual del recurso ya no está en
+  // `systemPrompt` — viaja acá, pegado ANTES del texto del docente en el
+  // ÚLTIMO mensaje de usuario, para que el system prompt y el historial de
+  // arriba queden estables turno a turno.
+  const currentResourceBlock = buildCurrentResourceBlock(
+    project.currentHtml,
+    project.title,
+    codeEditedByTeacher ?? false,
+  );
+
   const userContent = await buildUserContent(
     message,
     attachmentUrls ?? [],
     assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
     provider,
+    currentResourceBlock,
   );
 
   // T9: cualquier turno nuevo del proyecto invalida las versiones guardadas
@@ -1224,19 +1251,18 @@ export const POST: APIRoute = async ({ request, locals }) => {
           ].join('\n');
 
           // El prompt de sistema se arma EXACTAMENTE como siempre
-          // (`buildSystemPrompt`), pero con el primer pase como "el recurso
-          // actual": la REGLA MÁS IMPORTANTE ("se EDITA lo que ya existe")
-          // sigue rigiendo también para esta llamada, así que el modelo no
-          // reescribe de cero para corregir dos degradados. Sin historial:
-          // es un pedido mecánico y autocontenido, no una conversación.
+          // (`buildSystemPrompt`), y el primer pase como "el recurso
+          // actual" viaja en el mensaje de usuario (T1,
+          // "html-fuera-del-system"): la REGLA MÁS IMPORTANTE ("se EDITA lo
+          // que ya existe") sigue rigiendo también para esta llamada, así
+          // que el modelo no reescribe de cero para corregir dos
+          // degradados. Sin historial: es un pedido mecánico y
+          // autocontenido, no una conversación.
           const systemPromptRevision = buildSystemPrompt({
             globalRules,
             userRules,
             assets: assetContexts,
-            currentHtml: primeraPasada,
-            projectTitle: project.title,
             canSeeImages: supportsVision(proveedorUsado),
-            htmlEditedByTeacher: false,
             turnosPrevios: history.filter((entry) => entry.role === 'user').length,
             herramientaForzada: true,
           });
@@ -1249,7 +1275,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
             const respuestaRevision = await requestCompletionStream({
               messages: [
                 { role: 'system', content: systemPromptRevision },
-                { role: 'user', content: mensajeHallazgos },
+                {
+                  role: 'user',
+                  content: `${buildCurrentResourceBlock(primeraPasada, project.title, false)}\n\n${mensajeHallazgos}`,
+                },
               ],
               provider: proveedorUsado,
               signal: request.signal,

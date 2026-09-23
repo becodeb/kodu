@@ -9,7 +9,7 @@ import type { SettingsParaCapacidades, UsuarioParaCapacidades } from '../src/lib
 import { ClaveInvalida, cifrar, descifrar } from '../src/lib/crypto/secretos.ts';
 import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelDeConsumo } from '../src/lib/ai/usage.ts';
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
-import { buildSystemPrompt } from '../src/lib/ai/prompt.ts';
+import { buildCurrentResourceBlock, buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
 import { razonamiento, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
@@ -402,10 +402,7 @@ function contextoDePrueba(turnosPrevios: number, herramientaForzada: boolean) {
     globalRules: [],
     userRules: [],
     assets: [],
-    currentHtml: '<!DOCTYPE html><html><body></body></html>',
-    projectTitle: 'Recurso de prueba',
     canSeeImages: false,
-    htmlEditedByTeacher: false,
     turnosPrevios,
     herramientaForzada,
   };
@@ -578,29 +575,39 @@ await prueba('buildSystemPrompt: lleva la sección de diseño visual y los 8 tem
   }
 });
 
-await prueba('buildSystemPrompt: el prompt base es idéntico byte a byte en dos armados seguidos', () => {
-  // El cache de prefijo del proveedor (comentario en buildSystemPrompt, junto
-  // a `renderPreguntas`) sólo pega mientras ese prefijo sea IDÉNTICO entre
-  // pedidos: nada de fechas, Math.random ni orden de Set/Map inestable
-  // colado ahí adentro.
-  const ctx = contextoDePrueba(2, false); // turno tardío: sin guía de preguntas
-  const primero = buildSystemPrompt(ctx);
-  const segundo = buildSystemPrompt(ctx);
-  const marca = '\n\n## Estado actual del recurso';
-  assert.equal(
-    primero.slice(0, primero.indexOf(marca)),
-    segundo.slice(0, segundo.indexOf(marca)),
-    'todo lo que hay antes del estado del recurso tiene que salir byte a byte igual',
+await prueba(
+  'buildSystemPrompt: es idéntico byte a byte en dos armados seguidos (T1, cache de prefijo)',
+  () => {
+    // El cache de prefijo del proveedor (comentario en buildSystemPrompt, junto
+    // a `renderPreguntas`) sólo pega mientras ese prefijo sea IDÉNTICO entre
+    // pedidos: nada de fechas, Math.random ni orden de Set/Map inestable
+    // colado ahí adentro. Desde T1 ("html-fuera-del-system") el HTML actual ya
+    // no viaja acá — viaja en el último mensaje de usuario
+    // (`buildCurrentResourceBlock`) — así que ahora el prompt ENTERO tiene que
+    // salir byte a byte igual entre dos turnos del mismo hilo, no sólo "lo de
+    // antes del estado del recurso".
+    const ctx = contextoDePrueba(2, false); // turno tardío: sin guía de preguntas
+    const primero = buildSystemPrompt(ctx);
+    const segundo = buildSystemPrompt(ctx);
+    assert.equal(primero, segundo, 'el system prompt entero tiene que salir byte a byte igual');
+  },
+);
+
+await prueba('buildSystemPrompt: no lleva el HTML actual (T1, vive en el último mensaje)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(
+    !prompt.includes('## Estado actual del recurso'),
+    'el bloque del recurso actual ya no puede viajar en el system prompt',
   );
 });
 
-await prueba('buildSystemPrompt: el HTML actual viaja con el bloque del kit plegado', () => {
+await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {
   // Marca del JSON embebido en `tailwind.config = {...}` (construirTailwindConfig):
   // NO se puede usar la cadena "tailwind.config" sola para probar el plegado,
-  // porque la propia sección "Diseño visual" del prompt la menciona en prosa
-  // ("NO escribas tailwind.config…") — con o sin plegar, esa frase siempre
-  // está. `"borderRadius"` en cambio sólo puede salir del JSON.stringify de
-  // adentro del bloque canónico.
+  // porque la propia sección "Diseño visual" del system prompt la menciona en
+  // prosa ("NO escribas tailwind.config…") — con o sin plegar, esa frase
+  // siempre está ahí. `"borderRadius"` en cambio sólo puede salir del
+  // JSON.stringify de adentro del bloque canónico.
   const MARCA_JSON_CONFIG = '"borderRadius"';
 
   const sinBloque =
@@ -611,14 +618,14 @@ await prueba('buildSystemPrompt: el HTML actual viaja con el bloque del kit pleg
     'la prueba no sirve si el bloque canónico no se insertó',
   );
 
-  const prompt = buildSystemPrompt({ ...contextoDePrueba(2, false), currentHtml: conBloque });
+  const bloque = buildCurrentResourceBlock(conBloque, 'Recurso de prueba', false);
 
   assert.ok(
-    prompt.includes('<!-- kodu-kit:v1 tema=pizarron:'),
+    bloque.includes('<!-- kodu-kit:v1 tema=pizarron:'),
     'el bloque tiene que llegar plegado, como el placeholder de una línea',
   );
-  assert.ok(!prompt.includes('kodu-kit:v1:inicio'), 'el bloque canónico completo NO tiene que viajar en el prompt');
-  assert.ok(!prompt.includes(MARCA_JSON_CONFIG), 'plegado, no puede quedar el JSON de adentro del bloque');
+  assert.ok(!bloque.includes('kodu-kit:v1:inicio'), 'el bloque canónico completo NO tiene que viajar en el mensaje');
+  assert.ok(!bloque.includes(MARCA_JSON_CONFIG), 'plegado, no puede quedar el JSON de adentro del bloque');
 });
 
 await prueba('aplicarKitAlTurno: aplica el kit y usa el tema previo como respaldo', () => {

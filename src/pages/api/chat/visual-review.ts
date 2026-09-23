@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
-import { buildSystemPrompt, TURNOS_TEMPRANOS } from '../../../lib/ai/prompt.ts';
+import { buildCurrentResourceBlock, buildSystemPrompt, TURNOS_TEMPRANOS } from '../../../lib/ai/prompt.ts';
 import { aplicarKitAlTurno } from './stream.ts';
 import { temaDe } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
@@ -175,25 +175,27 @@ export const POST: APIRoute = async ({ request, locals }) => {
     extractedText: asset.extractedText,
   }));
 
-  // El prompt de sistema "de siempre" (T8: "usual system prompt"), con el
-  // HTML actual plegado. `turnosPrevios` se pisa a un valor grande a
-  // propósito: esto es un pedido mecánico de una sola llamada, sin hilo al
-  // que volver con preguntas — la guía de "preguntas tempranas"
-  // (prompt.ts) no tiene sentido acá (no hay dónde contestarlas).
+  // El prompt de sistema "de siempre" (T8: "usual system prompt").
+  // `turnosPrevios` se pisa a un valor grande a propósito: esto es un
+  // pedido mecánico de una sola llamada, sin hilo al que volver con
+  // preguntas — la guía de "preguntas tempranas" (prompt.ts) no tiene
+  // sentido acá (no hay dónde contestarlas).
   const systemPrompt = buildSystemPrompt({
     globalRules,
     userRules,
     assets: assetContexts,
-    currentHtml: project.currentHtml,
-    projectTitle: project.title,
     canSeeImages: true, // ya confirmado arriba con supportsVision(provider)
-    htmlEditedByTeacher: false,
     turnosPrevios: TURNOS_TEMPRANOS + 1,
     herramientaForzada: false,
   });
 
+  // T1 ("html-fuera-del-system"): el HTML actual plegado ya no va en el
+  // system prompt, viaja acá, antes de la instrucción de revisión visual.
   const userContent: ContentPart[] = [
-    { type: 'text', text: INSTRUCCION_REVISION_VISUAL },
+    {
+      type: 'text',
+      text: `${buildCurrentResourceBlock(project.currentHtml, project.title, false)}\n\n${INSTRUCCION_REVISION_VISUAL}`,
+    },
     { type: 'image_url', image_url: { url: dataUrl } },
   ];
 
