@@ -7,6 +7,8 @@ import {
   FAMILIAS_EXITO,
   FAMILIAS_ERROR,
   aplicarKit,
+  aplicarKitConRedDeSeguridad,
+  usaClasesDeTailwind,
   plegarKit,
   temaDe,
   bloqueKit,
@@ -278,6 +280,99 @@ await prueba('ida y vuelta: aplicarKit(plegarKit(aplicarKit(x))) === aplicarKit(
     const idaYVuelta = aplicarKit(plegarKit(aplicadoUnaVez));
     assert.equal(idaYVuelta, aplicadoUnaVez, `round trip falló para ${tema.id}`);
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// T11: red de seguridad — usaClasesDeTailwind y aplicarKitConRedDeSeguridad
+// ─────────────────────────────────────────────────────────────
+
+/** Un `<div>` con un puñado de clases de Tailwind bien variadas: alcanza de sobra el mínimo. */
+const DIV_CON_TAILWIND = '<div class="flex items-center gap-4 p-6 rounded-lg bg-blue-600 text-white md:flex">Hola</div>';
+
+function documentoSinMeta(cuerpo: string): string {
+  return `<!DOCTYPE html>\n<html lang="es">\n<head>\n</head>\n<body>\n${cuerpo}\n</body>\n</html>`;
+}
+
+await prueba('usaClasesDeTailwind: detecta clases de sobra en markup y responsive', () => {
+  assert.equal(usaClasesDeTailwind(documentoSinMeta(DIV_CON_TAILWIND)), true);
+});
+
+await prueba('usaClasesDeTailwind: también mira className/setAttribute/classList.add en JS', () => {
+  const html = documentoSinMeta(
+    '<div id="x"></div><script>' +
+      'document.getElementById("x").className = "flex items-center";' +
+      'document.getElementById("x").setAttribute("class", "gap-4 p-6");' +
+      'document.getElementById("x").classList.add("rounded-lg", "bg-blue-600");' +
+      '</script>',
+  );
+  assert.equal(usaClasesDeTailwind(html), true);
+});
+
+await prueba('usaClasesDeTailwind: CSS plano sin clases de utilidad da false', () => {
+  const html = documentoSinMeta('<style>.tarjeta{padding:1rem;background:#fff}</style><div class="tarjeta">Hola</div>');
+  assert.equal(usaClasesDeTailwind(html), false);
+});
+
+await prueba('usaClasesDeTailwind: un par de clases propias con forma de utilidad no alcanza el mínimo', () => {
+  const html = documentoSinMeta('<div class="top-bar row-header">Hola</div>');
+  assert.equal(usaClasesDeTailwind(html), false, 'dos coincidencias sueltas no tienen que alcanzar el mínimo');
+});
+
+await prueba('aplicarKitConRedDeSeguridad: sin meta, sin temaPrevio, sin Tailwind propio, con clases → cae a cuaderno', () => {
+  const html = documentoSinMeta(DIV_CON_TAILWIND);
+  const resultado = aplicarKitConRedDeSeguridad(html);
+  assert.equal(temaDe(resultado), 'cuaderno', 'tiene que insertar el meta de cuaderno, el tema más neutro');
+  assert.ok(resultado.includes(bloqueKit('cuaderno')), 'tiene que insertar el bloque canónico de cuaderno');
+});
+
+await prueba('aplicarKitConRedDeSeguridad: si ya carga su propio Tailwind por CDN, no toca nada', () => {
+  const html =
+    '<!DOCTYPE html>\n<html lang="es">\n<head>\n<script src="https://cdn.tailwindcss.com"></script>\n</head>\n' +
+    `<body>\n${DIV_CON_TAILWIND}\n</body>\n</html>`;
+  assert.equal(aplicarKitConRedDeSeguridad(html), html, 'un recurso que YA trae Tailwind no necesita el respaldo');
+});
+
+await prueba('aplicarKitConRedDeSeguridad: CSS plano sin clases de utilidad no toca nada', () => {
+  const html = documentoSinMeta('<style>.tarjeta{padding:1rem;background:#fff}</style><div class="tarjeta">Hola</div>');
+  assert.equal(aplicarKitConRedDeSeguridad(html), html);
+});
+
+await prueba('aplicarKitConRedDeSeguridad: un par de clases sueltas con forma de utilidad no toca nada', () => {
+  const html = documentoSinMeta('<div class="top-bar row-header">Hola</div>');
+  assert.equal(aplicarKitConRedDeSeguridad(html), html, 'por debajo del mínimo: no hay evidencia suficiente de Tailwind');
+});
+
+await prueba('aplicarKitConRedDeSeguridad: con meta válido, el meta manda aunque haya clases de Tailwind', () => {
+  const html =
+    `<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta name="kodu-tema" content="plano">\n</head>\n` +
+    `<body>\n${DIV_CON_TAILWIND}\n</body>\n</html>`;
+  const resultado = aplicarKitConRedDeSeguridad(html);
+  assert.equal(temaDe(resultado), 'plano', 'el meta existente manda; la red de seguridad no participa');
+  assert.ok(resultado.includes(bloqueKit('plano')));
+  assert.ok(!resultado.includes(bloqueKit('cuaderno')));
+});
+
+await prueba('aplicarKitConRedDeSeguridad: con temaPrevio válido, gana por sobre la red de seguridad', () => {
+  const html = documentoSinMeta(DIV_CON_TAILWIND);
+  const resultado = aplicarKitConRedDeSeguridad(html, { temaPrevio: 'noche' });
+  assert.equal(temaDe(resultado), 'noche', 'el temaPrevio ya es un respaldo válido; la red de seguridad no participa');
+  assert.ok(resultado.includes(bloqueKit('noche')));
+  assert.ok(!resultado.includes(bloqueKit('cuaderno')));
+});
+
+await prueba('aplicarKitConRedDeSeguridad es idempotente incluso cuando aplica la red de seguridad', () => {
+  const html = documentoSinMeta(DIV_CON_TAILWIND);
+  const una = aplicarKitConRedDeSeguridad(html);
+  const dos = aplicarKitConRedDeSeguridad(una);
+  assert.equal(dos, una);
+  assert.equal(temaDe(una), 'cuaderno');
+});
+
+await prueba('aplicarKitConRedDeSeguridad: ida y vuelta con plegarKit', () => {
+  const html = documentoSinMeta(DIV_CON_TAILWIND);
+  const aplicado = aplicarKitConRedDeSeguridad(html);
+  const idaYVuelta = aplicarKitConRedDeSeguridad(plegarKit(aplicado));
+  assert.equal(idaYVuelta, aplicado);
 });
 
 // ─────────────────────────────────────────────────────────────

@@ -811,3 +811,171 @@ export function plegarKit(html: string): string {
   const id = bloque.id as TemaId;
   return html.slice(0, bloque.desde) + marcadorPlegado(id) + html.slice(bloque.hasta);
 }
+
+// ─────────────────────────────────────────────────────────────
+// T11: red de seguridad — tema por defecto si el modelo se olvidó del meta
+// (odd/tasks/modo-prime.md, "T11 — Red de seguridad: tema por defecto")
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Prefijos de variante de Tailwind (responsive: `sm/md/lg/xl/2xl`, o de
+ * estado: `hover/focus/...`) que pueden anteponerse a una utilidad,
+ * encadenados con `:` (p. ej. `md:hover:bg-acento`). No hace falta la lista
+ * completa del framework: alcanza con las que de verdad aparecen en HTML
+ * generado siguiendo el Apéndice B (no pide dark mode manual ni
+ * pseudo-clases raras).
+ */
+const VARIANTE_TAILWIND_RE =
+  '(?:sm|md|lg|xl|2xl|hover|focus|focus-visible|active|disabled|dark|group-hover|first|last|odd|even)';
+
+/** Utilidades que SON la clase completa, sin `-valor` después. */
+const UTILIDAD_TAILWIND_SOLA_RE =
+  '(?:flex|inline-flex|grid|inline-grid|hidden|block|inline|inline-block|relative|absolute|fixed' +
+  '|sticky|static|container|truncate|uppercase|lowercase|capitalize|italic|underline|shadow|border' +
+  '|rounded|antialiased)';
+
+/**
+ * Raíces que siempre siguen con `-algo` (el Apéndice B las nombra como
+ * ejemplo: "spacing, text-, bg-, flex, grid, rounded, gap-"). No es la
+ * lista completa de Tailwind a propósito: cuanto más acotada, menos falsos
+ * positivos con una clase propia que por casualidad empieza igual.
+ */
+const RAIZ_TAILWIND_CON_VALOR_RE =
+  '(?:text|bg|border|rounded|ring|shadow|outline|divide|placeholder|from|via|to' +
+  '|p|px|py|pt|pr|pb|pl|m|mx|my|mt|mr|mb|ml|gap|gap-x|gap-y|space-x|space-y' +
+  '|w|h|min-w|min-h|max-w|max-h|inset|top|right|bottom|left' +
+  '|flex|grid-cols|grid-rows|col|row|items|justify|content|self|place' +
+  '|font|leading|tracking|opacity|z|rotate|scale|translate|skew' +
+  '|duration|delay|ease|cursor|overflow|object|aspect|basis|order)';
+
+/**
+ * Un token individual "parece" una utilidad de Tailwind: variantes
+ * opcionales encadenadas con `:`, un `-` opcional antes de la raíz
+ * (utilidades negativas, `-mt-4`), y una raíz reconocida — sola, o seguida
+ * de `-` y un valor (letras, números y los símbolos que Tailwind usa en
+ * valores arbitrarios: `. % _ / [ ] #`). Anclado en las dos puntas para que
+ * una palabra que sólo CONTIENE una raíz (`flexible`, `bordereau`) no
+ * cuente: tiene que tener la forma exacta de principio a fin.
+ */
+const TOKEN_TAILWIND_RE = new RegExp(
+  `^(?:${VARIANTE_TAILWIND_RE}:)*-?(?:${RAIZ_TAILWIND_CON_VALOR_RE}-[a-z0-9.%_/\\[\\]#-]+|${UTILIDAD_TAILWIND_SOLA_RE})$`,
+);
+
+const ATRIBUTO_CLASE_RE = /\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g;
+const SET_ATTRIBUTE_CLASE_RE = /\.setAttribute\(\s*['"]class(?:Name)?['"]\s*,\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g;
+const CLASS_LIST_ADD_RE = /\bclassList\s*\.\s*add\(([^)]*)\)/g;
+const TOKEN_ENTRE_COMILLAS_RE = /"([^"]*)"|'([^']*)'|`([^`]*)`/g;
+
+/**
+ * Junta todo el texto candidato a contener clases: el valor de cada
+ * `class="…"`/`className="…"` (markup Y asignación en JS,
+ * `elemento.className = "…"`), cada `setAttribute('class', '…')`, y cada
+ * string suelto dentro de un `classList.add(…)` — frecuente en el JS que
+ * arma el modelo para cambiar de estado (Apéndice B: devoluciones tipo
+ * "Correcto: tres cuartos y un cuarto…" suelen ir con un cambio de clases).
+ */
+function extraerPoolsDeClases(html: string): string[] {
+  const pools: string[] = [];
+
+  for (const re of [ATRIBUTO_CLASE_RE, SET_ATTRIBUTE_CLASE_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) pools.push(m[1] ?? m[2] ?? m[3] ?? '');
+  }
+
+  CLASS_LIST_ADD_RE.lastIndex = 0;
+  let llamada: RegExpExecArray | null;
+  while ((llamada = CLASS_LIST_ADD_RE.exec(html)) !== null) {
+    TOKEN_ENTRE_COMILLAS_RE.lastIndex = 0;
+    let token: RegExpExecArray | null;
+    while ((token = TOKEN_ENTRE_COMILLAS_RE.exec(llamada[1] ?? '')) !== null) {
+      pools.push(token[1] ?? token[2] ?? token[3] ?? '');
+    }
+  }
+
+  return pools;
+}
+
+/**
+ * Mínimo de clases DISTINTAS con forma de utilidad de Tailwind para
+ * considerar que el HTML "usa Tailwind". Bien por encima de un par de
+ * falsos positivos sueltos (una clase propia que por casualidad tiene forma
+ * de utilidad) y bien por debajo de lo que cualquier recurso que de verdad
+ * usa el framework acumula: un solo elemento con
+ * `class="flex items-center gap-4 p-6"` ya aporta 4.
+ */
+const MINIMO_CLASES_TAILWIND = 4;
+
+/**
+ * Detector puro de "este HTML usa clases de Tailwind" (T11): robusto (mira
+ * markup y JS, con o sin prefijo de variante) pero conservador (forma
+ * exacta por token, más un mínimo de coincidencias DISTINTAS para que una o
+ * dos palabras sueltas con forma de clase no lo disparen).
+ */
+export function usaClasesDeTailwind(html: string): boolean {
+  const encontradas = new Set<string>();
+  for (const pool of extraerPoolsDeClases(html)) {
+    for (const token of pool.split(/\s+/)) {
+      if (token !== '' && TOKEN_TAILWIND_RE.test(token)) encontradas.add(token);
+      if (encontradas.size >= MINIMO_CLASES_TAILWIND) return true; // ya alcanza, no hace falta seguir
+    }
+  }
+  return false;
+}
+
+/**
+ * El HTML carga su propio Tailwind por CDN (el modelo ignoró "NO pegues
+ * scripts de Tailwind... el sistema agrega solo Tailwind configurado" del
+ * Apéndice B): un `<script src="…cdn.tailwindcss.com…">` en cualquier parte
+ * del documento. Mismo dominio que carga el propio bloque canónico
+ * (`construirBloque` más arriba) — si ya aparece, el recurso tiene Tailwind
+ * funcionando por su cuenta y la red de seguridad no tiene nada que arreglar.
+ */
+function cargaTailwindPorSuCuenta(html: string): boolean {
+  const re = /<script\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const src = (m[1] ?? m[2] ?? m[3] ?? '').toLowerCase();
+    if (src.includes('cdn.tailwindcss.com')) return true;
+  }
+  return false;
+}
+
+/** Tema que aplica la red de seguridad: el más neutro de los 8 (Apéndice A). */
+const TEMA_RED_DE_SEGURIDAD: TemaId = 'cuaderno';
+
+/**
+ * `aplicarKit` con la red de seguridad de T11 encima: si el HTML no declara
+ * un `<meta name="kodu-tema">` válido, tampoco hay `temaPrevio` que lo
+ * respalde, no carga Tailwind por su cuenta, Y usa clases de Tailwind →
+ * aplica `cuaderno` exactamente por el mismo camino que el respaldo por
+ * `temaPrevio` (meta + bloque canónico insertados después de `<head>`, o
+ * `<html>`, o al principio). En cualquier otro caso el comportamiento es
+ * IDÉNTICO a `aplicarKit` a secas.
+ *
+ * Función aparte y no una rama más de `aplicarKit` a propósito: así
+ * `aplicarKit` (y las pruebas que ya existen contra ella) no cambian de
+ * comportamiento para nadie que no pase por acá — el único lugar que decide
+ * "cuándo corresponde el respaldo de la red de seguridad" es este.
+ *
+ * Se llama con el HTML tal cual salió del modelo, ANTES de cualquier otra
+ * transformación: la detección de "carga su propio Tailwind" y "usa clases
+ * de Tailwind" tiene que mirar el documento ORIGINAL, no uno que ya podría
+ * tener el bloque canónico insertado (que por supuesto usa esos mismos
+ * prefijos por su cuenta).
+ *
+ * Pura y barata (mismo motivo que el resto del módulo, ver el comentario de
+ * arriba de todo): la usan tanto `aplicarKitAlTurno` en `stream.ts` (server,
+ * antes de guardar) como `PreviewPanel.tsx` (cliente, sobre el HTML parcial
+ * mientras la IA todavía escribe) — así la vista previa en vivo no muestra
+ * un instante de clases de Tailwind sin estilos para después "saltar" al
+ * tema por defecto recién cuando el turno termina y el servidor aplica el
+ * mismo respaldo.
+ */
+export function aplicarKitConRedDeSeguridad(html: string, opts?: { temaPrevio?: string | null }): string {
+  const yaTieneRespaldo = buscarMetaTema(html) !== null || (opts?.temaPrevio != null && esTemaId(opts.temaPrevio));
+  const necesitaRedDeSeguridad =
+    !yaTieneRespaldo && !cargaTailwindPorSuCuenta(html) && usaClasesDeTailwind(html);
+
+  return aplicarKit(html, necesitaRedDeSeguridad ? { temaPrevio: TEMA_RED_DE_SEGURIDAD } : opts);
+}

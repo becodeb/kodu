@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildSystemPrompt, type AssetContext, type RuleContext } from '../../../lib/ai/prompt.ts';
-import { aplicarKit, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
+import { aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
   ProviderError,
@@ -216,9 +216,17 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
  * Exportada para `e2e/unidad.ts` (mismo criterio que `pideCambio` más abajo)
  * y, desde T8, para `visual-review.ts` — mismo paso, misma razón: el HTML
  * que devuelve esa llamada también pasa por acá antes de persistirse.
+ *
+ * `aplicarKitConRedDeSeguridad` y no `aplicarKit` a secas (T11, "Red de
+ * seguridad: tema por defecto"): si el modelo se olvidó el meta pero igual
+ * escribió clases de Tailwind, el HTML se guardaría sin ningún Tailwind
+ * cargado — sin estilos para cualquier docente. Al pasar TODO HTML de
+ * modelo por acá (primer pase, corrección de T7, versiones de T9, revisión
+ * visual de T8), la red de seguridad cubre las cuatro fuentes con un solo
+ * cambio.
  */
 export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
-  return aplicarKit(html, { temaPrevio });
+  return aplicarKitConRedDeSeguridad(html, { temaPrevio });
 }
 
 /**

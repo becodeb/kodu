@@ -10,7 +10,7 @@ import {
   useState,
 } from 'react';
 import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
-import { aplicarKit, temaDe } from '../../lib/ai/kit.ts';
+import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
@@ -137,9 +137,18 @@ const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function 
 
   // El kit recién se aplica (y se empieza a mostrar) una vez que hay `<body`:
   // antes de eso el documento no tiene nada para pintar todavía.
+  //
+  // `aplicarKitConRedDeSeguridad` y no `aplicarKit` a secas (T11, "Red de
+  // seguridad: tema por defecto"): es pura y barata, así que correrla acá
+  // también no cuesta nada, y evita que la vista previa en vivo muestre un
+  // instante de clases de Tailwind sin estilos (si el modelo todavía no
+  // escribió el meta) para después "saltar" al tema por defecto recién
+  // cuando el turno termina y el servidor aplica el mismo respaldo
+  // (`aplicarKitAlTurno` en stream.ts) — la vista previa queda consistente
+  // con lo que termina guardado.
   const kitParcial = useMemo(() => {
     if (props.partialHtml == null || !/<body[\s>]/i.test(props.partialHtml)) return null;
-    return aplicarKit(props.partialHtml, { temaPrevio });
+    return aplicarKitConRedDeSeguridad(props.partialHtml, { temaPrevio });
   }, [props.partialHtml, temaPrevio]);
 
   const hayParcial = props.partialHtml != null;
