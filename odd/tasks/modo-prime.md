@@ -128,11 +128,12 @@ Notas T1: `e2e/unidad-kit.ts` es una suite aparte porque `e2e/unidad.ts` necesit
 
 ## Próximo paso
 
-Las 11 tareas están hechas en `feat/modo-prime` (24 commits sobre `main`, sin pushear). Queda en manos del dueño:
+Las 11 tareas están hechas. El 2026-09-23 el dueño eligió mergear a `main` y pushear sin la validación previa con un modelo real: prefiere probarlo directo en producción. El merge es un commit `--no-ff`, así que `git revert -m 1 <merge>` deshace la feature entera. Las migraciones son aditivas (columnas y tablas nuevas con valores por defecto, más una actualización de texto de una regla), así que un revert del código no necesita tocar la base.
 
-1. **Validar con un modelo real.** No hubo ninguna llamada a un modelo real en toda la feature: las keys de `.env` en desarrollo están vacías. La capa 1 (prompt y kit) cambia la generación de TODOS los docentes apenas se despliega, así que conviene correr unas generaciones reales antes (DeepSeek V4.1 Flash y MiniMax M3, que es el motor por defecto) y mirar las capturas.
-2. **Aprobar el merge a `main`**, que dispara el deploy de Coolify.
-3. Después del deploy, en producción: prender prime en `/admin/generacion`; marcar "ve imágenes" en el motor que se use para demos (la revisión visual lo necesita, además de `AI_VISION=true` en el entorno); cargar un modelo premium con "Solo modo prime" si se quiere; subir el tope de la demo en `/admin/demo` antes de una reunión (A fondo y las versiones lo gastan varias veces más rápido).
+Queda en manos del dueño:
+
+1. **Probar con modelos reales en producción.** No hubo ninguna llamada a un modelo real en toda la feature (las keys de `.env` en desarrollo están vacías). La capa 1 (prompt y kit) cambia la generación de TODOS los docentes apenas se despliega: mirar los primeros recursos de DeepSeek V4.1 Flash y de MiniMax M3 (el motor por defecto).
+2. En producción: prender prime en `/admin/generacion`; marcar "ve imágenes" en el motor que se use para demos (la revisión visual lo necesita, además de `AI_VISION=true` en el entorno); cargar un modelo premium con "Solo modo prime" si se quiere; subir el tope de la demo en `/admin/demo` antes de una reunión (A fondo y las versiones lo gastan varias veces más rápido).
 
 RDD: en todos los commits `review assess` dio medium o high, pero el preflight de `review status` siempre devolvió `stop rdd_disabled`, aunque `review mode status` dice "on (decided by default)". No se habilitó en nombre del dueño; se usó la verificación del modo sin RDD (escritor, control del orquestador y un verificador independiente en la tarea de riesgo alto, T5).
 
