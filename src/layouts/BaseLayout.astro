@@ -11,6 +11,14 @@ interface Props {
   wide?: boolean;
   /** Sin contenedor: cada sección maneja su propio ancho (home). */
   bleed?: boolean;
+  /**
+   * T5 (odd/tasks/responsive-celulares.md): achica el padding vertical del
+   * `<main>` sólo por debajo de `lg` — el editor de recursos necesita cada
+   * píxel para que el composer no quede bajo el pliegue a 390×664. Arriba de
+   * `lg` sigue siendo exactamente `py-8`, así que ninguna otra página (que no
+   * pasa esta prop) ni el desktop del editor cambian.
+   */
+  compactMobile?: boolean;
 }
 
 const {
@@ -19,6 +27,7 @@ const {
   bare = false,
   wide = false,
   bleed = false,
+  compactMobile = false,
 } = Astro.props;
 
 const user = Astro.locals.user;
@@ -82,18 +91,22 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
           {/* Tres columnas de igual ancho: asi los enlaces del medio quedan
               centrados respecto de la pagina y no respecto del hueco que dejan
               el logo y los botones, que es lo que los corria a la derecha. */}
-          <nav class="mx-auto grid max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-4 px-4 py-3">
-            <a href="/" class="flex items-center justify-self-start" aria-label="Kodu, ir al inicio">
+          <nav class="mx-auto grid max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 py-3 sm:gap-4">
+            <a
+              href="/"
+              class="flex min-w-[85px] shrink-0 items-center justify-self-start"
+              aria-label="Kodu, ir al inicio"
+            >
               <img
                 src="/brand/kodu-logo.webp"
                 alt="Kodu"
                 width="420"
                 height="158"
-                class="h-8 w-auto"
+                class="h-8 w-auto shrink-0"
               />
             </a>
 
-            <div class="flex items-center gap-6 text-sm">
+            <div class="flex items-center gap-3 text-sm sm:gap-6">
               <a
                 href="/gallery"
                 class="kodu-nav-link"
@@ -120,7 +133,7 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
                 <a
                   href="/admin"
                   aria-current={ruta.startsWith('/admin') ? 'page' : undefined}
-                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2.5 py-1.5 text-sm ${
+                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2 py-1.5 text-sm sm:px-2.5 ${
                     ruta.startsWith('/admin')
                       ? 'border-brand-300 text-brand-700'
                       : 'border-linea text-ink-700 hover:border-ink-500'
@@ -202,7 +215,11 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
       )
     }
 
-    <main class={bleed ? '' : `mx-auto px-4 py-8 ${wide ? 'max-w-[110rem]' : 'max-w-6xl'}`}>
+    <main
+      class={bleed
+        ? ''
+        : `mx-auto px-4 ${compactMobile ? 'py-3 lg:py-8' : 'py-8'} ${wide ? 'max-w-[110rem]' : 'max-w-6xl'}`}
+    >
       <slot />
     </main>
 
