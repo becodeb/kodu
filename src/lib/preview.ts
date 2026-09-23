@@ -14,8 +14,10 @@
  * necesitamos aflojar el sandbox — que es lo que mantiene al recurso generado
  * lejos de la sesión del docente.
  *
- * Ojo: esto se inyecta SÓLO en la vista previa del editor. La página pública
- * /p/[slug] sirve el HTML del docente tal cual, sin agregados.
+ * Ojo: este puente se inyecta SÓLO en la vista previa del editor. La página
+ * pública /p/[slug] sirve el HTML del docente tal cual, sin este bridge; lo
+ * único que puede agregarle es un `<meta name="viewport">` de respaldo si al
+ * HTML le faltaba (odd/tasks/responsive-celulares.md, T2).
  *
  * T8 ("Revisión visual con captura"): el mismo puente sirve la captura que
  * se le manda al modelo, con otras opciones (JPEG en vez de WebP, sin bajar

@@ -31,6 +31,36 @@ const CSP = [
   `base-uri 'none'`,
 ].join('; ');
 
+const META_VIEWPORT = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+
+/**
+ * Red de seguridad de viewport (odd/tasks/responsive-celulares.md, T2): si el
+ * HTML generado por la IA se olvidó de `<meta name="viewport">`, el celular
+ * lo renderiza a 980px de ancho y lo aleja. Igual que `aplicarKit` en
+ * `src/lib/ai/kit.ts`, insertamos justo después de `<head…>` si existe, si no
+ * después de `<html…>`, y si no hay ninguno de los dos, al principio.
+ *
+ * Idempotente: si ya hay un meta viewport (sea cual sea su contenido), el
+ * html vuelve sin tocar — no pisamos una decisión del docente o del modelo.
+ */
+export function asegurarViewport(html: string): string {
+  if (/<meta[^>]+name=["']viewport["']/i.test(html)) return html;
+
+  const headMatch = /<head[^>]*>/i.exec(html);
+  if (headMatch) {
+    const hasta = headMatch.index + headMatch[0].length;
+    return html.slice(0, hasta) + '\n' + META_VIEWPORT + html.slice(hasta);
+  }
+
+  const htmlMatch = /<html[^>]*>/i.exec(html);
+  if (htmlMatch) {
+    const hasta = htmlMatch.index + htmlMatch[0].length;
+    return html.slice(0, hasta) + '\n' + META_VIEWPORT + html.slice(hasta);
+  }
+
+  return META_VIEWPORT + '\n' + html;
+}
+
 export const GET: APIRoute = async ({ params }) => {
   const project = await prisma.project.findUnique({
     where: { slug: params.slug! },
@@ -44,7 +74,7 @@ export const GET: APIRoute = async ({ params }) => {
     );
   }
 
-  return new Response(project.currentHtml, {
+  return new Response(asegurarViewport(project.currentHtml), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': CSP,
