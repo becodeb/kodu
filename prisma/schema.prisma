@@ -353,8 +353,43 @@ model ChatMessage {
   /// "assistant" que cambiaron el recurso. Relación 1:1 opcional — la FK
   /// vive del lado de ProjectSnapshot (`chatMessageId` es `@unique` ahí).
   snapshot     ProjectSnapshot?
+  /// T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un recurso"):
+  /// cuál de `variants` está elegida ahora mismo (1, 2 o 3). Se pone en 1 al
+  /// crear el turno (`Project.currentHtml` ya arranca en la versión 1) y
+  /// cambia con `POST /api/projects/[id]/variant`. `NULL` en cualquier
+  /// mensaje que no sea un turno de versiones.
+  chosenVariantIndex Int?
+  /// Las hasta 3 versiones que generó ESTE turno en paralelo (T9), cuando
+  /// correspondía (`puedePedirVersiones` Y el recurso todavía era el de
+  /// arranque). `stream.ts` las borra al empezar cualquier turno POSTERIOR
+  /// del mismo proyecto — nunca se acumulan turno a turno. Back-relation de
+  /// ResourceVariant.chatMessage.
+  variants     ResourceVariant[]
 
   @@index([threadId, createdAt])
+}
+
+/// Una de las hasta 3 versiones que generó un "turno de versiones" (T9,
+/// odd/tasks/modo-prime.md — "Varias versiones al crear un recurso"):
+/// cuelga del ÚNICO mensaje "assistant" que cierra ese turno (las tres
+/// comparten el mismo mensaje — el turno persiste un solo texto fijo, no
+/// uno por versión). Tabla aparte y NO una columna grande en ChatMessage a
+/// propósito: `stream.ts` arma el contexto del modelo leyendo ChatMessage en
+/// cada turno, y esas consultas de historial tienen que seguir livianas —
+/// no pueden arrastrar hasta 3 documentos HTML completos que además nunca
+/// vuelven como contexto (sólo se ofrecen al docente, para elegir).
+model ResourceVariant {
+  id            String      @id @default(uuid())
+  chatMessageId String
+  chatMessage   ChatMessage @relation(fields: [chatMessageId], references: [id], onDelete: Cascade)
+  /// 1, 2 o 3 — el orden en que se ofrecen los chips ("Versión 1 · 2 · 3"),
+  /// no el orden de llegada (la 1 siempre es la que se transmitió en vivo;
+  /// la 2 y la 3 pueden terminar en cualquier orden entre sí).
+  index         Int
+  html          String
+  createdAt     DateTime    @default(now())
+
+  @@unique([chatMessageId, index])
 }
 
 /// Instantánea del HTML de un recurso justo ANTES de un turno de la IA que lo

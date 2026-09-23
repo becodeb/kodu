@@ -76,6 +76,14 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
       // poder contestar "¿existe?".
       undoneAt: true,
       snapshot: { select: { id: true } },
+      // T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un
+      // recurso"): sólo el mensaje más nuevo del proyecto puede tener filas
+      // acá (stream.ts las borra al empezar cualquier turno posterior), así
+      // que no hace falta un caso especial para "es el más nuevo" — la
+      // tabla ya lo garantiza sola. Nunca el `html` de cada versión (sólo
+      // viaja al elegir, por POST /api/projects/[id]/variant).
+      chosenVariantIndex: true,
+      variants: { select: { index: true }, orderBy: { index: 'asc' } },
     },
   });
 
@@ -96,6 +104,15 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
       // instantánea y todavía no se deshizo). El cliente decide, con esto,
       // cuál es "el más nuevo deshacible" — acá no hace falta saber cuál es.
       canUndo: message.snapshot !== null && message.undoneAt === null,
+      // T9: ausente (no `[]`) cuando este mensaje no es un turno de
+      // versiones, para que el cliente lo trate igual que cualquier turno
+      // de antes de T9.
+      ...(message.variants.length > 0
+        ? {
+            variants: message.variants.map((variant) => ({ index: variant.index })),
+            chosenVariant: message.chosenVariantIndex ?? 1,
+          }
+        : {}),
     })),
   });
 };

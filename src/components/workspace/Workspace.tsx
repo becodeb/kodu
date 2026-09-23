@@ -5,12 +5,15 @@ import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
+import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
+import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
   MotorPublico,
   Speed,
+  VersionEnCurso,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceProject,
@@ -45,6 +48,28 @@ interface WorkspaceProps {
    * propio control.
    */
   capacidades: CapacidadesEditor;
+}
+
+/**
+ * T9 ("Varias versiones al crear un recurso"): agrega/actualiza UN índice
+ * dentro de la lista de progreso, sin mutar la anterior (React necesita una
+ * referencia nueva para volver a renderizar) — pura, así que se puede probar
+ * sin montar el componente. Ordenada por índice: como los tres "variant" de
+ * anuncio (`ready: false`) pueden llegar en cualquier orden relativo a los
+ * "listo" (`ready: true`) de otro índice, ordenar acá es lo que garantiza
+ * que la fila de chips siempre se vea "1 · 2 · 3" y no según el orden de
+ * llegada.
+ */
+function actualizarVersionEnCurso(
+  actual: VersionEnCurso[] | null,
+  index: 1 | 2 | 3,
+  ready: boolean,
+): VersionEnCurso[] {
+  const lista = actual ? [...actual] : [];
+  const indice = lista.findIndex((version) => version.index === index);
+  if (indice >= 0) lista[indice] = { index, ready };
+  else lista.push({ index, ready });
+  return lista.sort((a, b) => a.index - b.index);
 }
 
 /**
@@ -90,6 +115,36 @@ export default function Workspace(props: WorkspaceProps) {
     setSpeed(nuevaVelocidad);
     guardarVelocidad(nuevaVelocidad);
   }
+
+  /**
+   * T9 ("Varias versiones al crear un recurso"): apagado por default —a
+   * diferencia de la velocidad, acá no hay un default que dependa de la
+   * cuenta— y persistido por navegador (`client/versiones.ts`, mismo patrón
+   * que T6). El interruptor sólo se OFRECE cuando además el recurso sigue
+   * siendo el de arranque (`esRecursoInicial(html)`, recalculado en cada
+   * render): server-side, `stream.ts` vuelve a cruzar las tres condiciones
+   * igual, así que este estado nunca alcanza por sí solo para forzar nada.
+   */
+  const [versiones, setVersiones] = useState(false);
+
+  useEffect(() => {
+    if (leerVersionesGuardado()) setVersiones(true);
+    // Sólo al montar, mismo criterio que la velocidad de arriba.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleVersionesChange(activo: boolean) {
+    setVersiones(activo);
+    guardarVersiones(activo);
+  }
+
+  /**
+   * T9: estado progresivo de un turno de versiones EN CURSO — `null` cuando
+   * no hay ninguno. Se llena con los eventos `variant` del SSE (anuncio
+   * `ready:false` apenas arranca, `ready:true` cuando cada una termina) y se
+   * pliega en el mensaje final una vez que llega "done" — ver `handleSend`.
+   */
+  const [versionesEnCurso, setVersionesEnCurso] = useState<VersionEnCurso[] | null>(null);
 
   const [threads, setThreads] = useState(props.threads);
   const [activeThreadId, setActiveThreadId] = useState(props.activeThreadId);
@@ -398,6 +453,21 @@ export default function Workspace(props: WorkspaceProps) {
     let ultimoHtmlDelTurno: string | null = null;
     let ofreceRevisionVisual = false;
 
+    /**
+     * T9 ("Varias versiones al crear un recurso"): lo que este turno le pide
+     * al servidor — capacidad Y el interruptor prendido Y el recurso
+     * todavía en blanco. El servidor vuelve a cruzar las tres cosas con SUS
+     * propios datos (`variantesEfectivas`, `stream.ts`): esto sólo decide si
+     * vale la pena mandar `variants: 3`, nunca fuerza nada.
+     */
+    const pedirVersiones = props.capacidades.puedePedirVersiones && versiones && esRecursoInicial(html);
+    // Progreso de las versiones de ESTE turno, si el servidor confirma que
+    // corresponde (primer evento "variant") — plano y no sólo estado de
+    // React por el mismo motivo que `cambioElHtml`/`ultimoHtmlDelTurno` de
+    // arriba: hace falta leerlo de forma síncrona después del `for await`,
+    // en el manejo de "done".
+    let versionesDelTurno: VersionEnCurso[] | null = null;
+
     try {
       abortador.current = new AbortController();
 
@@ -412,6 +482,9 @@ export default function Workspace(props: WorkspaceProps) {
           // T6: el servidor la ignora sin `puedeElegirVelocidad`, así que
           // siempre es seguro mandar la actual.
           speed,
+          // T9: mismo criterio — el servidor la ignora sin las otras dos
+          // condiciones, así que también es siempre seguro mandarla.
+          variants: pedirVersiones ? 3 : undefined,
         },
         abortador.current.signal,
       )) {
@@ -461,6 +534,14 @@ export default function Workspace(props: WorkspaceProps) {
           // de siempre (con el puente de captura incluido).
           rawArgsBuffer = '';
           setPartialHtml(null);
+        } else if (event.type === 'variant') {
+          // T9 ("Varias versiones"): `ready: false` es el anuncio de que
+          // este índice va a existir (las tres llegan juntas, apenas el
+          // servidor confirma el turno de versiones); `ready: true` es que
+          // ya terminó. Nunca se infiere esto del lado del cliente —server
+          // confirmado, igual que `revisionVisualDisponible` en T8.
+          versionesDelTurno = actualizarVersionEnCurso(versionesDelTurno, event.index, event.ready);
+          setVersionesEnCurso(versionesDelTurno);
         } else if (event.type === 'error') {
           setError(event.message);
           setFailedMessage(message);
@@ -469,6 +550,14 @@ export default function Workspace(props: WorkspaceProps) {
           }
           if (event.registerUrl) setRegisterUrl(event.registerUrl);
         } else if (event.type === 'done') {
+          // T9: las versiones que de verdad llegaron a existir — cualquier
+          // índice que se haya quedado en `ready: false` (nunca llegó su
+          // "variant" de `ready: true`) se descarta acá, nunca se ofrece un
+          // chip para una versión que falló.
+          const variantesListas = versionesDelTurno
+            ?.filter((v) => v.ready)
+            .map((v) => ({ index: v.index }));
+
           setMessages((current) => [
             // T4: el mensaje del docente pasa a tener su id REAL — de acá en
             // más, un "Deshacer" que lo marque en `undoneMessageIds` lo va a
@@ -487,6 +576,12 @@ export default function Workspace(props: WorkspaceProps) {
               // instantánea (mismo criterio, ver stream.ts) — se puede
               // ofrecer para deshacer sin esperar a releer el hilo.
               canUndo: cambioElHtml,
+              // T9: ausente (no `[]`) cuando este turno no ofreció ninguna
+              // versión lista — mismo criterio que expone threads.ts tras
+              // recargar, para que ChatPanel trate los dos casos igual.
+              ...(variantesListas && variantesListas.length > 0
+                ? { variants: variantesListas, chosenVariant: 1 }
+                : {}),
             },
           ]);
           if (event.codeUpdated) flashNotice('Recurso actualizado');
@@ -522,6 +617,11 @@ export default function Workspace(props: WorkspaceProps) {
       // — los otros dos casos (`code`, `code_reset`) ya lo limpiaron arriba,
       // así que esto es un no-op en esos casos.
       setPartialHtml(null);
+      // T9: el progreso EN CURSO siempre se limpia acá — si el turno terminó
+      // bien, ya quedó plegado en el mensaje nuevo (arriba, en "done"); si se
+      // cortó por error o "Detener", no hay nada que ofrecer y no debe
+      // quedar una fila pendiente colgada para el próximo turno.
+      setVersionesEnCurso(null);
     }
   }
 
@@ -657,6 +757,35 @@ export default function Workspace(props: WorkspaceProps) {
     );
 
     flashNotice('Deshecho');
+  }
+
+  /**
+   * T9 ("Varias versiones al crear un recurso"): activa la versión `index`
+   * del mensaje `messageId`. Mismo patrón que `handleUndo` de arriba —
+   * siempre confirma contra el servidor (nunca aplica el cambio a partir de
+   * un HTML que ya tuviera en memoria): ni siquiera la versión 1, que ya se
+   * vio completa por `code`, se aplica sin este viaje — así elegir siempre
+   * queda persistido y consistente, sin un estado "elegido en el cliente
+   * pero no en la base" posible.
+   */
+  async function handleElegirVersion(messageId: string, index: number) {
+    const result = await apiRequest<{ html: string }>(`/api/projects/${projectId}/variant`, 'POST', {
+      messageId,
+      index,
+    });
+
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+
+    setHtml(result.data.html);
+    codeEditedByTeacher.current = false;
+    if (screenshotUrl) setPortadaVieja(true);
+
+    setMessages((current) =>
+      current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
+    );
   }
 
   async function handleNewThread() {
@@ -854,6 +983,12 @@ export default function Workspace(props: WorkspaceProps) {
         puedeElegirVelocidad={props.capacidades.puedeElegirVelocidad}
         speed={speed}
         onSpeedChange={handleSpeedChange}
+        puedePedirVersiones={props.capacidades.puedePedirVersiones}
+        esRecursoInicial={esRecursoInicial(html)}
+        versiones={versiones}
+        onVersionesChange={handleVersionesChange}
+        versionesEnCurso={versionesEnCurso}
+        onElegirVersion={(messageId, index) => void handleElegirVersion(messageId, index)}
       />
       </div>
 

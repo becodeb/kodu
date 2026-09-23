@@ -6,10 +6,12 @@ import StarterDialog from './StarterDialog.tsx';
 import SelectorDeMotor from './SelectorDeMotor.tsx';
 import { STARTERS, type Starter } from './starters.ts';
 import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
+import { mensajeParaVersiones } from '../../lib/client/versiones.ts';
 import type {
   AiPhase,
   MotorPublico,
   Speed,
+  VersionEnCurso,
   WorkspaceAsset,
   WorkspaceMessage,
   WorkspaceThread,
@@ -52,6 +54,68 @@ interface ChatPanelProps {
   puedeElegirVelocidad: boolean;
   speed: Speed;
   onSpeedChange: (speed: Speed) => void;
+  /**
+   * T9 ("Varias versiones al crear un recurso"): el interruptor sólo se
+   * ofrece con las dos condiciones juntas — el permiso Y el recurso todavía
+   * en blanco (crear, no editar).
+   */
+  puedePedirVersiones: boolean;
+  esRecursoInicial: boolean;
+  versiones: boolean;
+  onVersionesChange: (activo: boolean) => void;
+  /** T9: progreso del turno de versiones EN CURSO — `null` si no hay uno. */
+  versionesEnCurso: VersionEnCurso[] | null;
+  /** T9: elige la versión `index` del mensaje `messageId`. */
+  onElegirVersion: (messageId: string, index: number) => void;
+}
+
+/**
+ * T9: la fila de chips "Versión 1 · 2 · 3" — usada tanto para el progreso EN
+ * CURSO (todavía sin mensaje: `activa` fija en 1, `onElegir` ausente, nada
+ * es clickeable) como para el mensaje ya cerrado (`onElegir` presente,
+ * clickeable en cualquier índice que exista). Chica y muda a propósito
+ * (decisiones del dueño, "Discreto"): nunca la palabra "prime".
+ */
+function FilaVersiones(props: {
+  variantes: Array<{ index: number; ready: boolean }>;
+  activa: number | null;
+  onElegir: ((index: number) => void) | null;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Versiones generadas"
+      className="mt-1 flex flex-wrap items-center gap-1 px-1 text-xs text-ink-500"
+    >
+      <span>Versión</span>
+      {props.variantes.map((variante, posicion) => {
+        const esActiva = props.activa === variante.index;
+        const clicable = variante.ready && props.onElegir !== null;
+
+        return (
+          <span key={variante.index} className="inline-flex items-center gap-1">
+            {posicion > 0 && <span aria-hidden="true">·</span>}
+            <button
+              type="button"
+              disabled={!clicable}
+              aria-pressed={esActiva}
+              onClick={clicable ? () => props.onElegir!(variante.index) : undefined}
+              className={`rounded-full border px-2 py-0.5 font-medium transition-colors ${
+                esActiva
+                  ? 'border-brand-600 bg-brand-600 text-white'
+                  : variante.ready
+                    ? 'border-linea bg-superficie text-ink-700 hover:border-brand-300 hover:text-brand-700'
+                    : 'border-transparent text-ink-500/50'
+              }`}
+            >
+              {variante.index}
+              {!variante.ready && <span className="sr-only"> (generando)</span>}
+            </button>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /**
@@ -85,6 +149,11 @@ export default function ChatPanel(props: ChatPanelProps) {
   // T4: el único mensaje que puede ofrecer "Deshacer" ahora mismo — nunca
   // mientras hay un turno corriendo, aunque técnicamente ya sea deshacible.
   const idParaDeshacer = props.isStreaming ? null : mensajeParaDeshacer(props.messages);
+
+  // T9: el único mensaje que puede mostrar la fila de chips ahora mismo —
+  // a diferencia de "Deshacer", acá SÍ importa mientras `isStreaming` es
+  // `true` (el próximo turno ya la tapa: ver `mensajeParaVersiones`).
+  const idParaVersiones = mensajeParaVersiones(props.messages);
 
   // Autoscroll mientras llega el stream.
   useEffect(() => {
@@ -320,6 +389,19 @@ export default function ChatPanel(props: ChatPanelProps) {
                   Deshacer
                 </button>
               )}
+
+              {/* T9 ("Varias versiones al crear un recurso"): sólo en el
+                  mensaje "assistant" de un turno de versiones, y sólo
+                  mientras sigue siendo el último de la lista (ver
+                  `mensajeParaVersiones` — desaparece apenas el docente manda
+                  el próximo mensaje, la elección queda hecha). */}
+              {message.id === idParaVersiones && message.variants && (
+                <FilaVersiones
+                  variantes={message.variants.map((variante) => ({ index: variante.index, ready: true }))}
+                  activa={message.chosenVariant ?? 1}
+                  onElegir={(index) => props.onElegirVersion(message.id, index)}
+                />
+              )}
             </div>
           );
         })}
@@ -330,6 +412,16 @@ export default function ChatPanel(props: ChatPanelProps) {
           <article className="mr-6 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
             <StreamedText text={props.streamingText} render={renderRich} />
           </article>
+        )}
+
+        {/* T9: progreso de un turno de versiones EN CURSO — todavía no hay
+            mensaje "assistant" al que colgarle la fila de arriba (recién
+            existe cuando el turno entero termina), así que se muestra
+            aparte, con las mismas chips pero ninguna clickeable. */}
+        {props.isStreaming && props.versionesEnCurso && props.versionesEnCurso.length > 0 && (
+          <div className="mr-6">
+            <FilaVersiones variantes={props.versionesEnCurso} activa={1} onElegir={null} />
+          </div>
         )}
 
         {props.error && (
@@ -525,6 +617,41 @@ export default function ChatPanel(props: ChatPanelProps) {
                 <span className="sr-only">A fondo</span>
               </button>
             </div>
+          )}
+
+          {/* T9 ("Varias versiones al crear un recurso"): compacto, mismo
+              criterio de discreción que la velocidad de arriba — sólo
+              íconos, con un "×3" chico cuando está prendido, sin la palabra
+              "prime". Ausente salvo con las dos condiciones juntas: el
+              permiso Y el recurso todavía en blanco (crear, no editar). */}
+          {props.puedePedirVersiones && props.esRecursoInicial && (
+            <button
+              type="button"
+              aria-pressed={props.versiones}
+              disabled={props.isStreaming}
+              onClick={() => props.onVersionesChange(!props.versiones)}
+              title="Varias versiones: arma tres propuestas distintas para que elijas una"
+              className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border px-1.5 text-xs font-semibold transition-colors ${
+                props.versiones
+                  ? 'border-brand-600 bg-brand-600 text-white'
+                  : 'border-linea bg-superficie text-ink-500 hover:bg-sutil hover:text-ink-900'
+              }`}
+            >
+              {/* Mismo trazo que `copy` de Lucide: dos rectángulos
+                  superpuestos ("varias copias distintas"). */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+                <path
+                  d="M5 15V5a2 2 0 0 1 2-2h10"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {props.versiones && <span>×3</span>}
+              <span className="sr-only">Varias versiones</span>
+            </button>
           )}
 
           <button

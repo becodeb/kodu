@@ -73,6 +73,20 @@ export interface RespuestaScript {
   usage?: UsageScript;
 }
 
+/**
+ * T9 ("Varias versiones al crear un recurso"): una respuesta elegida por el
+ * CONTENIDO del pedido (`match`), no por orden de llegada — las tres
+ * llamadas de un turno de versiones salen casi juntas y pueden llegar en
+ * cualquier orden, así que un FIFO no alcanza para saber cuál es la 1, la 2
+ * o la 3. `match` recibe el `body` completo (mismo objeto que ve la app:
+ * `messages`, `model`, `tools`, `tool_choice`), típicamente para buscar la
+ * directiva de esa versión en el system prompt (`body.messages[0].content`).
+ */
+export interface RespuestaCondicional {
+  match: (body: Record<string, unknown>) => boolean;
+  respuesta: RespuestaScript;
+}
+
 export interface MockProveedor {
   url: string;
   puerto: number;
@@ -82,6 +96,20 @@ export interface MockProveedor {
   /** Encola una respuesta para el PRÓXIMO pedido que llegue (FIFO). Sin
    *  nada encolado, se usa la respuesta por defecto. */
   programarRespuesta(respuesta: RespuestaScript): void;
+  /**
+   * Igual que `programarRespuesta`, pero la respuesta se elige por el
+   * CONTENIDO del pedido, no por orden de llegada (ver `RespuestaCondicional`
+   * más arriba). Se revisa ANTES que la cola FIFO, en el orden en que se
+   * programaron cada una; la primera que matchea se consume y se saca de la
+   * cola (no vuelve a aplicar a un pedido futuro). Si ninguna condicional
+   * matchea, se sigue con el comportamiento de siempre
+   * (`programarRespuesta`/la respuesta por defecto) — así los scripts viejos
+   * que sólo usan `programarRespuesta` no se enteran de que esto existe.
+   */
+  programarRespuestaCondicional(
+    match: (body: Record<string, unknown>) => boolean,
+    respuesta: RespuestaScript,
+  ): void;
   detener(): Promise<void>;
 }
 
@@ -209,6 +237,7 @@ async function manejarPedido(
   res: ServerResponse,
   llamadas: LlamadaRegistrada[],
   colaRespuestas: RespuestaScript[],
+  colaCondicional: RespuestaCondicional[],
 ): Promise<void> {
   const crudo = await leerCuerpo(req);
   let body: Record<string, unknown>;
@@ -221,7 +250,20 @@ async function manejarPedido(
   }
 
   llamadas.push({ recibidaEn: Date.now(), body });
-  const script = colaRespuestas.shift() ?? RESPUESTA_POR_DEFECTO;
+
+  // T9: se prueba primero la cola condicional (por contenido) y recién si
+  // ninguna matchea se cae al FIFO de siempre — ver `programarRespuestaCondicional`.
+  const indiceCondicional = colaCondicional.findIndex((entrada) => {
+    try {
+      return entrada.match(body);
+    } catch {
+      return false; // un `match` que tira no cuenta como matcheado
+    }
+  });
+  const script =
+    indiceCondicional !== -1
+      ? colaCondicional.splice(indiceCondicional, 1)[0]!.respuesta
+      : (colaRespuestas.shift() ?? RESPUESTA_POR_DEFECTO);
 
   if (script.status && script.status !== 200) {
     res.writeHead(script.status, { 'Content-Type': 'application/json' });
@@ -329,6 +371,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
   const puerto = opciones.puerto ?? PUERTO_POR_DEFECTO;
   const llamadas: LlamadaRegistrada[] = [];
   const colaRespuestas: RespuestaScript[] = [];
+  const colaCondicional: RespuestaCondicional[] = [];
 
   const server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/salud') {
@@ -343,7 +386,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
       return;
     }
 
-    manejarPedido(req, res, llamadas, colaRespuestas).catch((error) => {
+    manejarPedido(req, res, llamadas, colaRespuestas, colaCondicional).catch((error) => {
       console.error('[mock-proveedor] error atendiendo el pedido:', error);
       try {
         if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -364,6 +407,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
     puerto,
     llamadas,
     programarRespuesta: (respuesta: RespuestaScript) => colaRespuestas.push(respuesta),
+    programarRespuestaCondicional: (match, respuesta) => colaCondicional.push({ match, respuesta }),
     detener: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());

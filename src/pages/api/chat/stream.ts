@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
-import { buildSystemPrompt } from '../../../lib/ai/prompt.ts';
+import { buildSystemPrompt, type AssetContext, type RuleContext } from '../../../lib/ai/prompt.ts';
 import { aplicarKit, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
@@ -13,11 +13,18 @@ import {
   type ChatMessage,
   type ContentPart,
   type ProviderConfig,
+  type Speed,
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { resolverCapacidades, resolverVelocidadEfectiva } from '../../../lib/ai/capacidades.ts';
 import { aplicaRevisionVisual } from '../../../lib/ai/revision-visual.ts';
+import {
+  contenidoMensajeDeVersiones,
+  directivaDeVersion,
+  esRecursoInicial,
+  variantesEfectivas,
+} from '../../../lib/ai/versiones.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -72,6 +79,14 @@ const schema = z.object({
    * alcanza para forzar nada sin el permiso.
    */
   speed: z.enum(['fast', 'deep']).optional(),
+  /**
+   * T9 ("Varias versiones al crear un recurso"): lo que pidió el docente en
+   * el interruptor del compositor. Server-side, `variantesEfectivas`
+   * (`lib/ai/versiones.ts`) lo cruza con `puedePedirVersiones` Y con si el
+   * recurso sigue siendo el de arranque — mandarlo desde acá no alcanza
+   * para forzar nada sin las otras dos condiciones.
+   */
+  variants: z.union([z.literal(1), z.literal(3)]).optional(),
 });
 
 /** Cuántos mensajes del hilo se reenvían como historial. */
@@ -284,6 +299,167 @@ async function motorConCapacidad(
   return cadena.find((motor) => motor.id !== actual.id && motor.maxInputChars >= largoMensaje) ?? null;
 }
 
+/**
+ * T9 ("Varias versiones al crear un recurso"): genera UNA versión
+ * secundaria (2 o 3) de un turno de versiones — una llamada sola al motor
+ * pedido (SIN cadena de respaldo, sin rescate de HTML del texto, sin
+ * re-pedido forzado: si algo sale mal, se descarta entera, nunca tumba el
+ * turno — mismo criterio que T8 ya sienta para la revisión visual: "no hay
+ * 'otro motor' al que valga la pena pasarle lo mismo") y, si corresponde, su
+ * propia pasada de corrección de T7 (en `POST`, `revisarYCorregir` hace lo
+ * mismo para la versión 1; esto es el equivalente para cualquier otra, con
+ * el mismo criterio de "usar lo corregido si algo salió, sin reintentar una
+ * segunda vez"). `anterior` para el lint SIEMPRE es `null`: una versión
+ * sólo existe cuando el recurso todavía era el de arranque (T9,
+ * "eligibility"), así que nunca hay nada previo con qué comparar.
+ *
+ * Nunca tira: cualquier falla (red, JSON inválido, truncado, el docente
+ * cancelando el turno) se loguea y devuelve `null` — el llamador la trata
+ * como "esta versión no existe", nunca como un error del turno.
+ */
+async function generarVersionSecundaria(args: {
+  indice: 2 | 3;
+  mensajes: ChatMessage[];
+  provider: ProviderConfig;
+  temaProyecto: TemaId | null;
+  velocidadEfectiva: Speed | null;
+  autoReviewForAll: boolean;
+  promptBase: {
+    globalRules: RuleContext[];
+    userRules: RuleContext[];
+    assets: AssetContext[];
+    projectTitle: string;
+    turnosPrevios: number;
+  };
+  userId: string;
+  projectId: string;
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  const registrarConsumo = (usage: MotorTokenUsage | null) => {
+    if (!usage) return;
+    recordUsage({
+      userId: args.userId,
+      projectId: args.projectId,
+      aiModelId: args.provider.id,
+      model: args.provider.model,
+      promptTokens: usage.promptTokens,
+      cachedInputTokens: usage.cachedTokens,
+      completionTokens: usage.completionTokens,
+      precios: args.provider.precios,
+    }).catch((error) =>
+      console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
+    );
+  };
+
+  let primeraPasada: string | null = null;
+
+  try {
+    const respuesta = await requestCompletionStream({
+      messages: args.mensajes,
+      provider: args.provider,
+      signal: args.signal,
+      forzarHerramienta: true,
+      velocidad: args.velocidadEfectiva,
+    });
+
+    let usage: MotorTokenUsage | null = null;
+    for await (const event of readCompletionStream(respuesta)) {
+      if (event.type === 'usage') {
+        usage = event.usage;
+      } else if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
+        const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
+        if (resultado.ok) primeraPasada = aplicarKitAlTurno(resultado.html, args.temaProyecto);
+      }
+    }
+    registrarConsumo(usage);
+  } catch (error) {
+    console.warn(
+      `[chat/stream] versión ${args.indice}: no se pudo generar, se descarta:`,
+      (error as Error).message,
+    );
+    return null;
+  }
+
+  if (!primeraPasada) return null;
+
+  // T7 ("Revisión automática"), misma puerta que la versión 1 en `POST`
+  // (A fondo, o `autoReviewForAll` para quien lo tiene "para todos").
+  if (args.velocidadEfectiva !== 'deep' && !args.autoReviewForAll) return primeraPasada;
+
+  const hallazgos = revisarHtml(primeraPasada, { anterior: null });
+  if (hallazgos.length === 0) return primeraPasada;
+
+  try {
+    const mensajeHallazgos = [
+      'Revisión automática antes de entregarle el recurso al docente. Corregí SÓLO esto, sin cambiar nada más del recurso:',
+      ...hallazgos.map((hallazgo, indice) => {
+        const ejemplos =
+          hallazgo.ejemplos && hallazgo.ejemplos.length > 0
+            ? ` Ejemplos: ${hallazgo.ejemplos.join(', ')}.`
+            : '';
+        return `${indice + 1}. ${hallazgo.instruccion}${ejemplos}`;
+      }),
+    ].join('\n');
+
+    // Mismo criterio que `revisarYCorregir`: el system prompt "de siempre",
+    // pero con la primera pasada como "el recurso actual" — la REGLA MÁS
+    // IMPORTANTE ("se EDITA lo que ya existe") sigue rigiendo, así el
+    // modelo no reescribe de cero para corregir un par de hallazgos. Sin
+    // historial: es un pedido mecánico y autocontenido.
+    const systemPromptRevision = buildSystemPrompt({
+      ...args.promptBase,
+      currentHtml: primeraPasada,
+      canSeeImages: supportsVision(args.provider),
+      htmlEditedByTeacher: false,
+      herramientaForzada: true,
+    });
+
+    const respuestaRevision = await requestCompletionStream({
+      messages: [
+        { role: 'system', content: systemPromptRevision },
+        { role: 'user', content: mensajeHallazgos },
+      ],
+      provider: args.provider,
+      signal: args.signal,
+      forzarHerramienta: true,
+      // Mecánico, no creativo: razonamiento OFF, sin importar la velocidad
+      // efectiva del turno — mismo criterio que la corrección de T7.
+      velocidad: 'fast',
+    });
+
+    let htmlCorregido: string | null = null;
+    let usageRevision: MotorTokenUsage | null = null;
+    for await (const event of readCompletionStream(respuestaRevision)) {
+      if (event.type === 'usage') {
+        usageRevision = event.usage;
+      } else if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
+        const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
+        if (resultado.ok) htmlCorregido = aplicarKitAlTurno(resultado.html, args.temaProyecto);
+      }
+    }
+    registrarConsumo(usageRevision);
+
+    if (!htmlCorregido) return primeraPasada;
+
+    // Sólo se loguea si quedan hallazgos: no se reintenta una segunda vez,
+    // mismo límite que `revisarYCorregir` — "una sola corrección por turno".
+    const hallazgosRestantes = revisarHtml(htmlCorregido, { anterior: null });
+    if (hallazgosRestantes.length > 0) {
+      console.warn(
+        `[chat/stream] versión ${args.indice}: tras la corrección quedan ${hallazgosRestantes.length} hallazgo(s); no se reintenta una segunda vez`,
+      );
+    }
+
+    return htmlCorregido;
+  } catch (error) {
+    console.warn(
+      `[chat/stream] versión ${args.indice}: la corrección automática falló, queda la primera pasada:`,
+      (error as Error).message,
+    );
+    return primeraPasada;
+  }
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const user = locals.user!;
 
@@ -331,7 +507,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
 
-  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, speed } = parsed.data;
+  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, speed, variants } = parsed.data;
 
   /**
    * T6: la velocidad efectiva de ESTE turno — capacidad × pedido × default
@@ -368,6 +544,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // arriba: `project` es una copia local que nadie reasigna, así que esta
   // lectura sigue siendo válida durante todo el turno.
   const htmlAlInicioDelTurno = project.currentHtml;
+
+  /**
+   * T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un recurso"):
+   * capacidad × recurso todavía en blanco × lo pedido, en ese orden — mismo
+   * patrón que `velocidadEfectiva` de arriba resuelve `speed`. Nunca se
+   * confía en `variants` a solas: sin `puedePedirVersiones`, o con un
+   * recurso que ya no es el de arranque, esto da `false` sin importar lo
+   * que haya mandado el cliente.
+   */
+  const solicitaVersiones =
+    variantesEfectivas({
+      puedePedirVersiones: capacidades.puedePedirVersiones,
+      esRecursoInicial: esRecursoInicial(htmlAlInicioDelTurno),
+      variantsPedidas: variants,
+    }) === 3;
 
   // M8 (design.md §7): un admin mandando un turno en un recurso ajeno deja
   // la marca en el Project ANTES de gastar nada, y `actuaComoAdmin` decide
@@ -535,6 +726,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
     provider,
   );
 
+  // T9: cualquier turno nuevo del proyecto invalida las versiones guardadas
+  // de turnos anteriores (ver la tarea: "the next turn removes ... the
+  // stored versions") — se hace para TODO turno, sea o no de versiones:
+  // `currentHtml` está por cambiar de cualquier manera, así que cualquier
+  // versión vieja guardada deja de tener sentido apenas este turno arranca.
+  // Por proyecto entero y no por hilo, mismo alcance que `hayTurnoEnCurso`:
+  // `currentHtml` es del proyecto, no de un hilo puntual.
+  await prisma.resourceVariant.deleteMany({
+    where: { chatMessage: { thread: { projectId: project.id } } },
+  });
+
   // Se persiste ANTES de llamar a la IA: si el turno se corta, el docente no
   // pierde lo que escribió.
   //
@@ -563,6 +765,30 @@ export const POST: APIRoute = async ({ request, locals }) => {
     })),
     { role: 'user', content: userContent },
   ];
+
+  /**
+   * T9: versiones 2 y 3 son llamadas APARTE, con el MISMO contexto que
+   * `messages` (historial + turno actual, sin tocar) pero con la directiva
+   * de esa versión sumada al system prompt. La versión 1 sigue el camino de
+   * siempre (`messages`, de acá para abajo) salvo que también suma la
+   * suya — pedirle al modelo una frase de presentación para el chat, que
+   * igual se descarta al persistir (ver `contenidoMensajeDeVersiones`, más
+   * abajo).
+   */
+  let messagesV2: ChatMessage[] | null = null;
+  let messagesV3: ChatMessage[] | null = null;
+  if (solicitaVersiones) {
+    const historialYUsuario = messages.slice(1);
+    messages[0] = { role: 'system', content: `${systemPrompt}\n\n## Versión 1 de 3\n${directivaDeVersion(1)}` };
+    messagesV2 = [
+      { role: 'system', content: `${systemPrompt}\n\n## Versión 2 de 3\n${directivaDeVersion(2)}` },
+      ...historialYUsuario,
+    ];
+    messagesV3 = [
+      { role: 'system', content: `${systemPrompt}\n\n## Versión 3 de 3\n${directivaDeVersion(3)}` },
+      ...historialYUsuario,
+    ];
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -712,6 +938,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
       let upstream: Response | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;
+      // T9: promesas de las versiones 2 y 3 — `Promise.resolve(null)` por
+      // default (turno sin versiones, o cadena de respaldo que nunca llegó
+      // a conectar), reasignadas más abajo apenas la 1 tiene `upstream`.
+      let promesaV2: Promise<string | null> = Promise.resolve(null);
+      let promesaV3: Promise<string | null> = Promise.resolve(null);
 
       try {
         for (const [indice, motor] of motores.entries()) {
@@ -743,6 +974,63 @@ export const POST: APIRoute = async ({ request, locals }) => {
         console.log(
           `[chat/stream] ${proveedorUsado.label} respondió cabeceras en ${transcurrido()}`,
         );
+
+        /**
+         * T9: acá arrancan (si corresponde) las versiones 2 y 3 — recién
+         * ahora, con la 1 ya conectada (headers recibidos). Si la cadena de
+         * respaldo entera hubiera fallado, el `catch` de abajo corta el
+         * turno antes de llegar hasta acá, así que no se gasta en dos
+         * llamadas más para un turno que ya se sabe que no va a andar. De
+         * acá en más SÍ corren en paralelo con el cuerpo de la 1
+         * (`consumir(upstream)`, más abajo): son pedidos HTTP aparte, que no
+         * esperan a que la 1 termine de escribir.
+         */
+        if (solicitaVersiones && messagesV2 && messagesV3) {
+          // Anuncio: las tres van a existir (T9, "Progresivo") — el cliente
+          // arma la fila de chips con las tres en estado pendiente, antes de
+          // que ninguna termine.
+          send({ type: 'variant', index: 1, ready: false });
+          send({ type: 'variant', index: 2, ready: false });
+          send({ type: 'variant', index: 3, ready: false });
+
+          const promptBaseVersiones = {
+            globalRules,
+            userRules,
+            assets: assetContexts,
+            projectTitle: project.title,
+            turnosPrevios: history.filter((entry) => entry.role === 'user').length,
+          };
+
+          const generar = (indice: 2 | 3, mensajesDeEsaVersion: ChatMessage[]) =>
+            generarVersionSecundaria({
+              indice,
+              mensajes: mensajesDeEsaVersion,
+              provider,
+              temaProyecto,
+              velocidadEfectiva,
+              autoReviewForAll: capacidades.autoReviewForAll,
+              promptBase: promptBaseVersiones,
+              userId: user.id,
+              projectId: project.id,
+              signal: request.signal,
+            })
+              .then((html) => {
+                // `ready: true` SÓLO si de verdad generó algo: una que
+                // falla se queda pendiente para siempre desde el punto de
+                // vista del cliente, y el "done" (más abajo) es quien la da
+                // por descartada — nunca se anuncia lista una versión que
+                // no existe.
+                if (html) send({ type: 'variant', index: indice, ready: true });
+                return html;
+              })
+              .catch((error) => {
+                console.error(`[chat/stream] versión ${indice}: falla inesperada, se descarta:`, error);
+                return null;
+              });
+
+          promesaV2 = generar(2, messagesV2);
+          promesaV3 = generar(3, messagesV3);
+        }
       } catch (error) {
         console.error(`[chat/stream] fallaron todos los motores a los ${transcurrido()}:`, (error as Error).message);
         const detalle = (error as Error).message;
@@ -1101,6 +1389,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }
         }
 
+        /**
+         * T9: la versión 1 ya tiene lo que va a tener en el caso normal
+         * (tool call directo, rescate del texto, o el re-pedido forzado —
+         * las tres rutas de arriba ya corrieron) — se anuncia ACÁ, antes de
+         * la corrección de T7 de abajo, para que su chip pase a "lista" tan
+         * pronto como exista, sin esperar a que la 2 y la 3 (que corren en
+         * paralelo desde mucho antes) también terminen. Si A fondo o
+         * `autoReviewForAll` todavía la mejoran, no hace falta un segundo
+         * aviso: el chip ya está listo, y elegirla siempre relee el HTML
+         * vigente del servidor recién en ese momento (ver
+         * `POST /api/projects/[id]/variant`), nunca el de este evento.
+         */
+        if (solicitaVersiones && generatedHtml) {
+          send({ type: 'variant', index: 1, ready: true });
+        }
+
         // T7: A fondo suma revisión automática, y lo mismo vale para
         // cualquiera a quien el admin se la prendió "para todos" — misma
         // combinación que ya anticipaba el comentario de `autoReviewForAll`
@@ -1137,6 +1441,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 
+        /**
+         * T9: se espera a que la 2 y la 3 terminen (o se descarten solas)
+         * ANTES de cerrar el turno — el "done" tiene que llegar recién
+         * cuando las tres cosas ya se sabe qué pasó, así el cliente arma la
+         * fila de chips completa de una, sin un aviso más después del
+         * "done". Con `solicitaVersiones` en `false` las dos promesas ya
+         * son `Promise.resolve(null)` (ver su declaración más arriba), así
+         * que este `await` es inmediato y no cambia en nada el turno de
+         * siempre.
+         */
+        const [resultadoV2, resultadoV3] = solicitaVersiones
+          ? await Promise.all([promesaV2, promesaV3])
+          : [null, null];
+
         // Persistir pase lo que pase: si el docente cierra la pestaña a mitad de
         // camino, lo generado hasta ahí queda guardado.
         try {
@@ -1158,15 +1476,42 @@ export const POST: APIRoute = async ({ request, locals }) => {
             (part): part is string => Boolean(part),
           );
 
+          // T9: el texto fijo manda por encima de lo que haya escrito la
+          // versión 1 en el chat — pero sólo si de verdad hubo versión 1
+          // (`contenidoMensajeDeVersiones` da `null` si `generatedHtml`
+          // quedó vacío): sin ella, este turno de versiones falló como
+          // cualquier otro y cae al texto de siempre, sin mencionar
+          // versiones que no llegaron a existir.
           const finalText =
-            notes.length > 0
+            contenidoMensajeDeVersiones(solicitaVersiones && Boolean(generatedHtml)) ??
+            (notes.length > 0
               ? notes.join('\n\n')
               : generatedHtml
                 ? 'Actualicé el recurso.'
-                : SILENT_TURN;
+                : SILENT_TURN);
+
+          // T9: si esto era un turno de versiones Y la 1 generó algo, se
+          // guardan las que hayan salido bien (siempre al menos la 1; la 2
+          // y/o la 3 sólo si `generarVersionSecundaria` no las descartó) —
+          // mismo `create` anidado de Prisma, misma escritura.
+          const versionesParaGuardar =
+            solicitaVersiones && generatedHtml
+              ? [
+                  { index: 1, html: generatedHtml },
+                  ...(resultadoV2 ? [{ index: 2, html: resultadoV2 }] : []),
+                  ...(resultadoV3 ? [{ index: 3, html: resultadoV3 }] : []),
+                ]
+              : [];
 
           const saved = await prisma.chatMessage.create({
-            data: { threadId: thread.id, role: 'assistant', content: finalText },
+            data: {
+              threadId: thread.id,
+              role: 'assistant',
+              content: finalText,
+              ...(versionesParaGuardar.length > 0
+                ? { chosenVariantIndex: 1, variants: { create: versionesParaGuardar } }
+                : {}),
+            },
             select: { id: true },
           });
 
@@ -1222,10 +1567,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
             velocidadEfectiva,
             motorVeImagenes: supportsVision(proveedorUsado),
             cambioElRecurso: cambioElHtml,
-            // Hook para T9 ("Varias versiones"): este turno siempre genera
-            // una sola versión, así que nunca es el motivo de que no se
-            // ofrezca.
-            huboVariasVersiones: false,
+            // T9 ("Varias versiones"): decisión de diseño "Revisión visual y
+            // versiones son excluyentes" — con varias versiones no corre la
+            // revisión visual (triplicaría costo y tiempo). Se usa
+            // `solicitaVersiones` (lo que este turno PIDIÓ), no cuántas
+            // salieron bien: un turno de versiones sigue siendo eso aunque
+            // la 2 y la 3 hayan fallado las dos.
+            huboVariasVersiones: solicitaVersiones,
           });
 
           send({

@@ -51,6 +51,10 @@ const messages = await prisma.chatMessage.findMany({
     // que el `id` de la instantánea — nunca su `html`.
     undoneAt: true,
     snapshot: { select: { id: true } },
+    // T9 (odd/tasks/modo-prime.md): igual que threads.ts — nunca el `html`
+    // de cada versión acá, sólo al elegir.
+    chosenVariantIndex: true,
+    variants: { select: { index: true }, orderBy: { index: 'asc' } },
   },
 });
 
@@ -211,6 +215,12 @@ const capacidadesEditor: CapacidadesEditor = {
       authorName: message.authorUser?.name ?? null,
       undoneAt: message.undoneAt ? message.undoneAt.getTime() : null,
       canUndo: message.snapshot !== null && message.undoneAt === null,
+      ...(message.variants.length > 0
+        ? {
+            variants: message.variants.map((variant) => ({ index: variant.index })),
+            chosenVariant: message.chosenVariantIndex ?? 1,
+          }
+        : {}),
     }))}
     assets={project.assets}
     siteUrl={siteUrl}

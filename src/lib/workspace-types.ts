@@ -83,6 +83,32 @@ export interface WorkspaceMessage {
    * quien decide, con esto, cuál es "el más nuevo deshacible".
    */
   canUndo?: boolean;
+  /**
+   * T9 ("Varias versiones al crear un recurso"): presente sólo en el
+   * mensaje "assistant" de un turno de versiones — nunca vacío cuando está
+   * (al menos la versión 1). El HTML de cada una no viaja acá: sólo se pide
+   * al elegir, con `POST /api/projects/[id]/variant`.
+   */
+  variants?: WorkspaceMessageVariant[];
+  /** T9: cuál de `variants` está elegida ahora mismo (1, 2 o 3). */
+  chosenVariant?: number | null;
+}
+
+/** T9: una de las versiones que expone el servidor para un mensaje ya
+ *  guardado (post-turno) — ver `WorkspaceMessage.variants`. */
+export interface WorkspaceMessageVariant {
+  index: 1 | 2 | 3;
+}
+
+/**
+ * T9: estado progresivo de las versiones de un turno EN CURSO, antes de que
+ * exista el mensaje "assistant" final. `ready` distingue "todavía
+ * generando" (chip apagado) de "ya se puede ofrecer" (chip visualmente
+ * listo) — ver Workspace.tsx (`versionesEnCurso`) y ChatPanel.tsx.
+ */
+export interface VersionEnCurso {
+  index: 1 | 2 | 3;
+  ready: boolean;
 }
 
 export interface WorkspaceAsset {

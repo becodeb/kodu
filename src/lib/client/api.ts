@@ -74,6 +74,17 @@ export type StreamEvent =
    * dura, nunca se manda un `code_delta` de esta pasada.
    */
   | { type: 'phase'; phase: 'revisando' }
+  /**
+   * T9 ("Varias versiones al crear un recurso"): sólo en un turno de
+   * versiones. `ready: false` es el anuncio de que ESTE índice va a existir
+   * (las tres llegan juntas, apenas arranca el turno); `ready: true` es que
+   * ya terminó (o se descartó si nunca llega). Nunca trae el HTML —eso sólo
+   * se pide al elegir, `POST /api/projects/[id]/variant` (ver el reporte de
+   * la tarea para la justificación de no mandarlo acá)—, así que elegir
+   * siempre confirma contra el servidor, incluida la versión 1 que ya se
+   * vio completa por `code`.
+   */
+  | { type: 'variant'; index: 1 | 2 | 3; ready: boolean }
   /** Algo que el docente tiene que saber pero que no cortó el turno. */
   | { type: 'notice'; message: string }
   /** `userMessageId` (T4) es el id REAL del mensaje "user" que este turno
@@ -157,6 +168,10 @@ export async function* streamChat(payload: {
   /** T6 ("Velocidad Rápido / A fondo"). El servidor la ignora sin el permiso
    *  (`puedeElegirVelocidad`), así que siempre es seguro mandarla. */
   speed?: Speed;
+  /** T9 ("Varias versiones al crear un recurso"). El servidor la ignora sin
+   *  `puedePedirVersiones` O si el recurso ya no es el de arranque, así que
+   *  también es siempre seguro mandarla. */
+  variants?: 3;
 }, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   const response = await fetch('/api/chat/stream', {
     method: 'POST',
