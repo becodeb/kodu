@@ -60,7 +60,7 @@ Ruta por tarea: todas **delegadas** a un escritor (disparador: tocan 2+ archivos
 - [x] **T8 — Revisión visual con captura (A fondo + modelo con visión).** Captura con el puente existente de `src/lib/preview.ts`, `POST /api/chat/visual-review` (SSE), llamada con la imagen, el resultado reemplaza la vista previa al llegar.
 - [x] **T9 — Varias versiones al crear (prime o `versionsForAll`).** Hasta 3 generaciones en paralelo con enfoques distintos, la 1 se transmite en vivo, las demás aparecen al terminar, selector de versión en el mensaje, `POST /api/projects/[id]/variant`.
 - [x] **T10 — Verificación de punta a punta y documentación.** Recorrido en navegador del flujo completo en desarrollo, README actualizado, reporte final.
-- [ ] **T11 — Red de seguridad: tema por defecto.** Agregada al revisar el riesgo del deploy: el prompt le pide al modelo que NO cargue Tailwind porque lo trae el kit, así que si un modelo se olvida del `<meta name="kodu-tema">` y usa clases de Tailwind, el recurso sale sin estilos para cualquier docente. Si el HTML nuevo no declara tema, no hay tema previo, no carga Tailwind por su cuenta y usa clases de Tailwind, el servidor aplica `cuaderno` (el tema más neutro) de forma determinística.
+- [x] **T11 — Red de seguridad: tema por defecto.** Agregada al revisar el riesgo del deploy: el prompt le pide al modelo que NO cargue Tailwind porque lo trae el kit, así que si un modelo se olvida del `<meta name="kodu-tema">` y usa clases de Tailwind, el recurso sale sin estilos para cualquier docente. Si el HTML nuevo no declara tema, no hay tema previo, no carga Tailwind por su cuenta y usa clases de Tailwind, el servidor aplica `cuaderno` (el tema más neutro) de forma determinística.
 
 ## Criterios de aceptación
 
@@ -106,6 +106,10 @@ Motor mock para T4+: queda un `AiProvider` (`kind: "kodu-mock-t3"`) y un `AiMode
 
 | T10 | `9caf1e3`, `75ac93f` | 24/24 suites en verde sin reintentos: `npm run check`, las 6 `unidad*`, `m1`–`m9`, `t3`–`t10`. Nuevo `e2e/t10-docente-comun.ts`: con prime apagado y prendido (docente sin marcar) hay una sola llamada, vista previa en vivo, kit aplicado, sin eventos `phase`/`variant`, sin controles de velocidad ni versiones, sin "prime" en la página y deshacer vuelve al arranque. `npm run build` OK: "prime" sólo aparece en 4 chunks del panel admin, nunca en los del editor del docente; el mock no llega al build | Tareas de verificación y docs; sin assess propio. Corrección del orquestador: el escritor afirmó que `m8`/`m9` generaron contenido real con "Alpha", pero ese motor está deshabilitado y sin key en dev — no hubo ninguna llamada a un modelo real en toda la feature |
 
+| T11 | `ea5fa6a` | `npm run check` OK; `npx tsx e2e/unidad-kit.ts` 36/36 (+12 pruebas; re-corrido por el orquestador: OK); resto de las `unidad*` OK; `t3`, `t7` y `t10` OK | assess (desde `6764ded`): **medium**, `under_budget` (sin revisión debida) |
+
+Notas T11: `usaClasesDeTailwind()` exige al menos 4 utilidades distintas (en `class`, `className`, `setAttribute` o `classList.add`) para no dispararse por palabras sueltas. `aplicarKitConRedDeSeguridad()` sólo fuerza `cuaderno` si no hay meta, ni tema previo, ni Tailwind propio. La usan el servidor (`aplicarKitAlTurno`) y la vista previa en vivo, así que no hay salto visual entre el parcial y el resultado guardado.
+
 Notas T9: las versiones se guardan en la tabla `ResourceVariant` (no en `ChatMessage`) y el HTML no viaja por SSE: elegir llama a `POST /api/projects/[id]/variant`, como deshacer. Los chips muestran el estado "lista" apenas cada versión termina, pero se pueden tocar recién cuando cierra el turno (antes no existe el mensaje en la base). El mensaje del chat de un turno con versiones es fijo. No se probó elegir versión como admin sobre un recurso ajeno ni la interacción con los topes de tokens.
 
 Notas T8: el servidor decide si corresponde (`revisionVisualDisponible` en el `done`) y el cliente sólo ejecuta: captura con el puente de `src/lib/preview.ts` (JPEG, alto acotado), `POST /api/chat/visual-review` `{ projectId, dataUrl, fingerprint }` con respuesta SSE `code?` + `done`. La imagen no se guarda. No crea mensajes de chat. La máquina de desarrollo estaba muy cargada (varias sesiones en paralelo): algunas escenas tardías de `m9` se colgaron por memoria, no por código.
@@ -124,7 +128,13 @@ Notas T1: `e2e/unidad-kit.ts` es una suite aparte porque `e2e/unidad.ts` necesit
 
 ## Próximo paso
 
-T10. Para validar el prompt con modelos reales hace falta que el dueño cargue una key de DeepSeek en el `.env` de desarrollo (queda para T10 si no llega antes).
+Las 11 tareas están hechas en `feat/modo-prime` (24 commits sobre `main`, sin pushear). Queda en manos del dueño:
+
+1. **Validar con un modelo real.** No hubo ninguna llamada a un modelo real en toda la feature: las keys de `.env` en desarrollo están vacías. La capa 1 (prompt y kit) cambia la generación de TODOS los docentes apenas se despliega, así que conviene correr unas generaciones reales antes (DeepSeek V4.1 Flash y MiniMax M3, que es el motor por defecto) y mirar las capturas.
+2. **Aprobar el merge a `main`**, que dispara el deploy de Coolify.
+3. Después del deploy, en producción: prender prime en `/admin/generacion`; marcar "ve imágenes" en el motor que se use para demos (la revisión visual lo necesita, además de `AI_VISION=true` en el entorno); cargar un modelo premium con "Solo modo prime" si se quiere; subir el tope de la demo en `/admin/demo` antes de una reunión (A fondo y las versiones lo gastan varias veces más rápido).
+
+RDD: en todos los commits `review assess` dio medium o high, pero el preflight de `review status` siempre devolvió `stop rdd_disabled`, aunque `review mode status` dice "on (decided by default)". No se habilitó en nombre del dueño; se usó la verificación del modo sin RDD (escritor, control del orquestador y un verificador independiente en la tarea de riesgo alto, T5).
 
 ---
 
