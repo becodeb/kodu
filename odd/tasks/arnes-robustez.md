@@ -569,7 +569,7 @@ caught by an automatic test, so round 3 adds one that runs inside the sandboxed 
 Constraints: no paid calls (mock provider only), `npm run check` clean, work-unit commits, no
 merge, no push. Prompt growth for Part A ≤ ~150 tokens.
 
-- [ ] T9 — Kit: unit-mode `kodu.arrastrar` positions the element along `eje` inside `area`
+- [x] T9 — Kit: unit-mode `kodu.arrastrar` positions the element along `eje` inside `area`
   from `min`/`max` (opt-out option for resources that draw themselves); 44 px minimum
   invisible hit area on draggables, keeping "nearest wins". Browser tests in
   `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + prompt + tests).
@@ -587,6 +587,64 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
   Route: delegated (writer trigger: stream API + workspace UI + history).
 - [ ] T13 — Mock provider that returns broken HTML first and a healthy one on correction; e2e of
   the full cycle in real Chromium. Route: delegated (same writer as T12).
+
+### Round 3 Progress
+
+- T9 done. `src/lib/ai/kit.ts`, `arrastrar()`'s modo unidad:
+  - **Posiciona el propio elemento.** El blind test de ronda 3 encontró recursos que
+    actualizaban el valor en `alCambiar` pero se olvidaban de mover el punto. Nueva
+    `posicionarElemento(v)`, llamada en cada emisión (agarrar, mover, soltar, tecla,
+    y al inicializar) DESPUÉS de `alCambiar`/`alSoltar` — decisión de diseño explícita:
+    si el recurso TAMBIÉN reposiciona `el` a mano en su propio callback (patrón de
+    antes de T9), el helper corre último y su posición manda siempre, nunca al revés,
+    así la compatibilidad hacia atrás no depende de que el recurso deje de tocar la
+    posición.
+    - SVG `<circle>`/`<ellipse>`: `cx`/`cy` directo, en unidades del `viewBox` de
+      `area` (mismo sistema que ya usaba el modo bajo nivel).
+    - SVG genérico (`rect`, `g`, `path`…, sin `cx`/`cy` propio): `transform:
+      translate(...)` relativo al centro ORIGINAL del elemento (capturado una sola
+      vez, vía la misma `coords()`/CTM que el modo bajo nivel). Pisa cualquier
+      `transform` propio existente — si el recurso necesita otro transform en el
+      mismo nodo (p. ej. `rotate`), tiene que envolver el punto en un `<g>` aparte.
+    - HTML: `left`/`top` en % de `area` (robusto a que `area` cambie de tamaño) +
+      `transform: translateX/Y(-50%)` SÓLO en el eje que se mueve, así el CENTRO del
+      elemento queda sobre el valor sin necesitar conocer su ancho/alto. Fuerza
+      `position:absolute` sólo si el autor no puso ya una posición (`static` es el
+      default de `getComputedStyle`).
+    - Opt-out: `opciones.mover === false` para un recurso que dibuja el punto con su
+      propio motor (canvas, D3) — el helper no toca la posición en absoluto.
+  - **Zona mínima de 44px (WCAG 2.5.5).** `elegirArrastrable` gana `golpeaZonaMinima`:
+    un candidato golpeado por el hit-test real (T6 post-review) O DENTRO de un
+    rectángulo mínimo de 44px por eje centrado en su centro real (sólo agranda el eje
+    donde el elemento renderizado es más chico que 44px — una barra ancha no gana halo
+    extra en su eje largo) es candidato válido; "gana el más cercano" sigue igual entre
+    TODOS los candidatos encontrados por cualquiera de los dos caminos. Ningún nodo
+    nuevo en el DOM (se prefirió extender el hit-test, como pedía la consigna). La
+    prioridad de un control interactivo real (botón, link…) sobre `evento.target` no
+    cambia: un botón cercano a un arrastrable chico sigue recibiendo su click aunque su
+    centro caiga geométricamente en la zona mínima de ese arrastrable — se decide por
+    el target real del evento, no por esta selección.
+  - Nuevos tests unitarios en `e2e/unidad-kit.ts` (3): presencia de
+    `posicionarElemento`/`moverActivo`/`medidasAreaLocal`/`fraccionPosicion` y de las
+    tres ramas de escritura (`cx`/`cy`, `left`, `top`); el opt-out
+    `opciones.mover !== false`; `TAMANO_MINIMO_TOQUE = 44` + `golpeaZonaMinima` como OR
+    del hit-test real, nunca reemplazándolo.
+  - Nuevos tests de navegador en `e2e/navegador-kit.ts` (11): posición inicial HTML
+    (valor 4 de 0..10 → `left:40%`) y SVG circle (valor 7 → `cx=70`); mouse y teclado
+    reposicionan de verdad (no sólo el valor) en HTML y SVG circle; forma SVG genérica
+    (`<rect>`) se mueve con `transform` (corrimiento de pantalla ~20px, escala 2x,
+    signo verificado); `mover:false` no toca la posición ni al inicializar ni tras
+    varios `alCambiar`; zona mínima de 44px agarrable 18px afuera de un punto de 8px
+    con mouse Y con touch real (CDP); dos zonas mínimas superpuestas sin golpear
+    ninguna forma real → gana la más cercana; un botón cuyo centro cae en la zona
+    mínima de un punto cercano conserva su click.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 58/58 pass (pinned
+    legacy hash unaffected — T9 only touches `SCRIPT_KODU`, never `legado`).
+    `npx tsx e2e/navegador-kit.ts` → 43/43 pass, run twice, no flakiness, no leftover
+    Chromium process from these runs (the one found on the machine was ~2h old,
+    unrelated, not started by this task — left alone per the standing rule to only
+    stop processes started in this task).
+  - Commit: `16773c9`.
 
 ## Next step
 
