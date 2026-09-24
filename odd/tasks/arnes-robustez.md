@@ -62,7 +62,7 @@ covers what the kit cannot.
     assertions in `e2e/navegador-kit.ts`.
   - [x] T4.2 — Trim `## Que funcione de verdad` in BASE_PROMPT (drop intro paragraph,
     mention area coordinates in the `kodu.arrastrar` line); keep `e2e/unidad.ts` green.
-  - [ ] T4.3 — Mock-provider flow check (`e2e/mock-proveedor.ts` pattern): system prompt
+  - [x] T4.3 — Mock-provider flow check (`e2e/mock-proveedor.ts` pattern): system prompt
     contains the new section/helper, saved HTML carries the new kit block, legacy block
     gets folded.
 
@@ -209,8 +209,57 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
   - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 52/52 pass
     (both T3 prompt tests still pass unmodified). `npx tsx
     e2e/unidad-kit.ts` → 41/41 pass.
+  - Commit: `920201f`.
+
+- T4.3 done. New `e2e/arnes-robustez.ts`, same pattern as
+  `e2e/html-fuera-del-system.ts` (dev server on :3000, `kodu_db_dev`,
+  seeded admin, shared `kodu-mock-t3` mock provider/model). Sends real
+  turns through `/api/chat/stream` against the mock and inspects what the
+  mock actually received:
+  - **(A)** the system prompt the mock got contains `"## Que funcione de
+    verdad"` and `"kodu.arrastrar"`.
+  - **(B)** after the turn, `Project.currentHtml` (read via Prisma) contains
+    `window.kodu` and `[hidden]{display:none!important}` — the server-side
+    `aplicarKitAlTurno` path, not just `aplicarKit` called directly in a
+    unit test.
+  - **(C)** a second project whose `currentHtml` is seeded (via Prisma)
+    with the LEGACY kit block (`bloqueKitLegado('pizarron')`) — a turn sent
+    on it makes the mock receive the block PLEGADO (the short placeholder
+    comment), not the full block with `tailwind.config` inside, proving
+    `bloqueEsCanonico`'s legacy recognition works through
+    `buildCurrentResourceBlock` in a real request, not only in
+    `unidad-kit.ts`.
+  - The dev server on :3000 was **already running** when T4 started
+    (PID 3285777, `astro dev --json`, parent PID 1 — left over from a prior
+    session, not started by me this task). I reused it after confirming it
+    answers `200` on `/` and that it picked up all of T1–T4's source
+    changes (proven by the flow check itself passing, since it depends on
+    the current `BASE_PROMPT` and kit code). Per the instruction to only
+    stop by PID a server I start myself, I did **not** stop it — it wasn't
+    mine to stop, and killing another session's server would be presumptuous.
+  - Found and fixed one test-harness issue while writing this: the shared
+    `kodu-mock-t3` `AiProvider`/`AiModel` lookup (same pattern as
+    `html-fuera-del-system.ts`'s `asegurarMotorMock`, a bare `findFirst`)
+    picked up a stale row from unrelated past e2e runs in the shared dev DB
+    — a provider with `enabled:false` and no API key (`apiKeyCipher: null`)
+    under the same `kind`. The turn silently fell back to the platform's
+    real default model (MiniMax M3, no key configured in this
+    environment) instead of reaching the mock, so `mock.llamadas.length`
+    stayed `0`. Not a defect in `arnes-robustez` code — confirmed by
+    querying all `AiModel`/`AiProvider` rows directly: multiple leftover
+    `kodu-mock-t3` rows exist from other sessions/tasks, several disabled
+    or keyless. Fixed by filtering the lookup on
+    `enabled: true, apiKeyCipher: { not: null }` (provider) and
+    `enabled: true` (model), so it prefers a known-good existing row and
+    only creates a fresh one when none qualifies.
+  - Checks: `npm run check` → clean. `npx tsx e2e/arnes-robustez.ts` → all
+    3 checks (A/B/C) pass, run twice, no flakiness. Mock port 4790 released
+    after each run (`mock.detener()` in `finally`); dev server on :3000 left
+    running (not mine to stop).
   - Commit: (recorded after commit below).
 
 ## Next step
 
-T4.3.
+None — T1/T2/T3/T4 all done. Branch `feat/arnes-robustez` has 8 commits,
+not pushed, not merged (per constraints). Next human step: review the diff
+and decide push/PR/merge.
