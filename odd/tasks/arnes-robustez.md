@@ -147,7 +147,7 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     `npx tsx e2e/unidad-kit.ts` → 41/41 pass. `npx tsx e2e/navegador-kit.ts`
     → 11/11 pass (re-run after the prompt change to confirm the kit itself
     didn't regress).
-  - Commit: (recorded after commit below).
+  - Commit: `73fe193`.
 
 ## Next step
 
