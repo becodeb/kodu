@@ -608,7 +608,13 @@ const SCRIPT_ICONOS = `(function () {
  *    (flechas), con `soltar` disparando UNA sola vez al terminar la acción
  *    — ahí, y no a mitad de camino, es donde el modelo tiene que evaluar la
  *    consigna (defecto 3: quedaba marcada como resuelta en un estado
- *    intermedio del arrastre y nunca se desmarcaba).
+ *    intermedio del arrastre y nunca se desmarcaba). `p.x`/`p.y` del
+ *    teclado están en las MISMAS unidades de `area` que las del puntero
+ *    (T4, `arnes-robustez`): se calculan desde el centro ACTUAL de `el`
+ *    (`getBoundingClientRect` pasado por `coords`), no desde un acumulador
+ *    propio — si no, un `mover` que hace `setAttribute('cx', p.x)` hacía
+ *    saltar el punto a `(paso, 0)` en la primera flecha en vez de moverlo
+ *    `paso` unidades desde donde estaba.
  *  - `despues`/`cancelarTemporizadores` (y `cada`, de yapa) — defecto 4: un
  *    `setTimeout` para "la próxima ronda" que ya estaba pedido cuando el
  *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
@@ -692,12 +698,12 @@ const SCRIPT_KODU = `(function () {
 
     el.style.touchAction = 'none';
     el.style.cursor = 'grab';
+    el.style.userSelect = 'none';
     if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
 
     var activo = false;
     var idPuntero = null;
     var anterior = null;
-    var posTeclado = { x: 0, y: 0 };
 
     function area() {
       if (areaFija) return areaFija;
@@ -746,6 +752,11 @@ const SCRIPT_KODU = `(function () {
       soltar({ x: anterior.x, y: anterior.y, dx: 0, dy: 0, teclado: false });
     }
 
+    function centroDeEl() {
+      var caja = el.getBoundingClientRect();
+      return coords({ clientX: caja.left + caja.width / 2, clientY: caja.top + caja.height / 2 });
+    }
+
     function alTecla(evento) {
       var dx = 0, dy = 0;
       if (evento.key === 'ArrowLeft') dx = -paso;
@@ -755,8 +766,12 @@ const SCRIPT_KODU = `(function () {
       else return;
       if (evento.shiftKey) { dx = dx * 5; dy = dy * 5; }
       evento.preventDefault();
-      posTeclado = { x: posTeclado.x + dx, y: posTeclado.y + dy };
-      var p = { x: posTeclado.x, y: posTeclado.y, dx: dx, dy: dy, teclado: true };
+      // El centro ACTUAL del elemento, no un acumulador propio: así p.x/p.y
+      // quedan en las mismas unidades de area que en el camino de puntero
+      // (defecto de T4) y un mover() que hace setAttribute('cx', p.x) no
+      // hace saltar el punto a (paso,0) en la primera flecha.
+      var centro = centroDeEl();
+      var p = { x: centro.x + dx, y: centro.y + dy, dx: dx, dy: dy, teclado: true };
       mover(p);
       soltar(p);
     }

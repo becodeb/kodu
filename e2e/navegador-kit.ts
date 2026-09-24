@@ -58,6 +58,10 @@ declare global {
       soltarTouch: PuntoDrag[];
       moverOverlay: PuntoDrag[];
       soltarOverlay: PuntoDrag[];
+      moverTecladoSvg: PuntoDrag[];
+      soltarTecladoSvg: PuntoDrag[];
+      moverTecladoHtml: PuntoDrag[];
+      soltarTecladoHtml: PuntoDrag[];
       timerDisparado: boolean;
     };
   }
@@ -90,7 +94,7 @@ function construirPagina(): string {
 <meta name="kodu-tema" content="pizarron">
 <style>
   body{margin:0;padding:0}
-  #area-html,#area-teclado,#area-touch,#area-overlay{position:relative;background:#eee}
+  #area-html,#area-teclado,#area-touch,#area-overlay,#area-teclado-html{position:relative;background:#eee}
   .caja{position:absolute;width:24px;height:24px;background:#333}
 </style>
 </head>
@@ -120,6 +124,16 @@ function construirPagina(): string {
     <div id="capa-decorativa" style="position:absolute;inset:0;pointer-events:none;background:rgba(0,0,0,.15);z-index:2;"></div>
   </div>
 
+  <!-- T4 (arnes-robustez): p.x/p.y del teclado tienen que quedar en las
+       MISMAS unidades que area, no un acumulador propio arrancando en 0. -->
+  <svg id="area-svg-teclado" viewBox="0 0 100 100" width="300" height="300" style="display:block;background:#ddd;">
+    <circle id="drag-svg-teclado" cx="30" cy="50" r="6"></circle>
+  </svg>
+
+  <div id="area-teclado-html" style="width:300px;height:300px;">
+    <div id="drag-teclado-html" class="caja" style="left:40px;top:60px;"></div>
+  </div>
+
   <!-- fuerza scroll disponible: si ArrowUp/ArrowDown NO se previenen, esto se mueve -->
   <div id="relleno" style="height:3000px;"></div>
 
@@ -130,6 +144,8 @@ function construirPagina(): string {
       moverTeclado: [], soltarTeclado: [],
       moverTouch: [], soltarTouch: [],
       moverOverlay: [], soltarOverlay: [],
+      moverTecladoSvg: [], soltarTecladoSvg: [],
+      moverTecladoHtml: [], soltarTecladoHtml: [],
       timerDisparado: false
     };
 
@@ -152,6 +168,31 @@ function construirPagina(): string {
     kodu.arrastrar(document.getElementById('drag-overlay'), {
       mover: function (p) { window.__test.moverOverlay.push(p); },
       soltar: function (p) { window.__test.soltarOverlay.push(p); }
+    });
+
+    // El mover() aplica p.x/p.y de vuelta al elemento, tal como haría un
+    // recurso real (setAttribute('cx', p.x)): así una segunda flecha
+    // demuestra que la posición se acumula desde donde quedó el elemento,
+    // no desde un contador interno que reiniciaba en 0.
+    kodu.arrastrar(document.getElementById('drag-svg-teclado'), {
+      paso: 5,
+      mover: function (p) {
+        window.__test.moverTecladoSvg.push(p);
+        var circulo = document.getElementById('drag-svg-teclado');
+        circulo.setAttribute('cx', p.x);
+        circulo.setAttribute('cy', p.y);
+      },
+      soltar: function (p) { window.__test.soltarTecladoSvg.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('drag-teclado-html'), {
+      paso: 5,
+      mover: function (p) {
+        window.__test.moverTecladoHtml.push(p);
+        var elemento = document.getElementById('drag-teclado-html');
+        elemento.style.left = (p.x - 12) + 'px';
+        elemento.style.top = (p.y - 12) + 'px';
+      },
+      soltar: function (p) { window.__test.soltarTecladoHtml.push(p); }
     });
 
     // Se agenda Y se cancela en el mismo tick: si cancelarTemporizadores()
@@ -318,6 +359,8 @@ async function main(): Promise<void> {
     await prueba('kodu.arrastrar: touch real (CDP dispatchTouchEvent) — mismo camino de Pointer Events', async () => {
       const touchAction = await page.locator('#drag-touch').evaluate((el) => getComputedStyle(el).touchAction);
       assert.equal(touchAction, 'none', 'arrastrar() tiene que poner touch-action:none');
+      const userSelect = await page.locator('#drag-touch').evaluate((el) => getComputedStyle(el).userSelect);
+      assert.equal(userSelect, 'none', 'arrastrar() tiene que poner user-select:none (T4, no seleccionar texto al arrastrar)');
 
       await arrastrarConTouch(page, '#drag-touch', 35, 20);
       const estado = await page.evaluate(() => ({
@@ -349,6 +392,35 @@ async function main(): Promise<void> {
       assert.equal(estado.movidas[0].dx, 10, 'ArrowRight: paso por defecto 10 en dx');
       assert.equal(estado.movidas[1].dy, -10, 'ArrowUp: paso por defecto 10 en dy, negativo');
       assert.equal(estado.scrollDespues, scrollAntes, 'las flechas no pueden scrollear la página (preventDefault)');
+    });
+
+    // ── T4: p.x/p.y del teclado en las mismas unidades que el puntero ──
+    await prueba('kodu.arrastrar: teclado sobre SVG — p.x/p.y en unidades del viewBox, no un acumulador desde 0', async () => {
+      await page.locator('#drag-svg-teclado').focus();
+      await page.keyboard.press('ArrowRight'); // paso 5: cx 30 -> ~35
+      await page.keyboard.press('ArrowRight'); // el mover() anterior ya aplicó cx=35: próximo debería ser ~40, no 10
+
+      const movidas = await page.evaluate(() => window.__test.moverTecladoSvg as PuntoDrag[]);
+      assert.equal(movidas.length, 2);
+      assert.ok(Math.abs(movidas[0].x - 35) <= 0.5, `primera flecha: x=${movidas[0].x}, esperaba ≈35`);
+      assert.ok(Math.abs(movidas[0].y - 50) <= 0.5, `primera flecha: y=${movidas[0].y}, esperaba ≈50 (ArrowRight no mueve y)`);
+      assert.ok(
+        Math.abs(movidas[1].x - 40) <= 0.5,
+        `segunda flecha: x=${movidas[1].x}, esperaba ≈40 (si acumulara desde 0 dando ~10, el fix no está funcionando)`,
+      );
+    });
+
+    await prueba('kodu.arrastrar: teclado sobre HTML — p.x/p.y relativos a la caja del padre, mismo criterio', async () => {
+      await page.locator('#drag-teclado-html').focus();
+      // caja inicial left:40,top:60,24x24 -> centro (52,72); paso 5.
+      await page.keyboard.press('ArrowRight'); // centro -> ~(57,72)
+      await page.keyboard.press('ArrowRight'); // desde la posición YA actualizada -> ~(62,72)
+
+      const movidas = await page.evaluate(() => window.__test.moverTecladoHtml as PuntoDrag[]);
+      assert.equal(movidas.length, 2);
+      assert.ok(Math.abs(movidas[0].x - 57) <= 0.5, `primera flecha: x=${movidas[0].x}, esperaba ≈57`);
+      assert.ok(Math.abs(movidas[0].y - 72) <= 0.5, `primera flecha: y=${movidas[0].y}, esperaba ≈72`);
+      assert.ok(Math.abs(movidas[1].x - 62) <= 0.5, `segunda flecha: x=${movidas[1].x}, esperaba ≈62 (no un salto a ~10)`);
     });
 
     // ── overlay decorativo con pointer-events:none (defecto 5, documenta la regla) ──

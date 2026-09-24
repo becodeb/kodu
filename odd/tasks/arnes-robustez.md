@@ -55,6 +55,16 @@ covers what the kit cannot.
   (same writer).
 - [x] T3 — BASE_PROMPT functional rules + helper docs; tests in `e2e/unidad.ts`; token
   count of the addition. Route: delegated (same writer); token count inline.
+- [ ] T4 — Follow-up: fix keyboard-drag coordinate defect (`kodu.arrastrar`), trim the
+  BASE_PROMPT section, run the mock-provider flow check. Route: delegated (same writer).
+  - [x] T4.1 — Fix `p.x`/`p.y` on the keyboard path of `kodu.arrastrar` (own accumulator
+    from 0 instead of `area`-space coordinates); add `user-select:none`; browser
+    assertions in `e2e/navegador-kit.ts`.
+  - [ ] T4.2 — Trim `## Que funcione de verdad` in BASE_PROMPT (drop intro paragraph,
+    mention area coordinates in the `kodu.arrastrar` line); keep `e2e/unidad.ts` green.
+  - [ ] T4.3 — Mock-provider flow check (`e2e/mock-proveedor.ts` pattern): system prompt
+    contains the new section/helper, saved HTML carries the new kit block, legacy block
+    gets folded.
 
 ## Acceptance criteria
 
@@ -149,8 +159,41 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     didn't regress).
   - Commit: `73fe193`.
 
+- T4.1 done. Fixed a real defect reported by the user in `kodu.arrastrar`'s
+  keyboard path: `p.x`/`p.y` were a private `posTeclado` accumulator
+  starting at `(0,0)`, in different units than the pointer path (which
+  reports coordinates in `area` space). A model doing
+  `punto.setAttribute('cx', p.x)` in `mover` would jump the point to
+  `(paso, 0)` on the first `ArrowRight` instead of moving it `paso` units
+  from where it was. Fix (`src/lib/ai/kit.ts`, `SCRIPT_KODU`): added
+  `centroDeEl()` — the element's CURRENT center (`getBoundingClientRect`)
+  converted through the existing `coords()` (same SVG-CTM / bounding-box
+  logic as the pointer path) — and `alTecla` now reports
+  `x: centro.x + dx, y: centro.y + dy`. Removed `posTeclado`. Also added
+  `el.style.userSelect = 'none'` in `arrastrar` setup (mouse drag no longer
+  selects text).
+  - New browser assertions in `e2e/navegador-kit.ts`: an SVG `<circle
+    cx="30" cy="50">` inside a viewBox-scaled `<svg>`, `paso:5`, `mover`
+    writes `cx`/`cy` back — first `ArrowRight` → `x≈35` (±0.5), `y≈50`;
+    second `ArrowRight` (after the first already moved the circle) → `x≈40`
+    (proves no reset-to-accumulator regression). Same shape for an HTML
+    `<div>` (`left:40,top:60`, `paso:5`, `mover` writes `style.left/top`
+    back) → `x≈57` then `x≈62`. Also asserts `user-select:none` next to the
+    existing `touch-action:none` check.
+  - Found and fixed a second, unrelated harness bug while writing the HTML
+    keyboard test: the new `#area-teclado-html` container was left out of
+    the CSS selector that grants `position:relative`, so its
+    `position:absolute` child anchored to a distant ancestor instead of its
+    own box — first observed as `y≈-1556` instead of `≈72`. Fixed by adding
+    it to that selector.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 41/41
+    pass (legacy-block pinned hash unaffected: the keyboard fix only
+    touches `SCRIPT_KODU`'s current block, and `legado` never includes
+    `SCRIPT_KODU`). `npx tsx e2e/unidad.ts` → 52/52 pass. `npx tsx
+    e2e/navegador-kit.ts` → 13/13 pass (11 previous + 2 new), run twice, no
+    flakiness, no leftover Chromium process.
+  - Commit: (recorded after commit below).
+
 ## Next step
 
-None — T1/T2/T3 all done. Branch `feat/arnes-robustez` has 3 commits, not
-pushed, not merged (per constraints). Next human step: review the diff and
-decide push/PR/merge.
+T4.2, then T4.3.
