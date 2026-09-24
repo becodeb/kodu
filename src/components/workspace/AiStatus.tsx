@@ -35,6 +35,12 @@ const PHASES: Record<
   // etiqueta propia: acá no hay ningún lint corriendo, hay un modelo
   // mirando una imagen.
   mirando: { state: 'weaving', label: 'Mirando cómo quedó' },
+  // T12 (round 3, "Autoprueba + autocorrección"): el recurso ya está armado
+  // (y, si corrió, ya pasó por la revisión visual) — se lo está probando
+  // solo, en un iframe que el docente no ve, antes de soltarlo. Misma
+  // sensación de "weaving" que las dos de arriba.
+  probando: { state: 'weaving', label: 'Probando el recurso…' },
+  corrigiendo: { state: 'weaving', label: 'Corrigiendo un detalle…' },
 };
 
 function formatearTiempo(segundos: number): string {

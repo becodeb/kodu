@@ -250,3 +250,62 @@ export async function* streamVisualReview(
     yield evento as VisualReviewEvent;
   }
 }
+
+/**
+ * T12 (round 3, "Autoprueba + autocorrección"): mismo vocabulario reducido
+ * que T8 — ver el comentario grande en `src/pages/api/chat/autocorreccion.ts`.
+ */
+export type AutocorreccionEvent =
+  | { type: 'code'; html: string }
+  | { type: 'done'; codeUpdated: boolean }
+  /** Sólo por una respuesta HTTP que no llegó a abrir el SSE (permiso,
+   *  huella vieja, tope de tokens): una falla DEL MODELO adentro del SSE
+   *  nunca llega como esto, siempre termina en un "done" silencioso. */
+  | { type: 'error'; message: string };
+
+export async function* streamAutocorreccion(
+  payload: {
+    projectId: string;
+    fingerprint: string;
+    ronda: 1 | 2;
+    errores: Array<{
+      tipo: 'error' | 'promesa' | 'consola';
+      mensaje: string;
+      linea: number | null;
+      columna: number | null;
+      accion: string;
+    }>;
+    reinicioOk: boolean | null;
+    exitoVisibleAlInicio: boolean;
+    diferencias: {
+      textoQueFalta: string[];
+      textoQueSobra: string[];
+      controles: Array<{
+        etiqueta: string;
+        antes: string | number | boolean | null;
+        despues: string | number | boolean | null;
+      }>;
+    };
+  },
+  signal?: AbortSignal,
+): AsyncGenerator<AutocorreccionEvent> {
+  const response = await fetch('/api/chat/autocorreccion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    yield {
+      type: 'error',
+      message: error?.error ?? `El servidor rechazó el pedido (error ${response.status}).`,
+    };
+    return;
+  }
+
+  for await (const evento of leerEventosSse(response)) {
+    yield evento as AutocorreccionEvent;
+  }
+}

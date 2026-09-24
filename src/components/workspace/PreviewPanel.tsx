@@ -72,6 +72,16 @@ interface PreviewPanelProps {
   portadaVieja: boolean;
   saving: boolean;
   notice: string | null;
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): la autoprueba automática
+   * de este recurso siguió encontrando problemas después de las 2 rondas de
+   * corrección permitidas. Discreto y NO bloqueante — el recurso se sigue
+   * mostrando igual, esto es sólo una señal para que el docente sepa que
+   * conviene revisarlo con más atención. Workspace.tsx lo limpia solo apenas
+   * el HTML vuelve a cambiar (nuevo turno, deshacer, edición manual, cambio
+   * de versión).
+   */
+  autopruebaAdvertencia?: boolean;
 }
 
 type Tab = 'preview' | 'code';
@@ -559,6 +569,16 @@ const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function 
             >
               Entendido
             </button>
+          </p>
+        )}
+
+        {/* T12 ("Autoprueba + autocorrección"): discreto a propósito — no es
+            un error del docente ni bloquea nada, sólo una señal de que
+            conviene mirar el recurso con más atención. Sin botón de cerrar:
+            se limpia sola cuando el HTML vuelve a cambiar (ver Workspace.tsx). */}
+        {props.autopruebaAdvertencia && (
+          <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+            Probamos el recurso y algo puede no funcionar bien. Si lo notás, contalo en el chat.
           </p>
         )}
 

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel, { type PreviewPanelHandle } from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
-import { apiRequest, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
+import { apiRequest, streamAutocorreccion, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
+import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../../lib/client/autoprueba.ts';
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
 import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
+import { necesitaCorreccion } from '../../lib/ai/autoprueba.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import type {
   AiPhase,
@@ -170,6 +172,16 @@ export default function Workspace(props: WorkspaceProps) {
 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): la autoprueba siguió
+   * fallando después de las 2 rondas de corrección permitidas (o el
+   * endpoint de corrección falló). Aviso discreto y NO bloqueante en el
+   * panel de vista previa — se limpia solo apenas el HTML vuelve a cambiar
+   * por cualquier vía (nuevo turno, deshacer, edición manual, cambio de
+   * versión): ver los `setAutopruebaAdvertencia(false)` repartidos abajo.
+   */
+  const [autopruebaAdvertencia, setAutopruebaAdvertencia] = useState(false);
 
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
@@ -384,6 +396,7 @@ export default function Workspace(props: WorkspaceProps) {
         resumeTimer.current = null;
         setMessages(result.data.messages);
         setHtml(result.data.currentHtml);
+        setAutopruebaAdvertencia(false);
         setIsStreaming(false);
         setAiPhase('idle');
         setTurnoDesde(null);
@@ -405,6 +418,10 @@ export default function Workspace(props: WorkspaceProps) {
     setFailedMessage(null);
     setFallback(null);
     setRegisterUrl(null);
+    // T12: un turno nuevo empieza de cero — el aviso de la autoprueba, si
+    // había quedado uno del turno anterior, ya no aplica al recurso que
+    // está por escribirse.
+    setAutopruebaAdvertencia(false);
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -598,8 +615,21 @@ export default function Workspace(props: WorkspaceProps) {
       // `isStreaming`/`turnoDesde` no se tocan acá (siguen como están hasta
       // el `finally` de abajo), así que el compositor sigue deshabilitado,
       // "Detener" sigue andando y el cronómetro no se reinicia.
+      let htmlParaAutoprueba = ultimoHtmlDelTurno;
       if (ofreceRevisionVisual && ultimoHtmlDelTurno) {
-        await ejecutarRevisionVisual(ultimoHtmlDelTurno);
+        htmlParaAutoprueba = await ejecutarRevisionVisual(ultimoHtmlDelTurno);
+      }
+
+      // T12 (round 3, "Autoprueba + autocorrección"): el ÚLTIMO chequeo
+      // antes de soltarle el recurso al docente, después de la revisión
+      // visual si corrió (es el gate final sobre lo que el docente ve de
+      // verdad). Se salta en un turno de versiones (T9): la autoprueba
+      // corre sobre UN HTML — con 3 versiones en paralelo no hay "el"
+      // recurso vigente todavía hasta que el docente elige una, y
+      // probarlas las 3 triplicaría costo y tiempo, mismo criterio que ya
+      // usa T8 para excluir versiones de la revisión visual.
+      if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba) {
+        await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
       }
     } catch (error) {
       // Un abort es el docente tocando "Detener": no es una falla que reportar.
@@ -637,14 +667,20 @@ export default function Workspace(props: WorkspaceProps) {
    * HTML que ya había dejado el turno. `isStreaming`/`turnoDesde` los
    * maneja `handleSend` (no se tocan acá): para el docente sigue siendo el
    * mismo turno, con el mismo cronómetro.
+   *
+   * Devuelve el HTML con el que terminó (el corregido, o `htmlCapturado` tal
+   * cual si no cambió nada): T12 la encadena para correr la autoprueba
+   * sobre lo que el docente TERMINÓ viendo, no sobre lo que había antes de
+   * la revisión visual.
    */
-  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<void> {
+  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<string> {
     setAiPhase('mirando');
+    let htmlFinal = htmlCapturado;
 
     const capturado = await previewRef.current?.capturar({ formato: 'jpeg', calidad: 0.85, altoMax: 1_600 });
     if (!capturado || 'error' in capturado) {
       if (capturado) console.warn('[revisión visual] no se pudo capturar la vista previa:', capturado.error);
-      return;
+      return htmlFinal;
     }
 
     abortador.current = new AbortController();
@@ -658,6 +694,7 @@ export default function Workspace(props: WorkspaceProps) {
           // previa cambia, la portada vieja queda marcada, y lo que el
           // docente hubiera escrito a mano ya quedó incorporado.
           setHtml(event.html);
+          htmlFinal = event.html;
           codeEditedByTeacher.current = false;
           if (screenshotUrl) setPortadaVieja(true);
           flashNotice('Recurso actualizado');
@@ -676,6 +713,99 @@ export default function Workspace(props: WorkspaceProps) {
       }
     } finally {
       abortador.current = null;
+    }
+
+    return htmlFinal;
+  }
+
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): el último paso, opcional,
+   * de un turno que cambió el recurso — `handleSend` la llama después de la
+   * revisión visual de T8 (si corrió), sobre el HTML final de esa cadena.
+   * Corre la autoprueba de T11 en un iframe oculto; si encuentra errores
+   * reales o un reinicio roto, pide hasta 2 rondas de corrección puntual
+   * (razonamiento "low", server-side) y vuelve a probar cada una.
+   *
+   * Discreta, mismo criterio que T8: nunca toca el chat. Si la autoprueba
+   * no se pudo correr (timeout, "Detener") no hay NADA que avisar — no es
+   * que el recurso esté mal, es que no se llegó a saber. El aviso discreto
+   * en el panel de vista previa (`autopruebaAdvertencia`) es SÓLO para
+   * "se probó y sigue fallando después de corregir dos veces".
+   */
+  async function ejecutarAutopruebaYCorreccion(htmlInicial: string): Promise<void> {
+    const MAX_RONDAS_CORRECCION = 2;
+    let htmlActual = htmlInicial;
+    let rondasUsadas = 0;
+
+    for (;;) {
+      setAiPhase('probando');
+      abortador.current = new AbortController();
+      const resultado: ResultadoAutopruebaCliente | null = await ejecutarAutopruebaEnIframe(htmlActual, {
+        signal: abortador.current.signal,
+      });
+      abortador.current = null;
+
+      if (!resultado) return; // timeout o "Detener": no se pudo probar, nada que avisar.
+
+      if (!necesitaCorreccion(resultado)) {
+        setAutopruebaAdvertencia(false); // sano: por si quedaba un aviso de una ronda anterior de ESTE turno.
+        return;
+      }
+
+      if (rondasUsadas >= MAX_RONDAS_CORRECCION) {
+        setAutopruebaAdvertencia(true);
+        return;
+      }
+
+      rondasUsadas++;
+      setAiPhase('corrigiendo');
+      abortador.current = new AbortController();
+
+      let htmlCorregido: string | null = null;
+      try {
+        for await (const event of streamAutocorreccion(
+          {
+            projectId,
+            fingerprint: fingerprintHtml(htmlActual),
+            ronda: rondasUsadas as 1 | 2,
+            errores: resultado.errores,
+            reinicioOk: resultado.reinicioOk,
+            exitoVisibleAlInicio: resultado.exitoVisibleAlInicio,
+            diferencias: resultado.detalles.diferencias,
+          },
+          abortador.current.signal,
+        )) {
+          if (event.type === 'code') {
+            // Mismo tratamiento que un "code" de la revisión visual: la
+            // vista previa cambia, sin pasar por el chat.
+            setHtml(event.html);
+            htmlCorregido = event.html;
+            codeEditedByTeacher.current = false;
+            if (screenshotUrl) setPortadaVieja(true);
+          } else if (event.type === 'error') {
+            console.warn('[autoprueba] la corrección respondió con un error:', event.message);
+          }
+        }
+      } catch (error) {
+        abortador.current = null;
+        // "Detener": se deja el recurso como estaba, sin aviso — el docente
+        // cortó a propósito, no es una falla del recurso.
+        if ((error as Error)?.name === 'AbortError') return;
+        console.warn('[autoprueba] se cortó la conexión de la corrección:', error);
+        setAutopruebaAdvertencia(true); // el endpoint falló: mismo tratamiento que "sigue fallando".
+        return;
+      }
+      abortador.current = null;
+
+      if (!htmlCorregido) {
+        // El endpoint no aplicó nada (huella vencida, el modelo no devolvió
+        // código, etc.): no hay un HTML nuevo para volver a probar.
+        setAutopruebaAdvertencia(true);
+        return;
+      }
+
+      htmlActual = htmlCorregido;
+      // Vuelve al principio del for(;;): se re-prueba lo que acaba de corregir.
     }
   }
 
@@ -746,6 +876,7 @@ export default function Workspace(props: WorkspaceProps) {
     setHtml(result.data.currentHtml);
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
+    setAutopruebaAdvertencia(false); // T12: deshacer cambió el recurso, cualquier aviso viejo ya no aplica.
 
     const ahora = Date.now();
     setMessages((current) =>
@@ -782,6 +913,7 @@ export default function Workspace(props: WorkspaceProps) {
     setHtml(result.data.html);
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
+    setAutopruebaAdvertencia(false); // T12: cambio de versión, cualquier aviso viejo ya no aplica.
 
     setMessages((current) =>
       current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
@@ -1011,6 +1143,7 @@ export default function Workspace(props: WorkspaceProps) {
           // El docente cambió el recurso a mano: si ya había portada, quedó
           // vieja (design §6).
           if (screenshotUrl) setPortadaVieja(true);
+          setAutopruebaAdvertencia(false); // T12: edición manual, cualquier aviso viejo ya no aplica.
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
@@ -1037,6 +1170,7 @@ export default function Workspace(props: WorkspaceProps) {
         portadaVieja={portadaVieja}
         saving={saving}
         notice={notice}
+        autopruebaAdvertencia={autopruebaAdvertencia}
       />
       </div>
       </div>
