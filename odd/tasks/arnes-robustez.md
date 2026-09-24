@@ -573,7 +573,7 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
   from `min`/`max` (opt-out option for resources that draw themselves); 44 px minimum
   invisible hit area on draggables, keeping "nearest wins". Browser tests in
   `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + prompt + tests).
-- [ ] T10 — BASE_PROMPT: theme colors are for the UI, content objects use what the teacher
+- [x] T10 — BASE_PROMPT: theme colors are for the UI, content objects use what the teacher
   asked for; `textContent` only for text; state styles beat hover; "tomar decisiones" means
   branching. ≤ ~150 tokens; `e2e/unidad.ts`. Route: delegated (same writer as T9).
 - [ ] T11 — Kit: sentinel (onerror, unhandledrejection, console.error -> postMessage to parent)
@@ -645,6 +645,52 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
     unrelated, not started by this task — left alone per the standing rule to only
     stop processes started in this task).
   - Commit: `16773c9`.
+
+- T10 done. `src/lib/ai/prompt.ts`, BASE_PROMPT:
+  - **kodu.arrastrar docs**: now says the helper already MOVES the point in unit mode
+    (matches T9's `posicionarElemento`) and to never reposition it by hand inside
+    `alCambiar`; documents `mover:false` for a resource that draws the point itself
+    (canvas, D3). The inline example's `alCambiar` callback was renamed from
+    `dibujar()` to `actualizarTexto()` to stop implying the callback has to move
+    anything.
+  - **Colores (Diseño visual)**: one clause added after the existing token list —
+    theme tokens are for the INTERFACE; CONTENT objects (a chocolate bar, a fruit)
+    use whatever color/shape the teacher asked for, not the theme's. Directly
+    addresses the round-3 defect (chocolate bars rendered blue/white across all three
+    fraction resources because theme rules won).
+  - **Three new one-line rules** (11-13) in "Que funcione de verdad": `textContent`
+    only for plain text, `innerHTML` for markup; state styles (correct, incorrect,
+    chosen) beat `:hover` — no hover after answering; "tomar decisiones" means the
+    choice branches what happens next, not just the feedback text.
+  - Prompt cost: BASE_PROMPT 11932 (after T8) -> 12419 chars (+487), measured at
+    runtime via `buildSystemPrompt` with empty rules/assets and `herramientaForzada:
+    true` (isolates BASE_PROMPT with no other section appended) — not a regex over
+    the source, to avoid the escaped-backtick trap (an escaped `` \` `` inside an
+    inline-code example like `` \`p.x\` `` looks like a real template-literal
+    terminator to a naive regex). At 3.37 chars/token (same fit used since T3), +487
+    chars is ~145 tokens — under the ~150 budget for this part. First draft was 535
+    chars (~159 tokens, over budget); trimmed wording in the colores clause and all
+    three new rules (dropped a parenthetical example, shortened "ganan sobre
+    `:hover`: después de responder, sin hover" to "ganan a `:hover`: sin hover
+    después de responder", "cambian lo que sigue (ramas)" to "ramifican lo que
+    sigue") to land at 487.
+  - Tests: `e2e/unidad.ts` — updated the T3/round-2 helper-docs test (the exact
+    substring `'no agregues \`pointerdown\` ni \`keydown\` propios'` no longer
+    exists verbatim since the wording changed to `/`; narrowed the assertion to
+    `'no agregues \`pointerdown\`'`, still true). Added 3 new tests: the T9
+    positioning markers (`'YA MUEVE el punto'`, `'ni lo reposiciones en
+    \`alCambiar\`'`, `` '`mover:false`' ``), the colores/objetos clause, and the 3
+    new one-line rules by distinctive substring.
+  - `e2e/arnes-robustez.ts`: assertion (A) checks `'## Que funcione de verdad'`,
+    `'kodu.arrastrar'`, `'alCambiar: (v) =>'`, `'kodu.mezclar('` — all four still
+    present verbatim after T10's edits, no change needed there. Ran it for real
+    (dev server on :3000 was already up from a prior session, `kodu_db_dev` up):
+    A/B/C all pass.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 58/58 pass (54 before
+    + 4 new). `npx tsx e2e/arnes-robustez.ts` → A/B/C pass (ran once; not required by
+    the task's checklist for T10, done as a bonus consistency check since the dev
+    server happened to already be up).
+  - Commit: `962521c`.
 
 ## Next step
 
