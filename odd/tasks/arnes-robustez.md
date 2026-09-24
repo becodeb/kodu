@@ -50,7 +50,7 @@ covers what the kit cannot.
 - [x] T1 — Kit: `[hidden]` CSS, `window.kodu` helpers, legacy canonical block
   recognition; unit tests in `e2e/unidad-kit.ts`. Route: delegated (writer trigger:
   kit + tests + browser harness + prompt are 2+ non-trivial files).
-- [ ] T2 — Browser verification in real Chromium: mouse drag, touch drag, keyboard
+- [x] T2 — Browser verification in real Chromium: mouse drag, touch drag, keyboard
   drag, repeated icon swap, `hidden` + `flex`, timer cancellation. Route: delegated
   (same writer).
 - [ ] T3 — BASE_PROMPT functional rules + helper docs; tests in `e2e/unidad.ts`; token
@@ -98,8 +98,31 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     no server needed) → 18/18 pass. `e2e/t10-docente-comun.ts` also
     references the block markers but needs a running dev server + browser
     harness — skipped, out of scope for a unit-level check.
-  - Commit: (recorded after commit below).
+  - Commit: `07a0431`.
+- T2 done. New `e2e/navegador-kit.ts`: real Chromium (system binary, no
+  `playwright install`), one combined test page built with the real
+  `aplicarKit` (real CDN Tailwind/Lucide, nothing mocked). 11 assertions:
+  `[hidden]` vs `.flex` both ways; repeated icon swap in one tick (incl.
+  passing the drawn `<svg>` itself) keeping the author's class and returning
+  the final node; mouse drag on an HTML `<div>`; mouse drag on an SVG
+  `<circle>` inside a viewBox-scaled `<svg>` (asserts coordinates stay in the
+  0–100 viewBox range, not screen pixels); touch drag via real CDP
+  `Input.dispatchTouchEvent` (not `.tap()`); keyboard drag (`ArrowRight`/
+  `ArrowUp`, asserts no page scroll); a `pointer-events:none` decorative
+  layer on top not blocking the drag underneath; `kodu.despues` +
+  `kodu.cancelarTemporizadores`; and a final check that zero `pageerror`/
+  `console.error` happened across the whole run.
+  - Found and fixed one harness bug (not a `kit.ts` defect): the touch and
+    overlay test elements sat far enough down the combined test page to
+    fall outside the default viewport, so `boundingBox()` returned
+    viewport-relative coordinates that didn't hit anything — mouse/touch
+    dispatch silently produced zero events. Fixed by calling
+    `scrollIntoViewIfNeeded()` before measuring each element's box in
+    `cajaDe()`.
+  - Checks: `npx tsx e2e/navegador-kit.ts` → 11/11 pass, run twice (no
+    flakiness observed). No leftover Chromium process after the run
+    (`browser.close()` in a `finally`). `npm run check` → clean.
 
 ## Next step
 
-T2.
+T3.
