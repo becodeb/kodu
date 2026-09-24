@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   TEMAS,
   FAMILIAS_NEUTRAS,
@@ -12,6 +13,7 @@ import {
   plegarKit,
   temaDe,
   bloqueKit,
+  bloqueKitLegado,
   paletaDeTema,
   temaPorId,
   esTemaId,
@@ -280,6 +282,79 @@ await prueba('ida y vuelta: aplicarKit(plegarKit(aplicarKit(x))) === aplicarKit(
     const idaYVuelta = aplicarKit(plegarKit(aplicadoUnaVez));
     assert.equal(idaYVuelta, aplicadoUnaVez, `round trip falló para ${tema.id}`);
   }
+});
+
+// ─────────────────────────────────────────────────────────────
+// T1 (arnes-robustez): [hidden], window.kodu y el bloque legado
+// (odd/tasks/arnes-robustez.md)
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: lleva la regla [hidden]{display:none!important}', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('[hidden]{display:none!important}'),
+      `${tema.id}: falta la regla que arregla el defecto 2 (hidden pierde contra flex)`,
+    );
+  }
+});
+
+await prueba('bloqueKit: define window.kodu con los cuatro helpers públicos', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('window.kodu = {'), `${tema.id}: falta la asignación de window.kodu`);
+    for (const helper of ['icono:', 'arrastrar:', 'despues:', 'cancelarTemporizadores:']) {
+      assert.ok(bloque.includes(helper), `${tema.id}: falta el helper "${helper}"`);
+    }
+  }
+});
+
+await prueba('bloqueKitLegado: pinned contra el bloque canónico previo a T1', () => {
+  // Hash calculado ANTES de este cambio, contra bloqueKit('pizarron') del
+  // código en main (commit 98fa485, previo a la rama arnes-robustez) — ver
+  // el comentario de BLOQUES_LEGADO_POR_ID en kit.ts. Si este assert falla,
+  // construirBloque(tema, { legado: true }) dejó de reproducir byte a byte
+  // el bloque viejo, y los recursos guardados con el kit anterior a T1
+  // dejarían de reconocerse como canónicos.
+  const hash = createHash('sha256').update(bloqueKitLegado('pizarron'), 'utf8').digest('hex');
+  assert.equal(hash, 'ac6fd001d31b49cf449f54a288782ec824ae1da1014cda7cecc105e805b64a30');
+});
+
+await prueba('bloqueKitLegado: no lleva [hidden] ni window.kodu (es el bloque de antes de T1)', () => {
+  const legado = bloqueKitLegado('cuaderno');
+  assert.ok(!legado.includes('[hidden]{display:none!important}'));
+  assert.ok(!legado.includes('window.kodu'));
+  assert.ok(legado.startsWith('<!-- kodu-kit:v1:inicio tema=cuaderno -->'));
+  assert.ok(legado.endsWith('<!-- kodu-kit:v1:fin -->'));
+});
+
+await prueba('aplicarKit: un recurso guardado con el bloque legado se actualiza al bloque actual', () => {
+  // Simula un recurso guardado ANTES de T1: meta + bloque legado (no el que
+  // arma aplicarKit, que ya usaría el bloque nuevo).
+  const doc = documentoConMeta('noche', `${bloqueKitLegado('noche')}\n`);
+  assert.ok(doc.includes(bloqueKitLegado('noche')), 'setup: el doc de prueba tiene que llevar el bloque legado');
+
+  const resultado = aplicarKit(doc);
+  assert.ok(resultado.includes(bloqueKit('noche')), 'aplicarKit tiene que subir al bloque canónico actual');
+  assert.ok(resultado.includes('window.kodu'), 'el bloque insertado tiene que ser el nuevo, con window.kodu');
+  assert.ok(!resultado.includes(bloqueKitLegado('noche')), 'el bloque legado viejo no puede quedar');
+  assert.equal(aplicarKit(resultado), resultado, 'y ya queda estable (idempotente) en el bloque actual');
+});
+
+await prueba('plegarKit: un bloque legado también se pliega (sigue siendo canónico)', () => {
+  const doc = documentoConMeta('recreo', `${bloqueKitLegado('recreo')}\n`);
+  const plegado = plegarKit(doc);
+  assert.ok(!plegado.includes('tailwind.config'), 'el bloque legado completo ya no puede estar');
+  assert.ok(plegado.includes('kodu-kit:v1 tema=recreo:'), 'tiene que quedar el marcador corto');
+});
+
+await prueba('aplicarKit: un bloque legado editado a mano sigue sin tocarse', () => {
+  const doc = documentoConMeta('huerta', `${bloqueKitLegado('huerta')}\n`);
+  const editado = doc.replace(
+    '<!-- kodu-kit:v1:fin -->',
+    '<!-- un comentario de más, a mano --><!-- kodu-kit:v1:fin -->',
+  );
+  const resultado = aplicarKit(editado);
+  assert.equal(resultado, editado, 'un bloque legado que ya no es byte a byte el legado de su id se respeta tal cual');
 });
 
 // ─────────────────────────────────────────────────────────────

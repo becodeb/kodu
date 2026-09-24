@@ -47,7 +47,7 @@ covers what the kit cannot.
 
 ## Tasks
 
-- [ ] T1 — Kit: `[hidden]` CSS, `window.kodu` helpers, legacy canonical block
+- [x] T1 — Kit: `[hidden]` CSS, `window.kodu` helpers, legacy canonical block
   recognition; unit tests in `e2e/unidad-kit.ts`. Route: delegated (writer trigger:
   kit + tests + browser harness + prompt are 2+ non-trivial files).
 - [ ] T2 — Browser verification in real Chromium: mouse drag, touch drag, keyboard
@@ -76,7 +76,30 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
 ## Progress
 
 - Branch `feat/arnes-robustez` created from `main` (98fa485).
+- T1 done. `src/lib/ai/kit.ts`: added `[hidden]{display:none!important}` to
+  `construirEstiloBase`; added `window.kodu` (`icono`, `arrastrar`, `despues`,
+  `cada`, `cancelarTemporizadores`) as a new `SCRIPT_KODU` string constant
+  embedded in the canonical block. `construirBloque`/`construirEstiloBase`
+  now take `{ legado?: boolean }`; `construirBloque(tema, { legado: true })`
+  reproduces the pre-T1 block byte for byte (no `SCRIPT_KODU`, no `[hidden]`
+  rule) — precomputed into `BLOQUES_LEGADO_POR_ID`, exposed as
+  `bloqueKitLegado(temaId)`. `bloqueEsCanonico` now accepts either the
+  current or the legado block as canonical, so `aplicarKit` upgrades an
+  existing legacy-block resource to the new block and `plegarKit` still
+  folds it.
+  - Pinned hash (computed BEFORE this change, against `bloqueKit('pizarron')`
+    on `main` @ 98fa485): sha256
+    `ac6fd001d31b49cf449f54a288782ec824ae1da1014cda7cecc105e805b64a30` —
+    asserted in `e2e/unidad-kit.ts` against `bloqueKitLegado('pizarron')`.
+  - Checks: `npm run check` → clean (no errors). `npx tsx e2e/unidad-kit.ts`
+    → 41/41 pass. `npx tsx e2e/unidad.ts` (against `kodu_db_dev`, up) →
+    50/50 pass. `npx tsx e2e/unidad-revision.ts` (grepped for other files
+    pinning kit-block bytes; this one uses `bloqueKit` but not a byte pin,
+    no server needed) → 18/18 pass. `e2e/t10-docente-comun.ts` also
+    references the block markers but needs a running dev server + browser
+    harness — skipped, out of scope for a unit-level check.
+  - Commit: (recorded after commit below).
 
 ## Next step
 
-T1.
+T2.

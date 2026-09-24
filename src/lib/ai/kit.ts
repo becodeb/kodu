@@ -579,7 +579,247 @@ const SCRIPT_ICONOS = `(function () {
   }
 })();`;
 
-function construirEstiloBase(tema: Tema): string {
+/**
+ * `window.kodu`: helpers que el modelo puede llamar desde el JS que escribe
+ * (T1, `arnes-robustez`) para no reintroducir los defectos que el blind test
+ * de 22 generaciones (branch `exp/razonamiento-deepseek`,
+ * `experimentos/razonamiento/RESULTADOS.md`) encontró repetidos entre temas
+ * y niveles de razonamiento. Un helper por defecto, cada uno resuelve lo que
+ * el prompt solo no puede garantizar:
+ *
+ *  - `icono(el, nombre)` — defecto 1: el código buscaba `<i>` después de que
+ *    `lucide.createIcons()` YA lo había reemplazado por un `<svg>` (así se
+ *    congelaba, por ejemplo, la simulación de ósmosis al pausar: el botón
+ *    quedaba con el ícono de "play" para siempre). `el` puede ser el propio
+ *    ícono (el `<i data-lucide>` sin dibujar o el `<svg data-lucide>` que
+ *    Lucide ya dibujó) o un contenedor que lo tiene adentro (un botón); si el
+ *    contenedor no tiene ícono, se le agrega uno. Siempre inserta un `<i>`
+ *    fresco y lo dibuja EN EL ACTO (no espera al `MutationObserver` de
+ *    `SCRIPT_ICONOS`, que corre en el próximo frame): así una secuencia
+ *    play→pause→play en el mismo tick queda siempre en el ícono correcto.
+ *    Lucide 1.47.0 `createIcons()` no filtra por etiqueta: reemplaza
+ *    CUALQUIER `[data-lucide]` que encuentre bajo `root` (también `<svg>` ya
+ *    dibujados), por eso conviene pasarle `root` acotado al contenedor y no
+ *    al `document` entero.
+ *  - `arrastrar(el, opciones)` — el defecto que más apareció en el blind
+ *    test: arrastrar con el mouse funcionaba porque el modelo probó eso, y
+ *    con el dedo o el teclado no, porque nunca lo probó. Un solo camino de
+ *    Pointer Events (mouse, lápiz y touch son el mismo evento) más teclado
+ *    (flechas), con `soltar` disparando UNA sola vez al terminar la acción
+ *    — ahí, y no a mitad de camino, es donde el modelo tiene que evaluar la
+ *    consigna (defecto 3: quedaba marcada como resuelta en un estado
+ *    intermedio del arrastre y nunca se desmarcaba).
+ *  - `despues`/`cancelarTemporizadores` (y `cada`, de yapa) — defecto 4: un
+ *    `setTimeout` para "la próxima ronda" que ya estaba pedido cuando el
+ *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
+ *    `reiniciar()` que llama a `cancelarTemporizadores()` (regla que
+ *    BASE_PROMPT agrega en T3) alcanza para limpiar todo lo pendiente.
+ *
+ * Escrito ES5-a-mano como `SCRIPT_ICONOS` de arriba (mismo motivo: viaja
+ * embebido en TODOS los recursos guardados, no pasa por ningún bundler ni
+ * transpilador — tiene que poder correr tal cual en el navegador del
+ * alumno) y compacto a propósito, mismo motivo de peso.
+ */
+const SCRIPT_KODU = `(function () {
+  if (window.kodu) return;
+
+  var contadorSwap = 0;
+  var ATRIBUTOS_PROPIOS_DE_LUCIDE = {
+    'data-lucide': 1, xmlns: 1, width: 1, height: 1, viewbox: 1, fill: 1,
+    stroke: 1, 'stroke-width': 1, 'stroke-linecap': 1, 'stroke-linejoin': 1,
+    class: 1, 'aria-hidden': 1
+  };
+
+  function icono(el, nombre) {
+    try {
+      var nodoIcono = el && el.hasAttribute && el.hasAttribute('data-lucide')
+        ? el
+        : (el && el.querySelector ? el.querySelector('[data-lucide]') : null);
+      var contenedor = nodoIcono ? nodoIcono.parentNode : el;
+      if (!contenedor) return null;
+
+      var nuevo = document.createElement('i');
+      nuevo.setAttribute('data-lucide', nombre);
+
+      if (nodoIcono) {
+        var clases = [];
+        for (var i = 0; i < nodoIcono.attributes.length; i++) {
+          var attr = nodoIcono.attributes[i];
+          if (ATRIBUTOS_PROPIOS_DE_LUCIDE[attr.name.toLowerCase()]) continue;
+          nuevo.setAttribute(attr.name, attr.value);
+        }
+        var claseOriginal = (nodoIcono.getAttribute('class') || '').split(' ');
+        for (var j = 0; j < claseOriginal.length; j++) {
+          var token = claseOriginal[j];
+          if (token && token !== 'lucide' && token.indexOf('lucide-') !== 0) clases.push(token);
+        }
+        if (clases.length) nuevo.setAttribute('class', clases.join(' '));
+      }
+
+      contadorSwap++;
+      var marca = 'k' + contadorSwap;
+      nuevo.setAttribute('data-kodu-swap', marca);
+
+      if (nodoIcono) contenedor.replaceChild(nuevo, nodoIcono);
+      else contenedor.appendChild(nuevo);
+
+      // Dibuja YA, sin esperar al observer de SCRIPT_ICONOS (que corre en el
+      // próximo frame): así una llamada repetida en el mismo tick siempre ve
+      // el resultado de la anterior.
+      if (window.lucide && window.lucide.createIcons) {
+        try { window.lucide.createIcons({ root: contenedor }); } catch (e) {}
+      }
+
+      // Lucide reemplaza el <i> por un <svg> nuevo (otro nodo): la marca
+      // viaja con él (createIcons copia los atributos del <i> original) y
+      // así lo volvemos a encontrar sin asumir que "nuevo" sigue siendo el
+      // nodo vivo. Si Lucide no cargó, la marca sigue en el propio <i>.
+      var resultado = contenedor.querySelector('[data-kodu-swap="' + marca + '"]') || nuevo;
+      resultado.removeAttribute('data-kodu-swap');
+      return resultado;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function arrastrar(el, opciones) {
+    opciones = opciones || {};
+    var mover = opciones.mover || function () {};
+    var soltar = opciones.soltar || function () {};
+    var areaFija = opciones.area || null;
+    var paso = opciones.paso || 10;
+    var esSvg = el.namespaceURI === 'http://www.w3.org/2000/svg';
+
+    el.style.touchAction = 'none';
+    el.style.cursor = 'grab';
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+
+    var activo = false;
+    var idPuntero = null;
+    var anterior = null;
+    var posTeclado = { x: 0, y: 0 };
+
+    function area() {
+      if (areaFija) return areaFija;
+      if (esSvg) return el.ownerSVGElement || (el.closest ? el.closest('svg') : null) || el.parentElement;
+      return el.parentElement;
+    }
+
+    function coords(evento) {
+      var a = area();
+      if (a && a.createSVGPoint) {
+        var ctm = a.getScreenCTM();
+        if (ctm) {
+          var punto = a.createSVGPoint();
+          punto.x = evento.clientX;
+          punto.y = evento.clientY;
+          var local = punto.matrixTransform(ctm.inverse());
+          return { x: local.x, y: local.y };
+        }
+      }
+      var caja = (a || document.body).getBoundingClientRect();
+      return { x: evento.clientX - caja.left, y: evento.clientY - caja.top };
+    }
+
+    function alBajar(evento) {
+      if (evento.button > 0 || evento.isPrimary === false) return;
+      activo = true;
+      idPuntero = evento.pointerId;
+      anterior = coords(evento);
+      el.style.cursor = 'grabbing';
+      try { el.setPointerCapture(idPuntero); } catch (e) {}
+    }
+
+    function alMover(evento) {
+      if (!activo || evento.pointerId !== idPuntero) return;
+      var actual = coords(evento);
+      var dx = actual.x - anterior.x;
+      var dy = actual.y - anterior.y;
+      anterior = actual;
+      mover({ x: actual.x, y: actual.y, dx: dx, dy: dy, teclado: false });
+    }
+
+    function alSoltar(evento) {
+      if (!activo || evento.pointerId !== idPuntero) return;
+      activo = false;
+      el.style.cursor = 'grab';
+      soltar({ x: anterior.x, y: anterior.y, dx: 0, dy: 0, teclado: false });
+    }
+
+    function alTecla(evento) {
+      var dx = 0, dy = 0;
+      if (evento.key === 'ArrowLeft') dx = -paso;
+      else if (evento.key === 'ArrowRight') dx = paso;
+      else if (evento.key === 'ArrowUp') dy = -paso;
+      else if (evento.key === 'ArrowDown') dy = paso;
+      else return;
+      if (evento.shiftKey) { dx = dx * 5; dy = dy * 5; }
+      evento.preventDefault();
+      posTeclado = { x: posTeclado.x + dx, y: posTeclado.y + dy };
+      var p = { x: posTeclado.x, y: posTeclado.y, dx: dx, dy: dy, teclado: true };
+      mover(p);
+      soltar(p);
+    }
+
+    el.addEventListener('pointerdown', alBajar);
+    el.addEventListener('pointermove', alMover);
+    el.addEventListener('pointerup', alSoltar);
+    el.addEventListener('pointercancel', alSoltar);
+    el.addEventListener('lostpointercapture', alSoltar);
+    el.addEventListener('keydown', alTecla);
+
+    return function () {
+      el.removeEventListener('pointerdown', alBajar);
+      el.removeEventListener('pointermove', alMover);
+      el.removeEventListener('pointerup', alSoltar);
+      el.removeEventListener('pointercancel', alSoltar);
+      el.removeEventListener('lostpointercapture', alSoltar);
+      el.removeEventListener('keydown', alTecla);
+    };
+  }
+
+  var temporizadores = [];
+  function quitarTemporizador(id) {
+    var pos = temporizadores.indexOf(id);
+    if (pos !== -1) temporizadores.splice(pos, 1);
+  }
+  function despues(ms, fn) {
+    var id = setTimeout(function () {
+      quitarTemporizador(id);
+      fn();
+    }, ms);
+    temporizadores.push(id);
+    return id;
+  }
+  function cada(ms, fn) {
+    var id = setInterval(fn, ms);
+    temporizadores.push(id);
+    return id;
+  }
+  function cancelarTemporizadores() {
+    for (var i = 0; i < temporizadores.length; i++) {
+      clearTimeout(temporizadores[i]);
+      clearInterval(temporizadores[i]);
+    }
+    temporizadores.length = 0;
+  }
+
+  window.kodu = {
+    icono: icono,
+    arrastrar: arrastrar,
+    despues: despues,
+    cada: cada,
+    cancelarTemporizadores: cancelarTemporizadores
+  };
+})();`;
+
+/**
+ * `opts.legado`: reproduce byte a byte el `<style>` ANTERIOR a T1 de
+ * `arnes-robustez` (sin la regla `[hidden]`), para que
+ * `construirBloque(tema, { legado: true })` reconstruya el bloque canónico
+ * VIEJO — ver el comentario grande sobre `BLOQUES_LEGADO_POR_ID` más abajo.
+ */
+function construirEstiloBase(tema: Tema, opts?: { legado?: boolean }): string {
   const t = tema.tokens;
   const variables =
     `--fondo:${t.fondo};--superficie:${t.superficie};--tinta:${t.tinta};--suave:${t.suave};` +
@@ -599,6 +839,15 @@ function construirEstiloBase(tema: Tema): string {
     `.lucide{width:1.15em;height:1.15em;vertical-align:-0.2em}`,
     `:focus-visible{outline:2px solid var(--acento);outline-offset:2px}`,
     `@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}`,
+    // T1 (arnes-robustez), defecto 2 del blind test: el modelo esconde algo
+    // con el atributo `hidden` (`<div hidden>`) pero también le puso una
+    // clase de layout tipo `flex`/`grid`/`block` — Tailwind por CDN emite
+    // esas utilidades con la MISMA especificidad que `[hidden]` de la hoja
+    // por defecto del navegador, y en el CSS generado por el CDN quedan
+    // DESPUÉS de esa hoja, así que ganan y el elemento se ve igual "oculto".
+    // `!important` acá es la única forma de que `hidden` gane siempre,
+    // sin pedirle al modelo que se acuerde de esto en cada recurso.
+    ...(opts?.legado ? [] : ['[hidden]{display:none!important}']),
   ].join('\n');
 }
 
@@ -606,8 +855,16 @@ const BLOQUE_PREFIJO = '<!-- kodu-kit:v1:inicio tema=';
 const BLOQUE_INICIO_SUFIJO = ' -->';
 const BLOQUE_FIN = '<!-- kodu-kit:v1:fin -->';
 
-function construirBloque(tema: Tema): string {
+/**
+ * `opts.legado`: reconstruye byte a byte el bloque canónico ANTERIOR a T1 de
+ * `arnes-robustez` (sin `SCRIPT_KODU` ni la regla `[hidden]`), para que
+ * `bloqueEsCanonico` siga reconociendo como canónico un bloque guardado con
+ * el kit viejo. Ver el comentario de `BLOQUES_LEGADO_POR_ID` más abajo para
+ * el motivo completo y cómo está fijado con un hash.
+ */
+function construirBloque(tema: Tema, opts?: { legado?: boolean }): string {
   const config = construirTailwindConfig(tema);
+  const legado = opts?.legado === true;
 
   const partes = [
     `${BLOQUE_PREFIJO}${tema.id}${BLOQUE_INICIO_SUFIJO}`,
@@ -620,7 +877,8 @@ function construirBloque(tema: Tema): string {
     `<script>tailwind.config = ${JSON.stringify(config)};</script>`,
     '<script src="https://cdn.jsdelivr.net/npm/lucide@1.47.0/dist/umd/lucide.min.js"></script>',
     `<script>${SCRIPT_ICONOS}</script>`,
-    `<style>${construirEstiloBase(tema)}</style>`,
+    ...(legado ? [] : [`<script>${SCRIPT_KODU}</script>`]),
+    `<style>${construirEstiloBase(tema, { legado })}</style>`,
     BLOQUE_FIN,
   ];
 
@@ -631,9 +889,37 @@ function construirBloque(tema: Tema): string {
 // consulta directa — determinista y estable byte a byte por construcción.
 const BLOQUES_POR_ID = new Map<TemaId, string>(TEMAS.map((t) => [t.id, construirBloque(t)]));
 
+/**
+ * Bloque canónico ANTERIOR a T1 de `arnes-robustez`, uno por tema,
+ * reconstruido con el MISMO `construirBloque`/`construirEstiloBase` de
+ * arriba (rama `legado`) en vez de guardar 8 strings largos a mano: es
+ * imposible que se desincronice byte a byte de lo que este archivo produce.
+ * `bloqueEsCanonico` acepta este bloque como canónico ADEMÁS del actual para
+ * que un recurso guardado con el kit viejo (`SCRIPT_KODU` no existía, y el
+ * `<style>` no tenía `[hidden]{display:none!important}`) lo siga
+ * reconociendo `aplicarKit`/`plegarKit` — si no, esos recursos viejos se
+ * tratarían como "editados a mano" y nunca recibirían los helpers nuevos.
+ *
+ * Que la reconstrucción es EXACTA a lo que salía del código antes de T1 está
+ * fijado por el hash de la prueba "bloqueKitLegado: pinned contra el
+ * bloque canónico previo a T1" en `e2e/unidad-kit.ts` — ese hash se calculó
+ * ANTES de este cambio, contra el `bloqueKit('pizarron')` del código en
+ * `main` (commit 98fa485, previo a esta rama).
+ */
+const BLOQUES_LEGADO_POR_ID = new Map<TemaId, string>(
+  TEMAS.map((t) => [t.id, construirBloque(t, { legado: true })]),
+);
+
 /** El bloque canónico completo de un tema, delimitado por los comentarios `kodu-kit:v1`. */
 export function bloqueKit(temaId: TemaId): string {
   const bloque = BLOQUES_POR_ID.get(temaId);
+  if (!bloque) throw new Error(`tema desconocido: ${temaId}`);
+  return bloque;
+}
+
+/** El bloque canónico ANTERIOR a T1 de un tema — ver `BLOQUES_LEGADO_POR_ID`. */
+export function bloqueKitLegado(temaId: TemaId): string {
+  const bloque = BLOQUES_LEGADO_POR_ID.get(temaId);
   if (!bloque) throw new Error(`tema desconocido: ${temaId}`);
   return bloque;
 }
@@ -736,7 +1022,11 @@ function buscarBloque(html: string): BloqueEncontrado | null {
 
 /** El bloque encontrado es EXACTAMENTE el canónico del tema que él mismo declara (nadie lo tocó a mano). */
 function bloqueEsCanonico(bloque: BloqueEncontrado): boolean {
-  return esTemaId(bloque.id) && bloque.texto === bloqueKit(bloque.id);
+  if (!esTemaId(bloque.id)) return false;
+  // El bloque ANTERIOR a T1 (arnes-robustez) cuenta como canónico también:
+  // así aplicarKit lo actualiza al bloque actual (con los helpers nuevos) en
+  // vez de tratarlo como editado a mano. Ver BLOQUES_LEGADO_POR_ID.
+  return bloque.texto === bloqueKit(bloque.id) || bloque.texto === bloqueKitLegado(bloque.id);
 }
 
 /**
