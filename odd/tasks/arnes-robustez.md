@@ -580,12 +580,12 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
   and self-test triggered by `kodu:autoprueba` (snapshot, move ranges, click up to N buttons,
   reset, compare). Browser tests against a healthy HTML, one that throws on click, one with a
   partial reset. Route: delegated (writer trigger).
-- [ ] T12 — Editor: after a generation that changed the resource, run the self-test in a hidden
+- [x] T12 — Editor: after a generation that changed the resource, run the self-test in a hidden
   sandboxed iframe; on JS errors or a failed reset send one correction turn (reasoning `low`,
   max 2 rounds) with the exact detail; status copy for the teacher; the turn is not recorded as
   written by the teacher; after 2 failed rounds show the resource with a discreet warning.
   Route: delegated (writer trigger: stream API + workspace UI + history).
-- [ ] T13 — Mock provider that returns broken HTML first and a healthy one on correction; e2e of
+- [x] T13 — Mock provider that returns broken HTML first and a healthy one on correction; e2e of
   the full cycle in real Chromium. Route: delegated (same writer as T12).
 
 ### Round 3 Progress
@@ -787,19 +787,152 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
     expected or found.
   - Commit: `4f2c9c4`.
 
+- T12 done, two work-unit commits.
+  - **T12a (server): `2455e86`.** `src/lib/ai/provider.ts`: added `razonamientoCorreccion(provider)`
+    — an internal "low" reasoning level, never exposed as part of `Speed` (effort dialect →
+    `reasoning_effort:'low'`; thinking dialect → `enabled`; unknown dialect → nothing) — plus a new
+    `razonamientoOverride?: Record<string, unknown> | null` option on `requestCompletionStream`/
+    `intentarUna` that, when present, replaces the `razonamientoEfectivo(provider, velocidad)` call
+    in the request body. This reuses all existing plumbing (retries, `forzarHerramienta` fallback,
+    saturation backoff) untouched.
+    New isomorphic module `src/lib/ai/autoprueba.ts` (pure, no Node/DOM — same pattern as
+    `revision-visual.ts`): types matching `SCRIPT_CENTINELA`'s `autoprueba:resultado` message;
+    `necesitaCorreccion({errores, reinicioOk})` (true on any error, or `reinicioOk === false`;
+    `reinicioOk === null` alone does NOT trigger a correction); `lineaFuente(html, linea, contexto=1)`
+    (extracts the 1-based source line ± context with a `>` marker, `null` out of range); a stable
+    marker constant `MARCADOR_CORRECCION_AUTOPRUEBA` for T13's mock matching; and
+    `construirMensajeCorreccion({html, informe, ronda})`, which quotes each error's message, action
+    and exact source-line text (from the CURRENT server-side HTML, never client-supplied), the
+    before/after diff for a failed reset (missing/extra text, control values), and an extra note
+    when `exitoVisibleAlInicio` is true.
+    New `POST /api/chat/autocorreccion` (`src/pages/api/chat/autocorreccion.ts`), modeled on
+    `visual-review.ts`: same auth/demo/project-access/fingerprint-staleness/quota gates, but
+    WITHOUT visual-review's `puedeElegirVelocidad`/`supportsVision` gates — the self-test runs for
+    every teacher, it's the harness fixing its own defects, not a prime feature. Body
+    `{projectId, fingerprint, ronda: 1|2, errores, reinicioOk, exitoVisibleAlInicio, diferencias}`,
+    zod-capped (20 errors, 5 diff entries each list, 300-500 char strings); `ronda` as a
+    `z.union([z.literal(1), z.literal(2)])` rejects anything else by construction. Historyless
+    prompt (`buildSystemPrompt` + `buildCurrentResourceBlock`), forced tool,
+    `razonamientoOverride: razonamientoCorreccion(provider)`. Applies the kit, persists
+    `currentHtml`, records ONE `TokenUsage` row per round (consumes the teacher's quota like
+    T7/T8). No `ChatMessage`, no `ProjectSnapshot`. SSE `code`/`done` only — failures never surface
+    as an `error` event, just one server log line per round (`proyecto`, `ronda`, `errores` count,
+    `reinicioOk`, `corrigioCodigo` — no HTML content).
+    Unit tests in `e2e/unidad.ts`: 3 for `razonamientoCorreccion` (unknown dialect, always "low",
+    always "enabled"), 4 for `necesitaCorreccion`, 4 for `lineaFuente`, 3 for
+    `construirMensajeCorreccion` (exact message/action/source-line citation, reset diff citation,
+    exitoVisibleAlInicio note presence/absence).
+  - **T12b (client): `b26857f`.** `src/lib/workspace-types.ts`/`AiStatus.tsx`: two new `AiPhase`
+    values, `probando` ("Probando el recurso…") and `corrigiendo` ("Corrigiendo un detalle…").
+    New `src/lib/client/autoprueba.ts`: `ejecutarAutopruebaEnIframe(html, {signal, numBotones,
+    timeoutMs})` — creates a hidden `<iframe sandbox="allow-scripts">` (no `allow-same-origin`,
+    same as PreviewPanel), `srcdoc=html`, 1280×800, posts `{kodu:'autoprueba', id, botones}` only
+    AFTER the iframe's own `load` event (a message posted before the `srcdoc` navigation starts can
+    be lost — goes to the initial `about:blank`, not the final document), waits for
+    `{kodu:'autoprueba:resultado', id}` from `evento.source === iframe.contentWindow`, `null` on a
+    ~25s timeout or on `signal` abort (both always remove the iframe). New `streamAutocorreccion` +
+    `AutocorreccionEvent` in `src/lib/client/api.ts`, same transport as `streamVisualReview`.
+    `src/components/workspace/Workspace.tsx`: `ejecutarRevisionVisual` now RETURNS the html it
+    ended with (corrected, or the input unchanged) instead of `void` — T12 chains off of it, so the
+    self-test runs on what the teacher actually ends up seeing after T8, not before it. New
+    `ejecutarAutopruebaYCorreccion(htmlInicial)`: loop of at most 2 rounds — `probando` phase, run
+    the self-test; if healthy, done; if it needs correction and rounds remain, `corrigiendo` phase,
+    call the endpoint, apply the returned `code` to the preview (same silent treatment as T8, no
+    chat message), loop back to re-test the corrected HTML; if still failing after round 2 (or the
+    endpoint call raises a non-abort error, or returns no HTML), set the discreet warning. A timeout
+    or abort during the self-test itself returns immediately with NO warning (couldn't test ≠ found
+    a defect). `abortador.current` is reused for both the iframe wait and the correction fetch, so
+    the existing "Detener" button (already unconditionally wired for any non-idle `aiPhase`) cancels
+    whichever is in flight; `/api/chat/cancel` is a safe no-op here since the main turn's assistant
+    message is already saved by this point. Skipped entirely for a multi-variant turn
+    (`pedirVersiones`, T9) — matches T8's existing "versions and visual review are exclusive"
+    reasoning. New `autopruebaAdvertencia` state, cleared at every other place `html` changes
+    (new turn start, resume-after-reload poll, undo, version switch, manual code edit) and
+    surfaced as a small discreet line in `PreviewPanel`'s footer: "Probamos el recurso y algo puede
+    no funcionar bien. Si lo notás, contalo en el chat." — no dismiss button, clears only via HTML
+    change, never auto-times-out like `flashNotice`.
+    **Hidden-iframe measurement** (required by the task — "measure, don't assume"): wrote a
+    throwaway Playwright script (not committed) that put the same rAF+setInterval-animated resource
+    in two placements and counted ticks over a real 2000ms window. `position:absolute;
+    left:-9999px;top:-9999px` (off-screen): **0 `requestAnimationFrame` frames fired inside a 10s
+    safety timeout** — Chromium fully freezes rAF scheduling for a cross-origin iframe whose rect
+    never intersects the viewport (same class of throttling as an off-screen ad iframe), regardless
+    of the iframe's own CSS visibility. `position:fixed;top:0;left:0;opacity:0;pointer-events:none;
+    z-index:-1` (in-viewport, only visually hidden): **~122 rAF frames in 2044ms (≈60fps)** —
+    behaves exactly like a visible frame. `setInterval` ticks (40 in ~2000ms, 50ms interval) were
+    unaffected in EITHER placement — only rAF is gated by viewport intersection. Decision: the
+    hidden self-test iframe uses the in-viewport `opacity:0` placement, not off-screen — a resource
+    that animates via rAF (increasingly common after T7's `kodu.festejar`, and any hand-rolled
+    animation) would otherwise never settle, or the self-test's own timing (which itself only
+    depends on native `setTimeout`, unaffected) could observe a half-animated DOM state.
+  - Checks: `npm run check` → clean after both commits. `npx tsx e2e/unidad.ts` (against
+    `kodu_db_dev`, already up) → 70/70 pass (58 previous + 12 new: 3 `razonamientoCorreccion` + 9
+    `autoprueba.ts`). `npx tsx e2e/unidad-kit.ts` → 64/64 pass, unchanged (T12 never touches
+    `kit.ts`). `npx tsx e2e/navegador-kit.ts` → 50/50 pass, unchanged, run once, no leftover
+    Chromium process, no regression.
+
+- T13 done. Commit `c665d09`. `e2e/mock-proveedor.ts` needed NO code changes — it already records
+  the full request body per call (`llamadas[i].body`), which is all T13 needed to assert on
+  `reasoning_effort` and the correction prompt text.
+  New `e2e/t11-autoprueba.ts` (real Chromium against the dev server + mock, same pattern as
+  `e2e/t8-revision-visual.ts`'s browser scene). HTML fixtures (unkitted — the server applies the
+  kit): `htmlRoto` (a "Comprobar" button whose handler calls `funcionQueNoExiste()`, no reset
+  button), `htmlSano` (same button, works), `htmlReinicioParcial` ("Comprobar" sets a message,
+  "Reiniciar" resets the range but forgets to clear the message — same defect shape as
+  `navegador-kit.ts`'s own "Muestra 3"). The mock's correction response is selected via
+  `programarRespuestaCondicional` matching `MARCADOR_CORRECCION_AUTOPRUEBA` (exported from
+  `src/lib/ai/autoprueba.ts`) in the last user message. Pisa el dialecto del motor mock a
+  `reasoning_effort`/`"none"` (mismo patrón que T6/T7) para poder comprobar que la corrección
+  pide `"low"` — se restaura al final.
+  - **Escena 1 (roto → corregido)**: observa "Probando el recurso…" y "Corrigiendo un detalle…"
+    en pantalla, exactamente 1 pedido de corrección, `reasoning_effort:"low"`, el prompt de
+    corrección cita el mensaje del error (`funcionQueNoExiste`), la etiqueta del botón
+    ("Comprobar") y el TEXTO exacto de la línea de origen (`funcionQueNoExiste();`); el resultado
+    final es el sano (preview y `Project.currentHtml`); el hilo tiene EXACTAMENTE 2
+    `ChatMessage` (nada extra de la corrección); `TokenUsage` sumó 2 filas (turno + 1 ronda); 1
+    sola `ProjectSnapshot` (la del turno, la corrección no crea la suya); sin aviso.
+  - **Escena 2 (sigue roto)**: exactamente 2 pedidos de corrección (nunca un 3ro), el recurso
+    final queda con lo último que devolvió la 2da corrección aunque siga roto, y se ve el aviso
+    discreto.
+  - **Escena 3 (sano a la primera)**: cero pedidos de corrección, sin aviso.
+  - **Escena 4 (reinicio parcial, sin error de JS)**: dispara una corrección cuyo prompt incluye
+    la línea "Intentaste" que quedó sin limpiar y el texto "no vuelve el recurso al estado
+    inicial" (nunca la ruta de "error"), y termina sana.
+  - **Gotcha real encontrado y arreglado (no era del código de T12/T13)**: la primera corrida de
+    `e2e/t7-revision-automatica.ts` (chequeo de regresión pedido para esta tarea) falló con la
+    secuencia SSE `['done']` en vez de `['code','phase','code','done']` — el turno cayó al motor
+    real MiniMax M3 ("El servidor no tiene configurada la clave"). Investigado con Prisma
+    directo: bajo el `kind` compartido `"kodu-mock-t3"` había 3 `AiProvider`, DOS
+    deshabilitados y sin `apiKeyCipher` (sobras de sesiones anteriores — el mismo problema que
+    ya había encontrado y arreglado `e2e/arnes-robustez.ts` en su T4.3, pero SÓLO ahí:
+    `t7-revision-automatica.ts`/`t8-revision-visual.ts` siguen con un `findFirst` SIN el filtro
+    `enabled`/`apiKeyCipher`, y por lo visto en esta corrida cayeron en uno de los deshabilitados,
+    cuyo `AiModel` hijo `normalizarMotor` no puede usar aunque el modelo en sí esté `enabled`).
+    NO se tocó ningún archivo `.ts` de e2e existente (fuera del alcance de T12/T13): se borraron
+    sólo las dos filas de `AiProvider` deshabilitadas y sus `AiModel` hijos de la base de
+    desarrollo compartida (`onDelete: SetNull` en `Project`/`TokenUsage.aiModelId`, así que
+    cualquier fila vieja que las referenciara queda con `NULL`, nunca rota) — pura limpieza de
+    datos, no un cambio de código. Con eso, `e2e/t7-revision-automatica.ts` corrió limpio
+    (13/13 escenas). Queda abierto (fuera de este cambio): endurecer el `asegurarMotorMock` de
+    esos dos archivos con el mismo filtro que ya usa `arnes-robustez.ts`, para que la clase de
+    falla no vuelva a aparecer.
+  - Checks: `npx tsx e2e/t11-autoprueba.ts` → 4/4 escenas pass, corrido dos veces, sin
+    flakiness (la primera corrida real necesitó agrandar el `chunkDelayMs`/achicar el
+    `chunkBytes` de la respuesta de corrección de la escena 1 — con chunks grandes y rápidos la
+    fase "Corrigiendo un detalle…" duraba unos pocos ms del lado del servidor y el `waitFor` de
+    Playwright la perdía; mismo truco que ya usa la escena H de `t8-revision-visual.ts`). Ningún
+    Chromium ni mock quedó colgado después de ninguna corrida (`browser.close()`/`mock.detener()`
+    en `finally`); el único proceso Chromium visto en la máquina durante estas corridas ya
+    estaba ahí antes (mismo PID, de otra sesión, no tocado).
+
 ## Next step
 
-T11 done (kit + tests), branch not pushed or merged. T12 (editor: run the self-test in a
-hidden sandboxed iframe after a generation, correction turn on failure) and T13 (mock provider
-for the broken→fixed cycle) are next, per round 3's task list above. T12 needs to know: the
-hidden iframe has to actually be attached to the DOM with a non-zero size for
-`getBoundingClientRect`-based visibility checks (buttons, ranges, the reset button) to work —
-`display:none` or `width:0` on the iframe itself would make the self-test see nothing as
-visible and never click anything; keep it off-screen (e.g. `position:absolute;left:-9999px`)
-or visually hidden some other way that preserves layout, not `display:none`/zero size. Typical
-self-test duration observed in these tests: roughly 3-6s for a small resource (mostly the
-fixed waits: ~800ms load settle + up to two ~1200ms reset waits + ~150ms per button clicked),
-well under the ~20s budget.
+Round 3 completa (T9–T13), branch `feat/arnes-robustez` sin pushear ni mergear. Pendiente fuera
+de esta tarea: endurecer `asegurarMotorMock` en `e2e/t7-revision-automatica.ts` y
+`e2e/t8-revision-visual.ts` con el mismo filtro `enabled`/`apiKeyCipher` que ya usa
+`e2e/arnes-robustez.ts` (y ahora `e2e/t11-autoprueba.ts`), para no depender de limpiar la base a
+mano cada vez que la base de desarrollo compartida acumula filas deshabilitadas de otras
+sesiones.
 
 Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
 session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
