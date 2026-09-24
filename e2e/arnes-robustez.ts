@@ -199,6 +199,9 @@ async function main(): Promise<void> {
     assert.equal(pedidoA.messages[0]!.role, 'system');
     assert.ok(sistemaA.includes('## Que funcione de verdad'), 'el system prompt tiene que llevar la sección nueva de T3/T4');
     assert.ok(sistemaA.includes('kodu.arrastrar'), 'el system prompt tiene que documentar kodu.arrastrar');
+    // Vuelta 2: el arrastre en unidades del problema y el orden mezclado.
+    assert.ok(sistemaA.includes('alCambiar: (v) =>'), 'el system prompt tiene que llevar el ejemplo del arrastre en unidades');
+    assert.ok(sistemaA.includes('kodu.mezclar('), 'el system prompt tiene que documentar kodu.mezclar');
     console.log('✔ (A) el system prompt que recibió el mock lleva "Que funcione de verdad" y "kodu.arrastrar"');
 
     const proyectoGuardadoA = await prisma.project.findUniqueOrThrow({
@@ -212,6 +215,10 @@ async function main(): Promise<void> {
     assert.ok(
       proyectoGuardadoA.currentHtml.includes('[hidden]{display:none!important}'),
       'el HTML guardado después del turno tiene que llevar la regla [hidden] del kit',
+    );
+    assert.ok(
+      proyectoGuardadoA.currentHtml.includes('festejar: festejar') && proyectoGuardadoA.currentHtml.includes('__koduDibujarIconos'),
+      'el HTML guardado tiene que llevar el kit de la vuelta 2 (festejar y el dibujo de íconos nuevo)',
     );
     console.log('✔ (B) el HTML guardado (Project.currentHtml) lleva window.kodu y la regla [hidden]');
 

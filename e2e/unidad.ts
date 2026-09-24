@@ -604,7 +604,7 @@ await prueba('buildSystemPrompt: no lleva el HTML actual (T1, vive en el último
 // ── T3 (arnes-robustez): "Que funcione de verdad" y los helpers de window.kodu ──
 // (odd/tasks/arnes-robustez.md)
 
-await prueba('buildSystemPrompt: lleva la sección "Que funcione de verdad" con las 6 reglas', () => {
+await prueba('buildSystemPrompt: lleva la sección "Que funcione de verdad" con las reglas de la vuelta 1', () => {
   const prompt = buildSystemPrompt(contextoDePrueba(2, false));
   assert.ok(prompt.includes('## Que funcione de verdad'), 'tiene que llevar la sección nueva de T3');
 
@@ -626,6 +626,34 @@ await prueba('buildSystemPrompt: documenta los cuatro helpers de window.kodu por
   for (const helper of ['kodu.icono(', 'kodu.arrastrar(', 'kodu.despues(', 'kodu.cancelarTemporizadores(']) {
     assert.ok(prompt.includes(helper), `falta documentar el helper "${helper}"`);
   }
+});
+
+// ── Round 2 (arnes-robustez): reglas nuevas y helpers a prueba de mal uso ──
+
+await prueba('buildSystemPrompt: lleva las reglas de la vuelta 2 del arnés', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'ESTADO_INICIAL', // reiniciar vuelve a un estado declarado una sola vez
+    'Un LOGRO, una vez obtenido, queda hasta reiniciar', // logro contra condición
+    'borrá el mensaje del intento anterior',
+    'desde el primer cuadro', // estado inicial sincronizado
+    'kodu.mezclar(', // orden de las opciones
+    'nunca con 0 aciertos', // festejo sólo ante un logro real
+    '820×1180', // controles visibles en escritorio y tablet
+    'recién al resolver el anterior', // desafíos en orden
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla de la vuelta 2: "${marca}"`);
+  }
+  assert.ok(!prompt.includes('puede volver a "pendiente"'), 'la regla vieja de consignas en vivo tiene que haberse ido');
+});
+
+await prueba('buildSystemPrompt: documenta el arrastre en unidades y que el helper ya maneja el teclado', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const marca of ['alCambiar: (v) =>', 'valor: () =>', 'no agregues `pointerdown` ni `keydown` propios', '`p` es un objeto', 'kodu.festejar()']) {
+    assert.ok(prompt.includes(marca), `falta en la documentación de los helpers: "${marca}"`);
+  }
+  assert.ok(!prompt.includes('canvas-confetti'), 'el festejo pasa por kodu.festejar, no por cargar canvas-confetti a mano');
 });
 
 await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {

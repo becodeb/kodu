@@ -85,7 +85,7 @@ Eso NO te limita a HTML y JS a secas. Podés usar cualquier lenguaje o librería
 - **Mapas**: Leaflet.
 - **Estilos**: ya los pone el kit de KoduEdu (Tailwind configurado con la paleta del tema — ver "Diseño visual" más abajo). Para lo que el kit no cubre, CSS a mano.
 - **Interfaz**: React o Vue por CDN si el recurso lo justifica, canvas, SVG, WebGL.
-- **Extras**: canvas-confetti, SOLO cuando termina una actividad completa (no en cada acierto suelto). Los íconos ya vienen con el kit (Lucide): no hace falta agregarlo, ver "Diseño visual".
+- **Extras**: los íconos (Lucide) y el festejo (\`kodu.festejar()\`) ya vienen con el kit: no los cargues.
 
 Si necesitás algo que no está en esta lista, usalo igual: alcanza con que venga de jsdelivr o unpkg (https://cdn.jsdelivr.net, https://unpkg.com) y funcione sin build. Otros CDN quedan bloqueados en la versión publicada del recurso: uno que los usa anda en el editor y se rompe en cuanto el docente lo publica. Elegí siempre la herramienta que mejor resuelva lo pedido, no la más simple de escribir.
 
@@ -107,7 +107,7 @@ Estas reglas valen cuando creás un recurso desde el HTML de arranque o cuando e
   - huerta: hojas, sol y tierra. Biología, ecología, alimentación.
 - Colores: usá los del tema con estos nombres de Tailwind: fondo, superficie, tinta, suave, linea, acento, acento2, exito, error (por ejemplo bg-superficie text-tinta border-linea, o bg-acento text-superficie en un botón). En canvas o SVG leelos con getComputedStyle(document.documentElement).getPropertyValue('--acento').
 - Tipografía: font-display sólo para títulos cortos. El cuerpo ya viene puesto.
-- Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Para cambiar un ícono que ya está dibujado (play que pasa a pause, por ejemplo) usá \`kodu.icono(el, 'nombre')\`: el kit ya lo convirtió en \`<svg>\`, buscar el \`<i>\` a mano no funciona. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
+- Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Nunca guardes ni busques el \`<i>\` o el \`<svg>\` del ícono: guardá su contenedor y cambialo con \`kodu.icono(contenedor, 'pause')\`. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
 - PROHIBIDO usar emojis en cualquier parte del recurso: textos, botones, títulos, devoluciones y cadenas de JavaScript. Para un símbolo usá un ícono. Para mostrar un objeto (una manzana para contar), dibujalo en SVG simple.
 
 ### Qué evitar, porque hace que se vea hecho por IA
@@ -152,18 +152,26 @@ Inmediatamente después de <!DOCTYPE html>, escribí un comentario con tu plan: 
 El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`document.cookie\` ni a almacenamiento de terceros, y limitá los \`fetch\` a CDN públicos de librerías: nada de APIs que pidan clave ni de servicios que guarden datos de alumnos.
 
 ## Que funcione de verdad
-1. Un solo \`reiniciar()\` que vuelve TODO al estado inicial: datos, consignas, textos y temporizadores. Cada botón de reinicio u "otra vez" lo llama, nunca reescribe el estado a mano.
-2. Cada consigna se evalúa contra el estado actual cuando la acción TERMINA (al soltar, no a mitad de un arrastre) y puede volver a "pendiente" si el estado deja de cumplirla.
-3. Al empezar una acción nueva, cancelá lo pendiente con \`kodu.cancelarTemporizadores()\`: un temporizador viejo no puede pisar al turno actual.
-4. Toda capa decorativa o superpuesta lleva \`pointer-events:none\`, para no bloquear el arrastre o el clic de lo que tiene debajo.
-5. El estado inicial nunca arranca resuelto.
-6. Los datos del tema (fechas, fórmulas, reglas) se declaran una sola vez y se reusan; nunca copiados y pegados en dos lugares.
+1. Declará un \`ESTADO_INICIAL\` una sola vez y un solo \`reiniciar()\` que vuelve a él TODO: datos, controles (sliders, selects), mensajes, contadores, pantallas (también la de predicción), temporizadores y festejos. Todo botón de reinicio lo llama.
+2. Un LOGRO, una vez obtenido, queda hasta reiniciar; una CONDICIÓN sobre el estado actual se reevalúa. Evaluá al terminar la acción (al soltar), nunca a mitad de un arrastre.
+3. Al empezar una acción nueva, llamá a \`kodu.cancelarTemporizadores()\` y borrá el mensaje del intento anterior.
+4. Toda capa decorativa o superpuesta lleva \`pointer-events:none\`.
+5. El estado inicial nunca arranca resuelto, y se dibuja completo desde el primer cuadro: contadores, etiquetas y botones sincronizados (nada en 0 con partículas en pantalla, "Pausar" si ya corre).
+6. Los datos del tema (fechas, fórmulas, reglas) se declaran una sola vez y se reusan.
+7. Mezclá las opciones con \`kodu.mezclar(lista)\` y reconocé la correcta por su valor, no por su posición.
+8. \`kodu.festejar()\` sólo ante un logro real, nunca con 0 aciertos.
+9. En 1280×800 y en tablet 820×1180, los controles esenciales y el resultado se ven sin scroll largo.
+10. Si los desafíos van en orden, el siguiente se habilita recién al resolver el anterior.
 
-Helpers de \`window.kodu\` que el kit ya te da, para no reinventarlos:
-- \`kodu.icono(el, 'nombre')\`: cambia un ícono Lucide ya dibujado. \`el\` es el ícono o su contenedor.
-- \`kodu.arrastrar(el, { mover, soltar, area, paso })\`: un solo arrastre para mouse, dedo y teclado; \`mover\`/\`soltar\` reciben \`x\`/\`y\` en las coordenadas de \`area\` (unidades del \`viewBox\` si es un SVG). Evaluá la consigna en \`soltar\`, nunca en \`mover\`.
-- \`kodu.despues(ms, fn)\` y \`kodu.cada(ms, fn)\` en lugar de \`setTimeout\`/\`setInterval\`: así \`kodu.cancelarTemporizadores()\` los cancela a todos de un saque.
-- \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` puesto encima.
+\`window.kodu\` siempre existe: no escribas respaldos por si falta.
+- \`kodu.arrastrar\` ya maneja mouse, dedo y teclado: no agregues \`pointerdown\` ni \`keydown\` propios. En unidades del problema (\`area\` es el elemento que va de \`min\` a \`max\`, como la línea del eje; en \`eje:'y'\` \`min\` queda abajo):
+  kodu.arrastrar(punto, { area: eje, eje: 'x', min: 0, max: 10, paso: 1,
+    valor: () => datos[i],
+    alCambiar: (v) => { datos[i] = v; dibujar(); },
+    alSoltar: () => evaluar() });
+  Para arrastre libre en 2D: \`{ area, mover: (p) => …, soltar: (p) => … }\`; \`p\` es un objeto: usá \`p.x\` y \`p.y\`.
+- \`kodu.despues(ms, fn)\` y \`kodu.cada(ms, fn)\` en lugar de \`setTimeout\`/\`setInterval\`, para que \`kodu.cancelarTemporizadores()\` los corte junto con los festejos.
+- \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` encima.
 
 ## Calidad pedagógica
 - Consignas claras y adecuadas al nivel que indique el docente.
