@@ -441,6 +441,41 @@ confirmed the round-1 gains but found a regression and new defect classes:
     `npx tsx e2e/navegador-kit.ts` → 24/24 pass, run three times total, no flakiness, no
     leftover Chromium process.
   - Commit: `2db95e3`.
+  - **Post-review correction**: parent review found `elegirArrastrable` picked drag
+    candidates by `getBoundingClientRect` containment only, regardless of what the
+    pointer actually hit. Two real consequences: a `<button>`/input/link geometrically
+    inside a draggable's bbox (but not a DOM descendant of it) started a drag instead of
+    letting the click through, and `setPointerCapture` then diverted `pointerup` so the
+    control's click never fired at all; a draggable with a large bbox (a diagonal line, a
+    `<g>`, a wide bar) started a drag from pressing empty space inside that bbox, away
+    from its actual rendered shape. Fixed by switching the candidate filter to
+    `document.elementsFromPoint(clientX, clientY)` — a real hit test, shape-accurate for
+    SVG, already skips `pointer-events:none` on its own, and returns the WHOLE element
+    stack at that point (not just the topmost), so a draggable underneath a label lacking
+    `pointer-events:none` is still found. Nearest-rect-center-wins and the
+    `evento.target`-containment tie-break are unchanged. Added a second, independent
+    guard in the `pointerdown` dispatcher: if the actually-hit element
+    (`evento.target.closest('button, a[href], input, select, textarea, label,
+    [contenteditable]')`) is an interactive control that is NOT contained by any
+    registered draggable, no drag starts at all — the control's normal click/focus
+    behavior is left completely untouched.
+    - The existing "dos arrastrables superpuestos" test needed NO geometry change: its
+      grab point (circulo-chico's own center, viewBox 75,35) is already inside the real
+      circular shape of BOTH circles (distance to circulo-grande's center ≈29.2, under
+      its radius 40), not just their bboxes — confirmed by re-running it unmodified
+      against the new hit-test code, still green. Added a code comment recording this so
+      it's not re-derived next time.
+    - New browser tests in `e2e/navegador-kit.ts`: a real `<button>` positioned inside a
+      diagonal `<line>`'s bbox (off the stroke) keeps its `click` (fires exactly once) and
+      starts no drag; pressing empty space inside that same line's bbox, off the stroke
+      and away from the button, starts no drag; a plain `<div>` label (no
+      `pointer-events:none`) fully covering a draggable point does not block dragging the
+      point underneath it.
+    - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 53/53 pass (unchanged
+      — this correction only touched `arrastrar()`'s dispatcher, no new unit-testable
+      surface). `npx tsx e2e/navegador-kit.ts` → 31/31 pass (28 previous + 3 new), run
+      three times total, no flakiness, no leftover Chromium process.
+    - Commit: `6130055`.
 
 - T7 done. `src/lib/ai/kit.ts`, `SCRIPT_KODU` gets two more helpers:
   - `festejar(opciones)`: if `window.confetti` already exists, fires immediately
