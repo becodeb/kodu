@@ -64,7 +64,10 @@ declare global {
       despues: (ms: number, fn: () => void) => number;
       cada: (ms: number, fn: () => void) => number;
       cancelarTemporizadores: () => void;
+      festejar: (opciones?: Record<string, unknown>) => void;
+      mezclar: <T>(lista: T[]) => T[];
     };
+    confetti?: { (opciones?: Record<string, unknown>): unknown; reset: () => void };
     __test: {
       moverHtml: PuntoDrag[];
       soltarHtml: PuntoDrag[];
@@ -430,6 +433,27 @@ async function arrastrarConTouch(page: Page, selector: string, dx: number, dy: n
   } finally {
     await cdp.detach();
   }
+}
+
+/**
+ * Round 2, T7: kodu.festejar() dibuja con la librería real de canvas-confetti
+ * (nada mockeado) en un <canvas> que la propia librería crea y agrega
+ * síncronamente a document.body al primer disparo. No se puede leer los
+ * píxeles: la instancia global de canvas-confetti (la que usa el atajo
+ * `confetti(opciones)` que llama kodu.festejar) siempre usa un Worker +
+ * OffscreenCanvas (`useWorker` queda fijo en `true` la primera vez que se
+ * crea esa instancia compartida, ver `dist/confetti.browser.min.js`), así
+ * que `canvas.getContext('2d')` tira `InvalidStateError` ("transferred its
+ * control to offscreen") — confirmado corriendo la prueba. La señal
+ * observable desde el hilo principal es la presencia del <canvas>: la
+ * librería lo agrega a document.body al animar y lo saca cuando termina
+ * (naturalmente) o cuando se llama a reset().
+ */
+async function hayCanvasDeConfetti(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    var canvas = document.querySelector('canvas');
+    return !!canvas && canvas.width > 0 && canvas.height > 0;
+  });
 }
 
 async function main(): Promise<void> {
@@ -846,6 +870,86 @@ async function main(): Promise<void> {
       await page.waitForTimeout(250); // bien por encima de los 100ms del timer agendado al cargar
       const disparado = await page.evaluate(() => window.__test.timerDisparado);
       assert.equal(disparado, false, 'cancelarTemporizadores() tiene que haber barrido el timer agendado');
+    });
+
+    // ── Round 2, T7: kodu.festejar / kodu.cancelarTemporizadores ───────
+    // ESTA prueba tiene que correr ANTES que cualquier otro festejar(): es
+    // la única forma de probar el caso "cancelado antes de que la librería
+    // terminara de cargar" (una vez que canvas-confetti carga, queda cacheada
+    // para el resto de la página).
+    await prueba('kodu.festejar + kodu.cancelarTemporizadores ANTES de que cargue la librería: nunca dibuja nada', async () => {
+      const yaHabiaConfetti = await page.evaluate(() => !!window.confetti);
+      assert.equal(yaHabiaConfetti, false, 'setup: esta prueba necesita correr antes de que canvas-confetti haya cargado');
+
+      await page.evaluate(() => {
+        window.kodu.festejar();
+        window.kodu.cancelarTemporizadores();
+      });
+      await page.waitForFunction(() => !!window.confetti, undefined, { timeout: 15_000 });
+      await page.waitForTimeout(500);
+      const hayCanvas = await hayCanvasDeConfetti(page);
+      assert.equal(hayCanvas, false, 'un festejo cancelado antes de que la librería cargara no puede dibujar nada después');
+    });
+
+    await prueba('kodu.festejar: dispara confetti real (agrega el <canvas> de la librería)', async () => {
+      await page.evaluate(() => window.kodu.festejar());
+      await page.waitForFunction(() => !!window.confetti, undefined, { timeout: 15_000 });
+      await page.waitForTimeout(150); // bien antes de que la animación termine sola
+      const hayCanvas = await hayCanvasDeConfetti(page);
+      assert.equal(hayCanvas, true, 'festejar() tiene que agregar el <canvas> real de canvas-confetti');
+    });
+
+    await prueba('kodu.cancelarTemporizadores: corta un festejo ya animando', async () => {
+      await page.evaluate(() => window.kodu.festejar());
+      await page.waitForTimeout(100); // dejarlo animar un poco primero
+      const hayCanvasAntes = await hayCanvasDeConfetti(page);
+      assert.equal(hayCanvasAntes, true, 'setup: tiene que haber un festejo animando antes de cancelar');
+      await page.evaluate(() => window.kodu.cancelarTemporizadores());
+      await page.waitForTimeout(300);
+      const hayCanvas = await hayCanvasDeConfetti(page);
+      assert.equal(hayCanvas, false, 'después de cancelar, el <canvas> de confetti tiene que desaparecer (reset())');
+    });
+
+    // ── Round 2, T7: kodu.mezclar ────────────────────────────────────────
+    await prueba(
+      'kodu.mezclar: mismo multiset, no muta el original, nunca queda idéntico (200 corridas), toda posición aparece',
+      async () => {
+        const resultado = await page.evaluate(() => {
+          var original = [1, 2, 3, 4];
+          var copiaOriginal = original.slice();
+          var vecesIdentico = 0;
+          var posicionesDelPrimero: Record<number, boolean> = {};
+          for (var i = 0; i < 200; i++) {
+            var mezclado = window.kodu.mezclar(original);
+            var ordenadoOriginal = original.slice().sort();
+            var ordenadoMezclado = mezclado.slice().sort();
+            if (JSON.stringify(ordenadoOriginal) !== JSON.stringify(ordenadoMezclado)) {
+              throw new Error('multiset distinto en la corrida ' + i + ': ' + JSON.stringify(mezclado));
+            }
+            if (JSON.stringify(mezclado) === JSON.stringify(original)) vecesIdentico++;
+            posicionesDelPrimero[mezclado.indexOf(original[0])] = true;
+          }
+          return {
+            originalIntacto: JSON.stringify(original) === JSON.stringify(copiaOriginal),
+            vecesIdentico: vecesIdentico,
+            posiciones: Object.keys(posicionesDelPrimero).length,
+          };
+        });
+        assert.equal(resultado.originalIntacto, true, 'mezclar() no puede mutar el array original');
+        assert.equal(resultado.vecesIdentico, 0, 'en ninguna de las 200 corridas puede quedar en el mismo orden de entrada');
+        assert.equal(resultado.posiciones, 4, 'en 200 corridas, el primer elemento original tiene que haber pasado por las 4 posiciones');
+      },
+    );
+
+    await prueba('kodu.mezclar: entrada no-array devuelve una copia sin tirar', async () => {
+      const resultado = await page.evaluate(() => ({
+        // @ts-expect-error: a propósito, para probar la entrada no-array en runtime
+        deNull: Array.isArray(window.kodu.mezclar(null)),
+        // @ts-expect-error: ídem
+        deNumero: Array.isArray(window.kodu.mezclar(42)),
+      }));
+      assert.equal(resultado.deNull, true);
+      assert.equal(resultado.deNumero, true);
     });
 
     // ── sin errores de página ni de consola en todo el recorrido ───────

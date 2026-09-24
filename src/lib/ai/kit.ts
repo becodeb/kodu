@@ -735,6 +735,21 @@ const SCRIPT_ICONOS_LEGADO = `(function () {
  *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
  *    `reiniciar()` que llama a `cancelarTemporizadores()` (regla que
  *    BASE_PROMPT agrega en T3) alcanza para limpiar todo lo pendiente.
+ *  - `festejar(opciones)` (round 2, T7) — confetti al resolver, sin que el
+ *    modelo tenga que pegar su propia lógica de canvas ni acordarse de
+ *    cortarla. Usa `window.confetti` si ya está, si no inyecta UN solo
+ *    `<script>` de canvas-confetti por CDN (versión fijada) y dispara ahí
+ *    apenas carga; nunca tira si el CDN falla. `cancelarTemporizadores()`
+ *    (defecto del blind test: confetti que seguía cayendo después de un
+ *    reset, o que festejaba con 0 respuestas correctas) también corta los
+ *    festejos — el ya animando (`confetti.reset()`) y el que todavía
+ *    esperaba a que la librería terminara de cargar (contador de
+ *    generación: un festejo pedido antes del cancelar nunca dispara,
+ *    aunque el `<script>` recién resuelva después).
+ *  - `mezclar(lista)` (round 2, T7) — Fisher-Yates sobre una COPIA (nunca
+ *    toca `lista`), y si el azar da exactamente el mismo orden de entrada
+ *    (longitud >= 2) fuerza un swap: la opción correcta ya no queda
+ *    siempre en la misma posición del blind test.
  *
  * Escrito ES5-a-mano como `SCRIPT_ICONOS` de arriba (mismo motivo: viaja
  * embebido en TODOS los recursos guardados, no pasa por ningún bundler ni
@@ -1158,12 +1173,108 @@ const SCRIPT_KODU = `(function () {
     temporizadores.push(id);
     return id;
   }
+
+  // ── kodu.festejar (round 2, T7) ──────────────────────────────────────
+  // Generación: cancelarTemporizadores() la incrementa, y un festejo
+  // pedido ANTES de eso (con la generación vieja) nunca dispara, ni
+  // siquiera si la librería termina de cargar después del cancelarlo.
+  var confettiGeneracion = 0;
+  var confettiPendientes = [];
+  var confettiScriptSolicitado = false;
+  var CONFETTI_CDN = 'https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js';
+  var CONFETTI_OPCIONES_BASE = { particleCount: 120, spread: 70, origin: { y: 0.6 }, disableForReducedMotion: true };
+
+  function dispararConfetti(opciones) {
+    if (!window.confetti) return;
+    var finales = opciones ? assign(assign({}, CONFETTI_OPCIONES_BASE), opciones) : CONFETTI_OPCIONES_BASE;
+    try { window.confetti(finales); } catch (e) {}
+  }
+
+  function assign(destino, origen) {
+    for (var clave in origen) {
+      if (Object.prototype.hasOwnProperty.call(origen, clave)) destino[clave] = origen[clave];
+    }
+    return destino;
+  }
+
+  function festejar(opciones) {
+    if (window.confetti) {
+      dispararConfetti(opciones);
+      return;
+    }
+    confettiPendientes.push({ opciones: opciones, generacion: confettiGeneracion });
+    if (confettiScriptSolicitado) return;
+    confettiScriptSolicitado = true;
+    try {
+      var script = document.createElement('script');
+      script.src = CONFETTI_CDN;
+      script.onload = function () {
+        var pendientes = confettiPendientes;
+        confettiPendientes = [];
+        for (var i = 0; i < pendientes.length; i++) {
+          if (pendientes[i].generacion === confettiGeneracion) dispararConfetti(pendientes[i].opciones);
+        }
+      };
+      // Si el CDN falla, no queda nada esperando un dibujo que nunca va a
+      // llegar (festejar() no puede tirar ni dejar promesas colgadas).
+      script.onerror = function () { confettiPendientes = []; };
+      document.head.appendChild(script);
+    } catch (e) {}
+  }
+
   function cancelarTemporizadores() {
     for (var i = 0; i < temporizadores.length; i++) {
       clearTimeout(temporizadores[i]);
       clearInterval(temporizadores[i]);
     }
     temporizadores.length = 0;
+
+    // Corta festejos: los que ya están animando (reset() de la librería) y
+    // los que todavía estaban esperando a que canvas-confetti terminara de
+    // cargar (la generación vieja nunca va a coincidir cuando el onload
+    // finalmente los revise).
+    confettiGeneracion++;
+    confettiPendientes = [];
+    if (window.confetti && typeof window.confetti.reset === 'function') {
+      try { window.confetti.reset(); } catch (e) {}
+    }
+  }
+
+  // ── kodu.mezclar (round 2, T7) ───────────────────────────────────────
+  function mismoOrden(a, b) {
+    if (!a || typeof a.length !== 'number' || a.length !== b.length) return false;
+    for (var i = 0; i < b.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  function mezclar(lista) {
+    var copia;
+    if (Array.isArray(lista)) {
+      copia = lista.slice();
+    } else {
+      try { copia = Array.prototype.slice.call(lista); } catch (e) { copia = []; }
+    }
+
+    // Fisher-Yates: nunca muta lista (se trabaja siempre sobre copia).
+    for (var i = copia.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = copia[i];
+      copia[i] = copia[j];
+      copia[j] = tmp;
+    }
+
+    // Con longitud >= 2, nunca puede quedar en el mismo orden que la
+    // entrada: si el azar dio exactamente eso, se fuerza un swap.
+    if (copia.length >= 2 && mismoOrden(lista, copia)) {
+      var otro = 1 + Math.floor(Math.random() * (copia.length - 1));
+      var t = copia[0];
+      copia[0] = copia[otro];
+      copia[otro] = t;
+    }
+
+    return copia;
   }
 
   window.kodu = {
@@ -1171,7 +1282,9 @@ const SCRIPT_KODU = `(function () {
     arrastrar: arrastrar,
     despues: despues,
     cada: cada,
-    cancelarTemporizadores: cancelarTemporizadores
+    cancelarTemporizadores: cancelarTemporizadores,
+    festejar: festejar,
+    mezclar: mezclar
   };
 })();`;
 

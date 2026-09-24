@@ -298,11 +298,13 @@ await prueba('bloqueKit: lleva la regla [hidden]{display:none!important}', () =>
   }
 });
 
-await prueba('bloqueKit: define window.kodu con los cuatro helpers públicos', () => {
+await prueba('bloqueKit: define window.kodu con los seis helpers públicos (round 2: festejar, mezclar)', () => {
   for (const tema of TEMAS) {
     const bloque = bloqueKit(tema.id);
     assert.ok(bloque.includes('window.kodu = {'), `${tema.id}: falta la asignación de window.kodu`);
-    for (const helper of ['icono:', 'arrastrar:', 'despues:', 'cancelarTemporizadores:']) {
+    for (const helper of [
+      'icono:', 'arrastrar:', 'despues:', 'cada:', 'cancelarTemporizadores:', 'festejar:', 'mezclar:',
+    ]) {
       assert.ok(bloque.includes(helper), `${tema.id}: falta el helper "${helper}"`);
     }
   }
@@ -440,6 +442,33 @@ await prueba('bloqueKit: arrastrar() escucha move/up/cancel en window (sobrevive
 await prueba('bloqueKit: el punto del modo bajo nivel tiene valueOf (red de seguridad de mal uso numérico)', () => {
   for (const tema of TEMAS) {
     assert.ok(bloqueKit(tema.id).includes('crearPuntoDrag'), `${tema.id}: falta la fábrica de puntos con valueOf`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 2, T7 (arnes-robustez): kodu.festejar y kodu.mezclar
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: festejar() carga canvas-confetti por CDN con versión fijada', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js'),
+      `${tema.id}: falta la URL fijada de canvas-confetti`,
+    );
+  }
+});
+
+await prueba('bloqueKit: cancelarTemporizadores() también corta festejar() (generación + reset)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('confettiGeneracion++'), `${tema.id}: falta el contador de generación`);
+    assert.ok(bloque.includes('window.confetti.reset()'), `${tema.id}: falta cortar el confetti ya animando`);
+  }
+});
+
+await prueba('bloqueKit: mezclar() nunca deja el mismo orden de entrada (longitud >= 2)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('mismoOrden'), `${tema.id}: falta la verificación de orden idéntico`);
   }
 });
 
