@@ -663,6 +663,466 @@ const SCRIPT_ICONOS_LEGADO = `(function () {
 })();`;
 
 /**
+ * Centinela + autoprueba (round 3, T11 de `arnes-robustez`). El editor NO
+ * puede tocar el DOM del iframe donde corre el recurso generado (sandbox
+ * `allow-scripts` SIN `allow-same-origin`, a propósito, para que el HTML
+ * generado no pueda leer nada del resto de la app) — así que cualquier
+ * chequeo automático tiene que correr DENTRO del propio recurso y contarle
+ * al padre por `postMessage` lo que encontró. T12 (no esta tarea) usa esto
+ * para pedir una autoprueba después de cada generación y, si algo falló,
+ * armar un turno de corrección con el detalle exacto.
+ *
+ * Es el PRIMER script de TODO el bloque (antes que los `<script src>` de
+ * Tailwind/Lucide y que cualquier contenido del propio recurso):
+ * `aplicarKit` inserta el bloque completo justo después de `<head>` (o del
+ * meta `kodu-tema`, si el modelo lo puso ahí), y SIEMPRE antes que el resto
+ * del `<head>`/`<body>` que escribió el recurso — ver `construirBloque` más
+ * abajo. Así un error que tira el propio `<script src>` de Tailwind/Lucide
+ * cargando, o el script del recurso arrancando, queda registrado igual.
+ *
+ * Los temporizadores nativos se capturan en la primera línea, antes de que
+ * CUALQUIER otro script (el del recurso incluido) tenga oportunidad de
+ * pisar `window.setTimeout`/`clearTimeout` — la autoprueba usa sólo estas
+ * referencias para sus propias esperas, así que `kodu.cancelarTemporizadores()`
+ * (que sólo barre lo agendado con `kodu.despues`/`kodu.cada`, una lista
+ * completamente distinta en `SCRIPT_KODU`) nunca puede cortarla a mitad de
+ * camino, ni siquiera si el recurso bajo prueba llama a `reiniciar()` (que
+ * BASE_PROMPT le pide llamar a `cancelarTemporizadores()`) durante la propia
+ * autoprueba.
+ *
+ * Escrito con `Promise`/`.then()` (no sólo ES5 a mano como el resto del
+ * archivo): esto NO es código que el modelo tenga que imitar ni que viaje
+ * como ejemplo en el prompt, y encadenar pasos asíncronos (cargar, esperar,
+ * mover, click, click, esperar, reiniciar, esperar, comparar) a mano con
+ * callbacks anidados sería bastante menos legible sin ninguna ganancia real
+ * de compatibilidad — `Promise` es soporte universal en cualquier Chromium
+ * moderno.
+ */
+const SCRIPT_CENTINELA = `(function () {
+  var setTimeoutNativo = window.setTimeout;
+
+  // Alert/confirm/prompt bloqueantes no deberían aparecer nunca en un
+  // recurso (y en un iframe sandbox sin allow-modals el navegador ya los
+  // resuelve solo, sin bloquear), pero un no-op propio es una segunda red
+  // de seguridad barata para que la autoprueba nunca quede colgada
+  // esperando una interacción humana que no puede llegar.
+  try {
+    window.alert = function () {};
+    window.confirm = function () { return false; };
+    window.prompt = function () { return null; };
+  } catch (e) {}
+
+  function truncar(texto, n) {
+    texto = String(texto == null ? '' : texto);
+    return texto.length > n ? texto.slice(0, n) + '…' : texto;
+  }
+
+  // ── Centinela: onerror / unhandledrejection / console.error ──────────
+  var accionActual = 'al cargar';
+  var errores = [];
+  var REENVIOS_MAXIMOS = 20;
+  var reenviados = 0;
+
+  function registrar(tipo, mensaje, linea, columna) {
+    var entrada = {
+      tipo: tipo,
+      mensaje: truncar(mensaje, 300),
+      linea: typeof linea === 'number' ? linea : null,
+      columna: typeof columna === 'number' ? columna : null,
+      accion: accionActual
+    };
+    errores.push(entrada);
+    if (reenviados >= REENVIOS_MAXIMOS) return;
+    if (window.parent === window) return;
+    reenviados++;
+    try {
+      window.parent.postMessage({
+        kodu: 'error', tipo: entrada.tipo, mensaje: entrada.mensaje,
+        linea: entrada.linea, columna: entrada.columna, accion: entrada.accion
+      }, '*');
+    } catch (e) {}
+  }
+
+  // Sin capture: un listener de 'error' en window sin fase de captura SÓLO
+  // recibe errores de ejecución de verdad (ErrorEvent con message/lineno/
+  // colno), nunca el evento 'error' de un recurso que no cargó (script/img/
+  // link) — ésos no burbujean, y sólo llegarían a window en captura. Así el
+  // ruido de un CDN caído (Tailwind, Lucide, Google Fonts, canvas-confetti,
+  // o una imagen rota del propio recurso) queda afuera solo, sin tener que
+  // filtrar dominios a mano.
+  window.addEventListener('error', function (evento) {
+    try {
+      var mensaje = evento.message || (evento.error && evento.error.message) || 'Error';
+      registrar('error', mensaje, evento.lineno, evento.colno);
+    } catch (e) {}
+  });
+
+  window.addEventListener('unhandledrejection', function (evento) {
+    try {
+      var razon = evento.reason;
+      var mensaje = razon && razon.message ? razon.message : String(razon);
+      registrar('promesa', mensaje, null, null);
+    } catch (e) {}
+  });
+
+  var consoleErrorOriginal = console.error;
+  console.error = function () {
+    try {
+      var partes = [];
+      for (var i = 0; i < arguments.length; i++) {
+        var arg = arguments[i];
+        if (typeof arg === 'string') partes.push(arg);
+        else if (arg instanceof Error) partes.push(arg.message);
+        else { try { partes.push(JSON.stringify(arg)); } catch (e2) { partes.push(String(arg)); } }
+      }
+      registrar('consola', partes.join(' '), null, null);
+    } catch (e) {}
+    return consoleErrorOriginal.apply(console, arguments);
+  };
+
+  // ── Autoprueba: corre SÓLO si el padre la pide por postMessage ───────
+  var RESET_RE = /reinici|empezar de nuevo|volver a empezar|jugar (de nuevo|otra vez)|play again|restart|start over/i;
+  var EXITO_RE = /completaste|¡logrado|lo lograste|acertaste|¡correcto|you did it|well done/i;
+  var ejecutadas = {};
+
+  function esperarMs(ms) {
+    return new Promise(function (resolve) { setTimeoutNativo(resolve, ms); });
+  }
+
+  function ahora() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+
+  function esVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    var estilo = getComputedStyle(el);
+    if (estilo.visibility === 'hidden' || estilo.display === 'none' || estilo.opacity === '0') return false;
+    return true;
+  }
+
+  function textoDe(el) {
+    return ((el.innerText != null ? el.innerText : el.textContent) || '').trim();
+  }
+
+  function etiquetaBoton(el) {
+    var texto = textoDe(el);
+    if (texto) return texto;
+    var aria = el.getAttribute('aria-label');
+    if (aria && aria.trim()) return aria.trim();
+    var title = el.getAttribute('title');
+    if (title && title.trim()) return title.trim();
+    return '(sin etiqueta)';
+  }
+
+  function etiquetaPorLabelFor(el) {
+    if (!el.id) return null;
+    var labels = document.getElementsByTagName('label');
+    for (var i = 0; i < labels.length; i++) {
+      if (labels[i].htmlFor === el.id) { var t = textoDe(labels[i]); if (t) return t; }
+    }
+    return null;
+  }
+
+  function etiquetaControl(el, indice) {
+    var aria = el.getAttribute('aria-label');
+    if (aria && aria.trim()) return aria.trim();
+    var porFor = etiquetaPorLabelFor(el);
+    if (porFor) return porFor;
+    var envolvente = el.closest ? el.closest('label') : null;
+    if (envolvente) { var t = textoDe(envolvente); if (t) return t; }
+    var placeholder = el.getAttribute('placeholder');
+    if (placeholder && placeholder.trim()) return placeholder.trim();
+    var name = el.getAttribute('name');
+    if (name) return name;
+    if (el.id) return el.id;
+    return (el.tagName || 'control').toLowerCase() + ' #' + (indice + 1);
+  }
+
+  function tomarSnapshot() {
+    var texto = document.body.innerText.replace(/\\d+[.,]?\\d*\\s*s\\b/g, '#s');
+    var lineas = texto.split('\\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });
+    var nodos = document.querySelectorAll('input,select,textarea');
+    var controles = [];
+    for (var i = 0; i < nodos.length; i++) {
+      var el = nodos[i];
+      var valor = el.type === 'checkbox' ? el.checked : el.value;
+      controles.push({ etiqueta: etiquetaControl(el, i), valor: valor });
+    }
+    return { lineas: lineas, controles: controles };
+  }
+
+  function detectarExito() {
+    var candidatos = document.querySelectorAll('body *');
+    for (var i = 0; i < candidatos.length; i++) {
+      var el = candidatos[i];
+      if (el.children.length) continue;
+      if (!EXITO_RE.test(el.textContent || '')) continue;
+      if (esVisible(el)) return true;
+    }
+    return false;
+  }
+
+  function candidatosBoton() {
+    return document.querySelectorAll("button, [role='button'], input[type='button']");
+  }
+
+  function textoBusquedaReset(el) {
+    return textoDe(el) + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '');
+  }
+
+  function buscarBotonReinicio() {
+    var candidatos = candidatosBoton();
+    for (var i = 0; i < candidatos.length; i++) {
+      var el = candidatos[i];
+      if (!esVisible(el) || el.disabled) continue;
+      if (RESET_RE.test(textoBusquedaReset(el))) return el;
+    }
+    return null;
+  }
+
+  function clicSecuencia(el) {
+    try { el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true })); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true })); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true })); } catch (e) {}
+    try { el.click(); } catch (e) {}
+  }
+
+  function moverRangos() {
+    var rangos = document.querySelectorAll('input[type=range]');
+    var movidos = [];
+    for (var i = 0; i < rangos.length; i++) {
+      var el = rangos[i];
+      if (!esVisible(el) || el.disabled) continue;
+      accionActual = "al mover el control '" + etiquetaControl(el, i) + "'";
+      try {
+        el.value = el.max !== '' && el.max != null ? el.max : 100;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        movidos.push(etiquetaControl(el, i));
+      } catch (e) {}
+    }
+    accionActual = 'al cargar';
+    return movidos;
+  }
+
+  function clicarBotones(n) {
+    var tocados = [];
+    var clicados = [];
+    function paso() {
+      if (tocados.length >= n) return Promise.resolve(tocados);
+      var candidatos = candidatosBoton();
+      var elegido = null;
+      for (var i = 0; i < candidatos.length; i++) {
+        var el = candidatos[i];
+        if (clicados.indexOf(el) !== -1) continue;
+        if (!esVisible(el) || el.disabled) continue;
+        if (RESET_RE.test(textoBusquedaReset(el))) continue;
+        elegido = el;
+        break;
+      }
+      if (!elegido) return Promise.resolve(tocados);
+      clicados.push(elegido);
+      var etiqueta = etiquetaBoton(elegido);
+      accionActual = "al tocar el botón '" + etiqueta + "'";
+      clicSecuencia(elegido);
+      tocados.push(etiqueta);
+      return esperarMs(150).then(paso);
+    }
+    return paso();
+  }
+
+  // Índices donde el valor difiere entre dos snapshots (mismo largo o no):
+  // random content (un número al azar, opciones mezcladas) cambia SIEMPRE
+  // de valor entre una carga y la siguiente, así que un índice que ya
+  // cambió entre "recién cargado" y "recién reiniciado en limpio" (sin
+  // ninguna interacción de por medio) es ruido, no un defecto — se excluye
+  // de la comparación final pase lo que pase después.
+  function indicesVolatiles(a, b) {
+    var mapa = {};
+    var n = Math.max(a.length, b.length);
+    for (var i = 0; i < n; i++) {
+      if (a[i] !== b[i]) mapa[i] = true;
+    }
+    return mapa;
+  }
+
+  function filtrarPorIndice(lista, volatiles) {
+    var salida = [];
+    for (var i = 0; i < lista.length; i++) {
+      if (!volatiles[i]) salida.push(lista[i]);
+    }
+    return salida;
+  }
+
+  function diffConjuntos(a, b) {
+    var enB = {};
+    for (var i = 0; i < b.length; i++) enB[b[i]] = true;
+    var enA = {};
+    for (var j = 0; j < a.length; j++) enA[a[j]] = true;
+    var faltan = [], sobran = [];
+    for (var k = 0; k < a.length; k++) { if (!enB[a[k]] && faltan.indexOf(a[k]) === -1) faltan.push(a[k]); }
+    for (var m = 0; m < b.length; m++) { if (!enA[b[m]] && sobran.indexOf(b[m]) === -1) sobran.push(b[m]); }
+    return { faltan: faltan, sobran: sobran };
+  }
+
+  function capar(lista, tope) {
+    return { items: lista.slice(0, tope), truncado: lista.length > tope };
+  }
+
+  function compararSnapshots(referencia, actual, volLineas, volControles) {
+    var dl = diffConjuntos(filtrarPorIndice(referencia.lineas, volLineas), filtrarPorIndice(actual.lineas, volLineas));
+
+    var controlesDiff = [];
+    var n = Math.max(referencia.controles.length, actual.controles.length);
+    for (var i = 0; i < n; i++) {
+      if (volControles[i]) continue;
+      var antes = referencia.controles[i];
+      var despues = actual.controles[i];
+      var valorAntes = antes ? antes.valor : undefined;
+      var valorDespues = despues ? despues.valor : undefined;
+      if (valorAntes !== valorDespues) {
+        controlesDiff.push({
+          etiqueta: (despues && despues.etiqueta) || (antes && antes.etiqueta) || ('control #' + (i + 1)),
+          antes: valorAntes === undefined ? null : valorAntes,
+          despues: valorDespues === undefined ? null : valorDespues
+        });
+      }
+    }
+
+    var faltanCap = capar(dl.faltan, 5);
+    var sobranCap = capar(dl.sobran, 5);
+    var controlesCap = capar(controlesDiff, 5);
+
+    return {
+      igual: dl.faltan.length === 0 && dl.sobran.length === 0 && controlesDiff.length === 0,
+      diferencias: {
+        textoQueFalta: faltanCap.items,
+        textoQueSobra: sobranCap.items,
+        controles: controlesCap.items,
+        truncado: { textoQueFalta: faltanCap.truncado, textoQueSobra: sobranCap.truncado, controles: controlesCap.truncado }
+      }
+    };
+  }
+
+  function ejecutarAutoprueba(id, numBotones) {
+    var inicio = ahora();
+    var incompleta = false;
+    function tiempoAgotado() { return ahora() - inicio > 20000; }
+
+    function esperarCarga() {
+      if (document.readyState === 'complete') return Promise.resolve();
+      return new Promise(function (resolve) {
+        window.addEventListener('load', function () { resolve(); }, { once: true });
+      });
+    }
+
+    var snapshotInicial, exitoInicial, botonReinicioInicial, snapshotBase;
+    var volLineas = {}, volControles = {};
+    var rangosMovidos = [], botonesTocados = [], reinicioOk = null, detalleReinicio = 'sin boton';
+    var diferencias = { textoQueFalta: [], textoQueSobra: [], controles: [], truncado: { textoQueFalta: false, textoQueSobra: false, controles: false } };
+
+    return esperarCarga()
+      .then(function () { return esperarMs(800); })
+      .then(function () {
+        accionActual = 'al cargar';
+        snapshotInicial = tomarSnapshot();
+        exitoInicial = detectarExito();
+        botonReinicioInicial = buscarBotonReinicio();
+        if (!botonReinicioInicial) { snapshotBase = snapshotInicial; return; }
+        accionActual = 'al reiniciar';
+        clicSecuencia(botonReinicioInicial);
+        return esperarMs(1200).then(function () {
+          snapshotBase = tomarSnapshot();
+          volLineas = indicesVolatiles(snapshotInicial.lineas, snapshotBase.lineas);
+          volControles = indicesVolatiles(
+            snapshotInicial.controles.map(function (c) { return c.valor; }),
+            snapshotBase.controles.map(function (c) { return c.valor; })
+          );
+        });
+      })
+      .then(function () {
+        accionActual = 'al cargar';
+        if (tiempoAgotado()) { incompleta = true; return; }
+        rangosMovidos = moverRangos();
+      })
+      .then(function () {
+        if (incompleta || tiempoAgotado()) { incompleta = true; return; }
+        return clicarBotones(numBotones).then(function (tocados) { botonesTocados = tocados; });
+      })
+      .then(function () {
+        accionActual = 'al cargar';
+        if (incompleta) return;
+        return esperarMs(1200);
+      })
+      .then(function () {
+        if (tiempoAgotado()) incompleta = true;
+        var botonFinal = buscarBotonReinicio();
+        if (!botonFinal) {
+          if (botonReinicioInicial) { reinicioOk = false; detalleReinicio = 'quedan restos'; }
+          else { reinicioOk = null; detalleReinicio = 'sin boton'; }
+          return;
+        }
+        accionActual = 'al reiniciar';
+        clicSecuencia(botonFinal);
+        return esperarMs(1200).then(function () {
+          accionActual = 'al cargar';
+          var snapshotFinal = tomarSnapshot();
+          var comparacion = compararSnapshots(snapshotBase, snapshotFinal, volLineas, volControles);
+          diferencias = comparacion.diferencias;
+          reinicioOk = comparacion.igual;
+          detalleReinicio = comparacion.igual ? 'vuelve al inicio' : 'quedan restos';
+        });
+      })
+      .then(function () {
+        var resultado = {
+          kodu: 'autoprueba:resultado',
+          id: id,
+          errores: errores.slice(),
+          reinicioOk: reinicioOk,
+          exitoVisibleAlInicio: !!exitoInicial,
+          detalles: {
+            botonesTocados: botonesTocados,
+            rangosMovidos: rangosMovidos,
+            reinicio: detalleReinicio,
+            diferencias: diferencias,
+            volatiles: { lineas: Object.keys(volLineas).length, controles: Object.keys(volControles).length },
+            duracionMs: Math.round(ahora() - inicio),
+            incompleta: incompleta
+          }
+        };
+        try { window.parent.postMessage(resultado, '*'); } catch (e) {}
+      })
+      .catch(function () {
+        try {
+          window.parent.postMessage({
+            kodu: 'autoprueba:resultado', id: id, errores: errores.slice(),
+            reinicioOk: null, exitoVisibleAlInicio: false,
+            detalles: {
+              botonesTocados: botonesTocados, rangosMovidos: rangosMovidos, reinicio: 'sin boton',
+              diferencias: diferencias, volatiles: { lineas: 0, controles: 0 },
+              duracionMs: Math.round(ahora() - inicio), incompleta: true
+            }
+          }, '*');
+        } catch (e2) {}
+      });
+  }
+
+  window.addEventListener('message', function (evento) {
+    if (evento.source !== window.parent) return;
+    var datos = evento.data;
+    if (!datos || datos.kodu !== 'autoprueba') return;
+    var id = datos.id;
+    if (id === undefined || id === null || ejecutadas[id]) return;
+    ejecutadas[id] = true;
+    var n = typeof datos.botones === 'number' && datos.botones > 0 ? datos.botones : 8;
+    ejecutarAutoprueba(id, n);
+  });
+})();`;
+
+/**
  * `window.kodu`: helpers que el modelo puede llamar desde el JS que escribe
  * (T1, `arnes-robustez`) para no reintroducir los defectos que el blind test
  * de 22 generaciones (branch `exp/razonamiento-deepseek`,
@@ -1530,6 +1990,12 @@ function construirBloque(tema: Tema, opts?: { legado?: boolean }): string {
 
   const partes = [
     `${BLOQUE_PREFIJO}${tema.id}${BLOQUE_INICIO_SUFIJO}`,
+    // T11 (round 3): el centinela/autoprueba va PRIMERO de todo el bloque —
+    // antes incluso de los <script src> de Tailwind/Lucide — para que quede
+    // instalado antes que cualquier otro script del documento. Sólo en el
+    // bloque actual: el legado tiene que seguir siendo byte a byte el de
+    // antes de T11.
+    ...(legado ? [] : [`<script>${SCRIPT_CENTINELA}</script>`]),
     '<link rel="preconnect" href="https://fonts.googleapis.com">',
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
     `<link rel="stylesheet" href="${tema.fontsUrl}">`,

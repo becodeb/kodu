@@ -509,6 +509,68 @@ await prueba('bloqueKit: elegirArrastrable respeta una zona mínima de 44px adem
 });
 
 // ─────────────────────────────────────────────────────────────
+// Round 3, T11 (arnes-robustez): centinela + autoprueba
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: el centinela va PRIMERO del bloque, antes de Tailwind/Lucide por CDN', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    const posCentinela = bloque.indexOf("kodu: 'error'");
+    const posTailwindCdn = bloque.indexOf('cdn.tailwindcss.com');
+    const posLucideCdn = bloque.indexOf('cdn.jsdelivr.net/npm/lucide');
+    assert.ok(posCentinela !== -1, `${tema.id}: falta el centinela`);
+    assert.ok(posCentinela < posTailwindCdn, `${tema.id}: el centinela tiene que ir antes que el <script src> de Tailwind`);
+    assert.ok(posCentinela < posLucideCdn, `${tema.id}: el centinela tiene que ir antes que el <script src> de Lucide`);
+  }
+});
+
+await prueba('bloqueKitLegado: no lleva centinela ni autoprueba (es el bloque de antes de T11)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKitLegado(tema.id);
+    assert.ok(!bloque.includes("kodu: 'error'"), `${tema.id}: el legado no puede llevar el centinela`);
+    assert.ok(!bloque.includes('autoprueba'), `${tema.id}: el legado no puede llevar la autoprueba`);
+  }
+});
+
+await prueba('bloqueKit: el centinela captura onerror, unhandledrejection y console.error', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("window.addEventListener('error'"), `${tema.id}: falta el listener de error`);
+    assert.ok(bloque.includes("window.addEventListener('unhandledrejection'"), `${tema.id}: falta unhandledrejection`);
+    assert.ok(bloque.includes('console.error = function'), `${tema.id}: falta envolver console.error`);
+    assert.ok(bloque.includes("kodu: 'error'"), `${tema.id}: falta el postMessage de error hacia el padre`);
+  }
+});
+
+await prueba('bloqueKit: la autoprueba escucha kodu:autoprueba del padre y responde kodu:autoprueba:resultado', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("datos.kodu !== 'autoprueba'"), `${tema.id}: falta escuchar el mensaje de autoprueba`);
+    assert.ok(bloque.includes("evento.source !== window.parent"), `${tema.id}: falta validar que el mensaje venga del padre`);
+    assert.ok(bloque.includes("kodu: 'autoprueba:resultado'"), `${tema.id}: falta responder con el resultado`);
+    assert.ok(bloque.includes('ejecutadas[id]'), `${tema.id}: falta correr una sola vez por id`);
+  }
+});
+
+await prueba('bloqueKit: la autoprueba usa temporizadores nativos capturados al inicio del script', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('var setTimeoutNativo = window.setTimeout;'),
+      `${tema.id}: falta capturar setTimeout nativo antes que nada`,
+    );
+  }
+});
+
+await prueba('bloqueKit: la autoprueba reporta duracionMs, incompleta y el detalle de reinicio/diferencias', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const campo of ['reinicioOk', 'exitoVisibleAlInicio', 'botonesTocados', 'rangosMovidos', 'diferencias', 'volatiles', 'duracionMs', 'incompleta']) {
+      assert.ok(bloque.includes(campo), `${tema.id}: falta el campo "${campo}" en el resultado`);
+    }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — usaClasesDeTailwind y aplicarKitConRedDeSeguridad
 // ─────────────────────────────────────────────────────────────
 

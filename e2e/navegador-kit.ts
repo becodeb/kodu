@@ -1281,7 +1281,405 @@ async function main(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Round 3, T11 (arnes-robustez): centinela + autoprueba
+//
+// El editor NO puede tocar el DOM de un recurso publicado (sandbox
+// `allow-scripts` SIN `allow-same-origin`): estas pruebas reproducen
+// exactamente esa condición, alojando cada recurso de ejemplo (construido
+// con el `aplicarKit` REAL, mismo CDN real que el resto de este archivo) en
+// un `<iframe sandbox="allow-scripts" srcdoc="…">` dentro de una página
+// padre, y manejando todo el protocolo (mandar `kodu:autoprueba`, juntar
+// `kodu:error` y `kodu:autoprueba:resultado`) desde ESA página padre — el
+// mismo lugar donde T12 (no esta tarea) va a vivir de verdad.
+// ─────────────────────────────────────────────────────────────
+
+interface DetalleErrorAutoprueba {
+  tipo: 'error' | 'promesa' | 'consola';
+  mensaje: string;
+  linea: number | null;
+  columna: number | null;
+  accion: string;
+}
+
+interface AutopruebaResultado {
+  kodu: 'autoprueba:resultado';
+  id: number;
+  errores: DetalleErrorAutoprueba[];
+  reinicioOk: boolean | null;
+  exitoVisibleAlInicio: boolean;
+  detalles: {
+    botonesTocados: string[];
+    rangosMovidos: string[];
+    reinicio: 'vuelve al inicio' | 'quedan restos' | 'sin boton';
+    diferencias: {
+      textoQueFalta: string[];
+      textoQueSobra: string[];
+      controles: { etiqueta: string; antes: unknown; despues: unknown }[];
+      truncado: { textoQueFalta: boolean; textoQueSobra: boolean; controles: boolean };
+    };
+    volatiles: { lineas: number; controles: number };
+    duracionMs: number;
+    incompleta: boolean;
+  };
+}
+
+/** Recurso mínimo con el kit REAL aplicado (mismo `aplicarKit` que usa el servidor). */
+function construirRecurso(cuerpo: string): string {
+  const html =
+    '<!DOCTYPE html>\n<html lang="es">\n<head>\n<meta charset="UTF-8">\n' +
+    '<meta name="kodu-tema" content="pizarron">\n</head>\n<body>\n' +
+    cuerpo +
+    '\n</body>\n</html>';
+  return aplicarKit(html);
+}
+
+/** Línea 1-based donde empieza `buscado` dentro de `html` — para verificar que `linea` del centinela apunta al lugar real. */
+function numeroDeLinea(html: string, buscado: string): number {
+  const idx = html.indexOf(buscado);
+  if (idx === -1) throw new Error(`no se encontró "${buscado}" en el documento`);
+  return html.slice(0, idx).split('\n').length;
+}
+
+/**
+ * Aloja `html` en un iframe sandbox NUEVO (sin allow-same-origin, igual que
+ * un recurso publicado de verdad), manda `{kodu:'autoprueba', id, botones}`
+ * apenas termina de cargar, y junta todo lo que el iframe reenvía por
+ * postMessage hasta encontrar el `autoprueba:resultado` de ese `id` o
+ * agotar `timeoutMs`. `srcdoc` se pone ANTES de conectar el iframe al DOM
+ * (si no, dispara un primer `load` de about:blank que mandaría el mensaje
+ * a un frame sin nadie escuchando).
+ */
+async function correrAutoprueba(
+  page: Page,
+  html: string,
+  opciones?: { botones?: number; id?: number; timeoutMs?: number },
+): Promise<{ resultado: AutopruebaResultado | null; erroresReenviados: DetalleErrorAutoprueba[] }> {
+  const id = opciones?.id ?? Math.floor(Math.random() * 1_000_000_000);
+  const botones = opciones?.botones;
+  const timeoutMs = opciones?.timeoutMs ?? 25_000;
+  // OJO tsx/esbuild: una función NOMBRADA (declaración, o asignada a una
+  // const/let/var) adentro de un page.evaluate rompe en runtime con
+  // "ReferenceError: __name is not defined" — esbuild envuelve los
+  // bindings nombrados con un helper `__name` (para conservar `.name` en
+  // los stack traces) que sólo existe en el módulo de Node, no en el string
+  // que Playwright manda al navegador. Función anónima INLINE (pasada
+  // directo como argumento) o guardada en una propiedad de objeto, no en
+  // una variable con nombre, evita el problema — por eso todo lo de abajo
+  // vive en `estado.*` y el polling usa setInterval en vez de una función
+  // recursiva con nombre.
+  return page.evaluate(
+    ({ html, id, botones, timeoutMs }) => {
+      return new Promise<{ resultado: unknown; erroresReenviados: unknown[] }>((resolve) => {
+        const estado: Record<string, any> = { erroresReenviados: [], resultado: null };
+
+        estado.iframe = document.createElement('iframe');
+        estado.iframe.setAttribute('sandbox', 'allow-scripts');
+        estado.iframe.style.width = '900px';
+        estado.iframe.style.height = '700px';
+
+        estado.onMessage = function (evento: MessageEvent) {
+          if (evento.source !== estado.iframe.contentWindow) return;
+          const datos = evento.data as { kodu?: string; id?: number } | null;
+          if (!datos || !datos.kodu) return;
+          if (datos.kodu === 'error') estado.erroresReenviados.push(datos);
+          else if (datos.kodu === 'autoprueba:resultado' && datos.id === id) estado.resultado = datos;
+        };
+        window.addEventListener('message', estado.onMessage);
+
+        estado.iframe.addEventListener('load', function () {
+          const mensaje: Record<string, unknown> = { kodu: 'autoprueba', id };
+          if (typeof botones === 'number') mensaje.botones = botones;
+          estado.iframe.contentWindow!.postMessage(mensaje, '*');
+        });
+
+        estado.iframe.srcdoc = html;
+        document.body.appendChild(estado.iframe);
+
+        const inicio = Date.now();
+        const iv = setInterval(function () {
+          if (!estado.resultado && Date.now() - inicio <= timeoutMs) return;
+          clearInterval(iv);
+          window.removeEventListener('message', estado.onMessage);
+          estado.iframe.remove();
+          resolve({ resultado: estado.resultado, erroresReenviados: estado.erroresReenviados });
+        }, 100);
+      });
+    },
+    { html, id, botones, timeoutMs },
+  ) as Promise<{ resultado: AutopruebaResultado | null; erroresReenviados: DetalleErrorAutoprueba[] }>;
+}
+
+// ── Muestra 1: recurso sano ──────────────────────────────────────────────
+const RECURSO_SANO = construirRecurso(`
+  <input id="rango" type="range" min="0" max="10" value="0" aria-label="Velocidad">
+  <button id="comprobar" type="button">Comprobar</button>
+  <button id="reiniciar" type="button">Reiniciar</button>
+  <p id="mensaje"></p>
+  <span id="contador">0</span>
+  <script>
+    var intentos = 0;
+    document.getElementById('comprobar').addEventListener('click', function () {
+      intentos++;
+      document.getElementById('contador').textContent = String(intentos);
+      var v = Number(document.getElementById('rango').value);
+      document.getElementById('mensaje').textContent = v >= 5 ? '¡Correcto!' : 'Probá de nuevo';
+    });
+    document.getElementById('reiniciar').addEventListener('click', function () {
+      document.getElementById('rango').value = '0';
+      document.getElementById('mensaje').textContent = '';
+      intentos = 0;
+      document.getElementById('contador').textContent = '0';
+    });
+  </script>
+`);
+
+// ── Muestra 2: tira un error al tocar un botón ──────────────────────────
+const LLAMADA_ROTA = 'funcionQueNoExiste();';
+const RECURSO_ROTO_AL_CLIC = construirRecurso(`
+  <button id="feo" type="button">Feo</button>
+  <script>
+    document.getElementById('feo').addEventListener('click', function () {
+      ${LLAMADA_ROTA}
+    });
+  </script>
+`);
+
+// ── Muestra 3: el reinicio deja restos (un mensaje que no se limpia) ────
+const RECURSO_REINICIO_PARCIAL = construirRecurso(`
+  <input id="rango" type="range" min="0" max="10" value="0">
+  <button id="comprobar" type="button">Comprobar</button>
+  <button id="reiniciar" type="button">Reiniciar</button>
+  <p id="msg"></p>
+  <script>
+    document.getElementById('comprobar').addEventListener('click', function () {
+      document.getElementById('msg').textContent = 'Intentaste';
+    });
+    document.getElementById('reiniciar').addEventListener('click', function () {
+      document.getElementById('rango').value = '0';
+      // A propósito (defecto de round 3): se olvida de limpiar msg.
+    });
+  </script>
+`);
+
+// ── Muestra 4: contenido al azar (opciones mezcladas + número random), ──
+// pero el reinicio en sí es correcto — no tiene que verse como un defecto.
+const RECURSO_CONTENIDO_ALEATORIO = construirRecurso(`
+  <div id="opciones"></div>
+  <div id="numero"></div>
+  <button id="elegir" type="button">Elegir</button>
+  <button id="reiniciar" type="button">Reiniciar</button>
+  <p id="msg"></p>
+  <script>
+    var base = ['Rojo', 'Verde', 'Azul', 'Amarillo'];
+    function pintar() {
+      document.getElementById('opciones').textContent = window.kodu.mezclar(base).join(', ');
+      document.getElementById('numero').textContent = String(1 + Math.floor(Math.random() * 1000));
+    }
+    pintar();
+    document.getElementById('elegir').addEventListener('click', function () {
+      document.getElementById('msg').textContent = 'Elegiste';
+    });
+    document.getElementById('reiniciar').addEventListener('click', function () {
+      document.getElementById('msg').textContent = '';
+      pintar();
+    });
+  </script>
+`);
+
+// ── Muestra 5: sólo centinela (consola, carga, promesa) ─────────────────
+const RECURSO_CENTINELA = construirRecurso(`
+  <script>console.error('mensaje de consola de prueba');</script>
+  <script>throw new Error('falla al cargar');</script>
+  <script>Promise.reject(new Error('promesa rota'));</script>
+`);
+
+// ── Muestra 6: pantalla de inicio — los controles del juego aparecen ────
+// recién después de "Empezar".
+const RECURSO_PANTALLA_INICIO = construirRecurso(`
+  <div id="pantalla-inicio">
+    <button id="empezar" type="button">Empezar</button>
+  </div>
+  <div id="juego" hidden>
+    <button id="jugar" type="button">Jugar</button>
+    <button id="reiniciar" type="button">Reiniciar</button>
+    <p id="msg"></p>
+  </div>
+  <script>
+    document.getElementById('empezar').addEventListener('click', function () {
+      document.getElementById('pantalla-inicio').setAttribute('hidden', '');
+      document.getElementById('juego').removeAttribute('hidden');
+    });
+    document.getElementById('jugar').addEventListener('click', function () {
+      document.getElementById('msg').textContent = 'Jugando';
+    });
+    document.getElementById('reiniciar').addEventListener('click', function () {
+      document.getElementById('msg').textContent = '';
+      document.getElementById('juego').setAttribute('hidden', '');
+      document.getElementById('pantalla-inicio').removeAttribute('hidden');
+    });
+  </script>
+`);
+
+async function mainAutoprueba(): Promise<void> {
+  const browser = await chromium.launch({ executablePath, args: ['--no-sandbox', '--disable-gpu'] });
+  const page = await (await browser.newContext()).newPage();
+
+  try {
+    await prueba('autoprueba: recurso sano → sin errores, reinicioOk true', async () => {
+      const { resultado, erroresReenviados } = await correrAutoprueba(page, RECURSO_SANO, { botones: 4 });
+      assert.ok(resultado, 'tiene que llegar un autoprueba:resultado');
+      assert.deepEqual(resultado!.errores, [], `no puede haber errores: ${JSON.stringify(resultado!.errores)}`);
+      assert.deepEqual(erroresReenviados, [], 'sin errores, no se reenvía ningún kodu:error');
+      assert.equal(resultado!.reinicioOk, true);
+      assert.equal(resultado!.detalles.reinicio, 'vuelve al inicio');
+      assert.equal(resultado!.exitoVisibleAlInicio, false, 'el mensaje de éxito arranca vacío');
+      assert.ok(resultado!.detalles.botonesTocados.includes('Comprobar'), 'tiene que haber tocado "Comprobar"');
+      assert.ok(!resultado!.detalles.botonesTocados.includes('Reiniciar'), 'nunca toca el botón de reiniciar en el paso de clicks');
+      assert.ok(resultado!.detalles.rangosMovidos.length >= 1, 'tiene que haber movido el input[type=range]');
+      assert.equal(resultado!.detalles.incompleta, false);
+      assert.ok(resultado!.detalles.duracionMs > 0);
+    });
+
+    await prueba('autoprueba: un botón que tira una excepción queda registrado con accion y linea correctas', async () => {
+      const { resultado } = await correrAutoprueba(page, RECURSO_ROTO_AL_CLIC);
+      assert.ok(resultado, 'tiene que llegar un autoprueba:resultado');
+      assert.equal(resultado!.errores.length, 1, `esperaba un solo error: ${JSON.stringify(resultado!.errores)}`);
+      const error = resultado!.errores[0];
+      assert.equal(error.tipo, 'error');
+      assert.equal(error.accion, "al tocar el botón 'Feo'");
+      assert.equal(error.linea, numeroDeLinea(RECURSO_ROTO_AL_CLIC, LLAMADA_ROTA), 'linea tiene que apuntar a la llamada rota');
+      assert.equal(resultado!.reinicioOk, null, 'este recurso no tiene botón de reiniciar');
+      assert.equal(resultado!.detalles.reinicio, 'sin boton');
+    });
+
+    await prueba('autoprueba: reinicio parcial → reinicioOk false, el mensaje que sobra queda en diferencias', async () => {
+      const { resultado } = await correrAutoprueba(page, RECURSO_REINICIO_PARCIAL, { botones: 2 });
+      assert.ok(resultado);
+      assert.deepEqual(resultado!.errores, []);
+      assert.equal(resultado!.reinicioOk, false);
+      assert.equal(resultado!.detalles.reinicio, 'quedan restos');
+      assert.ok(
+        resultado!.detalles.diferencias.textoQueSobra.includes('Intentaste'),
+        `"Intentaste" tiene que aparecer en textoQueSobra: ${JSON.stringify(resultado!.detalles.diferencias)}`,
+      );
+    });
+
+    await prueba('autoprueba: contenido al azar (mezclar + número) no cuenta como defecto de reinicio', async () => {
+      const { resultado } = await correrAutoprueba(page, RECURSO_CONTENIDO_ALEATORIO, { botones: 2 });
+      assert.ok(resultado);
+      assert.deepEqual(resultado!.errores, []);
+      assert.ok(resultado!.detalles.volatiles.lineas >= 2, 'opciones y número tienen que quedar marcados volátiles');
+      assert.equal(
+        resultado!.reinicioOk,
+        true,
+        `el azar no puede aparecer como defecto: ${JSON.stringify(resultado!.detalles.diferencias)}`,
+      );
+      assert.equal(resultado!.detalles.reinicio, 'vuelve al inicio');
+    });
+
+    await prueba('autoprueba: pantalla de inicio — el self-test llega a los controles detrás de "Empezar"', async () => {
+      const { resultado } = await correrAutoprueba(page, RECURSO_PANTALLA_INICIO, { botones: 3 });
+      assert.ok(resultado);
+      assert.deepEqual(resultado!.errores, []);
+      assert.deepEqual(resultado!.detalles.botonesTocados, ['Empezar', 'Jugar']);
+      assert.equal(resultado!.reinicioOk, true, 'reiniciar tiene que volver a la pantalla de inicio');
+    });
+
+    // ── Centinela sin autoprueba: los tres tipos de error llegan solos ──
+    await prueba('centinela: consola, carga y promesa rota llegan como kodu:error sin pedir autoprueba', async () => {
+      const erroresRecibidos = await page.evaluate((html) => {
+        return new Promise((resolve) => {
+          const estado: Record<string, any> = { recibidos: [] };
+          estado.iframe = document.createElement('iframe');
+          estado.iframe.setAttribute('sandbox', 'allow-scripts');
+          estado.onMessage = function (evento: MessageEvent) {
+            if (evento.source !== estado.iframe.contentWindow) return;
+            const datos = evento.data as { kodu?: string } | null;
+            if (datos && datos.kodu === 'error') estado.recibidos.push(datos);
+          };
+          window.addEventListener('message', estado.onMessage);
+          estado.iframe.srcdoc = html;
+          document.body.appendChild(estado.iframe);
+          setTimeout(function () {
+            window.removeEventListener('message', estado.onMessage);
+            estado.iframe.remove();
+            resolve(estado.recibidos);
+          }, 2000);
+        });
+      }, RECURSO_CENTINELA);
+
+      const errores = erroresRecibidos as DetalleErrorAutoprueba[];
+      assert.equal(errores.length, 3, `esperaba 3 errores reenviados: ${JSON.stringify(errores)}`);
+      const tipos = errores.map((e) => e.tipo).sort();
+      assert.deepEqual(tipos, ['consola', 'error', 'promesa']);
+      const deConsola = errores.find((e) => e.tipo === 'consola')!;
+      assert.ok(deConsola.mensaje.includes('mensaje de consola de prueba'));
+      const deError = errores.find((e) => e.tipo === 'error')!;
+      assert.ok(deError.mensaje.includes('falla al cargar'));
+      const dePromesa = errores.find((e) => e.tipo === 'promesa')!;
+      assert.ok(dePromesa.mensaje.includes('promesa rota'));
+    });
+
+    // ── El source check: un mensaje que NO viene de window.parent se ignora ──
+    await prueba('autoprueba: un kodu:autoprueba que no viene de window.parent se ignora (source check)', async () => {
+      const resultadoFinal = await page.evaluate((html) => {
+        return new Promise((resolve) => {
+          const estado: Record<string, any> = { respuestas: {} };
+          estado.objetivo = document.createElement('iframe');
+          estado.objetivo.setAttribute('sandbox', 'allow-scripts');
+          estado.objetivo.setAttribute('name', 'objetivo-fuente');
+
+          estado.onMessage = function (evento: MessageEvent) {
+            if (evento.source !== estado.objetivo.contentWindow) return;
+            const datos = evento.data as { kodu?: string; id?: number } | null;
+            if (datos && datos.kodu === 'autoprueba:resultado' && typeof datos.id === 'number') {
+              estado.respuestas[datos.id] = datos;
+            }
+          };
+          window.addEventListener('message', estado.onMessage);
+
+          estado.objetivo.addEventListener('load', function () {
+            // Hermano NO sandbox, mismo padre: llama a postMessage desde SU
+            // propio contexto, así evento.source adentro de "objetivo" es
+            // el hermano, no window.parent (el objetivo lo tiene que ignorar).
+            const hermano = document.createElement('iframe');
+            hermano.srcdoc =
+              '<script>window.parent.frames["objetivo-fuente"].postMessage({kodu:"autoprueba", id:111}, "*");</script>';
+            document.body.appendChild(hermano);
+
+            setTimeout(function () {
+              // Control positivo: UN mensaje de verdad, desde window.parent,
+              // tiene que funcionar sobre el MISMO iframe.
+              estado.objetivo.contentWindow!.postMessage({ kodu: 'autoprueba', id: 222, botones: 1 }, '*');
+            }, 1500);
+          });
+
+          estado.objetivo.srcdoc = html;
+          document.body.appendChild(estado.objetivo);
+
+          const inicio = Date.now();
+          const iv = setInterval(function () {
+            if (!estado.respuestas[222] && Date.now() - inicio <= 15000) return;
+            clearInterval(iv);
+            window.removeEventListener('message', estado.onMessage);
+            estado.objetivo.remove();
+            resolve(estado.respuestas);
+          }, 100);
+        });
+      }, RECURSO_CENTINELA);
+
+      const respuestas = resultadoFinal as Record<number, { id: number }>;
+      assert.ok(!respuestas[111], 'el mensaje spoofeado (id 111) nunca tiene que producir una respuesta');
+      assert.ok(respuestas[222], 'el mensaje real de window.parent (id 222) sí tiene que responder');
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
 await main();
+await mainAutoprueba();
 
 if (fallas > 0) {
   console.error(`\n✖ e2e/navegador-kit.ts: ${fallas} prueba(s) fallaron`);
