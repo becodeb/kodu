@@ -260,6 +260,6 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
 
 ## Next step
 
-None — T1/T2/T3/T4 all done. Branch `feat/arnes-robustez` has 8 commits,
+None — T1/T2/T3/T4 all done. Branch `feat/arnes-robustez` has 9 commits,
 not pushed, not merged (per constraints). Next human step: review the diff
 and decide push/PR/merge.
