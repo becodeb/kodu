@@ -321,7 +321,7 @@ confirmed the round-1 gains but found a regression and new defect classes:
   `kodu.cancelarTemporizadores()`, also before the library loads) and `kodu.mezclar`
   (new array, never the identical order). Browser + unit tests. Route: delegated (same
   writer).
-- [ ] T8 — BASE_PROMPT: rewrite rules 1-2 (initial state, achievement vs condition),
+- [x] T8 — BASE_PROMPT: rewrite rules 1-2 (initial state, achievement vs condition),
   new one-line rules, helper docs with the drag example; token count; `e2e/unidad.ts`;
   mock flow check `e2e/arnes-robustez.ts`. Route: inline (one file with exact text
   designed by the parent, plus a small test update).
@@ -533,8 +533,32 @@ confirmed the round-1 gains but found a regression and new defect classes:
     changes on the server-side flow (this task didn't touch `prompt.ts` or `unidad.ts`).
   - Commit: `83f12a4`.
 
+- T8 done (parent, inline). `src/lib/ai/prompt.ts`: the "Que funcione de verdad"
+  section now has 10 one-line rules: `ESTADO_INICIAL` + one `reiniciar()` that also
+  restores controls, messages, counters, screens and festejos; LOGRO (kept until reset)
+  vs CONDICIÓN (re-evaluated), evaluated when the action ends; a new action cancels
+  timers and clears the previous message; overlays `pointer-events:none`; first frame
+  fully synced; theme data declared once; `kodu.mezclar` + match the correct option by
+  value; `kodu.festejar()` only for a real achievement; controls visible at 1280×800
+  and 820×1180; ordered challenges unlock in order. Helper docs: `window.kodu` always
+  exists (no fallbacks); `kodu.arrastrar` already handles mouse, touch and keyboard (no
+  own `pointerdown`/`keydown`), a 4-line unit-mode example, low-level mode says `p` is
+  an object (`p.x`, `p.y`). The icon bullet says to keep the container, never the
+  `<i>`/`<svg>`, and swap with `kodu.icono(contenedor, …)`. The Extras line drops
+  "canvas-confetti" in favor of `kodu.festejar()`.
+  - Prompt cost: BASE_PROMPT 11450 -> 11932 chars (+482). At the 3.37 chars/token fit
+    that is ~145 tokens; even at a pessimistic 2.5 chars/token for the code-like lines
+    it stays under ~200. Budget was ~300.
+  - Tests: `e2e/unidad.ts` +2 (round-2 rule markers, drag/festejo docs; asserts the old
+    "puede volver a pendiente" rule and "canvas-confetti" are gone). `e2e/arnes-robustez.ts`
+    (A) now also requires the unit-mode example and `kodu.mezclar(`, (B) requires the
+    round-2 kit (`festejar`, `__koduDibujarIconos`) in the saved HTML.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 54/54 pass.
+    `npx tsx e2e/arnes-robustez.ts` (dev server on :3000 from this checkout, mock
+    provider) → A/B/C pass, run twice.
+  - Commit: `901746d`.
+
 ## Next step
 
-Round 2: T5-T7 done (this session). T8 (BASE_PROMPT rewrite + `e2e/arnes-robustez.ts`
-mock flow check) is the parent's task, not this writer's. Then measure with DeepSeek in
-a later session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
+Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
+session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
