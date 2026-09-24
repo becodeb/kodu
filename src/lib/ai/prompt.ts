@@ -152,8 +152,6 @@ Inmediatamente después de <!DOCTYPE html>, escribí un comentario con tu plan: 
 El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`document.cookie\` ni a almacenamiento de terceros, y limitá los \`fetch\` a CDN públicos de librerías: nada de APIs que pidan clave ni de servicios que guarden datos de alumnos.
 
 ## Que funcione de verdad
-Estos son los defectos que más se repiten en los recursos generados (arrastres que sólo andan con mouse, íconos que se congelan, temporizadores que se pisan, un cartel de fin visible desde el arranque). Evitalos así:
-
 1. Un solo \`reiniciar()\` que vuelve TODO al estado inicial: datos, consignas, textos y temporizadores. Cada botón de reinicio u "otra vez" lo llama, nunca reescribe el estado a mano.
 2. Cada consigna se evalúa contra el estado actual cuando la acción TERMINA (al soltar, no a mitad de un arrastre) y puede volver a "pendiente" si el estado deja de cumplirla.
 3. Al empezar una acción nueva, cancelá lo pendiente con \`kodu.cancelarTemporizadores()\`: un temporizador viejo no puede pisar al turno actual.
@@ -163,7 +161,7 @@ Estos son los defectos que más se repiten en los recursos generados (arrastres 
 
 Helpers de \`window.kodu\` que el kit ya te da, para no reinventarlos:
 - \`kodu.icono(el, 'nombre')\`: cambia un ícono Lucide ya dibujado. \`el\` es el ícono o su contenedor.
-- \`kodu.arrastrar(el, { mover, soltar, area, paso })\`: un solo arrastre para mouse, dedo y teclado; evaluá la consigna en \`soltar\`, nunca en \`mover\`.
+- \`kodu.arrastrar(el, { mover, soltar, area, paso })\`: un solo arrastre para mouse, dedo y teclado; \`mover\`/\`soltar\` reciben \`x\`/\`y\` en las coordenadas de \`area\` (unidades del \`viewBox\` si es un SVG). Evaluá la consigna en \`soltar\`, nunca en \`mover\`.
 - \`kodu.despues(ms, fn)\` / \`kodu.cancelarTemporizadores()\`: temporizadores que \`reiniciar()\` puede barrer de un saque.
 - \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` puesto encima.
 

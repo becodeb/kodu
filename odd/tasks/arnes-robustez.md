@@ -60,7 +60,7 @@ covers what the kit cannot.
   - [x] T4.1 — Fix `p.x`/`p.y` on the keyboard path of `kodu.arrastrar` (own accumulator
     from 0 instead of `area`-space coordinates); add `user-select:none`; browser
     assertions in `e2e/navegador-kit.ts`.
-  - [ ] T4.2 — Trim `## Que funcione de verdad` in BASE_PROMPT (drop intro paragraph,
+  - [x] T4.2 — Trim `## Que funcione de verdad` in BASE_PROMPT (drop intro paragraph,
     mention area coordinates in the `kodu.arrastrar` line); keep `e2e/unidad.ts` green.
   - [ ] T4.3 — Mock-provider flow check (`e2e/mock-proveedor.ts` pattern): system prompt
     contains the new section/helper, saved HTML carries the new kit block, legacy block
@@ -192,8 +192,25 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     `SCRIPT_KODU`). `npx tsx e2e/unidad.ts` → 52/52 pass. `npx tsx
     e2e/navegador-kit.ts` → 13/13 pass (11 previous + 2 new), run twice, no
     flakiness, no leftover Chromium process.
+  - Commit: `0fff82c`.
+- T4.2 done. Trimmed `## Que funcione de verdad` in `src/lib/ai/prompt.ts`:
+  dropped the intro paragraph ("Estos son los defectos que más se
+  repiten…"); kept all 6 rules and the 4 helper lines. Extended the
+  `kodu.arrastrar` helper line to say `mover`/`soltar` receive `x`/`y` in
+  `area`'s coordinates (viewBox units for an SVG) — the thing T4.1 fixed on
+  the code side now documented on the prompt side too.
+  - BASE_PROMPT length: 9792 (`main`) → 11584 (after T3) → 11479 (after
+    this trim). Net +1687 chars vs. `main`.
+  - `e2e/unidad.ts`'s T3 tests needed no substring changes: both check by
+    distinctive marker (`'reiniciar()'`, `'al soltar'`,
+    `'kodu.cancelarTemporizadores()'`, `'pointer-events:none'`, `'nunca
+    arranca resuelto'`, `'se declaran una sola vez'`, and the 4 helper
+    names), none of which lived in the deleted paragraph.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 52/52 pass
+    (both T3 prompt tests still pass unmodified). `npx tsx
+    e2e/unidad-kit.ts` → 41/41 pass.
   - Commit: (recorded after commit below).
 
 ## Next step
 
-T4.2, then T4.3.
+T4.3.
