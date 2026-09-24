@@ -317,7 +317,7 @@ confirmed the round-1 gains but found a regression and new defect classes:
   with a numeric safety net; helper owns arrow keys; nearest-to-pointer among
   overlapping draggables; drag survives a re-render. Browser + unit tests. Route:
   delegated (same writer).
-- [ ] T7 — `kodu.festejar` (lazy canvas-confetti, cut by
+- [x] T7 — `kodu.festejar` (lazy canvas-confetti, cut by
   `kodu.cancelarTemporizadores()`, also before the library loads) and `kodu.mezclar`
   (new array, never the identical order). Browser + unit tests. Route: delegated (same
   writer).
@@ -440,9 +440,66 @@ confirmed the round-1 gains but found a regression and new defect classes:
     hash unaffected — `arrastrar()` isn't part of the legacy block).
     `npx tsx e2e/navegador-kit.ts` → 24/24 pass, run three times total, no flakiness, no
     leftover Chromium process.
-  - Commit: `<pending, see next message>`.
+  - Commit: `2db95e3`.
+
+- T7 done. `src/lib/ai/kit.ts`, `SCRIPT_KODU` gets two more helpers:
+  - `festejar(opciones)`: if `window.confetti` already exists, fires immediately
+    (`window.confetti(finales)`, `finales` = a plain-object merge of a sensible default —
+    `particleCount: 120, spread: 70, origin: {y: 0.6}, disableForReducedMotion: true` —
+    with the caller's `opciones`). Otherwise queues `{opciones, generacion}` and lazily
+    injects exactly ONE `<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js">`
+    (1.9.4 is npm's current `latest` tag, verified against the npm registry and
+    confirmed the exact jsdelivr URL resolves with `curl -I`); `onload` drains the
+    pending queue, `onerror` clears it — nothing throws if the CDN is unreachable.
+  - `cancelarTemporizadores()` now also: increments a module-level `confettiGeneracion`
+    counter (so any `festejar()` queued before the increment, whose entry carries the
+    OLD generation, is skipped forever when the script eventually loads and drains the
+    queue) and calls `window.confetti.reset()` when the library is already loaded (stops
+    whatever's currently animating).
+  - `mezclar(lista)`: Fisher-Yates over a copy (`lista.slice()` for real arrays,
+    `Array.prototype.slice.call(lista)` wrapped in try/catch — falling back to `[]` — for
+    anything array-like or not), so the input is never mutated. If the shuffle happens to
+    land on the exact input order and `length >= 2`, forces one swap of index 0 with a
+    random other index.
+  - Both added to `window.kodu`; the big doc comment above `SCRIPT_KODU` gets two new
+    bullets. `bloqueKit`'s "define window.kodu" unit test updated from four to the
+    current six helper names (`icono`, `arrastrar`, `despues`, `cada`,
+    `cancelarTemporizadores`, `festejar`, `mezclar` — `cada` was already there but wasn't
+    in that specific test's list before).
+  - Real-library gotcha found while writing the browser tests: the exported
+    `confetti(opciones)` shorthand (what `kodu.festejar` calls) always uses ONE lazily-
+    created, cached, Worker + OffscreenCanvas-backed default instance
+    (`R(){return y||(y=A(null,{useWorker:!0,resize:!0}))}` in
+    `confetti.browser.min.js@1.9.4`) — `useWorker` is hardcoded `true` at that instance's
+    first-ever creation and can't be overridden per call. Once the canvas has
+    `transferControlToOffscreen()`'d itself to the worker, `canvas.getContext('2d')` from
+    the test throws `InvalidStateError`, so pixel-content assertions are impossible
+    against the real ambient API. Verified instead via DOM presence: the library
+    synchronously creates and `document.body.appendChild`s its own `<canvas>` on first
+    fire (confirmed by reading the minified source directly, `b(a)` in the same file) and
+    removes it on natural completion or on `reset()` — so "a `<canvas>` with non-zero
+    width/height exists" / "is absent" is the correct, real observable signal.
+  - New browser tests in `e2e/navegador-kit.ts` (order matters — the "cancelled before
+    load" case has to run before ANY other `festejar()` call, since `window.confetti`
+    stays loaded for the rest of the page once fetched): festejar()+cancelarTemporizadores()
+    called synchronously before the script has loaded, then waiting for load plus 500ms,
+    never produces a canvas; festejar() alone produces one; festejar() then
+    cancelarTemporizadores() mid-animation removes it; mezclar() over 200 runs of a
+    4-item array keeps the same multiset, never mutates the input, never repeats the
+    identical order, and the original first item visits all 4 positions; `null`/`42`
+    inputs return an array without throwing.
+  - New unit tests in `e2e/unidad-kit.ts`: the pinned CDN URL text, the generation-counter
+    and `reset()` calls, and the `mismoOrden` guard, all present in `bloqueKit` for every
+    theme.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 53/53 pass (pinned hash
+    unaffected). `npx tsx e2e/navegador-kit.ts` → 28/28 pass, run three times total, no
+    flakiness, no leftover Chromium process. `npx tsx e2e/unidad.ts` (against the running
+    `kodu_db_dev`, already up) → 52/52 pass — confirms no regression from the kit.ts
+    changes on the server-side flow (this task didn't touch `prompt.ts` or `unidad.ts`).
+  - Commit: `83f12a4`.
 
 ## Next step
 
-Round 2 in progress (T7-T8). Then measure with DeepSeek in a later session, only the
-affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
+Round 2: T5-T7 done (this session). T8 (BASE_PROMPT rewrite + `e2e/arnes-robustez.ts`
+mock flow check) is the parent's task, not this writer's. Then measure with DeepSeek in
+a later session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
