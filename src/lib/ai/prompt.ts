@@ -162,7 +162,7 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 Helpers de \`window.kodu\` que el kit ya te da, para no reinventarlos:
 - \`kodu.icono(el, 'nombre')\`: cambia un ícono Lucide ya dibujado. \`el\` es el ícono o su contenedor.
 - \`kodu.arrastrar(el, { mover, soltar, area, paso })\`: un solo arrastre para mouse, dedo y teclado; \`mover\`/\`soltar\` reciben \`x\`/\`y\` en las coordenadas de \`area\` (unidades del \`viewBox\` si es un SVG). Evaluá la consigna en \`soltar\`, nunca en \`mover\`.
-- \`kodu.despues(ms, fn)\` / \`kodu.cancelarTemporizadores()\`: temporizadores que \`reiniciar()\` puede barrer de un saque.
+- \`kodu.despues(ms, fn)\` y \`kodu.cada(ms, fn)\` en lugar de \`setTimeout\`/\`setInterval\`: así \`kodu.cancelarTemporizadores()\` los cancela a todos de un saque.
 - \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` puesto encima.
 
 ## Calidad pedagógica

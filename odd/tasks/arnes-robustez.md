@@ -258,8 +258,22 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     running (not mine to stop).
   - Commit: `d9bbd6a`.
 
+- Parent review (after T4): the timer rule pointed at
+  `kodu.cancelarTemporizadores()` without saying it only cancels timers made
+  with `kodu.despues`/`kodu.cada`; a bare `setTimeout` would survive. The
+  helper line now says to use them instead of `setTimeout`/`setInterval`,
+  and documents `kodu.cada`. Checks: `npm run check` clean,
+  `npx tsx e2e/unidad.ts` all pass.
+- Prompt cost: BASE_PROMPT 9776 -> 11450 chars (+1674, backticks unescaped).
+  DeepSeek V4.1 Flash measured ~3.37 chars/token on Spanish prose (linear fit
+  of `promptTokens` vs prompt length over the 6 prompts of the 2026-09-24
+  run, same system prompt), so the addition is ~500 tokens (estimate; the
+  code-like fragments tokenize denser). It sits in the cached prefix after
+  the first turn. The kit block grows too, but it is folded before reaching
+  the prompt, so it adds no prompt tokens.
+
 ## Next step
 
-None — T1/T2/T3/T4 all done. Branch `feat/arnes-robustez` has 9 commits,
-not pushed, not merged (per constraints). Next human step: review the diff
-and decide push/PR/merge.
+All tasks done; branch not pushed or merged. Measure with DeepSeek in a later
+session using the bench in `experimentos/razonamiento/` (branch
+`exp/razonamiento-deepseek`), `low` and `high`, 2-3 samples per prompt.
