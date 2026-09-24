@@ -63,6 +63,7 @@ declare global {
       moverTecladoHtml: PuntoDrag[];
       soltarTecladoHtml: PuntoDrag[];
       timerDisparado: boolean;
+      svgSyncAlCargar: boolean | null;
     };
   }
 }
@@ -99,6 +100,12 @@ function construirPagina(): string {
 </style>
 </head>
 <body>
+  <!-- Se crea temprano (antes que cualquier ícono en el markup) con el único
+       campo que una prueba necesita ANTES del script de inicialización de
+       más abajo: la prueba (a) de T5 lee document.querySelector(svg) desde
+       un script inline que corre en medio del parseo del body. -->
+  <script>window.__test = { svgSyncAlCargar: null };</script>
+
   <div id="cartel" class="flex" hidden>banner de fin</div>
 
   <button id="btn-icono" type="button"><i data-lucide="play" class="autor-clase"></i></button>
@@ -134,11 +141,26 @@ function construirPagina(): string {
     <div id="drag-teclado-html" class="caja" style="left:40px;top:60px;"></div>
   </div>
 
+  <!-- Round 2, T5: prueba (a) — un ícono en el markup seguido de un script
+       inline tiene que encontrar el <svg> YA dibujado en ese mismo momento
+       (dibujo síncrono en el callback del observer, no en el próximo frame). -->
+  <button id="btn-icono-sync" type="button"><i data-lucide="check"></i></button>
+  <script>
+    window.__test.svgSyncAlCargar = !!document.querySelector('#btn-icono-sync svg');
+  </script>
+
+  <!-- Round 2, T5: prueba (c) — dos íconos en el mismo contenedor; swapear
+       uno con kodu.icono no puede tocar al hermano. -->
+  <div id="contenedor-dos-iconos">
+    <i id="icono-a" data-lucide="check"></i>
+    <i id="icono-b" data-lucide="x"></i>
+  </div>
+
   <!-- fuerza scroll disponible: si ArrowUp/ArrowDown NO se previenen, esto se mueve -->
   <div id="relleno" style="height:3000px;"></div>
 
   <script>
-    window.__test = {
+    Object.assign(window.__test, {
       moverHtml: [], soltarHtml: [],
       moverSvg: [], soltarSvg: [],
       moverTeclado: [], soltarTeclado: [],
@@ -147,7 +169,9 @@ function construirPagina(): string {
       moverTecladoSvg: [], soltarTecladoSvg: [],
       moverTecladoHtml: [], soltarTecladoHtml: [],
       timerDisparado: false
-    };
+      // svgSyncAlCargar NO se pisa acá: ya lo puso el script de la prueba
+      // (a) más arriba, y Object.assign sobre el mismo objeto lo conserva.
+    });
 
     kodu.arrastrar(document.getElementById('drag-html'), {
       mover: function (p) { window.__test.moverHtml.push(p); },
@@ -322,6 +346,56 @@ async function main(): Promise<void> {
       assert.equal(resultado.cantidadSvg, 1);
       assert.equal(resultado.dataLucide, 'star');
       assert.equal(resultado.devuelveElNuevo, true);
+    });
+
+    // ── Round 2, T5: dibujo síncrono, nunca se re-reemplaza un svg dibujado ──
+    await prueba('SCRIPT_ICONOS: un script inline justo después del markup ya encuentra el <svg> dibujado', async () => {
+      const sync = await page.evaluate(() => window.__test.svgSyncAlCargar);
+      assert.equal(sync, true, 'el dibujo tiene que ser síncrono (microtarea del observer), no esperar al próximo frame');
+    });
+
+    await prueba('SCRIPT_ICONOS: agregar un ícono nuevo en otro lado no vuelve a reemplazar un <svg> ya dibujado', async () => {
+      const conectado = await page.evaluate(() => {
+        return new Promise<boolean>((resolve) => {
+          var referencia = document.querySelector('#btn-icono svg') as Element;
+          var nuevo = document.createElement('i');
+          nuevo.setAttribute('data-lucide', 'heart');
+          document.body.appendChild(nuevo);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve(referencia.isConnected);
+            });
+          });
+        });
+      });
+      assert.equal(conectado, true, 'un <svg> ya dibujado no puede perder identidad porque se dibujó otro ícono en cualquier lugar');
+    });
+
+    await prueba('kodu.icono: swap de uno no toca al hermano del mismo contenedor (sigue conectado, mismo nodo)', async () => {
+      // Espera a que el dibujo inicial (sync, en el observer) haya resuelto
+      // los dos <i> del contenedor a <svg>.
+      await page.waitForFunction(() => {
+        var c = document.getElementById('contenedor-dos-iconos')!;
+        return c.querySelectorAll('svg').length === 2;
+      });
+      const resultado = await page.evaluate(() => {
+        var contenedor = document.getElementById('contenedor-dos-iconos')!;
+        var iconoA = document.getElementById('icono-a')!;
+        var iconoB = document.getElementById('icono-b')!;
+        var nuevo = window.kodu.icono(iconoA, 'pause');
+        return {
+          hermanoConectado: iconoB.isConnected,
+          hermanoSigueSiendoX: iconoB.getAttribute('data-lucide'),
+          targetPaso: nuevo ? nuevo.getAttribute('data-lucide') : null,
+          targetEsElDevuelto: nuevo === contenedor.querySelector('#icono-a'),
+          quedaUnSoloSvgTargetEnContenedor: contenedor.querySelectorAll('[data-lucide="pause"]').length,
+        };
+      });
+      assert.equal(resultado.hermanoConectado, true, 'el hermano ya dibujado no puede desconectarse del documento');
+      assert.equal(resultado.hermanoSigueSiendoX, 'x', 'el hermano no puede cambiar de ícono');
+      assert.equal(resultado.targetPaso, 'pause');
+      assert.equal(resultado.targetEsElDevuelto, true);
+      assert.equal(resultado.quedaUnSoloSvgTargetEnContenedor, 1);
     });
 
     // ── arrastre con mouse, HTML ────────────────────────────────────────

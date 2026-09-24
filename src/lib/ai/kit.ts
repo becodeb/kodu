@@ -544,8 +544,91 @@ function construirTailwindConfig(tema: Tema): ConfigTailwind {
  * en vez de a `i[data-lucide]`, cada `<svg>` que Lucide inserta dispararía
  * una nueva vuelta — bucle infinito. Filtrar por la etiqueta `i` (Lucide
  * nunca crea elementos `<i>`) corta la cadena ahí.
+ *
+ * Round 2 (`odd/tasks/arnes-robustez.md`, T5) encontró que ese filtro
+ * alcanzaba para no entrar en loop, pero no para dos defectos más:
+ *
+ *  1. `dibujarIconos` de acá abajo llamaba a `lucide.createIcons()` A SECAS
+ *     (`nameAttr` por defecto `data-lucide`), y esa llamada reemplaza
+ *     CUALQUIER `[data-lucide]` bajo `root` — también los `<svg>` que YA
+ *     estaban dibujados. Cualquier ícono nuevo en cualquier parte del
+ *     documento disparaba una vuelta que volvía a reemplazar TODOS los
+ *     íconos ya dibujados por nodos `<svg>` nuevos, dejando conectada
+ *     cualquier referencia JS que el recurso guardara de un ícono anterior.
+ *     Arreglo: `dibujarIconos(root)` marca cada `<i data-lucide>` pendiente
+ *     con un atributo temporal propio (`data-kodu-dibujar`, mismo valor que
+ *     `data-lucide`) y llama a `createIcons({ nameAttr: 'data-kodu-dibujar',
+ *     root: root })` — así SÓLO toca esos `<i>` (un `<svg>` ya dibujado
+ *     nunca tiene `data-kodu-dibujar`) y nunca puede volver a agarrar un
+ *     ícono que ya estaba resuelto. El atributo temporal se saca de los
+ *     `<svg>` resultantes apenas termina (Lucide copia todos los atributos
+ *     del `<i>` original al `<svg>` nuevo, incluido éste).
+ *  2. El dibujo esperaba al próximo frame (`requestAnimationFrame`): un
+ *     script inline que el propio recurso pone justo después del markup del
+ *     ícono (`<i data-lucide="play"></i><script>…</script>`) corría ANTES de
+ *     ese frame y encontraba el `<i>` todavía sin reemplazar. Arreglo:
+ *     dibuja EN EL ACTO dentro del callback del observer (sin rAF) — el
+ *     callback de un `MutationObserver` corre como microtarea, y la spec de
+ *     HTML hace un microtask checkpoint antes de ejecutar un `<script>`
+ *     inline que sigue al markup, así que el `<svg>` ya está puesto cuando
+ *     ese script corre. Se pierde el debounce entre inserciones separadas en
+ *     el tiempo (antes juntaba varias en un solo frame), pero como
+ *     `dibujarIconos` es barato y sólo toca lo pendiente, no hace falta.
+ *
+ * `dibujarIconos` se expone como global "privada" (`window.__koduDibujarIconos`,
+ * fuera de `window.kodu`, la API pública) porque `SCRIPT_KODU` la necesita
+ * también para `kodu.icono()` (mismo motivo: no volver a tocar un hermano ya
+ * dibujado) y este script corre ANTES que `SCRIPT_KODU` en el bloque — no
+ * hay forma de que `SCRIPT_KODU` la reciba salvo por una global compartida.
  */
 const SCRIPT_ICONOS = `(function () {
+  function dibujarIconos(root) {
+    if (!window.lucide || !window.lucide.createIcons) return;
+    var raiz = root || document;
+    var pendientes = raiz.querySelectorAll('i[data-lucide]');
+    if (!pendientes.length) return;
+    for (var i = 0; i < pendientes.length; i++) {
+      pendientes[i].setAttribute('data-kodu-dibujar', pendientes[i].getAttribute('data-lucide'));
+    }
+    try {
+      lucide.createIcons({ nameAttr: 'data-kodu-dibujar', root: raiz });
+    } catch (e) {}
+    var dibujados = raiz.querySelectorAll('[data-kodu-dibujar]');
+    for (var j = 0; j < dibujados.length; j++) dibujados[j].removeAttribute('data-kodu-dibujar');
+  }
+  window.__koduDibujarIconos = dibujarIconos;
+
+  function traeIconoI(nodo) {
+    if (nodo.nodeType !== 1) return false;
+    if (nodo.tagName === 'I' && nodo.hasAttribute('data-lucide')) return true;
+    return typeof nodo.querySelector === 'function' && !!nodo.querySelector('i[data-lucide]');
+  }
+  new MutationObserver(function (mutaciones) {
+    for (var i = 0; i < mutaciones.length; i++) {
+      var agregados = mutaciones[i].addedNodes;
+      for (var j = 0; j < agregados.length; j++) {
+        if (traeIconoI(agregados[j])) {
+          // Sync, sin rAF: ver el punto 2 del comentario de arriba.
+          dibujarIconos(document);
+          return;
+        }
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { dibujarIconos(document); });
+  } else {
+    dibujarIconos(document);
+  }
+})();`;
+
+/**
+ * Texto EXACTO de `SCRIPT_ICONOS` previo a T5 de `arnes-robustez` (con el
+ * debounce por `requestAnimationFrame`), preservado sólo para
+ * `construirBloque(tema, { legado: true })` — igual que `BLOQUES_LEGADO_POR_ID`
+ * más abajo, para que el bloque legado siga siendo byte a byte el mismo.
+ */
+const SCRIPT_ICONOS_LEGADO = `(function () {
   var dibujoPendiente = false;
   function dibujarIconos() {
     dibujoPendiente = false;
@@ -594,13 +677,14 @@ const SCRIPT_ICONOS = `(function () {
  *    ícono (el `<i data-lucide>` sin dibujar o el `<svg data-lucide>` que
  *    Lucide ya dibujó) o un contenedor que lo tiene adentro (un botón); si el
  *    contenedor no tiene ícono, se le agrega uno. Siempre inserta un `<i>`
- *    fresco y lo dibuja EN EL ACTO (no espera al `MutationObserver` de
- *    `SCRIPT_ICONOS`, que corre en el próximo frame): así una secuencia
- *    play→pause→play en el mismo tick queda siempre en el ícono correcto.
- *    Lucide 1.47.0 `createIcons()` no filtra por etiqueta: reemplaza
- *    CUALQUIER `[data-lucide]` que encuentre bajo `root` (también `<svg>` ya
- *    dibujados), por eso conviene pasarle `root` acotado al contenedor y no
- *    al `document` entero.
+ *    fresco y lo dibuja EN EL ACTO llamando a `window.__koduDibujarIconos`
+ *    (la misma rutina que usa el observer de `SCRIPT_ICONOS`, ver su
+ *    comentario para el detalle de round 2/T5): así una secuencia
+ *    play→pause→play en el mismo tick queda siempre en el ícono correcto, Y
+ *    un hermano YA dibujado en el mismo contenedor nunca se vuelve a tocar
+ *    (round 2, T5: antes llamaba directo a `lucide.createIcons({root:
+ *    contenedor})`, que con el `nameAttr` por defecto reemplazaba también
+ *    los `<svg>` hermanos ya dibujados).
  *  - `arrastrar(el, opciones)` — el defecto que más apareció en el blind
  *    test: arrastrar con el mouse funcionaba porque el modelo probó eso, y
  *    con el dedo o el teclado no, porque nunca lo probó. Un solo camino de
@@ -669,12 +753,15 @@ const SCRIPT_KODU = `(function () {
       if (nodoIcono) contenedor.replaceChild(nuevo, nodoIcono);
       else contenedor.appendChild(nuevo);
 
-      // Dibuja YA, sin esperar al observer de SCRIPT_ICONOS (que corre en el
-      // próximo frame): así una llamada repetida en el mismo tick siempre ve
-      // el resultado de la anterior.
-      if (window.lucide && window.lucide.createIcons) {
-        try { window.lucide.createIcons({ root: contenedor }); } catch (e) {}
-      }
+      // Dibuja YA a través de la MISMA rutina que usa el observer de
+      // SCRIPT_ICONOS (T5, round 2 de arnes-robustez), acotada a
+      // contenedor: así una llamada repetida en el mismo tick siempre ve
+      // el resultado de la anterior, Y un hermano YA dibujado en el mismo
+      // contenedor no se vuelve a tocar (antes llamaba directo a
+      // lucide.createIcons({root: contenedor}) con el nameAttr por defecto
+      // 'data-lucide', que agarraba también los <svg> hermanos ya
+      // dibujados).
+      if (window.__koduDibujarIconos) window.__koduDibujarIconos(contenedor);
 
       // Lucide reemplaza el <i> por un <svg> nuevo (otro nodo): la marca
       // viaja con él (createIcons copia los atributos del <i> original) y
@@ -891,7 +978,7 @@ function construirBloque(tema: Tema, opts?: { legado?: boolean }): string {
     // guardado, no hace falta que sea lindo de leer, y así pesa menos.
     `<script>tailwind.config = ${JSON.stringify(config)};</script>`,
     '<script src="https://cdn.jsdelivr.net/npm/lucide@1.47.0/dist/umd/lucide.min.js"></script>',
-    `<script>${SCRIPT_ICONOS}</script>`,
+    `<script>${legado ? SCRIPT_ICONOS_LEGADO : SCRIPT_ICONOS}</script>`,
     ...(legado ? [] : [`<script>${SCRIPT_KODU}</script>`]),
     `<style>${construirEstiloBase(tema, { legado })}</style>`,
     BLOQUE_FIN,

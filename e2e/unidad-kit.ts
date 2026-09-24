@@ -358,6 +358,38 @@ await prueba('aplicarKit: un bloque legado editado a mano sigue sin tocarse', ()
 });
 
 // ─────────────────────────────────────────────────────────────
+// Round 2, T5 (arnes-robustez): íconos que nunca quedan viejos
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: el observer de íconos ya no usa requestAnimationFrame (dibuja sync)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      !bloqueKit(tema.id).includes('requestAnimationFrame'),
+      `${tema.id}: no puede quedar rAF en el dibujo de íconos (round 2, T5)`,
+    );
+  }
+});
+
+await prueba('bloqueKit: dibujarIconos se expone como global privada para que SCRIPT_KODU la reuse', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('window.__koduDibujarIconos'),
+      `${tema.id}: falta la global compartida entre SCRIPT_ICONOS y SCRIPT_KODU`,
+    );
+  }
+});
+
+await prueba('bloqueKitLegado: sigue con el observer viejo por rAF (SCRIPT_ICONOS_LEGADO intacto)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKitLegado(tema.id).includes('requestAnimationFrame'),
+      `${tema.id}: el bloque legado tiene que conservar el observer viejo tal cual`,
+    );
+    assert.ok(!bloqueKitLegado(tema.id).includes('__koduDibujarIconos'));
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — usaClasesDeTailwind y aplicarKitConRedDeSeguridad
 // ─────────────────────────────────────────────────────────────
 
