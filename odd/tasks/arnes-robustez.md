@@ -256,7 +256,7 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     3 checks (A/B/C) pass, run twice, no flakiness. Mock port 4790 released
     after each run (`mock.detener()` in `finally`); dev server on :3000 left
     running (not mine to stop).
-  - Commit: (recorded after commit below).
+  - Commit: `d9bbd6a`.
 
 ## Next step
 
