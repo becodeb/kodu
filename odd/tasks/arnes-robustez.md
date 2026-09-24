@@ -576,7 +576,7 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
 - [x] T10 — BASE_PROMPT: theme colors are for the UI, content objects use what the teacher
   asked for; `textContent` only for text; state styles beat hover; "tomar decisiones" means
   branching. ≤ ~150 tokens; `e2e/unidad.ts`. Route: delegated (same writer as T9).
-- [ ] T11 — Kit: sentinel (onerror, unhandledrejection, console.error -> postMessage to parent)
+- [x] T11 — Kit: sentinel (onerror, unhandledrejection, console.error -> postMessage to parent)
   and self-test triggered by `kodu:autoprueba` (snapshot, move ranges, click up to N buttons,
   reset, compare). Browser tests against a healthy HTML, one that throws on click, one with a
   partial reset. Route: delegated (writer trigger).
@@ -692,7 +692,114 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
     server happened to already be up).
   - Commit: `962521c`.
 
+- T11 done. `src/lib/ai/kit.ts`: new `SCRIPT_CENTINELA` — the FIRST script of the canonical
+  block (before even the Tailwind/Lucide `<script src>` CDN tags), only in the current block
+  (legacy stays byte-identical, pinned hash unaffected).
+  - **Sentinel**: `window.addEventListener('error'/'unhandledrejection', …)` plus a
+    `console.error` wrap (still calls the original). A plain (non-capture) `'error'` listener
+    on `window` only ever receives real `ErrorEvent`s, never a failed-resource-load event
+    (script/img/link) — those don't bubble and only reach `window` in the capture phase — so a
+    dead CDN (Tailwind, Lucide, Google Fonts, canvas-confetti) or a broken `<img>` in the
+    resource is excluded as noise for free, no domain filtering needed. Each capture is stored
+    in an in-page list AND (capped at 20, message truncated to 300 chars) forwarded to the
+    parent: `postMessage({kodu:'error', tipo:'error'|'promesa'|'consola', mensaje, linea,
+    columna, accion}, '*')`, only when `window.parent !== window`, wrapped so nothing can throw
+    (cross-origin parent, weird `evento.reason`, etc.). `accion` is whatever the self-test was
+    doing when the error fired (`'al cargar'` by default).
+  - **Self-test**: listens for `message` with `evento.source === window.parent` (verified in a
+    browser test with a real sibling-iframe spoof, not just a source-check inline) and
+    `data.kodu === 'autoprueba'` (`{kodu, id, botones?}`, default 8), runs once per `id`. Flow:
+    wait `readyState==='complete'` + ~800ms; snapshot (body text with chequeo-rapido's seconds
+    normalization, `input/select/textarea` values); find a reset button (text/aria-label/title
+    against the same regex family as chequeo-rapido); if found, click it ONCE before touching
+    anything and snapshot again — any TEXT LINE OR CONTROL INDEX that differs between these two
+    snapshots is "volatile" (shuffled options, a random number) and is excluded BY INDEX from
+    every later comparison, regardless of what it changes to next (index-based, not
+    exact-string: a third random realization still gets skipped). Then move every visible
+    `input[type=range]` to max, click up to N distinct visible/enabled non-reset buttons
+    (re-querying each time so a "Start" screen's later buttons are reached), realistic event
+    sequence (pointerdown/mousedown/pointerup/mouseup/click), ~150ms apart; wait ~1200ms; find
+    and click reset again; wait ~1200ms; snapshot; compare (set-difference on the
+    volatility-filtered lines, index comparison on controls) against the bare-reset snapshot
+    (or the initial one if there was no reset button). Replies
+    `{kodu:'autoprueba:resultado', id, errores, reinicioOk, exitoVisibleAlInicio, detalles:
+    {botonesTocados, rangosMovidos, reinicio, diferencias:{textoQueFalta, textoQueSobra,
+    controles, truncado}, volatiles:{lineas,controles}, duracionMs, incompleta}}`.
+    `reinicioOk` is `null` when there's no reset button at all, else `true`/`false`. Each diff
+    list capped at 5 with a `truncado` flag. A ~20s global budget sets `incompleta:true` and
+    still replies with whatever was gathered.
+  - **Timers**: `setTimeoutNativo = window.setTimeout` is captured on the very first line of
+    the script (before anything else, including the resource, has a chance to touch it) and is
+    the ONLY thing the self-test's waits use — `kodu.cancelarTemporizadores()` (in
+    `SCRIPT_KODU`, a separate list) can never cut the self-test short even if the resource
+    under test calls it from its own `reiniciar()` during the run.
+  - `alert`/`confirm`/`prompt` overridden to instant no-ops as a second guard (a sandbox
+    without `allow-modals` already resolves them instantly).
+  - Real defect found and fixed while writing this: a first draft used named inner
+    functions/const-bound arrows inside `page.evaluate` callbacks (`function onMessage(){}`, a
+    self-recursive `(function revisar(){…})()`) — tsx/esbuild wraps any NAMED binding with a
+    `__name(fn,"name")` helper (to preserve `.name` for stack traces) that only exists in the
+    Node module, not in the string Playwright ships to the browser, so every such call threw
+    `ReferenceError: __name is not defined` at runtime (type-checked fine, only failed when
+    actually run). Fixed by storing callbacks on plain object properties (`estado.onMessage =
+    function (…) {…}`) and replacing the recursive poll with `setInterval`/`clearInterval`
+    (confirmed both patterns avoid the wrapping with a minimal repro before touching the real
+    tests) — no other file in this repo had hit this yet since none nested named functions
+    inside `page.evaluate`.
+  - Unit tests in `e2e/unidad-kit.ts` (+6): centinela is the first thing in the block (before
+    the Tailwind/Lucide CDN URLs); legacy block has neither centinela nor autoprueba; the three
+    capture paths are present; the message contract (`autoprueba`/`autoprueba:resultado`,
+    source check, run-once-per-id) is present; native timer capture is the first line; the
+    result's field names are all present.
+  - Browser tests in `e2e/navegador-kit.ts` (+7, own `mainAutoprueba()` with its own browser —
+    kept separate from `main()` so the existing "no pageerror/console.error in the whole run"
+    assertion doesn't trip on errors this suite deliberately causes): each of the six samples
+    below hosted in a fresh `<iframe sandbox="allow-scripts" srcdoc="…">` (no
+    `allow-same-origin`) built with the real `aplicarKit`, driven from the parent page.
+    - **Healthy** (range + "Comprobar" + "Reiniciar" + message/counter): `errores:[]`,
+      `reinicioOk:true`, `botonesTocados` has "Comprobar" but never "Reiniciar".
+    - **Throws on click** (`funcionQueNoExiste()` in a click handler): exactly one error,
+      `accion:"al tocar el botón 'Feo'"`, `linea` matches the real source line (computed
+      dynamically from the built document, not hardcoded) — no reset button → `reinicioOk:
+      null`.
+    - **Partial reset** (reset restores the range but forgets to clear a message):
+      `reinicioOk:false`, `"Intentaste"` shows up in `diferencias.textoQueSobra`.
+    - **Random content** (`kodu.mezclar` reshuffled options + a random number on every reset,
+      otherwise correct): `volatiles.lineas >= 2`, `reinicioOk:true` — proves the bare-reset
+      probe keeps genuine randomness from reading as a defect.
+    - **Sentinel-only** (console.error + a thrown error at load + a rejected promise, no
+      autoprueba sent): exactly 3 forwarded `kodu:'error'` messages, one per `tipo`, right
+      substrings.
+    - **Start screen** ("Empezar" reveals "Jugar"/"Reiniciar", `[hidden]` on the game div):
+      `botonesTocados` is exactly `['Empezar','Jugar']` (the self-test reaches controls that
+      don't exist at load), `reinicioOk:true` (reset returns to the start screen).
+    - **Source check**: a same-origin SIBLING iframe posts a spoofed `autoprueba` message
+      straight at the target iframe's `contentWindow` (so `evento.source` inside the target is
+      the sibling, not `window.parent`) — never produces a reply; a genuine message from
+      `window.parent` right after, on the same iframe, does.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 64/64 pass (58 previous + 6
+    new; legacy pinned hash unaffected — T11 only touches the non-legado branch).
+    `npx tsx e2e/navegador-kit.ts` → 50/50 pass (43 previous + 7 new), run twice, no flakiness.
+    No new leftover Chromium process from these runs — one unrelated ~2h-old process was
+    already on the machine before this task started (same PIDs before and after both runs,
+    confirmed with `ps -eo pid,etime`) and was left alone. `npx tsx e2e/unidad.ts` (against
+    `kodu_db_dev`, already up) → 58/58 pass — this task didn't touch `prompt.ts`, no regression
+    expected or found.
+  - Commit: `4f2c9c4`.
+
 ## Next step
+
+T11 done (kit + tests), branch not pushed or merged. T12 (editor: run the self-test in a
+hidden sandboxed iframe after a generation, correction turn on failure) and T13 (mock provider
+for the broken→fixed cycle) are next, per round 3's task list above. T12 needs to know: the
+hidden iframe has to actually be attached to the DOM with a non-zero size for
+`getBoundingClientRect`-based visibility checks (buttons, ranges, the reset button) to work —
+`display:none` or `width:0` on the iframe itself would make the self-test see nothing as
+visible and never click anything; keep it off-screen (e.g. `position:absolute;left:-9999px`)
+or visually hidden some other way that preserves layout, not `display:none`/zero size. Typical
+self-test duration observed in these tests: roughly 3-6s for a small resource (mostly the
+fixed waits: ~800ms load settle + up to two ~1200ms reset waits + ~150ms per button clicked),
+well under the ~20s budget.
 
 Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
 session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
