@@ -558,6 +558,36 @@ confirmed the round-1 gains but found a regression and new defect classes:
     provider) → A/B/C pass, run twice.
   - Commit: `901746d`.
 
+## Round 3 (2026-09-24): small kit/prompt fixes + automatic self-test with auto-correction
+
+Source: `exp/medicion-arnes:experimentos/razonamiento/RESULTADOS-arnes.md` ("Ronda 3") and
+`resultados/ronda3-puntajes.json`. Remaining defects: unit-mode drag updates the value but not
+the point; `textContent` with HTML; hover hiding the state color; 34 px touch targets; chocolate
+bars drawn in theme colors; Revolución de Mayo never branches. Most remaining defects would be
+caught by an automatic test, so round 3 adds one that runs inside the sandboxed iframe.
+
+Constraints: no paid calls (mock provider only), `npm run check` clean, work-unit commits, no
+merge, no push. Prompt growth for Part A ≤ ~150 tokens.
+
+- [ ] T9 — Kit: unit-mode `kodu.arrastrar` positions the element along `eje` inside `area`
+  from `min`/`max` (opt-out option for resources that draw themselves); 44 px minimum
+  invisible hit area on draggables, keeping "nearest wins". Browser tests in
+  `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + prompt + tests).
+- [ ] T10 — BASE_PROMPT: theme colors are for the UI, content objects use what the teacher
+  asked for; `textContent` only for text; state styles beat hover; "tomar decisiones" means
+  branching. ≤ ~150 tokens; `e2e/unidad.ts`. Route: delegated (same writer as T9).
+- [ ] T11 — Kit: sentinel (onerror, unhandledrejection, console.error -> postMessage to parent)
+  and self-test triggered by `kodu:autoprueba` (snapshot, move ranges, click up to N buttons,
+  reset, compare). Browser tests against a healthy HTML, one that throws on click, one with a
+  partial reset. Route: delegated (writer trigger).
+- [ ] T12 — Editor: after a generation that changed the resource, run the self-test in a hidden
+  sandboxed iframe; on JS errors or a failed reset send one correction turn (reasoning `low`,
+  max 2 rounds) with the exact detail; status copy for the teacher; the turn is not recorded as
+  written by the teacher; after 2 failed rounds show the resource with a discreet warning.
+  Route: delegated (writer trigger: stream API + workspace UI + history).
+- [ ] T13 — Mock provider that returns broken HTML first and a healthy one on correction; e2e of
+  the full cycle in real Chromium. Route: delegated (same writer as T12).
+
 ## Next step
 
 Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
