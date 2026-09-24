@@ -105,7 +105,7 @@ Estas reglas valen cuando creás un recurso desde el HTML de arranque o cuando e
   - plano: plano técnico azul. Tecnología, robótica, programación, geometría.
   - noche: cielo nocturno. Astronomía y espacio.
   - huerta: hojas, sol y tierra. Biología, ecología, alimentación.
-- Colores: usá los del tema con estos nombres de Tailwind: fondo, superficie, tinta, suave, linea, acento, acento2, exito, error (por ejemplo bg-superficie text-tinta border-linea, o bg-acento text-superficie en un botón). En canvas o SVG leelos con getComputedStyle(document.documentElement).getPropertyValue('--acento').
+- Colores: usá los del tema con estos nombres de Tailwind: fondo, superficie, tinta, suave, linea, acento, acento2, exito, error (por ejemplo bg-superficie text-tinta border-linea, o bg-acento text-superficie en un botón). En canvas o SVG leelos con getComputedStyle(document.documentElement).getPropertyValue('--acento'). Son para la INTERFAZ; los OBJETOS del contenido (una barra de chocolate, una fruta) llevan el color y la forma que pida el docente, no los del tema.
 - Tipografía: font-display sólo para títulos cortos. El cuerpo ya viene puesto.
 - Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Nunca guardes ni busques el \`<i>\` o el \`<svg>\` del ícono: guardá su contenedor y cambialo con \`kodu.icono(contenedor, 'pause')\`. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
 - PROHIBIDO usar emojis en cualquier parte del recurso: textos, botones, títulos, devoluciones y cadenas de JavaScript. Para un símbolo usá un ícono. Para mostrar un objeto (una manzana para contar), dibujalo en SVG simple.
@@ -162,12 +162,15 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 8. \`kodu.festejar()\` sólo ante un logro real, nunca con 0 aciertos.
 9. En 1280×800 y en tablet 820×1180, los controles esenciales y el resultado se ven sin scroll largo.
 10. Si los desafíos van en orden, el siguiente se habilita recién al resolver el anterior.
+11. \`textContent\` sólo para texto; con HTML, usá \`innerHTML\`.
+12. Los estilos de estado (correcto, incorrecto, elegido) ganan a \`:hover\`: sin hover después de responder.
+13. Si el docente pide "tomar decisiones", las opciones ramifican lo que sigue, no sólo la devolución.
 
 \`window.kodu\` siempre existe: no escribas respaldos por si falta.
-- \`kodu.arrastrar\` ya maneja mouse, dedo y teclado: no agregues \`pointerdown\` ni \`keydown\` propios. En unidades del problema (\`area\` es el elemento que va de \`min\` a \`max\`, como la línea del eje; en \`eje:'y'\` \`min\` queda abajo):
+- \`kodu.arrastrar\` ya maneja mouse, dedo y teclado, y en modo unidad YA MUEVE el punto (según \`eje\`/\`min\`/\`max\`): no agregues \`pointerdown\`/\`keydown\` propios ni lo reposiciones en \`alCambiar\`. Si el recurso dibuja el punto a mano (canvas, D3), pasá \`mover:false\` y posicionalo vos ahí:
   kodu.arrastrar(punto, { area: eje, eje: 'x', min: 0, max: 10, paso: 1,
     valor: () => datos[i],
-    alCambiar: (v) => { datos[i] = v; dibujar(); },
+    alCambiar: (v) => { datos[i] = v; actualizarTexto(); },
     alSoltar: () => evaluar() });
   Para arrastre libre en 2D: \`{ area, mover: (p) => …, soltar: (p) => … }\`; \`p\` es un objeto: usá \`p.x\` y \`p.y\`.
 - \`kodu.despues(ms, fn)\` y \`kodu.cada(ms, fn)\` en lugar de \`setTimeout\`/\`setInterval\`, para que \`kodu.cancelarTemporizadores()\` los corte junto con los festejos.

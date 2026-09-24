@@ -650,10 +650,40 @@ await prueba('buildSystemPrompt: lleva las reglas de la vuelta 2 del arnés', ()
 
 await prueba('buildSystemPrompt: documenta el arrastre en unidades y que el helper ya maneja el teclado', () => {
   const prompt = buildSystemPrompt(contextoDePrueba(2, false));
-  for (const marca of ['alCambiar: (v) =>', 'valor: () =>', 'no agregues `pointerdown` ni `keydown` propios', '`p` es un objeto', 'kodu.festejar()']) {
+  for (const marca of ['alCambiar: (v) =>', 'valor: () =>', 'no agregues `pointerdown`', '`p` es un objeto', 'kodu.festejar()']) {
     assert.ok(prompt.includes(marca), `falta en la documentación de los helpers: "${marca}"`);
   }
   assert.ok(!prompt.includes('canvas-confetti'), 'el festejo pasa por kodu.festejar, no por cargar canvas-confetti a mano');
+});
+
+// ── Round 3, T10 (arnes-robustez): kodu.arrastrar ya mueve el punto, colores
+// de interfaz vs. objetos del contenido, y tres reglas de una línea nuevas ──
+
+await prueba('buildSystemPrompt: kodu.arrastrar documenta que YA mueve el punto en modo unidad y el opt-out mover:false', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const marca of ['YA MUEVE el punto', 'ni lo reposiciones en `alCambiar`', '`mover:false`']) {
+    assert.ok(prompt.includes(marca), `falta la marca del posicionamiento de T9 en el prompt: "${marca}"`);
+  }
+});
+
+await prueba('buildSystemPrompt: distingue colores de interfaz de los objetos del contenido', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(
+    prompt.includes('Son para la INTERFAZ; los OBJETOS del contenido'),
+    'falta la aclaración de que los tokens del tema son para la interfaz, no para los objetos dibujados',
+  );
+});
+
+await prueba('buildSystemPrompt: lleva las tres reglas nuevas de "Que funcione de verdad" (T10)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'sólo para texto', // 11: textContent vs innerHTML
+    'ganan a `:hover`', // 12: estilos de estado sobre hover
+    'ramifican lo que sigue', // 13: "tomar decisiones" implica ramas
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla nueva de T10: "${marca}"`);
+  }
 });
 
 await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {
