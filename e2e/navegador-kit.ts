@@ -105,6 +105,16 @@ declare global {
       clicksBoton: number;
       moverLinea: PuntoDrag[];
       moverEtiqueta: PuntoDrag[];
+      // Round 3, T9: modo unidad posiciona el propio elemento + zona mínima de 44px
+      posicionHtmlIzqInicial: string | null;
+      posicionSvgCxInicial: number | null;
+      sinMoverIzqInicial: string | null;
+      moverChicoToqueMouse: PuntoDrag[];
+      moverChicoToqueTouch: PuntoDrag[];
+      moverZonaA: PuntoDrag[];
+      moverZonaB: PuntoDrag[];
+      moverPuntoCercaBoton: PuntoDrag[];
+      clicksBotonCerca: number;
     };
   }
 }
@@ -240,6 +250,50 @@ function construirPagina(): string {
     <div id="drag-safety" class="caja" style="left:10px;top:10px;"></div>
   </div>
 
+  <!-- Round 3, T9: modo unidad posiciona el propio elemento. Sin left/top ni
+       cx/cy en el markup a propósito: si el helper no los pusiera, la
+       prueba de "posición inicial" fallaría sola (no hay valor "de fábrica"
+       que coincida por casualidad). -->
+  <div id="pista-posicion-html" style="position:relative;width:400px;height:30px;background:#ccc;">
+    <div id="perilla-posicion-html" style="position:absolute;width:20px;height:20px;border-radius:50%;background:#333;"></div>
+  </div>
+
+  <svg id="area-posicion-svg" viewBox="0 0 100 100" width="200" height="200" style="display:block;background:#ddd;">
+    <circle id="punto-posicion-svg" r="4" cy="50"></circle>
+  </svg>
+
+  <!-- forma SVG genérica (no circle/ellipse): se posiciona con transform. -->
+  <svg id="area-posicion-svg-rect" viewBox="0 0 100 100" width="200" height="200" style="display:block;background:#ddd;">
+    <rect id="rect-posicion-svg" x="45" y="45" width="10" height="10"></rect>
+  </svg>
+
+  <!-- opt-out: mover:false, el helper no toca la posición. -->
+  <div id="pista-sin-mover" style="position:relative;width:300px;height:20px;background:#ccc;">
+    <div id="perilla-sin-mover" style="position:absolute;left:5px;top:0;width:20px;height:20px;background:#333;"></div>
+  </div>
+
+  <!-- zona mínima de 44px: puntos chicos (8px de diámetro en pantalla), agarrables 18px afuera del dibujo real. -->
+  <svg id="area-toque-chico-mouse" viewBox="0 0 100 100" width="100" height="100" style="display:block;background:#eee;">
+    <circle id="punto-chico-mouse" cx="50" cy="50" r="4"></circle>
+  </svg>
+  <svg id="area-toque-chico-touch" viewBox="0 0 100 100" width="100" height="100" style="display:block;background:#eee;">
+    <circle id="punto-chico-touch" cx="50" cy="50" r="4"></circle>
+  </svg>
+
+  <!-- dos zonas mínimas superpuestas, ninguna golpeada por el hit-test real: gana la más cercana. -->
+  <svg id="area-zonas-superpuestas" viewBox="0 0 100 100" width="200" height="200" style="display:block;background:#eee;">
+    <circle id="punto-zona-a" cx="40" cy="50" r="3"></circle>
+    <circle id="punto-zona-b" cx="60" cy="50" r="3"></circle>
+  </svg>
+
+  <!-- un botón real cuyo centro cae ADENTRO de la zona mínima de 44px de un punto chico cercano: el click tiene que ser del botón igual. -->
+  <div id="area-boton-cerca" style="position:relative;width:150px;height:80px;">
+    <svg id="svg-punto-cerca-boton" viewBox="0 0 100 50" width="150" height="80" style="position:absolute;left:0;top:0;display:block;">
+      <circle id="punto-cerca-boton" cx="20" cy="25" r="3"></circle>
+    </svg>
+    <button id="boton-cerca-punto" type="button" style="position:absolute;left:35px;top:15px;width:30px;height:20px;">Ir</button>
+  </div>
+
   <!-- Corrección post-review de T6: hit-test real. Línea diagonal con bbox
        grande (el bbox cubre 0..100 x 0..100, el trazo sólo la diagonal) y un
        <button> real cuyo propio bbox cae DENTRO del bbox de la línea, cerca
@@ -283,7 +337,16 @@ function construirPagina(): string {
       safetyValores: [],
       clicksBoton: 0,
       moverLinea: [],
-      moverEtiqueta: []
+      moverEtiqueta: [],
+      posicionHtmlIzqInicial: null,
+      posicionSvgCxInicial: null,
+      sinMoverIzqInicial: null,
+      moverChicoToqueMouse: [],
+      moverChicoToqueTouch: [],
+      moverZonaA: [],
+      moverZonaB: [],
+      moverPuntoCercaBoton: [],
+      clicksBotonCerca: 0
       // svgSyncAlCargar NO se pisa acá: ya lo puso el script de la prueba
       // (a) más arriba, y Object.assign sobre el mismo objeto lo conserva.
     });
@@ -406,6 +469,60 @@ function construirPagina(): string {
 
     kodu.arrastrar(document.getElementById('drag-safety'), {
       mover: function (x) { window.__test.safetyValores.push(x + 0); }
+    });
+
+    // ── Round 3, T9: modo unidad posiciona el propio elemento ───────────
+    var valorPosicionHtml = 4;
+    kodu.arrastrar(document.getElementById('perilla-posicion-html'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorPosicionHtml; },
+      alCambiar: function (v) { valorPosicionHtml = v; }
+    });
+    window.__test.posicionHtmlIzqInicial = document.getElementById('perilla-posicion-html').style.left;
+
+    var valorPosicionSvg = 7;
+    kodu.arrastrar(document.getElementById('punto-posicion-svg'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorPosicionSvg; },
+      alCambiar: function (v) { valorPosicionSvg = v; }
+    });
+    window.__test.posicionSvgCxInicial = Number(document.getElementById('punto-posicion-svg').getAttribute('cx'));
+
+    var valorPosicionRect = 0;
+    kodu.arrastrar(document.getElementById('rect-posicion-svg'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorPosicionRect; },
+      alCambiar: function (v) { valorPosicionRect = v; }
+    });
+
+    var valorSinMover = 0;
+    kodu.arrastrar(document.getElementById('perilla-sin-mover'), {
+      mover: false,
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorSinMover; },
+      alCambiar: function (v) { valorSinMover = v; }
+    });
+    window.__test.sinMoverIzqInicial = document.getElementById('perilla-sin-mover').style.left;
+
+    // ── Round 3, T9: zona mínima de 44px (modo bajo nivel, más simple) ──
+    kodu.arrastrar(document.getElementById('punto-chico-mouse'), {
+      mover: function (p) { window.__test.moverChicoToqueMouse.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('punto-chico-touch'), {
+      mover: function (p) { window.__test.moverChicoToqueTouch.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('punto-zona-a'), {
+      mover: function (p) { window.__test.moverZonaA.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('punto-zona-b'), {
+      mover: function (p) { window.__test.moverZonaB.push(p); }
+    });
+
+    document.getElementById('boton-cerca-punto').addEventListener('click', function () {
+      window.__test.clicksBotonCerca++;
+    });
+    kodu.arrastrar(document.getElementById('punto-cerca-boton'), {
+      mover: function (p) { window.__test.moverPuntoCercaBoton.push(p); }
     });
 
     // ── Corrección post-review de T6: hit-test real ─────────────────────
@@ -951,6 +1068,122 @@ async function main(): Promise<void> {
         for (const v of valores) assert.equal(typeof v, 'number', `x + 0 tiene que dar un número, dio ${typeof v}`);
       },
     );
+
+    // ── Round 3, T9: modo unidad posiciona el propio elemento ───────────
+    await prueba('kodu.arrastrar (modo unidad, HTML): posiciona el propio elemento al inicio (valor 4 de 0..10 -> 40%)', async () => {
+      const izq = await page.evaluate(() => window.__test.posicionHtmlIzqInicial);
+      assert.equal(izq, '40%', `left inicial tenía que ser 40%, fue ${izq}`);
+    });
+
+    await prueba('kodu.arrastrar (modo unidad, SVG circle): posiciona cx al inicio (valor 7 de 0..10 -> cx=70)', async () => {
+      const cx = await page.evaluate(() => window.__test.posicionSvgCxInicial);
+      assert.equal(cx, 70, `cx inicial tenía que ser 70, fue ${cx}`);
+    });
+
+    await prueba('kodu.arrastrar (modo unidad, HTML): el mouse reposiciona el propio elemento (no sólo el valor)', async () => {
+      const caja = await cajaDe(page, '#perilla-posicion-html');
+      const gx = caja.x + caja.width / 2;
+      const gy = caja.y + caja.height / 2;
+      await page.mouse.move(gx, gy);
+      await page.mouse.down();
+      await page.mouse.move(gx + 80, gy, { steps: 8 }); // pista 400px, 0..10 -> 40px/unidad: +80px = +2 (4 -> 6)
+      await page.mouse.up();
+      const izq = await page.locator('#perilla-posicion-html').evaluate((el) => (el as HTMLElement).style.left);
+      assert.equal(izq, '60%', `left tras arrastrar tenía que ser 60%, fue ${izq}`);
+    });
+
+    await prueba('kodu.arrastrar (modo unidad, SVG circle): el teclado reposiciona cx (no sólo el valor)', async () => {
+      await page.locator('#punto-posicion-svg').focus();
+      await page.keyboard.press('ArrowRight'); // 7 -> 8
+      const cx = await page.locator('#punto-posicion-svg').evaluate((el) => Number(el.getAttribute('cx')));
+      assert.equal(cx, 80, `cx tras ArrowRight tenía que ser 80, fue ${cx}`);
+    });
+
+    await prueba('kodu.arrastrar (modo unidad, forma SVG genérica sin cx/cy): se posiciona con transform', async () => {
+      // valorPosicionRect arranca en 0 (el mínimo): el propio setup YA lo
+      // desplazó con transform al construir la página (pos=0 -> x=0 del
+      // viewBox, lejos del centro original x=50). "antes" ya refleja eso.
+      const antes = await cajaDe(page, '#rect-posicion-svg');
+      await page.locator('#rect-posicion-svg').focus();
+      await page.keyboard.press('ArrowRight'); // 0 -> 1 de 0..10: pos 0 -> 0.1, destino x 0 -> 10 (viewBox 100) = +10 unidades = +20px de pantalla (escala 2x), hacia la DERECHA
+      const despues = await cajaDe(page, '#rect-posicion-svg');
+      const deltaX = despues.x - antes.x;
+      assert.ok(deltaX > 0, `el corrimiento tenía que ser hacia la derecha (positivo), fue ${deltaX}`);
+      assert.ok(Math.abs(deltaX - 20) <= 3, `esperaba un corrimiento de pantalla de ~20px, fue ${deltaX}`);
+      assert.ok(Math.abs(despues.y - antes.y) <= 1, 'el eje x no puede mover el eje y');
+    });
+
+    await prueba('kodu.arrastrar (modo unidad, mover:false): NO toca la posición del elemento', async () => {
+      const izqInicial = await page.evaluate(() => window.__test.sinMoverIzqInicial);
+      assert.equal(izqInicial, '5px', 'con mover:false, el estilo del autor no se puede tocar al inicializar');
+
+      const caja = await cajaDe(page, '#perilla-sin-mover');
+      const gy = caja.y + caja.height / 2;
+      await page.mouse.move(caja.x + caja.width / 2, gy);
+      await page.mouse.down();
+      await page.mouse.move(caja.x + caja.width / 2 + 90, gy, { steps: 6 }); // dispara varios alCambiar
+      await page.mouse.up();
+      const izqFinal = await page.locator('#perilla-sin-mover').evaluate((el) => (el as HTMLElement).style.left);
+      assert.equal(izqFinal, '5px', 'con mover:false, arrastrar() no puede haber tocado left aunque el valor haya cambiado');
+    });
+
+    // ── Round 3, T9: zona mínima de 44px ─────────────────────────────────
+    await prueba('kodu.arrastrar: zona mínima de 44px — agarrable 18px afuera del punto (8px de diámetro) con mouse', async () => {
+      const cajaPunto = await cajaDe(page, '#punto-chico-mouse');
+      const cx = cajaPunto.x + cajaPunto.width / 2;
+      const cy = cajaPunto.y + cajaPunto.height / 2;
+      await page.mouse.move(cx + 18, cy); // 18px < 22 (mitad de 44), pero bien afuera del punto real (radio 4px)
+      await page.mouse.down();
+      await page.mouse.move(cx + 10, cy, { steps: 3 });
+      await page.mouse.up();
+      const movidas = await page.evaluate(() => window.__test.moverChicoToqueMouse.length);
+      assert.ok(movidas > 0, 'agarrar 18px afuera de un punto de 8px tiene que arrancar el arrastre (zona mínima de 44px)');
+    });
+
+    await prueba('kodu.arrastrar: zona mínima de 44px — agarrable 18px afuera del punto con touch real (CDP)', async () => {
+      const cajaPunto = await cajaDe(page, '#punto-chico-touch');
+      const cx = cajaPunto.x + cajaPunto.width / 2;
+      const cy = cajaPunto.y + cajaPunto.height / 2;
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: cx + 18, y: cy }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: cx + 10, y: cy }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } finally {
+        await cdp.detach();
+      }
+      const movidas = await page.evaluate(() => window.__test.moverChicoToqueTouch.length);
+      assert.ok(movidas > 0, 'lo mismo con un dedo real: 18px afuera de un punto de 8px tiene que arrancar el arrastre');
+    });
+
+    await prueba('kodu.arrastrar: dos zonas mínimas de 44px superpuestas (sin golpear ninguna forma real) — gana la más cercana', async () => {
+      const cajaArea = await cajaDe(page, '#area-zonas-superpuestas');
+      // punto-zona-a: cx=40,cy=50 (escala 2x -> 80,100); punto-zona-b: cx=60,cy=50 (-> 120,100).
+      // (99,100) cae en las DOS zonas mínimas de 44px (rango 58-102 y 98-142) pero en NINGUNA forma real
+      // (radio real en pantalla 6px): distancia a A=19, a B=21 -> A tiene que ganar.
+      const px = cajaArea.x + 99;
+      const py = cajaArea.y + 100;
+      await page.mouse.move(px, py);
+      await page.mouse.down();
+      await page.mouse.move(px + 5, py, { steps: 2 });
+      await page.mouse.up();
+      const estado = await page.evaluate(() => ({ a: window.__test.moverZonaA.length, b: window.__test.moverZonaB.length }));
+      assert.ok(estado.a > 0, 'el punto A (más cerca del agarre) tiene que recibir el arrastre');
+      assert.equal(estado.b, 0, 'el punto B (más lejos) no puede recibir el arrastre aunque su zona mínima también incluya el punto');
+    });
+
+    await prueba('kodu.arrastrar: un botón cuyo centro cae en la zona mínima de 44px de un punto cercano conserva su click', async () => {
+      const caja = await cajaDe(page, '#boton-cerca-punto');
+      const cx = caja.x + caja.width / 2;
+      const cy = caja.y + caja.height / 2;
+      await page.mouse.click(cx, cy);
+      const estado = await page.evaluate(() => ({
+        clicks: window.__test.clicksBotonCerca,
+        movidas: window.__test.moverPuntoCercaBoton.length,
+      }));
+      assert.equal(estado.clicks, 1, 'el click del botón tiene que llegar aunque su centro caiga en la zona mínima de un punto cercano');
+      assert.equal(estado.movidas, 0, 'no puede haber arrancado un arrastre sobre el botón');
+    });
 
     // ── temporizadores cancelables (defecto 4) ──────────────────────────
     await prueba('kodu.despues + kodu.cancelarTemporizadores: el callback cancelado nunca dispara', async () => {

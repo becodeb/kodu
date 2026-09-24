@@ -473,6 +473,42 @@ await prueba('bloqueKit: mezclar() nunca deja el mismo orden de entrada (longitu
 });
 
 // ─────────────────────────────────────────────────────────────
+// Round 3, T9 (arnes-robustez): modo unidad posiciona el propio elemento,
+// zona mínima de 44px
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: arrastrar() en modo unidad posiciona el propio elemento (cx/cy, transform o left/top)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const fragmento of ['posicionarElemento', 'moverActivo', 'medidasAreaLocal', 'fraccionPosicion']) {
+      assert.ok(bloque.includes(fragmento), `${tema.id}: falta "${fragmento}" del posicionamiento del modo unidad`);
+    }
+    // SVG circle/ellipse: cx/cy directo. Forma genérica: transform. HTML: left/top + transform.
+    assert.ok(bloque.includes("el.setAttribute(eje === 'x' ? 'cx' : 'cy'"), `${tema.id}: falta setear cx/cy`);
+    assert.ok(bloque.includes("el.style.left = pct"), `${tema.id}: falta posicionar left en HTML`);
+    assert.ok(bloque.includes("el.style.top = pct"), `${tema.id}: falta posicionar top en HTML`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() opt-out mover:false no reposiciona el elemento', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('opciones.mover !== false'), `${tema.id}: falta el opt-out mover:false`);
+  }
+});
+
+await prueba('bloqueKit: elegirArrastrable respeta una zona mínima de 44px además del hit-test real', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('TAMANO_MINIMO_TOQUE = 44'), `${tema.id}: falta el mínimo de 44px`);
+    assert.ok(bloque.includes('golpeaZonaMinima'), `${tema.id}: falta la función de zona mínima`);
+    assert.ok(
+      bloque.includes('elementoFueGolpeado(entrada.el, golpeados) || golpeaZonaMinima('),
+      `${tema.id}: la zona mínima tiene que ser un OR con el hit-test real, no reemplazarlo`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — usaClasesDeTailwind y aplicarKitConRedDeSeguridad
 // ─────────────────────────────────────────────────────────────
 

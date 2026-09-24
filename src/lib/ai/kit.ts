@@ -730,6 +730,34 @@ const SCRIPT_ICONOS_LEGADO = `(function () {
  *        devuelve `p.x`, así un `mover: function (x) { ... }` que trata todo
  *        el punto como si fuera un número igual obtiene la coordenada `x`
  *        en cualquier cuenta aritmética.
+ *
+ *    Round 3 (T9, blind test: el valor cambiaba pero el punto se quedaba
+ *    quieto) hizo que el modo unidad MUEVA el propio `el` — no sólo reporte
+ *    el valor —, y agregó una zona mínima de agarre:
+ *      - En cada emisión (agarrar, mover, soltar, tecla) se llama a
+ *        `posicionarElemento(v)` DESPUÉS de `alCambiar`/`alSoltar`: si el
+ *        recurso TAMBIÉN reposiciona `el` a mano en su callback (el patrón
+ *        de antes de T9), el helper corre último y su posición manda —
+ *        nunca al revés. `opciones.mover === false` desactiva esto por
+ *        completo, para un recurso que dibuja el punto con su propio motor
+ *        (canvas, D3).
+ *      - Para SVG, un `<circle>`/`<ellipse>` recibe `cx`/`cy` directo (en
+ *        unidades del `viewBox` de `area`, mismo sistema que ya usa el modo
+ *        bajo nivel); cualquier otra forma recibe un `transform: translate`
+ *        relativo a su centro original.
+ *      - Para HTML, `left`/`top` en % de `area` (robusto a que `area`
+ *        cambie de tamaño) más `transform: translateX/Y(-50%)` en el eje
+ *        que se mueve, así el CENTRO del elemento —no su esquina— queda
+ *        sobre el valor sin necesitar su ancho/alto.
+ *      - `elegirArrastrable` gana una zona mínima de agarre de 44px (WCAG
+ *        2.5.5) además del hit-test real: un arrastrable renderizado más
+ *        chico en algún eje (un punto de 20px, el grosor de una barra) se
+ *        puede agarrar hasta 22px del centro en ESE eje aunque el dedo caiga
+ *        afuera de la forma dibujada — sin agregar ningún nodo al DOM. Sigue
+ *        siendo "gana el más cercano" entre TODOS los candidatos (hit real o
+ *        zona mínima), y nunca le roba el click a un control interactivo
+ *        real fuera de esa zona (el handler de `pointerdown` decide por
+ *        `evento.target`, no por esta selección).
  *  - `despues`/`cancelarTemporizadores` (y `cada`, de yapa) — defecto 4: un
  *    `setTimeout` para "la próxima ronda" que ya estaba pedido cuando el
  *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
@@ -860,13 +888,40 @@ const SCRIPT_KODU = `(function () {
     return false;
   }
 
+  // Round 3 (arnes-robustez, T9): 44px es el mínimo táctil recomendado
+  // (WCAG 2.5.5/2.5.8); un punto dibujado más chico (un círculo de 8px de
+  // radio, un handle de 20px) es difícil de agarrar con el dedo aunque el
+  // hit-test de arriba sea preciso a la forma real. Esto NO agrega DOM (la
+  // consigna prefería extender el hit-test existente): es una zona
+  // invisible, sólo en la lógica de selección de elegirArrastrable, que
+  // agranda cada EJE del rect real hasta 44px como mínimo, centrada en el
+  // centro real del elemento — así un arrastrable ya grande en un eje (una
+  // barra ancha, una línea) no gana un halo extra en ESE eje (seguiría
+  // exigiendo el hit-test real ahí, T6 post-review), pero el eje angosto
+  // (el grosor de la barra, el diámetro del punto) sí se agranda.
+  var TAMANO_MINIMO_TOQUE = 44;
+
+  function golpeaZonaMinima(rect, x, y) {
+    if (rect.width >= TAMANO_MINIMO_TOQUE && rect.height >= TAMANO_MINIMO_TOQUE) return false;
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var mitadX = Math.max(rect.width, TAMANO_MINIMO_TOQUE) / 2;
+    var mitadY = Math.max(rect.height, TAMANO_MINIMO_TOQUE) / 2;
+    return x >= cx - mitadX && x <= cx + mitadX && y >= cy - mitadY && y <= cy + mitadY;
+  }
+
   /**
-   * Entre los arrastrables registrados, CONECTADOS y de verdad golpeados por
-   * el puntero (hit-test real, ver el comentario de arriba), gana el de
-   * centro más cercano al puntero — no el que aparece primero en el DOM ni
-   * el de más arriba en el z-index (round 2: con puntos superpuestos, el
-   * arrastre agarraba el equivocado). Empate: se prefiere el que de verdad
-   * recibió el evento (evento.target cae adentro de su subárbol).
+   * Entre los arrastrables registrados, CONECTADOS y golpeados por el
+   * puntero — hit-test real (ver el comentario de arriba) O, si no, dentro
+   * de su zona mínima de 44px (T9, round 3) —, gana el de centro más
+   * cercano al puntero — no el que aparece primero en el DOM ni el de más
+   * arriba en el z-index (round 2: con puntos superpuestos, el arrastre
+   * agarraba el equivocado). Empate: se prefiere el que de verdad recibió
+   * el evento (evento.target cae adentro de su subárbol). La zona mínima
+   * NUNCA cambia qué control interactivo gana el pointerdown (ver el
+   * handler de abajo: eso se decide por evento.target real, no por esta
+   * selección), así que un botón cercano a un arrastrable chico sigue
+   * recibiendo su click con normalidad.
    */
   function elegirArrastrable(evento) {
     var golpeados = document.elementsFromPoint(evento.clientX, evento.clientY);
@@ -876,8 +931,9 @@ const SCRIPT_KODU = `(function () {
     for (var i = 0; i < registroArrastre.length; i++) {
       var entrada = registroArrastre[i];
       if (!entrada.el.isConnected) continue;
-      if (!elementoFueGolpeado(entrada.el, golpeados)) continue;
       var rect = entrada.el.getBoundingClientRect();
+      var golpeado = elementoFueGolpeado(entrada.el, golpeados) || golpeaZonaMinima(rect, evento.clientX, evento.clientY);
+      if (!golpeado) continue;
       var dist = distanciaAlCentroCuadrado(rect, evento.clientX, evento.clientY);
       if (dist < mejorDist) {
         mejorDist = dist;
@@ -1042,12 +1098,100 @@ const SCRIPT_KODU = `(function () {
       return minU + fraccion * (maxU - minU);
     }
 
+    // ── T9 (round 3): el modo unidad MUEVE el propio elemento ───────────
+    //
+    // El blind test de ronda 3 encontró recursos que actualizaban el valor
+    // en alCambiar pero se olvidaban de mover el punto (defecto real, no
+    // sólo hipotético). opciones.mover === false es el opt-out para un
+    // recurso que dibuja el punto a mano (canvas, D3, o cualquier otra
+    // librería con su propio render).
+    var moverActivo = modoUnidad && opciones.mover !== false;
+    // Sólo para la forma SVG genérica (sin cx/cy propio): el centro
+    // ORIGINAL del elemento, capturado una única vez, en las mismas
+    // unidades de area que medidasAreaLocal() — ver posicionarElemento.
+    var origenTransformSvg = null;
+
+    /**
+     * Tamaño de area en su propio sistema de coordenadas: unidades de
+     * usuario del viewBox para un svg con viewBox (las mismas que cx/cy),
+     * o su tamaño renderizado en CSS px si no tiene viewBox — el mismo
+     * fallback que usa coords() más arriba, por consistencia.
+     */
+    function medidasAreaLocal() {
+      var a = area();
+      if (esSvg && a && a.viewBox && a.viewBox.baseVal && (a.viewBox.baseVal.width || a.viewBox.baseVal.height)) {
+        var vb = a.viewBox.baseVal;
+        return { x0: vb.x, y0: vb.y, w: vb.width, h: vb.height };
+      }
+      var caja = (a || el).getBoundingClientRect();
+      return { x0: 0, y0: 0, w: caja.width, h: caja.height };
+    }
+
+    // Fracción 0..1 a lo largo de eje, MISMA convención que
+    // valorAbsolutoBajoPuntero: en eje:'y', min queda ABAJO (fracción 0 =
+    // abajo, fracción 1 = arriba).
+    function fraccionPosicion(v) {
+      var rango = maxU - minU;
+      var f = rango ? (v - minU) / rango : 0;
+      return eje === 'y' ? (1 - f) : f;
+    }
+
+    /**
+     * Mueve el propio elemento arrastrado a la posición que corresponde a
+     * v dentro de area. Se llama DESPUÉS de alCambiar/alSoltar en todo
+     * este archivo — a propósito: si el recurso TAMBIÉN reposiciona el
+     * elemento a mano dentro de su alCambiar (compatibilidad con el patrón
+     * de antes de T9), esta llamada corre ÚLTIMA y deja la posición
+     * correcta pase lo que pase adentro del callback del recurso — el
+     * helper manda sobre lo que haga el recurso, nunca al revés.
+     */
+    function posicionarElemento(v) {
+      if (!moverActivo) return;
+      var pos = fraccionPosicion(v);
+      if (esSvg) {
+        var tag = (el.tagName || '').toLowerCase();
+        if (tag === 'circle' || tag === 'ellipse') {
+          var m = medidasAreaLocal();
+          var coordenada = eje === 'x' ? (m.x0 + pos * m.w) : (m.y0 + pos * m.h);
+          el.setAttribute(eje === 'x' ? 'cx' : 'cy', String(coordenada));
+          return;
+        }
+        // Forma SVG genérica (rect, g, path…): transform desde el centro
+        // ORIGINAL del elemento (capturado la primera vez que se
+        // posiciona). Pisa cualquier transform propio del elemento: si el
+        // recurso necesita otro transform en el mismo nodo (por ejemplo un
+        // rotate), conviene envolver el punto en un <g> aparte y arrastrar
+        // ese <g>.
+        if (!origenTransformSvg) origenTransformSvg = centroDeEl();
+        var m2 = medidasAreaLocal();
+        var destino = eje === 'x' ? (m2.x0 + pos * m2.w) : (m2.y0 + pos * m2.h);
+        var delta = destino - (eje === 'x' ? origenTransformSvg.x : origenTransformSvg.y);
+        el.setAttribute('transform', eje === 'x' ? ('translate(' + delta + ',0)') : ('translate(0,' + delta + ')'));
+        return;
+      }
+      // HTML: posición en % de area (robusto a resize/responsive),
+      // centrada con transform SOLO en el eje que se mueve — así no hace
+      // falta conocer el tamaño propio del elemento. position:absolute
+      // sólo si el autor no puso ya una posición (static es el default).
+      if (getComputedStyle(el).position === 'static') el.style.position = 'absolute';
+      var pct = redondearA(pos * 100, 4) + '%';
+      if (eje === 'x') {
+        el.style.left = pct;
+        el.style.transform = 'translateX(-50%)';
+      } else {
+        el.style.top = pct;
+        el.style.transform = 'translateY(-50%)';
+      }
+    }
+
     if (modoUnidad) {
       if (!el.hasAttribute('role')) el.setAttribute('role', 'slider');
       el.setAttribute('aria-valuemin', String(minU));
       el.setAttribute('aria-valuemax', String(maxU));
       var valorInicialAria = obtenerValor ? Number(obtenerValor()) : NaN;
-      actualizarAria(ajustarUnidad(isFinite(valorInicialAria) ? valorInicialAria : minU));
+      var valorInicialUnidad = ajustarUnidad(isFinite(valorInicialAria) ? valorInicialAria : minU);
+      actualizarAria(valorInicialUnidad);
+      posicionarElemento(valorInicialUnidad);
     }
 
     // ── Arranque, movimiento y fin de un arrastre por puntero. move/up/
@@ -1072,6 +1216,7 @@ const SCRIPT_KODU = `(function () {
           cbAlCambiar(ajustado);
         }
         actualizarAria(ajustado);
+        posicionarElemento(ajustado);
       } else {
         var actual = coords(evento);
         var dx = actual.x - anterior.x;
@@ -1119,6 +1264,7 @@ const SCRIPT_KODU = `(function () {
         valorInicialDrag = base;
         ultimoValorEmitido = ajustarUnidad(base);
         actualizarAria(ultimoValorEmitido);
+        posicionarElemento(ultimoValorEmitido);
       } else {
         anterior = coords(evento);
       }
@@ -1156,6 +1302,7 @@ const SCRIPT_KODU = `(function () {
           cbAlCambiar(ajustado);
         }
         actualizarAria(ajustado);
+        posicionarElemento(ajustado);
         cbAlSoltarU(ultimoValorEmitido);
       } else {
         var dx = 0, dy = 0;
