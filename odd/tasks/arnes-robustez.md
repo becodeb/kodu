@@ -272,8 +272,74 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
   the first turn. The kit block grows too, but it is folded before reaching
   the prompt, so it adds no prompt tokens.
 
+## Round 2 (2026-09-24)
+
+### Problem
+
+The blind round-2 evaluation (branch `exp/medicion-arnes`,
+`experimentos/razonamiento/RESULTADOS-arnes.md` and `resultados/ronda2-puntajes.json`)
+confirmed the round-1 gains but found a regression and new defect classes:
+
+- `kodu.arrastrar` misused three ways in D3 (6 -> 4 and 2): `mover(p)` treated as a
+  number (value became `NaN`); an extra resource `keydown` on top of the helper's (every
+  arrow moved twice); a keyboard step in pixels too small to change a rounded value.
+- Stacked draggable points: the wrong one moves.
+- Stale Lucide references. Root cause verified in lucide@1.47.0 `createIcons`: it
+  replaces EVERY `[data-lucide]` under `root`, including `<svg>`s it already drew, and
+  the kit calls it over the whole document on each new icon; initial icons are drawn on
+  `DOMContentLoaded`, after the resource's inline script already grabbed the `<i>`.
+- Confetti that keeps falling after a reset, or fires with 0 correct answers.
+- The correct option always in the same position.
+- Reset that does not restore controls, messages or the prediction screen; stale
+  message from the previous attempt; initial counters/labels out of sync; controls below
+  the fold; ordered challenges solvable out of order.
+- Round-1 rule 2 ("a challenge can go back to pending") led to live re-evaluation of
+  achievements, so with two bars the three challenges were never solved together.
+
+### Constraints (round 2)
+
+- Prefer misuse-proof helpers over more rules; one line per new rule.
+- BASE_PROMPT grows at most ~300 tokens over round 1 (11450 chars; estimate with the
+  3.37 chars/token fit above). Measure and report.
+- The kit block of `main` (pre-T1) stays recognized as canonical (pinned hash). The
+  round-1 block never shipped (branch unmerged), so it is not kept as legacy.
+- No paid model calls; browser tests in real Chromium; `npm run check` clean; no merge,
+  no push.
+
+### Tasks
+
+- [ ] T5 — Icons: draw `<i data-lucide>` synchronously in the observer (before the next
+  inline script runs) and never re-replace drawn `<svg>`s; `kodu.icono` only swaps its
+  own icon; legacy `SCRIPT_ICONOS` kept verbatim for the legacy block. Browser + unit
+  tests. Route: delegated (writer trigger: kit + two test files).
+- [ ] T6 — `kodu.arrastrar`: unit mode (`eje`, `min`, `max`, `paso`, `valor`,
+  `alCambiar`, `alSoltar`, keyboard in problem units, ARIA slider); low-level mode kept
+  with a numeric safety net; helper owns arrow keys; nearest-to-pointer among
+  overlapping draggables; drag survives a re-render. Browser + unit tests. Route:
+  delegated (same writer).
+- [ ] T7 — `kodu.festejar` (lazy canvas-confetti, cut by
+  `kodu.cancelarTemporizadores()`, also before the library loads) and `kodu.mezclar`
+  (new array, never the identical order). Browser + unit tests. Route: delegated (same
+  writer).
+- [ ] T8 — BASE_PROMPT: rewrite rules 1-2 (initial state, achievement vs condition),
+  new one-line rules, helper docs with the drag example; token count; `e2e/unidad.ts`;
+  mock flow check `e2e/arnes-robustez.ts`. Route: inline (one file with exact text
+  designed by the parent, plus a small test update).
+
+### Acceptance criteria (round 2)
+
+- Unit-mode drag works with mouse, touch and keyboard and reports values in problem
+  units, snapped to `paso`; a resource-level `keydown` on the document does not double
+  the move.
+- With two overlapping draggables, the one nearest to the pointer moves.
+- An inline script right after the markup finds the drawn `<svg>`; adding icons later
+  does not replace icons already drawn.
+- `kodu.cancelarTemporizadores()` stops confetti, including a festejo requested before
+  canvas-confetti finished loading.
+- `kodu.mezclar` returns a new array with the same items in a different order.
+- A resource saved with the `main` kit block is still upgraded and folded.
+
 ## Next step
 
-All tasks done; branch not pushed or merged. Measure with DeepSeek in a later
-session using the bench in `experimentos/razonamiento/` (branch
-`exp/razonamiento-deepseek`), `low` and `high`, 2-3 samples per prompt.
+Round 2 in progress (T5-T8). Then measure with DeepSeek in a later session, only the
+affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
