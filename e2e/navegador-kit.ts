@@ -101,6 +101,10 @@ declare global {
       rerenderCambios: number[];
       rerenderSoltar: number[];
       safetyValores: unknown[];
+      // Corrección post-review de T6: hit-test real en elegirArrastrable
+      clicksBoton: number;
+      moverLinea: PuntoDrag[];
+      moverEtiqueta: PuntoDrag[];
     };
   }
 }
@@ -236,6 +240,24 @@ function construirPagina(): string {
     <div id="drag-safety" class="caja" style="left:10px;top:10px;"></div>
   </div>
 
+  <!-- Corrección post-review de T6: hit-test real. Línea diagonal con bbox
+       grande (el bbox cubre 0..100 x 0..100, el trazo sólo la diagonal) y un
+       <button> real cuyo propio bbox cae DENTRO del bbox de la línea, cerca
+       de la esquina superior derecha, lejos del trazo. -->
+  <div id="area-hit-test" style="position:relative;width:200px;height:200px;">
+    <svg id="svg-linea" viewBox="0 0 100 100" width="200" height="200" style="display:block;background:#eee;">
+      <line id="linea-diagonal" x1="5" y1="5" x2="95" y2="95" stroke="#333" stroke-width="4"></line>
+    </svg>
+    <button id="boton-en-bbox" type="button" style="position:absolute;left:150px;top:10px;width:34px;height:20px;">Ir</button>
+  </div>
+
+  <!-- Corrección post-review de T6: etiqueta SIN pointer-events:none, pintada
+       encima de un punto arrastrable, cubriéndolo por completo. -->
+  <div id="area-etiqueta" style="position:relative;width:150px;height:150px;">
+    <div id="punto-bajo-etiqueta" class="caja" style="position:absolute;left:60px;top:60px;width:24px;height:24px;border-radius:50%;"></div>
+    <div id="etiqueta-sin-pointer-events-none" style="position:absolute;left:50px;top:50px;width:60px;height:40px;background:rgba(255,255,0,.6);font-size:10px;">Etiqueta</div>
+  </div>
+
   <!-- fuerza scroll disponible: si ArrowUp/ArrowDown NO se previenen, esto se mueve -->
   <div id="relleno" style="height:3000px;"></div>
 
@@ -258,7 +280,10 @@ function construirPagina(): string {
       contadorMismoElementoExtra: 0,
       moverChico: [], moverGrande: [],
       rerenderCambios: [], rerenderSoltar: [],
-      safetyValores: []
+      safetyValores: [],
+      clicksBoton: 0,
+      moverLinea: [],
+      moverEtiqueta: []
       // svgSyncAlCargar NO se pisa acá: ya lo puso el script de la prueba
       // (a) más arriba, y Object.assign sobre el mismo objeto lo conserva.
     });
@@ -381,6 +406,17 @@ function construirPagina(): string {
 
     kodu.arrastrar(document.getElementById('drag-safety'), {
       mover: function (x) { window.__test.safetyValores.push(x + 0); }
+    });
+
+    // ── Corrección post-review de T6: hit-test real ─────────────────────
+    document.getElementById('boton-en-bbox').addEventListener('click', function () {
+      window.__test.clicksBoton++;
+    });
+    kodu.arrastrar(document.getElementById('linea-diagonal'), {
+      mover: function (p) { window.__test.moverLinea.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('punto-bajo-etiqueta'), {
+      mover: function (p) { window.__test.moverEtiqueta.push(p); }
     });
   </script>
 </body>
@@ -815,6 +851,13 @@ async function main(): Promise<void> {
     );
 
     // ── Round 2, T6: dos arrastrables superpuestos ──────────────────────
+    // El punto de agarre es el CENTRO de circulo-chico: cx=75,cy=35 sobre un
+    // viewBox 0..100. Distancia al centro de circulo-grande (cx=50,cy=50,
+    // r=40) es sqrt(25²+15²)≈29.2 < 40, así que ese punto cae DENTRO de la
+    // forma real (no sólo el bbox) de los dos círculos — elementsFromPoint
+    // devuelve ambos ahí (la corrección post-review de T6 al hit-test no
+    // necesitó tocar esta geometría, ya ejercitaba "el puntero adentro de
+    // las dos formas").
     await prueba(
       'kodu.arrastrar: dos arrastrables superpuestos — gana el de centro más cercano al puntero, no el pintado encima',
       async () => {
@@ -831,6 +874,50 @@ async function main(): Promise<void> {
         }));
         assert.ok(estado.chico > 0, 'el círculo con el centro más cercano al puntero (chico) tiene que recibir el arrastre');
         assert.equal(estado.grande, 0, 'el círculo grande (pintado encima) no puede recibir el arrastre si su centro está más lejos');
+      },
+    );
+
+    // ── Corrección post-review de T6: hit-test real (no sólo bbox) ─────
+    await prueba(
+      'kodu.arrastrar: un botón cuyo bbox cae dentro del bbox de un arrastrable conserva su click',
+      async () => {
+        const caja = await cajaDe(page, '#boton-en-bbox');
+        const cx = caja.x + caja.width / 2;
+        const cy = caja.y + caja.height / 2;
+        await page.mouse.click(cx, cy);
+        const estado = await page.evaluate(() => ({
+          clicks: window.__test.clicksBoton,
+          movidas: window.__test.moverLinea.length,
+        }));
+        assert.equal(estado.clicks, 1, 'el click del botón tiene que llegar (setPointerCapture no lo puede desviar)');
+        assert.equal(estado.movidas, 0, 'no puede haber arrancado un arrastre sobre el botón');
+      },
+    );
+
+    await prueba(
+      'kodu.arrastrar: el espacio vacío dentro del bbox de una línea diagonal (fuera del trazo) no arranca un arrastre',
+      async () => {
+        const cajaSvg = await cajaDe(page, '#svg-linea');
+        // esquina inferior-izquierda del viewBox 0..100 (≈ punto 10,85):
+        // lejos de la diagonal x=y, y lejos del botón (que está arriba a la
+        // derecha) — vacío de verdad, sólo dentro del bbox de la línea.
+        const px = cajaSvg.x + cajaSvg.width * 0.1;
+        const py = cajaSvg.y + cajaSvg.height * 0.85;
+        await page.mouse.move(px, py);
+        await page.mouse.down();
+        await page.mouse.move(px + 10, py - 10, { steps: 3 });
+        await page.mouse.up();
+        const movidas = await page.evaluate(() => window.__test.moverLinea.length);
+        assert.equal(movidas, 0, 'presionar el bbox vacío (fuera del trazo real) no puede mover la línea');
+      },
+    );
+
+    await prueba(
+      'kodu.arrastrar: una etiqueta sin pointer-events:none encima de un punto no bloquea su arrastre',
+      async () => {
+        await arrastrarConMouse(page, '#punto-bajo-etiqueta', 20, 15);
+        const movidas = await page.evaluate(() => window.__test.moverEtiqueta.length);
+        assert.ok(movidas > 0, 'el arrastre tiene que llegar al punto aunque una etiqueta (sin pointer-events:none) esté encima');
       },
     );
 

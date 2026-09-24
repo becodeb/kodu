@@ -836,27 +836,48 @@ const SCRIPT_KODU = `(function () {
     return dx * dx + dy * dy;
   }
 
-  function rectContienePunto(rect, x, y) {
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  var SELECTOR_CONTROL_INTERACTIVO = 'button, a[href], input, select, textarea, label, [contenteditable]';
+
+  /**
+   * getBoundingClientRect sólo, sin hit-test real, tenía dos fallas
+   * (corrección post-review de T6): un button/input/link que cae
+   * GEOMÉTRICAMENTE adentro del bbox de un arrastrable (pero no es
+   * descendiente suyo) arrancaba un arrastre en vez de dejar pasar el click
+   * — y encima setPointerCapture desviaba el pointerup, así que el click
+   * del control nunca llegaba a dispararse. Y un arrastrable de bbox grande
+   * (una line diagonal, un g, una barra ancha) arrancaba un arrastre con
+   * sólo tocar el espacio vacío adentro de su bbox, lejos de la forma real.
+   * document.elementsFromPoint es la forma correcta: hace hit-test de
+   * verdad (preciso a la forma real en SVG), ya respeta pointer-events:none
+   * por su cuenta, y devuelve TODA la pila de elementos en ese punto — no
+   * sólo el de más arriba — así que un arrastrable debajo de una etiqueta
+   * sin pointer-events:none sigue encontrándose.
+   */
+  function elementoFueGolpeado(el, golpeados) {
+    for (var i = 0; i < golpeados.length; i++) {
+      if (el === golpeados[i] || el.contains(golpeados[i])) return true;
+    }
+    return false;
   }
 
   /**
-   * Entre los arrastrables registrados y CONECTADOS cuyo getBoundingClientRect
-   * contiene al puntero, gana el de centro más cercano al puntero — no el
-   * que aparece primero en el DOM ni el de más arriba en el z-index (round
-   * 2: con puntos superpuestos, el arrastre agarraba el equivocado). Empate:
-   * se prefiere el que de verdad recibió el evento (evento.target cae
-   * adentro de su subárbol).
+   * Entre los arrastrables registrados, CONECTADOS y de verdad golpeados por
+   * el puntero (hit-test real, ver el comentario de arriba), gana el de
+   * centro más cercano al puntero — no el que aparece primero en el DOM ni
+   * el de más arriba en el z-index (round 2: con puntos superpuestos, el
+   * arrastre agarraba el equivocado). Empate: se prefiere el que de verdad
+   * recibió el evento (evento.target cae adentro de su subárbol).
    */
   function elegirArrastrable(evento) {
+    var golpeados = document.elementsFromPoint(evento.clientX, evento.clientY);
     var mejor = null;
     var mejorDist = Infinity;
     var empatados = [];
     for (var i = 0; i < registroArrastre.length; i++) {
       var entrada = registroArrastre[i];
       if (!entrada.el.isConnected) continue;
+      if (!elementoFueGolpeado(entrada.el, golpeados)) continue;
       var rect = entrada.el.getBoundingClientRect();
-      if (!rectContienePunto(rect, evento.clientX, evento.clientY)) continue;
       var dist = distanciaAlCentroCuadrado(rect, evento.clientX, evento.clientY);
       if (dist < mejorDist) {
         mejorDist = dist;
@@ -880,6 +901,25 @@ const SCRIPT_KODU = `(function () {
   // pointerdown arranca exactamente un arrastre.
   document.addEventListener('pointerdown', function (evento) {
     if (evento.button > 0 || evento.isPrimary === false) return;
+
+    // Si lo que de verdad se tocó es un control interactivo (botón, link,
+    // input...) que no es parte de ningún arrastrable registrado, ese
+    // control gana siempre: no arranca ningún arrastre y el click/foco
+    // normal del control sigue su curso sin que setPointerCapture lo desvíe.
+    var interactivo = evento.target && evento.target.closest
+      ? evento.target.closest(SELECTOR_CONTROL_INTERACTIVO)
+      : null;
+    if (interactivo) {
+      var dentroDeUnArrastrable = false;
+      for (var k = 0; k < registroArrastre.length; k++) {
+        if (registroArrastre[k].el.isConnected && registroArrastre[k].el.contains(interactivo)) {
+          dentroDeUnArrastrable = true;
+          break;
+        }
+      }
+      if (!dentroDeUnArrastrable) return;
+    }
+
     var candidato = elegirArrastrable(evento);
     if (candidato) candidato.iniciar(evento);
   }, true);
