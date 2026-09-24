@@ -308,11 +308,11 @@ confirmed the round-1 gains but found a regression and new defect classes:
 
 ### Tasks
 
-- [ ] T5 — Icons: draw `<i data-lucide>` synchronously in the observer (before the next
+- [x] T5 — Icons: draw `<i data-lucide>` synchronously in the observer (before the next
   inline script runs) and never re-replace drawn `<svg>`s; `kodu.icono` only swaps its
   own icon; legacy `SCRIPT_ICONOS` kept verbatim for the legacy block. Browser + unit
   tests. Route: delegated (writer trigger: kit + two test files).
-- [ ] T6 — `kodu.arrastrar`: unit mode (`eje`, `min`, `max`, `paso`, `valor`,
+- [x] T6 — `kodu.arrastrar`: unit mode (`eje`, `min`, `max`, `paso`, `valor`,
   `alCambiar`, `alSoltar`, keyboard in problem units, ARIA slider); low-level mode kept
   with a numeric safety net; helper owns arrow keys; nearest-to-pointer among
   overlapping draggables; drag survives a re-render. Browser + unit tests. Route:
@@ -339,7 +339,110 @@ confirmed the round-1 gains but found a regression and new defect classes:
 - `kodu.mezclar` returns a new array with the same items in a different order.
 - A resource saved with the `main` kit block is still upgraded and folded.
 
+### Round 2 Progress
+
+- T5 done. Verified in lucide@1.47.0's own source (`createIcons`/`replaceElement`,
+  downloaded from jsdelivr and read directly): `createIcons({root})` with the default
+  `nameAttr` queries `root.querySelectorAll('[data-lucide]')`, which matches an
+  already-drawn `<svg data-lucide>` exactly like an undrawn `<i data-lucide>` — so any
+  new icon anywhere retriggered a full redraw that replaced every icon already on the
+  page with a fresh node.
+  - `src/lib/ai/kit.ts`: `SCRIPT_ICONOS` now defines `dibujarIconos(root)`, exposed as a
+    private global `window.__koduDibujarIconos` (not part of the public `window.kodu`
+    API — `SCRIPT_ICONOS` loads before `SCRIPT_KODU` in the block, so a shared global is
+    the only way for `SCRIPT_KODU` to reuse it). It marks each pending `i[data-lucide]`
+    with a temporary `data-kodu-dibujar` attribute (same value as `data-lucide`), calls
+    `lucide.createIcons({ nameAttr: 'data-kodu-dibujar', root })` so only those elements
+    are touched (an already-drawn `<svg>` never carries the temp attribute), then strips
+    the temp attribute from the resulting `<svg>`s.
+  - The `MutationObserver` callback now calls `dibujarIconos(document)` directly instead
+    of debouncing through `requestAnimationFrame`: a `MutationObserver` callback runs as
+    a microtask, and the HTML parser does a microtask checkpoint before executing an
+    inline `<script>` that follows markup, so an icon drawn by the observer is already an
+    `<svg>` by the time a resource's own inline script looks it up — the previous rAF
+    deferral missed that window.
+  - `kodu.icono(el, nombre)` now calls `window.__koduDibujarIconos(contenedor)` instead
+    of `lucide.createIcons({root: contenedor})` directly: before, that default-nameAttr
+    call inside a container with more than one icon also re-replaced an already-drawn
+    sibling icon (the same class of bug, just container-scoped) — this was a real,
+    previously-untested defect in the T1 implementation, not only a round-2 regression.
+  - The old `SCRIPT_ICONOS` text is preserved byte for byte as `SCRIPT_ICONOS_LEGADO`,
+    used only when `construirBloque(tema, { legado: true })`; the pinned-hash test
+    against `bloqueKitLegado('pizarron')` needed no change and still passes.
+  - New unit tests in `e2e/unidad-kit.ts`: current block has no `requestAnimationFrame`
+    and does expose `window.__koduDibujarIconos`; legacy block keeps `requestAnimationFrame`
+    and never mentions `__koduDibujarIconos`.
+  - New browser tests in `e2e/navegador-kit.ts`: (a) an inline script right after
+    `<i data-lucide>` markup already finds the drawn `<svg>`; (b) drawing a new icon
+    anywhere else does not disconnect a reference to a previously-drawn `<svg>`; (c)
+    `kodu.icono` on one of two icons in the same container leaves the sibling connected,
+    unchanged, and still the same node.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 44/44 pass (pinned
+    hash unmodified). `npx tsx e2e/navegador-kit.ts` → 16/16 pass, run three times total
+    (once during development, twice more after), no flakiness, no leftover Chromium
+    process.
+  - Commit: `c3c8f96`.
+
+- T6 done. `src/lib/ai/kit.ts`, `arrastrar()` rewritten with two selectable modes and a
+  shared drag registry, all inside the same `SCRIPT_KODU` ES5 string:
+  - **Modo unidad** (`opciones.alCambiar` is a function, or `min`/`max` present):
+    `arrastrar(el, { area, eje, min, max, paso, valor, alCambiar, alSoltar })`. Value math
+    is relative from `Number(valor())` captured at `pointerdown` (falls back to the
+    absolute value under the pointer only when `valor` is missing/non-finite) — no jump
+    on grab. Snap formula exactly as specified (`min + round((v-min)/paso)*paso`,
+    clamped, then rounded to `paso`'s own decimal count via `redondearA`/`decimalesDe`
+    to kill float noise). `alCambiar` fires only when the snapped value changes from the
+    last emitted one; `alSoltar` fires exactly once per action (pointerup/cancel, or
+    after each key press). Keyboard: ArrowRight/Up = +paso, ArrowLeft/Down = -paso,
+    Home/End = min/max, all clamped. ARIA (`role="slider"` unless already set,
+    `aria-valuemin/max/now`) applied at setup and kept in sync.
+  - **Modo bajo nivel** (`mover`/`soltar`, `p.x/p.y` in `area` coordinates, T4's SVG-CTM
+    path unchanged) kept as-is, plus a safety net: `crearPuntoDrag` gives every point a
+    `valueOf` returning `p.x`, so a misused `mover: function (x) { ... }` that treats the
+    whole point as a number still gets the area x in any numeric context.
+  - **Keyboard ownership**: `alTecla` is registered on `el` with `capture: true` and
+    calls `stopImmediatePropagation()` for every key it handles, in both modes — a
+    same-element `keydown` added by the resource AFTER `kodu.arrastrar()`, or a
+    `document`-level bubble-phase `keydown`, no longer double-fires the move.
+  - **Nearest-to-pointer among overlapping draggables**: every `arrastrar()` call
+    registers `{el, iniciar}` in a module-level `registroArrastre` array (entries with
+    `el.isConnected === false` are skipped, and the returned cleanup function removes
+    the entry). ONE `document`-level `pointerdown` listener in the capture phase (added
+    once, outside `arrastrar()`) picks, among registered connected elements whose
+    `getBoundingClientRect()` contains the pointer, the one with the nearest rect
+    center (ties broken by `el.contains(evento.target)`), then calls that single
+    winner's `iniciar(evento)` — so a click on stacked draggables starts exactly one
+    drag, regardless of DOM nesting, paint order, or z-index.
+  - **Survives a re-render**: `pointermove`/`pointerup`/`pointercancel` are attached to
+    `window` (not `el`) only while a drag is active, added in `iniciarArrastre` and
+    removed in `terminarArrastre` — filtered by `pointerId`, not by which element is
+    `evento.target`. `setPointerCapture` stays best-effort (wrapped in try/catch); the
+    old `lostpointercapture` → end-drag wiring was removed entirely, so losing capture
+    (e.g. because the dragged element was replaced) can no longer end the drag on its
+    own. If a resource replaces `el` with a clone mid-drag (from inside `alCambiar`) and
+    re-registers the clone, the ORIGINAL closure's window listeners keep delivering
+    events to the ORIGINAL callbacks until release — proven by a dedicated browser test.
+  - Every existing round-1/T4 browser and unit test for `kodu.arrastrar` still passes
+    unmodified — confirmed no behavior change to low-level mode's coordinate math, SVG
+    CTM handling, or shift-key multiplier.
+  - New browser tests in `e2e/navegador-kit.ts` (12 new, one per bullet of the round-2
+    acceptance criteria): unit-mode mouse (no jump on grab, snap, no consecutive
+    repeats, single `alSoltar`), unit-mode real touch (CDP), decimal `paso` (no float
+    noise), `eje:'y'` (drag up increases), unit-mode keyboard (ArrowRight/Home/End, ARIA,
+    both keyboard-ownership scenarios), two overlapping SVG circles (nearer center
+    wins over the one painted on top), re-render mid-drag (keeps emitting until
+    release), and low-level mode's `valueOf` safety net.
+  - New unit tests in `e2e/unidad-kit.ts`: presence of the unit-mode branch/ARIA
+    attributes, capture-phase keyboard registration + `stopImmediatePropagation`, the
+    shared registry/nearest-selection functions, `window`-level move/up/cancel listeners
+    with no `lostpointercapture` listener, and `crearPuntoDrag`.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 49/49 pass (pinned
+    hash unaffected — `arrastrar()` isn't part of the legacy block).
+    `npx tsx e2e/navegador-kit.ts` → 24/24 pass, run three times total, no flakiness, no
+    leftover Chromium process.
+  - Commit: `<pending, see next message>`.
+
 ## Next step
 
-Round 2 in progress (T5-T8). Then measure with DeepSeek in a later session, only the
+Round 2 in progress (T7-T8). Then measure with DeepSeek in a later session, only the
 affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.

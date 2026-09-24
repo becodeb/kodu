@@ -699,6 +699,37 @@ const SCRIPT_ICONOS_LEGADO = `(function () {
  *    propio — si no, un `mover` que hace `setAttribute('cx', p.x)` hacía
  *    saltar el punto a `(paso, 0)` en la primera flecha en vez de moverlo
  *    `paso` unidades desde donde estaba.
+ *
+ *    Round 2 (T6, blind test D3 y el defecto de puntos apilados) agregó un
+ *    MODO UNIDAD además del modo bajo nivel de arriba, y volvió a la propia
+ *    `arrastrar()` dueña de sus entradas para que un mal uso no la rompa:
+ *      - `opciones.alCambiar` (o `min`/`max`) presente activa el modo
+ *        unidad: `arrastrar(el, { area, eje, min, max, paso, valor,
+ *        alCambiar, alSoltar })` reporta un ESCALAR en unidades del
+ *        problema (no píxeles), ya snapeado a `paso` y sin ruido de punto
+ *        flotante, con teclado (flechas + Home/End) y ARIA (`role="slider"`,
+ *        `aria-valuemin/max/now`) de fábrica — así un `mover` que trataba el
+ *        punto como si fuera directamente el valor (`NaN`) o un `paso` en
+ *        píxeles demasiado chico para mover un valor redondeado deja de ser
+ *        posible.
+ *      - El teclado se escucha en captura y llama a
+ *        `stopImmediatePropagation()`: un `keydown` que el propio recurso
+ *        agrega encima (en el mismo elemento o en `document`) ya no puede
+ *        duplicar el movimiento de cada flecha.
+ *      - Con arrastrables superpuestos (puntos apilados), un registro
+ *        compartido entre todas las llamadas a `arrastrar()` elige, en
+ *        `pointerdown`, el de centro más cercano al puntero — no el primero
+ *        del DOM ni el de más arriba en el z-index.
+ *      - El arrastre en curso escucha `pointermove`/`pointerup`/
+ *        `pointercancel` en `window` (no en `el`) mientras está activo: si
+ *        el propio `alCambiar` reemplaza `el` por un clon a mitad de
+ *        arrastre, el arrastre sigue entregando eventos a los MISMOS
+ *        callbacks hasta soltar en vez de cortarse.
+ *      - El modo bajo nivel (`mover`/`soltar` con `p.x`/`p.y` libres en 2D)
+ *        sigue igual, más una red de seguridad: `p` tiene un `valueOf` que
+ *        devuelve `p.x`, así un `mover: function (x) { ... }` que trata todo
+ *        el punto como si fuera un número igual obtiene la coordenada `x`
+ *        en cualquier cuenta aritmética.
  *  - `despues`/`cancelarTemporizadores` (y `cada`, de yapa) — defecto 4: un
  *    `setTimeout` para "la próxima ronda" que ya estaba pedido cuando el
  *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
@@ -775,28 +806,123 @@ const SCRIPT_KODU = `(function () {
     }
   }
 
+  // ── kodu.arrastrar (round 2, T6) ─────────────────────────────────────
+  //
+  // Registro compartido de TODOS los elementos arrastrables activos (de
+  // cualquier llamada a arrastrar()), para poder elegir UNO solo cuando dos
+  // se superponen (round 2: con puntos apilados se movía el equivocado).
+  var registroArrastre = [];
+
+  function distanciaAlCentroCuadrado(rect, x, y) {
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var dx = cx - x;
+    var dy = cy - y;
+    return dx * dx + dy * dy;
+  }
+
+  function rectContienePunto(rect, x, y) {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  /**
+   * Entre los arrastrables registrados y CONECTADOS cuyo getBoundingClientRect
+   * contiene al puntero, gana el de centro más cercano al puntero — no el
+   * que aparece primero en el DOM ni el de más arriba en el z-index (round
+   * 2: con puntos superpuestos, el arrastre agarraba el equivocado). Empate:
+   * se prefiere el que de verdad recibió el evento (evento.target cae
+   * adentro de su subárbol).
+   */
+  function elegirArrastrable(evento) {
+    var mejor = null;
+    var mejorDist = Infinity;
+    var empatados = [];
+    for (var i = 0; i < registroArrastre.length; i++) {
+      var entrada = registroArrastre[i];
+      if (!entrada.el.isConnected) continue;
+      var rect = entrada.el.getBoundingClientRect();
+      if (!rectContienePunto(rect, evento.clientX, evento.clientY)) continue;
+      var dist = distanciaAlCentroCuadrado(rect, evento.clientX, evento.clientY);
+      if (dist < mejorDist) {
+        mejorDist = dist;
+        mejor = entrada;
+        empatados = [entrada];
+      } else if (dist === mejorDist) {
+        empatados.push(entrada);
+      }
+    }
+    if (empatados.length > 1) {
+      for (var j = 0; j < empatados.length; j++) {
+        if (empatados[j].el.contains(evento.target)) return empatados[j];
+      }
+    }
+    return mejor;
+  }
+
+  // En document y en captura: llega ANTES que cualquier listener propio del
+  // recurso (la captura va de document hacia el target) y elige un único
+  // arrastrable aunque dos estén anidados o superpuestos, así un solo
+  // pointerdown arranca exactamente un arrastre.
+  document.addEventListener('pointerdown', function (evento) {
+    if (evento.button > 0 || evento.isPrimary === false) return;
+    var candidato = elegirArrastrable(evento);
+    if (candidato) candidato.iniciar(evento);
+  }, true);
+
+  function decimalesDe(numero) {
+    var texto = String(numero);
+    var punto = texto.indexOf('.');
+    return punto === -1 ? 0 : texto.length - punto - 1;
+  }
+
+  function redondearA(valor, decimales) {
+    var factor = Math.pow(10, decimales);
+    return Math.round(valor * factor) / factor;
+  }
+
+  /**
+   * Red de seguridad (round 2, T6, blind test D3): un recurso que usa mal la
+   * firma y trata el punto entero como si fuera un número
+   * (mover: function (x) { moverPunto(g, d, x) }, donde x en realidad es
+   * el objeto p) igual obtiene p.x en cualquier contexto numérico
+   * (aritmética, comparación) gracias a este valueOf.
+   */
+  function crearPuntoDrag(x, y, dx, dy, teclado) {
+    return {
+      x: x, y: y, dx: dx, dy: dy, teclado: teclado,
+      valueOf: function () { return this.x; }
+    };
+  }
+
   function arrastrar(el, opciones) {
     opciones = opciones || {};
-    var mover = opciones.mover || function () {};
-    var soltar = opciones.soltar || function () {};
-    var areaFija = opciones.area || null;
-    var paso = opciones.paso || 10;
     var esSvg = el.namespaceURI === 'http://www.w3.org/2000/svg';
+    // Modo unidad: opciones.alCambiar (o min/max) presente. Ver el
+    // comentario grande de arriba de window.kodu para el resumen.
+    var modoUnidad = typeof opciones.alCambiar === 'function' || opciones.min != null || opciones.max != null;
 
     el.style.touchAction = 'none';
     el.style.cursor = 'grab';
     el.style.userSelect = 'none';
     if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
 
-    var activo = false;
-    var idPuntero = null;
-    var anterior = null;
-
+    var areaFija = opciones.area || null;
     function area() {
       if (areaFija) return areaFija;
       if (esSvg) return el.ownerSVGElement || (el.closest ? el.closest('svg') : null) || el.parentElement;
       return el.parentElement;
     }
+
+    var activo = false;
+    var idPuntero = null;
+
+    // ── Modo bajo nivel: arrastre libre en 2D, p.x/p.y en coordenadas de
+    // area (unidades de usuario del SVG si area tiene viewBox, vía
+    // getScreenCTM — T4). Sin cambios de comportamiento en round 2.
+    var mover = opciones.mover || function () {};
+    var soltar = opciones.soltar || function () {};
+    var pasoBajoNivel = opciones.paso || 10;
+    var anterior = null;
 
     function coords(evento) {
       var a = area();
@@ -814,69 +940,203 @@ const SCRIPT_KODU = `(function () {
       return { x: evento.clientX - caja.left, y: evento.clientY - caja.top };
     }
 
-    function alBajar(evento) {
-      if (evento.button > 0 || evento.isPrimary === false) return;
-      activo = true;
-      idPuntero = evento.pointerId;
-      anterior = coords(evento);
-      el.style.cursor = 'grabbing';
-      try { el.setPointerCapture(idPuntero); } catch (e) {}
-    }
-
-    function alMover(evento) {
-      if (!activo || evento.pointerId !== idPuntero) return;
-      var actual = coords(evento);
-      var dx = actual.x - anterior.x;
-      var dy = actual.y - anterior.y;
-      anterior = actual;
-      mover({ x: actual.x, y: actual.y, dx: dx, dy: dy, teclado: false });
-    }
-
-    function alSoltar(evento) {
-      if (!activo || evento.pointerId !== idPuntero) return;
-      activo = false;
-      el.style.cursor = 'grab';
-      soltar({ x: anterior.x, y: anterior.y, dx: 0, dy: 0, teclado: false });
-    }
-
     function centroDeEl() {
       var caja = el.getBoundingClientRect();
       return coords({ clientX: caja.left + caja.width / 2, clientY: caja.top + caja.height / 2 });
     }
 
-    function alTecla(evento) {
-      var dx = 0, dy = 0;
-      if (evento.key === 'ArrowLeft') dx = -paso;
-      else if (evento.key === 'ArrowRight') dx = paso;
-      else if (evento.key === 'ArrowUp') dy = -paso;
-      else if (evento.key === 'ArrowDown') dy = paso;
-      else return;
-      if (evento.shiftKey) { dx = dx * 5; dy = dy * 5; }
-      evento.preventDefault();
-      // El centro ACTUAL del elemento, no un acumulador propio: así p.x/p.y
-      // quedan en las mismas unidades de area que en el camino de puntero
-      // (defecto de T4) y un mover() que hace setAttribute('cx', p.x) no
-      // hace saltar el punto a (paso,0) en la primera flecha.
-      var centro = centroDeEl();
-      var p = { x: centro.x + dx, y: centro.y + dy, dx: dx, dy: dy, teclado: true };
-      mover(p);
-      soltar(p);
+    // ── Modo unidad: valores de problema (no píxeles) sobre un eje de
+    // area, en coordenadas de CLIENTE puras (getBoundingClientRect, robusto
+    // a viewBox/escala CSS — a diferencia del modo bajo nivel, acá no hace
+    // falta el CTM del SVG porque el resultado es un escalar, no un punto).
+    var eje = opciones.eje === 'y' ? 'y' : 'x';
+    var minU = typeof opciones.min === 'number' ? opciones.min : 0;
+    var maxU = typeof opciones.max === 'number' ? opciones.max : 100;
+    var pasoU = typeof opciones.paso === 'number' && opciones.paso > 0 ? opciones.paso : 1;
+    var decimalesU = decimalesDe(pasoU);
+    var obtenerValor = typeof opciones.valor === 'function' ? opciones.valor : null;
+    var cbAlCambiar = typeof opciones.alCambiar === 'function' ? opciones.alCambiar : function () {};
+    var cbAlSoltarU = typeof opciones.alSoltar === 'function' ? opciones.alSoltar : function () {};
+    var ultimoValorEmitido = minU;
+    var rectAreaInicial = null;
+    var clientInicial = { x: 0, y: 0 };
+    var valorInicialDrag = minU;
+
+    function ajustarUnidad(v) {
+      var pasosDesdeMin = Math.round((v - minU) / pasoU);
+      var ajustado = minU + pasosDesdeMin * pasoU;
+      if (ajustado < minU) ajustado = minU;
+      if (ajustado > maxU) ajustado = maxU;
+      return redondearA(ajustado, decimalesU);
     }
 
-    el.addEventListener('pointerdown', alBajar);
-    el.addEventListener('pointermove', alMover);
-    el.addEventListener('pointerup', alSoltar);
-    el.addEventListener('pointercancel', alSoltar);
-    el.addEventListener('lostpointercapture', alSoltar);
-    el.addEventListener('keydown', alTecla);
+    function actualizarAria(v) {
+      el.setAttribute('aria-valuenow', String(v));
+    }
+
+    function spanPixels(rect) {
+      return eje === 'y' ? rect.height : rect.width;
+    }
+
+    function valorAbsolutoBajoPuntero(rect, clientX, clientY) {
+      var span = spanPixels(rect);
+      if (!span) return minU;
+      var fraccion = eje === 'y'
+        ? (rect.top + rect.height - clientY) / span
+        : (clientX - rect.left) / span;
+      return minU + fraccion * (maxU - minU);
+    }
+
+    if (modoUnidad) {
+      if (!el.hasAttribute('role')) el.setAttribute('role', 'slider');
+      el.setAttribute('aria-valuemin', String(minU));
+      el.setAttribute('aria-valuemax', String(maxU));
+      var valorInicialAria = obtenerValor ? Number(obtenerValor()) : NaN;
+      actualizarAria(ajustarUnidad(isFinite(valorInicialAria) ? valorInicialAria : minU));
+    }
+
+    // ── Arranque, movimiento y fin de un arrastre por puntero. move/up/
+    // cancel se escuchan en window (no en el) mientras el arrastre está
+    // activo — no en el, para que sobreviva a un re-render (round 2, T6): si
+    // el recurso reemplaza el elemento arrastrado a mitad de camino (por
+    // ejemplo, desde el propio alCambiar), el arrastre sigue entregando
+    // eventos a los MISMOS callbacks hasta soltar, sin importar si el nodo
+    // original sigue conectado. setPointerCapture es sólo mejor esfuerzo:
+    // no se usa lostpointercapture para terminar el arrastre (se pierde la
+    // captura si el nodo se desconecta, pero eso solo no puede cortar el
+    // arrastre).
+    function alMoverPuntero(evento) {
+      if (!activo || evento.pointerId !== idPuntero) return;
+      if (modoUnidad) {
+        var delta = eje === 'y' ? (clientInicial.y - evento.clientY) : (evento.clientX - clientInicial.x);
+        var span = spanPixels(rectAreaInicial);
+        var crudo = valorInicialDrag + (span ? (delta * (maxU - minU)) / span : 0);
+        var ajustado = ajustarUnidad(crudo);
+        if (ajustado !== ultimoValorEmitido) {
+          ultimoValorEmitido = ajustado;
+          cbAlCambiar(ajustado);
+        }
+        actualizarAria(ajustado);
+      } else {
+        var actual = coords(evento);
+        var dx = actual.x - anterior.x;
+        var dy = actual.y - anterior.y;
+        anterior = actual;
+        mover(crearPuntoDrag(actual.x, actual.y, dx, dy, false));
+      }
+    }
+
+    function terminarArrastre() {
+      activo = false;
+      el.style.cursor = 'grab';
+      window.removeEventListener('pointermove', alMoverPuntero);
+      window.removeEventListener('pointerup', alSoltarPuntero);
+      window.removeEventListener('pointercancel', alSoltarPuntero);
+      if (modoUnidad) {
+        cbAlSoltarU(ultimoValorEmitido);
+      } else {
+        soltar(crearPuntoDrag(anterior.x, anterior.y, 0, 0, false));
+      }
+    }
+
+    function alSoltarPuntero(evento) {
+      if (!activo || evento.pointerId !== idPuntero) return;
+      terminarArrastre();
+    }
+
+    function iniciarArrastre(evento) {
+      activo = true;
+      idPuntero = evento.pointerId;
+      el.style.cursor = 'grabbing';
+      try { el.setPointerCapture(idPuntero); } catch (e) {}
+      window.addEventListener('pointermove', alMoverPuntero);
+      window.addEventListener('pointerup', alSoltarPuntero);
+      window.addEventListener('pointercancel', alSoltarPuntero);
+
+      if (modoUnidad) {
+        var rect = area().getBoundingClientRect();
+        rectAreaInicial = rect;
+        clientInicial = { x: evento.clientX, y: evento.clientY };
+        // Sin salto al agarrar: v0 sale del valor ACTUAL del problema
+        // (valor()), no de la posición absoluta del puntero.
+        var base = obtenerValor ? Number(obtenerValor()) : NaN;
+        if (!isFinite(base)) base = valorAbsolutoBajoPuntero(rect, evento.clientX, evento.clientY);
+        valorInicialDrag = base;
+        ultimoValorEmitido = ajustarUnidad(base);
+        actualizarAria(ultimoValorEmitido);
+      } else {
+        anterior = coords(evento);
+      }
+    }
+
+    /**
+     * arrastrar() es dueña de las flechas (y, en modo unidad, Home/End):
+     * captura + stopImmediatePropagation para que un keydown propio del
+     * recurso en el MISMO elemento (agregado después) o en un
+     * ancestro/document en burbuja no vuelva a mover lo mismo (round 2, T6:
+     * un recurso agregaba su propio keydown encima del de arrastrar y cada
+     * flecha movía el punto dos veces).
+     */
+    function alTecla(evento) {
+      if (modoUnidad) {
+        var tecla = evento.key;
+        if (
+          tecla !== 'ArrowLeft' && tecla !== 'ArrowRight' && tecla !== 'ArrowUp' &&
+          tecla !== 'ArrowDown' && tecla !== 'Home' && tecla !== 'End'
+        ) return;
+        evento.preventDefault();
+        evento.stopImmediatePropagation();
+
+        var base = obtenerValor ? Number(obtenerValor()) : NaN;
+        if (!isFinite(base)) base = ultimoValorEmitido;
+        var nuevo;
+        if (tecla === 'Home') nuevo = minU;
+        else if (tecla === 'End') nuevo = maxU;
+        else if (tecla === 'ArrowRight' || tecla === 'ArrowUp') nuevo = base + pasoU;
+        else nuevo = base - pasoU;
+
+        var ajustado = ajustarUnidad(nuevo);
+        if (ajustado !== ultimoValorEmitido) {
+          ultimoValorEmitido = ajustado;
+          cbAlCambiar(ajustado);
+        }
+        actualizarAria(ajustado);
+        cbAlSoltarU(ultimoValorEmitido);
+      } else {
+        var dx = 0, dy = 0;
+        if (evento.key === 'ArrowLeft') dx = -pasoBajoNivel;
+        else if (evento.key === 'ArrowRight') dx = pasoBajoNivel;
+        else if (evento.key === 'ArrowUp') dy = -pasoBajoNivel;
+        else if (evento.key === 'ArrowDown') dy = pasoBajoNivel;
+        else return;
+        if (evento.shiftKey) { dx = dx * 5; dy = dy * 5; }
+        evento.preventDefault();
+        evento.stopImmediatePropagation();
+        // El centro ACTUAL del elemento, no un acumulador propio: así p.x/p.y
+        // quedan en las mismas unidades de area que en el camino de puntero
+        // (defecto de T4) y un mover() que hace setAttribute('cx', p.x) no
+        // hace saltar el punto a (paso,0) en la primera flecha.
+        var centro = centroDeEl();
+        var p = crearPuntoDrag(centro.x + dx, centro.y + dy, dx, dy, true);
+        mover(p);
+        soltar(p);
+      }
+    }
+
+    el.addEventListener('keydown', alTecla, true);
+    var entradaRegistro = { el: el, iniciar: iniciarArrastre };
+    registroArrastre.push(entradaRegistro);
 
     return function () {
-      el.removeEventListener('pointerdown', alBajar);
-      el.removeEventListener('pointermove', alMover);
-      el.removeEventListener('pointerup', alSoltar);
-      el.removeEventListener('pointercancel', alSoltar);
-      el.removeEventListener('lostpointercapture', alSoltar);
-      el.removeEventListener('keydown', alTecla);
+      el.removeEventListener('keydown', alTecla, true);
+      var pos = registroArrastre.indexOf(entradaRegistro);
+      if (pos !== -1) registroArrastre.splice(pos, 1);
+      if (activo) {
+        activo = false;
+        window.removeEventListener('pointermove', alMoverPuntero);
+        window.removeEventListener('pointerup', alSoltarPuntero);
+        window.removeEventListener('pointercancel', alSoltarPuntero);
+      }
     };
   }
 

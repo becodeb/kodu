@@ -390,6 +390,60 @@ await prueba('bloqueKitLegado: sigue con el observer viejo por rAF (SCRIPT_ICONO
 });
 
 // ─────────────────────────────────────────────────────────────
+// Round 2, T6 (arnes-robustez): kodu.arrastrar a prueba de mal uso
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: arrastrar() soporta el modo unidad (alCambiar, eje, min/max/paso, valor, ARIA)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const fragmento of [
+      'modoUnidad',
+      'opciones.alCambiar',
+      "opciones.eje === 'y'",
+      'role',
+      'aria-valuemin',
+      'aria-valuemax',
+      'aria-valuenow',
+    ]) {
+      assert.ok(bloque.includes(fragmento), `${tema.id}: falta "${fragmento}" del modo unidad`);
+    }
+  }
+});
+
+await prueba('bloqueKit: arrastrar() escucha el teclado en captura y corta la propagación', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("addEventListener('keydown', alTecla, true)"), `${tema.id}: falta el registro en captura`);
+    assert.ok(bloque.includes('stopImmediatePropagation'), `${tema.id}: falta stopImmediatePropagation`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() elige el arrastrable más cercano entre superpuestos (registro compartido)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('registroArrastre'), `${tema.id}: falta el registro compartido`);
+    assert.ok(bloque.includes('elegirArrastrable'), `${tema.id}: falta la selección por cercanía`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() escucha move/up/cancel en window (sobrevive a un re-render)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("window.addEventListener('pointermove'"), `${tema.id}: el arrastre tiene que escuchar en window`);
+    assert.ok(
+      !bloque.includes("addEventListener('lostpointercapture'"),
+      `${tema.id}: no puede depender de lostpointercapture para terminar el arrastre`,
+    );
+  }
+});
+
+await prueba('bloqueKit: el punto del modo bajo nivel tiene valueOf (red de seguridad de mal uso numérico)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('crearPuntoDrag'), `${tema.id}: falta la fábrica de puntos con valueOf`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — usaClasesDeTailwind y aplicarKitConRedDeSeguridad
 // ─────────────────────────────────────────────────────────────
 

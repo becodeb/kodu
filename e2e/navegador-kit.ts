@@ -35,14 +35,32 @@ interface PuntoDrag {
  * `lib.dom` de este mismo archivo. Sin esto, `window.kodu`/`window.__test`
  * serían "Property does not exist on type Window".
  */
+interface OpcionesArrastrarBajoNivel {
+  mover?: (p: PuntoDrag) => void;
+  soltar?: (p: PuntoDrag) => void;
+  area?: Element;
+  paso?: number;
+}
+
+interface OpcionesArrastrarUnidad {
+  area?: Element;
+  eje?: 'x' | 'y';
+  min?: number;
+  max?: number;
+  paso?: number;
+  valor?: () => number;
+  alCambiar: (v: number) => void;
+  alSoltar?: (v: number) => void;
+}
+
 declare global {
   interface Window {
     kodu: {
       icono: (el: Element, nombre: string) => Element | null;
-      arrastrar: (
-        el: Element,
-        opciones: { mover?: (p: PuntoDrag) => void; soltar?: (p: PuntoDrag) => void; area?: Element; paso?: number },
-      ) => () => void;
+      arrastrar: {
+        (el: Element, opciones: OpcionesArrastrarBajoNivel): () => void;
+        (el: Element, opciones: OpcionesArrastrarUnidad): () => void;
+      };
       despues: (ms: number, fn: () => void) => number;
       cada: (ms: number, fn: () => void) => number;
       cancelarTemporizadores: () => void;
@@ -64,6 +82,22 @@ declare global {
       soltarTecladoHtml: PuntoDrag[];
       timerDisparado: boolean;
       svgSyncAlCargar: boolean | null;
+      // Round 2, T6 (modo unidad, keyboard ownership, nearest-target, re-render)
+      unidadCambios: number[];
+      unidadSoltar: number[];
+      touchUnidadCambios: number[];
+      touchUnidadSoltar: number[];
+      decimalCambios: number[];
+      verticalCambios: number[];
+      tecladoUnidadCambios: number[];
+      tecladoUnidadSoltar: number[];
+      contadorDocumentFlechas: number;
+      contadorMismoElementoExtra: number;
+      moverChico: PuntoDrag[];
+      moverGrande: PuntoDrag[];
+      rerenderCambios: number[];
+      rerenderSoltar: number[];
+      safetyValores: unknown[];
     };
   }
 }
@@ -156,6 +190,49 @@ function construirPagina(): string {
     <i id="icono-b" data-lucide="x"></i>
   </div>
 
+  <!-- Round 2, T6: modo unidad — pista horizontal 500px, 0..10, paso 1. -->
+  <div id="pista-unidad" style="position:relative;width:500px;height:20px;background:#ccc;">
+    <div id="perilla-unidad" style="position:absolute;width:20px;height:20px;border-radius:50%;background:#333;left:150px;top:0;"></div>
+  </div>
+
+  <!-- misma forma, para el touch real -->
+  <div id="pista-touch-unidad" style="position:relative;width:500px;height:20px;background:#ccc;">
+    <div id="perilla-touch-unidad" style="position:absolute;width:20px;height:20px;border-radius:50%;background:#333;left:150px;top:0;"></div>
+  </div>
+
+  <!-- paso decimal: 200px, 0..1, paso 0.1 -->
+  <div id="pista-decimal" style="position:relative;width:200px;height:20px;background:#ccc;">
+    <div id="perilla-decimal" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"></div>
+  </div>
+
+  <!-- eje y: pista vertical 300px, 0..10, paso 1; min abajo, max arriba -->
+  <div id="pista-vertical" style="position:relative;width:20px;height:300px;background:#ccc;">
+    <div id="perilla-vertical" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:280px;"></div>
+  </div>
+
+  <!-- teclado en modo unidad: 300px, 0..10, paso 1 -->
+  <div id="pista-teclado-unidad" style="position:relative;width:300px;height:20px;background:#ccc;">
+    <div id="perilla-teclado-unidad" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"></div>
+  </div>
+
+  <!-- dos arrastrables superpuestos: circulo-grande se pinta ENCIMA (va
+       después en el DOM) pero su centro está más lejos del punto donde se
+       agarra (el centro de circulo-chico) -->
+  <svg id="area-superpuestos" viewBox="0 0 100 100" width="200" height="200" style="display:block;background:#ddd;">
+    <circle id="circulo-chico" cx="75" cy="35" r="10" fill="#06c"></circle>
+    <circle id="circulo-grande" cx="50" cy="50" r="40" fill="rgba(200,0,0,.5)"></circle>
+  </svg>
+
+  <!-- re-render a mitad de arrastre (modo unidad) -->
+  <div id="pista-rerender" style="position:relative;width:300px;height:20px;background:#ccc;">
+    <div id="perilla-rerender" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"></div>
+  </div>
+
+  <!-- modo bajo nivel: red de seguridad de p.valueOf -->
+  <div id="area-safety" style="width:200px;height:100px;">
+    <div id="drag-safety" class="caja" style="left:10px;top:10px;"></div>
+  </div>
+
   <!-- fuerza scroll disponible: si ArrowUp/ArrowDown NO se previenen, esto se mueve -->
   <div id="relleno" style="height:3000px;"></div>
 
@@ -168,7 +245,17 @@ function construirPagina(): string {
       moverOverlay: [], soltarOverlay: [],
       moverTecladoSvg: [], soltarTecladoSvg: [],
       moverTecladoHtml: [], soltarTecladoHtml: [],
-      timerDisparado: false
+      timerDisparado: false,
+      unidadCambios: [], unidadSoltar: [],
+      touchUnidadCambios: [], touchUnidadSoltar: [],
+      decimalCambios: [],
+      verticalCambios: [],
+      tecladoUnidadCambios: [], tecladoUnidadSoltar: [],
+      contadorDocumentFlechas: 0,
+      contadorMismoElementoExtra: 0,
+      moverChico: [], moverGrande: [],
+      rerenderCambios: [], rerenderSoltar: [],
+      safetyValores: []
       // svgSyncAlCargar NO se pisa acá: ya lo puso el script de la prueba
       // (a) más arriba, y Object.assign sobre el mismo objeto lo conserva.
     });
@@ -223,6 +310,75 @@ function construirPagina(): string {
     // no barriera de verdad el timer, dispararía solo ~100ms después.
     kodu.despues(100, function () { window.__test.timerDisparado = true; });
     kodu.cancelarTemporizadores();
+
+    // ── Round 2, T6: modo unidad ────────────────────────────────────────
+    var valorPista = 3;
+    kodu.arrastrar(document.getElementById('perilla-unidad'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorPista; },
+      alCambiar: function (v) { valorPista = v; window.__test.unidadCambios.push(v); },
+      alSoltar: function (v) { window.__test.unidadSoltar.push(v); }
+    });
+
+    var valorPistaTouch = 3;
+    kodu.arrastrar(document.getElementById('perilla-touch-unidad'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorPistaTouch; },
+      alCambiar: function (v) { valorPistaTouch = v; window.__test.touchUnidadCambios.push(v); },
+      alSoltar: function (v) { window.__test.touchUnidadSoltar.push(v); }
+    });
+
+    var valorDecimal = 0;
+    kodu.arrastrar(document.getElementById('perilla-decimal'), {
+      min: 0, max: 1, paso: 0.1,
+      valor: function () { return valorDecimal; },
+      alCambiar: function (v) { valorDecimal = v; window.__test.decimalCambios.push(v); }
+    });
+
+    var valorVertical = 0;
+    kodu.arrastrar(document.getElementById('perilla-vertical'), {
+      eje: 'y', min: 0, max: 10, paso: 1,
+      valor: function () { return valorVertical; },
+      alCambiar: function (v) { valorVertical = v; window.__test.verticalCambios.push(v); }
+    });
+
+    var valorTecladoUnidad = 0;
+    kodu.arrastrar(document.getElementById('perilla-teclado-unidad'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorTecladoUnidad; },
+      alCambiar: function (v) { valorTecladoUnidad = v; window.__test.tecladoUnidadCambios.push(v); },
+      alSoltar: function (v) { window.__test.tecladoUnidadSoltar.push(v); }
+    });
+
+    kodu.arrastrar(document.getElementById('circulo-chico'), {
+      mover: function (p) { window.__test.moverChico.push(p); }
+    });
+    kodu.arrastrar(document.getElementById('circulo-grande'), {
+      mover: function (p) { window.__test.moverGrande.push(p); }
+    });
+
+    var valorRerender = 0;
+    function registrarRerender(elemento) {
+      return kodu.arrastrar(elemento, {
+        min: 0, max: 10, paso: 1,
+        valor: function () { return valorRerender; },
+        alCambiar: function (v) {
+          valorRerender = v;
+          window.__test.rerenderCambios.push(v);
+          if (window.__test.rerenderCambios.length === 1) {
+            var clon = elemento.cloneNode(true);
+            elemento.parentNode.replaceChild(clon, elemento);
+            registrarRerender(clon);
+          }
+        },
+        alSoltar: function (v) { window.__test.rerenderSoltar.push(v); }
+      });
+    }
+    registrarRerender(document.getElementById('perilla-rerender'));
+
+    kodu.arrastrar(document.getElementById('drag-safety'), {
+      mover: function (x) { window.__test.safetyValores.push(x + 0); }
+    });
   </script>
 </body>
 </html>`;
@@ -507,6 +663,183 @@ async function main(): Promise<void> {
       assert.ok(estado.movidas > 0, 'el arrastre tiene que llegar aunque haya una capa decorativa encima');
       assert.equal(estado.soltadas, 1);
     });
+
+    // ── Round 2, T6: modo unidad — mouse ────────────────────────────────
+    await prueba(
+      'kodu.arrastrar (modo unidad): mouse — sin salto al agarrar, snap a paso, sin repetidos, alSoltar una vez',
+      async () => {
+        const caja = await cajaDe(page, '#perilla-unidad');
+        // agarra unos px off-center dentro de la perilla, no en su centro exacto
+        const gx = caja.x + 3;
+        const gy = caja.y + caja.height / 2;
+        await page.mouse.move(gx, gy);
+        await page.mouse.down();
+        const trasAgarrar = await page.evaluate(() => window.__test.unidadCambios.length);
+        assert.equal(trasAgarrar, 0, 'agarrar no puede disparar alCambiar (sin salto al agarrar)');
+
+        await page.mouse.move(gx + 100, gy, { steps: 10 }); // pista 500px, 0..10 -> 50px/unidad: +100px = +2
+        await page.mouse.up();
+
+        const estado = await page.evaluate(() => ({
+          cambios: window.__test.unidadCambios.slice(),
+          soltar: window.__test.unidadSoltar.slice(),
+        }));
+        assert.ok(estado.cambios.length > 0, 'tiene que haber al menos un alCambiar');
+        assert.equal(estado.cambios[estado.cambios.length - 1], 5, 'valor inicial 3 + 2 = 5');
+        assert.equal(estado.soltar.length, 1, 'alSoltar tiene que dispararse EXACTAMENTE una vez');
+        assert.equal(estado.soltar[0], 5);
+        for (let i = 1; i < estado.cambios.length; i++) {
+          assert.notEqual(estado.cambios[i], estado.cambios[i - 1], 'alCambiar no puede repetir el mismo valor consecutivo');
+        }
+      },
+    );
+
+    // ── Round 2, T6: modo unidad — touch real (CDP) ─────────────────────
+    await prueba('kodu.arrastrar (modo unidad): touch real (CDP dispatchTouchEvent)', async () => {
+      await arrastrarConTouch(page, '#perilla-touch-unidad', 100, 0);
+      const estado = await page.evaluate(() => ({
+        cambios: window.__test.touchUnidadCambios.slice(),
+        soltar: window.__test.touchUnidadSoltar.slice(),
+      }));
+      assert.ok(estado.cambios.length > 0, 'un touch real tiene que producir al menos un alCambiar');
+      assert.equal(estado.cambios[estado.cambios.length - 1], 5, 'valor inicial 3 + 2 = 5, igual que con mouse');
+      assert.equal(estado.soltar.length, 1);
+    });
+
+    // ── Round 2, T6: modo unidad — paso decimal, sin ruido de punto flotante ──
+    await prueba('kodu.arrastrar (modo unidad): paso 0.1 — sin ruido de punto flotante', async () => {
+      const caja = await cajaDe(page, '#perilla-decimal');
+      const gy = caja.y + caja.height / 2;
+      await page.mouse.move(caja.x + caja.width / 2, gy);
+      await page.mouse.down();
+      await page.mouse.move(caja.x + caja.width / 2 + 60, gy, { steps: 6 }); // 200px, 0..1 -> 0.3
+      await page.mouse.up();
+      const cambios = await page.evaluate(() => window.__test.decimalCambios.slice());
+      assert.ok(cambios.length > 0, 'tiene que haber al menos un alCambiar');
+      for (const v of cambios) {
+        assert.equal(v, Math.round(v * 10) / 10, `valor con ruido de punto flotante: ${v}`);
+        assert.ok(!String(v).includes('000'), `el string del valor no puede mostrar ruido de punto flotante: ${v}`);
+      }
+    });
+
+    // ── Round 2, T6: modo unidad — eje y (arrastrar arriba aumenta) ─────
+    await prueba('kodu.arrastrar (modo unidad): eje y — arrastrar hacia arriba aumenta el valor', async () => {
+      const caja = await cajaDe(page, '#perilla-vertical');
+      const cx = caja.x + caja.width / 2;
+      const cy = caja.y + caja.height / 2;
+      await page.mouse.move(cx, cy);
+      await page.mouse.down();
+      await page.mouse.move(cx, cy - 90, { steps: 9 }); // pista 300px, 0..10 -> 90px = +3
+      await page.mouse.up();
+      const cambios = await page.evaluate(() => window.__test.verticalCambios.slice());
+      assert.ok(cambios.length > 0);
+      assert.equal(cambios[cambios.length - 1], 3, 'arrastrar 90px hacia ARRIBA en una pista de 300px (0..10) tiene que dar +3');
+    });
+
+    // ── Round 2, T6: modo unidad — teclado, ARIA, dueño de las flechas ──
+    await prueba(
+      'kodu.arrastrar (modo unidad): teclado — ArrowRight +1, Home/End clampeados, ARIA, dueño de las flechas',
+      async () => {
+        await page.evaluate(() => {
+          document.addEventListener('keydown', (e) => {
+            if (e.key.indexOf('Arrow') === 0) window.__test.contadorDocumentFlechas++;
+          });
+          document.getElementById('perilla-teclado-unidad')!.addEventListener('keydown', (e) => {
+            if (e.key.indexOf('Arrow') === 0) window.__test.contadorMismoElementoExtra++;
+          });
+        });
+
+        await page.locator('#perilla-teclado-unidad').focus();
+        await page.keyboard.press('ArrowRight');
+        const trasArrowRight = await page.evaluate(() => ({
+          cambios: window.__test.tecladoUnidadCambios.slice(),
+          ariaNow: document.getElementById('perilla-teclado-unidad')!.getAttribute('aria-valuenow'),
+          role: document.getElementById('perilla-teclado-unidad')!.getAttribute('role'),
+          ariaMin: document.getElementById('perilla-teclado-unidad')!.getAttribute('aria-valuemin'),
+          ariaMax: document.getElementById('perilla-teclado-unidad')!.getAttribute('aria-valuemax'),
+        }));
+        assert.equal(trasArrowRight.cambios[trasArrowRight.cambios.length - 1], 1, 'ArrowRight desde 0 tiene que dar 1');
+        assert.equal(trasArrowRight.ariaNow, '1', 'aria-valuenow tiene que quedar actualizado');
+        assert.equal(trasArrowRight.role, 'slider');
+        assert.equal(trasArrowRight.ariaMin, '0');
+        assert.equal(trasArrowRight.ariaMax, '10');
+
+        await page.keyboard.press('End');
+        await page.keyboard.press('End'); // repetir no puede volver a emitir alCambiar
+        const trasEnd = await page.evaluate(() => window.__test.tecladoUnidadCambios.slice());
+        assert.equal(trasEnd[trasEnd.length - 1], 10, 'End tiene que clampear al máximo (10)');
+
+        await page.keyboard.press('Home');
+        const trasHome = await page.evaluate(() => window.__test.tecladoUnidadCambios.slice());
+        assert.equal(trasHome[trasHome.length - 1], 0, 'Home tiene que ir al mínimo (0)');
+
+        const estadoFinal = await page.evaluate(() => ({
+          contadorDocumento: window.__test.contadorDocumentFlechas,
+          contadorMismoElemento: window.__test.contadorMismoElementoExtra,
+          soltadas: window.__test.tecladoUnidadSoltar.length,
+        }));
+        assert.equal(
+          estadoFinal.contadorDocumento, 0,
+          'un keydown en document (burbuja) no puede recibir las flechas que arrastrar() ya maneja',
+        );
+        assert.equal(
+          estadoFinal.contadorMismoElemento, 0,
+          'un keydown agregado DESPUÉS en el mismo elemento tampoco puede recibir las flechas',
+        );
+        assert.equal(estadoFinal.soltadas, 4, 'alSoltar tiene que dispararse una vez por cada tecla presionada (4)');
+      },
+    );
+
+    // ── Round 2, T6: dos arrastrables superpuestos ──────────────────────
+    await prueba(
+      'kodu.arrastrar: dos arrastrables superpuestos — gana el de centro más cercano al puntero, no el pintado encima',
+      async () => {
+        const cajaChico = await cajaDe(page, '#circulo-chico');
+        const cx = cajaChico.x + cajaChico.width / 2;
+        const cy = cajaChico.y + cajaChico.height / 2;
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        await page.mouse.move(cx + 5, cy + 5, { steps: 2 });
+        await page.mouse.up();
+        const estado = await page.evaluate(() => ({
+          chico: window.__test.moverChico.length,
+          grande: window.__test.moverGrande.length,
+        }));
+        assert.ok(estado.chico > 0, 'el círculo con el centro más cercano al puntero (chico) tiene que recibir el arrastre');
+        assert.equal(estado.grande, 0, 'el círculo grande (pintado encima) no puede recibir el arrastre si su centro está más lejos');
+      },
+    );
+
+    // ── Round 2, T6: sobrevive a un re-render a mitad de arrastre ───────
+    await prueba(
+      'kodu.arrastrar (modo unidad): sobrevive a un re-render — sigue emitiendo tras reemplazar el elemento',
+      async () => {
+        const caja = await cajaDe(page, '#perilla-rerender');
+        const cy = caja.y + caja.height / 2;
+        await page.mouse.move(caja.x + caja.width / 2, cy);
+        await page.mouse.down();
+        await page.mouse.move(caja.x + caja.width / 2 + 40, cy, { steps: 4 }); // primer cambio: dispara el reemplazo
+        await page.mouse.move(caja.x + caja.width / 2 + 90, cy, { steps: 4 }); // sigue moviendo tras el reemplazo
+        await page.mouse.up();
+        const estado = await page.evaluate(() => ({
+          cambios: window.__test.rerenderCambios.slice(),
+          soltar: window.__test.rerenderSoltar.slice(),
+        }));
+        assert.ok(estado.cambios.length >= 2, 'el arrastre tiene que seguir emitiendo alCambiar después del reemplazo del elemento');
+        assert.equal(estado.soltar.length, 1, 'alSoltar tiene que dispararse UNA sola vez pese al reemplazo a mitad de camino');
+      },
+    );
+
+    // ── Round 2, T6: modo bajo nivel — red de seguridad de p.valueOf ────
+    await prueba(
+      'kodu.arrastrar (modo bajo nivel): mover(x) que trata el punto como número recibe p.x vía valueOf',
+      async () => {
+        await arrastrarConMouse(page, '#drag-safety', 30, 0);
+        const valores = await page.evaluate(() => window.__test.safetyValores.slice());
+        assert.ok(valores.length > 0, 'tiene que haber al menos un valor');
+        for (const v of valores) assert.equal(typeof v, 'number', `x + 0 tiene que dar un número, dio ${typeof v}`);
+      },
+    );
 
     // ── temporizadores cancelables (defecto 4) ──────────────────────────
     await prueba('kodu.despues + kodu.cancelarTemporizadores: el callback cancelado nunca dispara', async () => {
