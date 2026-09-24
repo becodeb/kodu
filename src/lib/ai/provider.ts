@@ -158,6 +158,15 @@ export async function requestCompletionStream(options: {
    * y en cada saturación: es la misma velocidad durante todo el turno.
    */
   velocidad?: Speed | null;
+  /**
+   * T12 (round 3, `arnes-robustez`): anula `razonamientoEfectivo(provider,
+   * velocidad)` con un objeto YA ARMADO. La autocorrección de la autoprueba
+   * usa un nivel "low" que NO es parte del vocabulario `Speed` que ve el
+   * docente (la tarea pide explícitamente no ensanchar `Speed` sólo para un
+   * nivel interno) — ver `razonamientoCorreccion` más abajo. `undefined`/
+   * `null` = comportamiento de siempre (`razonamientoEfectivo`).
+   */
+  razonamientoOverride?: Record<string, unknown> | null;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -185,6 +194,7 @@ export async function requestCompletionStream(options: {
         signal: options.signal,
         forzarHerramienta: forzar,
         velocidad: options.velocidad,
+        razonamientoOverride: options.razonamientoOverride,
       });
     } catch (error) {
       if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
@@ -273,6 +283,32 @@ export function razonamientoEfectivo(
   return { reasoning_effort: yaAlcanzaAlto ? provider.reasoningEffort : 'high' };
 }
 
+/**
+ * El razonamiento de la autocorrección de la autoprueba (T12, round 3 de
+ * `arnes-robustez`): un nivel "low" interno, nunca expuesto al docente (no es
+ * parte de `Speed`, ver el comentario de `razonamientoOverride` en
+ * `requestCompletionStream`). Es una corrección mecánica y acotada —el
+ * detalle exacto del error ya viaja en el prompt (`autoprueba.ts`,
+ * `construirMensajeCorreccion`)—, así que no necesita el razonamiento "high"
+ * de A fondo, pero sí un poco más que "none": a diferencia de la corrección
+ * de T7/T8 (`velocidad: 'fast'`, razonamiento apagado del todo), acá el
+ * modelo tiene que releer un mensaje de error real y ubicarlo en el código,
+ * no sólo reescribir con una lista de reglas ya resueltas.
+ *
+ * Mismo dialecto que `razonamiento()`/`razonamientoEfectivo()`: sin
+ * `reasoningEffort` cargado (dialecto desconocido) no se manda nada.
+ */
+export function razonamientoCorreccion(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    // MiniMax no tiene niveles: cualquier nivel prendido alcanza para "low".
+    return { thinking: { type: 'enabled' } };
+  }
+
+  return { reasoning_effort: 'low' };
+}
+
 async function intentarUna(
   endpoint: string,
   options: {
@@ -281,6 +317,7 @@ async function intentarUna(
     signal?: AbortSignal;
     forzarHerramienta?: boolean;
     velocidad?: Speed | null;
+    razonamientoOverride?: Record<string, unknown> | null;
   },
 ): Promise<Response> {
   const { provider } = options;
@@ -309,8 +346,10 @@ async function intentarUna(
         // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
         // el temperature de acá abajo. T6: pisado por la velocidad efectiva
         // del turno cuando corresponde (`razonamientoEfectivo`); sin ella, es
-        // exactamente `razonamiento(provider)` de siempre.
-        ...razonamientoEfectivo(provider, options.velocidad ?? null),
+        // exactamente `razonamiento(provider)` de siempre. T12:
+        // `razonamientoOverride` (si vino) manda por encima de las dos — ver
+        // el comentario en `requestCompletionStream`.
+        ...(options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null)),
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de

@@ -11,7 +11,13 @@ import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelD
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildCurrentResourceBlock, buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
-import { razonamiento, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
+import { razonamiento, razonamientoCorreccion, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
+import {
+  construirMensajeCorreccion,
+  lineaFuente,
+  necesitaCorreccion,
+  type ErrorAutoprueba,
+} from '../src/lib/ai/autoprueba.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
 import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
@@ -1083,6 +1089,147 @@ await prueba('razonamientoEfectivo: thinking, Rápido apaga y A fondo prende sin
       `configurado en "${nivel}", A fondo tiene que prender el thinking`,
     );
   }
+});
+
+await prueba('razonamientoCorreccion: dialecto desconocido no manda nada', () => {
+  assert.deepEqual(razonamientoCorreccion(config({})), {});
+});
+
+await prueba('razonamientoCorreccion: reasoning_effort siempre "low", sin importar lo configurado', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoCorreccion(config({ reasoningEffort: nivel, reasoningParam: 'reasoning_effort' })),
+      { reasoning_effort: 'low' },
+      `configurado en "${nivel}", la corrección tiene que pedir "low"`,
+    );
+  }
+});
+
+await prueba('razonamientoCorreccion: thinking siempre prendido, sin importar el nivel', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoCorreccion(config({ reasoningEffort: nivel, reasoningParam: 'thinking' })),
+      { thinking: { type: 'enabled' } },
+      `configurado en "${nivel}", la corrección tiene que prender el thinking`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Autoprueba + autocorrección (T12, round 3 de arnes-robustez)
+// ─────────────────────────────────────────────────────────────
+
+function errorDePrueba(extra: Partial<ErrorAutoprueba> = {}): ErrorAutoprueba {
+  return { tipo: 'error', mensaje: 'algo explotó', linea: 5, columna: 3, accion: 'al cargar', ...extra };
+}
+
+await prueba('necesitaCorreccion: con errores, aunque reinicioOk sea true', () => {
+  assert.equal(necesitaCorreccion({ errores: [errorDePrueba()], reinicioOk: true }), true);
+});
+
+await prueba('necesitaCorreccion: reinicioOk === false, aunque no haya errores', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: false }), true);
+});
+
+await prueba('necesitaCorreccion: reinicioOk === null (sin botón de reinicio) NO cuenta solo', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: null }), false);
+});
+
+await prueba('necesitaCorreccion: sin errores y reinicioOk true, todo sano', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true }), false);
+});
+
+await prueba('lineaFuente: línea válida con contexto 1 marca la línea pedida y trae sus vecinas', () => {
+  const html = 'a\nb\nc\nd\ne';
+  const resultado = lineaFuente(html, 3);
+  assert.ok(resultado, 'tiene que devolver algo');
+  assert.equal(resultado, '  2: b\n> 3: c\n  4: d');
+});
+
+await prueba('lineaFuente: la primera línea no se sale del rango hacia arriba', () => {
+  const html = 'a\nb\nc';
+  const resultado = lineaFuente(html, 1);
+  assert.equal(resultado, '> 1: a\n  2: b');
+});
+
+await prueba('lineaFuente: null si no hay número de línea', () => {
+  assert.equal(lineaFuente('a\nb\nc', null), null);
+});
+
+await prueba('lineaFuente: null si el número está fuera de rango del HTML actual', () => {
+  assert.equal(lineaFuente('a\nb\nc', 9999), null);
+});
+
+await prueba('construirMensajeCorreccion: cita el mensaje, la acción y la línea de origen EXACTA', () => {
+  const html = Array.from({ length: 10 }, (_, i) => (i === 4 ? 'boton.onclick = funcionQueNoExiste;' : `linea${i}`)).join(
+    '\n',
+  );
+  const mensaje = construirMensajeCorreccion({
+    html,
+    informe: {
+      errores: [errorDePrueba({ mensaje: 'funcionQueNoExiste is not defined', linea: 5, accion: "al tocar el botón 'Feo'" })],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+
+  assert.ok(mensaje.includes('Autoprueba automática antes de entregarle el recurso al docente.'), 'lleva el marcador estable (T13 lo usa para el mock)');
+  assert.ok(mensaje.includes('ronda 1 de 2'));
+  assert.ok(mensaje.includes('funcionQueNoExiste is not defined'), 'tiene que citar el mensaje EXACTO del error');
+  assert.ok(mensaje.includes("al tocar el botón 'Feo'"), 'tiene que citar la acción');
+  assert.ok(mensaje.includes('boton.onclick = funcionQueNoExiste;'), 'tiene que citar el TEXTO de la línea de origen');
+  assert.ok(mensaje.includes('línea 5'));
+});
+
+await prueba('construirMensajeCorreccion: reinicioOk false cita lo que falta, lo que sobra y los controles', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [],
+      reinicioOk: false,
+      exitoVisibleAlInicio: false,
+      diferencias: {
+        textoQueFalta: ['Puntaje: 0'],
+        textoQueSobra: ['Intentaste 3 veces'],
+        controles: [{ etiqueta: 'Nivel', antes: 1, despues: 3 }],
+      },
+    },
+    ronda: 2,
+  });
+
+  assert.ok(mensaje.includes('no vuelve el recurso al estado inicial'));
+  assert.ok(mensaje.includes('Puntaje: 0'));
+  assert.ok(mensaje.includes('Intentaste 3 veces'));
+  assert.ok(mensaje.includes('Nivel') && mensaje.includes('antes: 1') && mensaje.includes('ahora: 3'));
+  assert.ok(mensaje.includes('ronda 2 de 2'));
+});
+
+await prueba('construirMensajeCorreccion: exitoVisibleAlInicio agrega la nota, sólo cuando ya se está corrigiendo', () => {
+  const conExito = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: true,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+  assert.ok(/completado|logrado/i.test(conExito), 'tiene que mencionar el mensaje de éxito visible al inicio');
+
+  const sinExito = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+  assert.ok(!/completado|logrado/i.test(sinExito), 'sin exitoVisibleAlInicio no tiene que aparecer la nota');
 });
 
 await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) son válidas', () => {
