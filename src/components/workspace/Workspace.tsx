@@ -894,7 +894,12 @@ export default function Workspace(props: WorkspaceProps) {
   }
 
   return (
-    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[28rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
+    // T5 (odd/tasks/responsive-celulares.md): 8.5rem en mobile porque el
+    // `<main>` de esta página ahora usa `compactMobile` (padding chico), la
+    // fila del "volver" y su margen — medido a 390×664, sin eso el composer
+    // quedaba bajo el pliegue. En `lg` el `<main>` vuelve a `py-8` de
+    // siempre, por eso ahí sigue siendo un valor distinto.
+    <div className="flex h-[calc(100dvh-8.5rem)] min-h-[28rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
       {/* Conmutador de pantallas chicas. */}
       <div className="mb-2 flex rounded-lg bg-sutil p-0.5 lg:hidden" role="tablist">
         {(

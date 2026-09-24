@@ -263,7 +263,7 @@ export default function ChatPanel(props: ChatPanelProps) {
           setDraft(prompt);
         }}
       />
-      <header className="space-y-3 border-b border-linea p-3">
+      <header className="space-y-2 border-b border-linea p-2 lg:space-y-3 lg:p-3">
         <div className="flex items-center gap-2">
           <select
             value={props.activeThreadId}

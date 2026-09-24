@@ -101,7 +101,12 @@ export default function SelectorDeMotor(props: SelectorDeMotorProps) {
         </svg>
       </button>
 
-      <p className="mt-1.5 text-[0.7rem] leading-snug text-ink-500">{seleccionado?.description}</p>
+      {/* T5 (odd/tasks/responsive-celulares.md): en celular esta línea le
+          come el alto al composer, que queda tapado bajo el pliegue; el
+          desplegable ya repite la descripción de cada motor al abrirlo. */}
+      <p className="mt-1.5 hidden text-[0.7rem] leading-snug text-ink-500 lg:block">
+        {seleccionado?.description}
+      </p>
 
       {abierto && (
         <ul
