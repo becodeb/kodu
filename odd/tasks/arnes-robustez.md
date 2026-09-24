@@ -53,7 +53,7 @@ covers what the kit cannot.
 - [x] T2 — Browser verification in real Chromium: mouse drag, touch drag, keyboard
   drag, repeated icon swap, `hidden` + `flex`, timer cancellation. Route: delegated
   (same writer).
-- [ ] T3 — BASE_PROMPT functional rules + helper docs; tests in `e2e/unidad.ts`; token
+- [x] T3 — BASE_PROMPT functional rules + helper docs; tests in `e2e/unidad.ts`; token
   count of the addition. Route: delegated (same writer); token count inline.
 
 ## Acceptance criteria
@@ -123,6 +123,34 @@ RDD: off globally by the user since 2026-09-23; no review lifecycle.
     flakiness observed). No leftover Chromium process after the run
     (`browser.close()` in a `finally`). `npm run check` → clean.
 
+- T3 done. `src/lib/ai/prompt.ts`: new `## Que funcione de verdad` section in
+  `BASE_PROMPT`, placed between "Seguridad y contexto de ejecución" and
+  "Calidad pedagógica" — the six functional rules (one `reiniciar()`,
+  evaluate on `soltar` not mid-drag, cancel timers on a new action,
+  `pointer-events:none` on decorative layers, never start solved, topic
+  data declared once) plus one line each for the four `window.kodu` helpers
+  and a note that `[hidden]` now always hides. Also extended the existing
+  Lucide bullet in "Diseño visual" to point at `kodu.icono` for swapping an
+  already-drawn icon.
+  - BASE_PROMPT length: 9792 → 11584 chars (+1792 chars). No token count
+    invented — chars measured directly with `BASE_PROMPT.length` via a
+    regex extract of the template literal, before and after the edit.
+  - New tests in `e2e/unidad.ts` (after the T1 "no lleva el HTML actual"
+    test): the 6 rules (by distinctive substring each) and the 4 helper
+    names all present in `buildSystemPrompt(...)`.
+  - Considered the optional mock-provider e2e flow check
+    (`e2e/t5-modo-prime.ts`-style, `e2e/mock-proveedor.ts`): needs the dev
+    server on :3000 plus seeded admin/teacher accounts and the full browser
+    auth flow — skipped as allowed by the task (heavy setup for a flow this
+    task didn't change).
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 52/52 pass.
+    `npx tsx e2e/unidad-kit.ts` → 41/41 pass. `npx tsx e2e/navegador-kit.ts`
+    → 11/11 pass (re-run after the prompt change to confirm the kit itself
+    didn't regress).
+  - Commit: (recorded after commit below).
+
 ## Next step
 
-T3.
+None — T1/T2/T3 all done. Branch `feat/arnes-robustez` has 3 commits, not
+pushed, not merged (per constraints). Next human step: review the diff and
+decide push/PR/merge.

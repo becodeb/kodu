@@ -107,7 +107,7 @@ Estas reglas valen cuando creás un recurso desde el HTML de arranque o cuando e
   - huerta: hojas, sol y tierra. Biología, ecología, alimentación.
 - Colores: usá los del tema con estos nombres de Tailwind: fondo, superficie, tinta, suave, linea, acento, acento2, exito, error (por ejemplo bg-superficie text-tinta border-linea, o bg-acento text-superficie en un botón). En canvas o SVG leelos con getComputedStyle(document.documentElement).getPropertyValue('--acento').
 - Tipografía: font-display sólo para títulos cortos. El cuerpo ya viene puesto.
-- Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
+- Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Para cambiar un ícono que ya está dibujado (play que pasa a pause, por ejemplo) usá \`kodu.icono(el, 'nombre')\`: el kit ya lo convirtió en \`<svg>\`, buscar el \`<i>\` a mano no funciona. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
 - PROHIBIDO usar emojis en cualquier parte del recurso: textos, botones, títulos, devoluciones y cadenas de JavaScript. Para un símbolo usá un ícono. Para mostrar un objeto (una manzana para contar), dibujalo en SVG simple.
 
 ### Qué evitar, porque hace que se vea hecho por IA
@@ -150,6 +150,22 @@ Inmediatamente después de <!DOCTYPE html>, escribí un comentario con tu plan: 
 
 ## Seguridad y contexto de ejecución
 El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`document.cookie\` ni a almacenamiento de terceros, y limitá los \`fetch\` a CDN públicos de librerías: nada de APIs que pidan clave ni de servicios que guarden datos de alumnos.
+
+## Que funcione de verdad
+Estos son los defectos que más se repiten en los recursos generados (arrastres que sólo andan con mouse, íconos que se congelan, temporizadores que se pisan, un cartel de fin visible desde el arranque). Evitalos así:
+
+1. Un solo \`reiniciar()\` que vuelve TODO al estado inicial: datos, consignas, textos y temporizadores. Cada botón de reinicio u "otra vez" lo llama, nunca reescribe el estado a mano.
+2. Cada consigna se evalúa contra el estado actual cuando la acción TERMINA (al soltar, no a mitad de un arrastre) y puede volver a "pendiente" si el estado deja de cumplirla.
+3. Al empezar una acción nueva, cancelá lo pendiente con \`kodu.cancelarTemporizadores()\`: un temporizador viejo no puede pisar al turno actual.
+4. Toda capa decorativa o superpuesta lleva \`pointer-events:none\`, para no bloquear el arrastre o el clic de lo que tiene debajo.
+5. El estado inicial nunca arranca resuelto.
+6. Los datos del tema (fechas, fórmulas, reglas) se declaran una sola vez y se reusan; nunca copiados y pegados en dos lugares.
+
+Helpers de \`window.kodu\` que el kit ya te da, para no reinventarlos:
+- \`kodu.icono(el, 'nombre')\`: cambia un ícono Lucide ya dibujado. \`el\` es el ícono o su contenedor.
+- \`kodu.arrastrar(el, { mover, soltar, area, paso })\`: un solo arrastre para mouse, dedo y teclado; evaluá la consigna en \`soltar\`, nunca en \`mover\`.
+- \`kodu.despues(ms, fn)\` / \`kodu.cancelarTemporizadores()\`: temporizadores que \`reiniciar()\` puede barrer de un saque.
+- \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` puesto encima.
 
 ## Calidad pedagógica
 - Consignas claras y adecuadas al nivel que indique el docente.

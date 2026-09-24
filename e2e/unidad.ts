@@ -601,6 +601,33 @@ await prueba('buildSystemPrompt: no lleva el HTML actual (T1, vive en el último
   );
 });
 
+// ── T3 (arnes-robustez): "Que funcione de verdad" y los helpers de window.kodu ──
+// (odd/tasks/arnes-robustez.md)
+
+await prueba('buildSystemPrompt: lleva la sección "Que funcione de verdad" con las 6 reglas', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(prompt.includes('## Que funcione de verdad'), 'tiene que llevar la sección nueva de T3');
+
+  const marcasDeLasSeisReglas = [
+    'reiniciar()', // 1: un solo reiniciar() que vuelve todo al estado inicial
+    'al soltar', // 2: se evalúa cuando la acción termina, no a mitad de arrastre
+    'kodu.cancelarTemporizadores()', // 3: cancelar lo pendiente al empezar una acción nueva
+    'pointer-events:none', // 4: toda capa decorativa/superpuesta
+    'nunca arranca resuelto', // 5: el estado inicial
+    'se declaran una sola vez', // 6: los datos del tema
+  ];
+  for (const marca of marcasDeLasSeisReglas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una de las 6 reglas: "${marca}"`);
+  }
+});
+
+await prueba('buildSystemPrompt: documenta los cuatro helpers de window.kodu por nombre', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const helper of ['kodu.icono(', 'kodu.arrastrar(', 'kodu.despues(', 'kodu.cancelarTemporizadores(']) {
+    assert.ok(prompt.includes(helper), `falta documentar el helper "${helper}"`);
+  }
+});
+
 await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {
   // Marca del JSON embebido en `tailwind.config = {...}` (construirTailwindConfig):
   // NO se puede usar la cadena "tailwind.config" sola para probar el plegado,
