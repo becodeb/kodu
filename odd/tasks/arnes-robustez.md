@@ -1509,13 +1509,117 @@ Constraints: no paid calls, e2e in real Chromium for both cases, `npm run check`
 green, work-unit commits, no merge, no push. TDD: off (same source as above). Functional checks
 only. RDD: off globally by the user.
 
-- [ ] T24 — Kit: `kodu.ocupado()` is false while the self-test runs; Chromium e2e with a resource
+- [x] T24 — Kit: `kodu.ocupado()` is false while the self-test runs; Chromium e2e with a resource
   that uses the pattern (screens + guarded handlers + tests that click right after `reiniciar()`).
   Route: delegated (kit + browser harness, 2+ non-trivial files).
-- [ ] T25 — Kit: unit-mode `arrastrar` leaves resource-owned ARIA alone and keeps problem units
+- [x] T25 — Kit: unit-mode `arrastrar` leaves resource-owned ARIA alone and keeps problem units
   otherwise; Chromium e2e for mouse and keyboard drags. Route: delegated (same writer).
 - [ ] T26 — Branch merge-readiness summary (everything on `feat/arnes-robustez` since `main`,
   migrations, post-deploy configuration). Route: delegated mapper, summary inline.
+
+### Round 6 fix — Progress
+
+Route: delegated (single writer for both T24 and T25, per the task's writer trigger — kit +
+browser harness are 2+ non-trivial files).
+
+- T24 done. `src/lib/ai/kit.ts`:
+  - `SCRIPT_CENTINELA`: new `contadorAutoprueba` counter (not a boolean — supports overlapping
+    self-test runs by id) exposed as `window.__koduAutoprobando`, a read-only accessor
+    (`Object.defineProperty` with only a `get`, `configurable: false`) that a resource cannot
+    overwrite or redefine. `ejecutarAutoprueba(id, numBotones)` increments it on entry; a new
+    `finAutoprueba()` decrements it, called at the top of BOTH terminal branches of the promise
+    chain (the success `.then` that posts `autoprueba:resultado`, and the `.catch`) — the only two
+    exit paths of a self-test run, covering success, failure and any timeout-marked-incomplete run
+    that still reaches the success branch.
+  - `SCRIPT_KODU`: `ocupado()` now returns `false` whenever `window.__koduAutoprobando` is true,
+    otherwise the same real candado check as before, renamed to a private `candadoPantallaActivo()`.
+    `alEventoCandado` (the capture-phase lock on TRUSTED events — the real double-tap protection for
+    a student) now calls `candadoPantallaActivo()` directly, NOT `ocupado()`, so it is completely
+    unaffected by the self-test flag. `kodu.pantalla()` still arms `candadoPantallaHasta` exactly as
+    before.
+  - Updated the big comment above `kodu.pantalla`/`kodu.ocupado` to document the exception and why.
+  - New `e2e/navegador-kit.ts` sample resource `RECURSO_PANTALLA_OCUPADO_AUTOPRUEBA` (Muestra 8):
+    three `data-pantalla` screens (inicio/juego/fin), `reiniciar T24()` calling
+    `kodu.pantalla('juego')`, three handlers guarded by `if (kodu.ocupado()) return;`, and
+    `window.__koduPruebas` with 4 tests: a synchronous `t.clic` right after `reiniciarT24()`
+    (no `await`, no wait — the exact N2 pattern); the resource's handler called directly
+    (`element.click()`, not `t.clic`); a chain of two `t.clic` calls across two screen transitions
+    with no wait between them; and a test that tries `window.__koduAutoprobando = false` and
+    `Object.defineProperty(window, '__koduAutoprobando', {value:false})` (both wrapped in
+    try/catch) and asserts the flag is unchanged before and after.
+  - Two new browser tests: (1) runs the sample through `correrAutoprueba`, asserts zero errors,
+    `reinicioOk === true` (the base-check phase's own final "click Reiniciar" is also
+    guarded by `kodu.ocupado()`, so this also proves the base-click phase is covered, not only
+    `__koduPruebas`), and all 4 `__koduPruebas` entries `ok: true`; (2) a dedicated test that keeps
+    the sandboxed iframe alive after `autoprueba:resultado`, waits 1.5s (comfortably over the 400ms
+    real candado, isolated from it on purpose — the base check's own final `kodu.pantalla('inicio')`
+    legitimately re-arms the real candado and that is correct, unrelated to T24), then asks the
+    resource's own diagnostic `message` listener (added only for this test, not part of the kit) for
+    `kodu.ocupado()`/`window.__koduAutoprobando`, asserting both are back to normal.
+  - RED evidence: `git checkout -- src/lib/ai/kit.ts` (keeping the new tests), reran
+    `npx tsx e2e/navegador-kit.ts` — the base-check assertion failed with
+    `reinicioOk: null !== true` (the base phase's own automatic clicks got swallowed by the
+    unfixed `ocupado()`, so it never reached the "fin" screen to find the reset button) — confirmed
+    the defect reproduces exactly as described. Restored with `git stash pop`.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → all pass (T24 touched no
+    text `bloqueKit`/`bloqueKitLegado` pins). `npx tsx e2e/navegador-kit.ts` → all pass, run
+    repeatedly (7+ times across the session) with zero failures attributable to T24; one
+    unrelated pre-existing flake observed twice in "autoprueba: contenido al azar (mezclar +
+    número) no cuenta como defecto de reinicio" (round 2/T7, `RECURSO_CONTENIDO_ALEATORIO`) — it
+    relies on `Math.random()`/`kodu.mezclar()` producing two DIFFERENT shuffles across two
+    independent renders with no guarantee against a same-by-chance repeat, not touched by this
+    task. No leftover Chromium process after any run.
+  - Commit: `b88893f`.
+- T25 done. `src/lib/ai/kit.ts`, `arrastrar()`:
+  - New `ariaActiva` (computed once, at call time, before `arrastrar()` writes anything: true only
+    when `modoUnidad` and `el` has NONE of `aria-valuemin`/`aria-valuemax`/`aria-valuenow` declared
+    yet) and `ultimoAriaEscrito` (the last string this helper itself wrote to `aria-valuenow`, or
+    `null`).
+  - `actualizarAria(v)`: no-op if `ariaActiva` is false. Otherwise, before writing, compares the
+    element's CURRENT `aria-valuenow` against `ultimoAriaEscrito`; a mismatch means the resource
+    wrote its own value in between (typically inside its own `alCambiar`, which every call site runs
+    BEFORE `actualizarAria`) — sets `ariaActiva = false` and returns without writing, permanently.
+  - The modo-unidad init block now writes `aria-valuemin`/`aria-valuemax` only `if (ariaActiva)`;
+    `role="slider"` (if not already set) and `tabindex` are unaffected, set unconditionally as
+    before.
+  - Updated the round-2/T6 doc comment above `window.kodu` with a new "Round 6 (T25, ...)" paragraph
+    documenting the D3 defect and the ownership decision.
+  - New `e2e/navegador-kit.ts` markup + wiring: `#perilla-aria-recurso` (D3-like: pre-declared
+    `role="slider" aria-valuemin="140" aria-valuemax="170"`, `arrastrar` called with the AXIS range
+    `min:135,max:175`; its own `alCambiar` writes `aria-valuenow` as `v+1000`, a value no kit code
+    path could ever produce, to make "the kit never touched it" unambiguous) and
+    `#perilla-aria-propia-en-cambio` (no ARIA declared at call time; `alCambiar` writes
+    `aria-valuenow` as `v*10`).
+  - Extended the existing "modo unidad: mouse" test for `#perilla-unidad` (no ARIA involved at all)
+    with an assertion that `aria-valuenow`/`min`/`max` still land in plain problem units — the "kit
+    keeps writing them otherwise" half of the acceptance criteria.
+  - Two new browser tests: (a) D3 case — asserts `aria-valuemin`/`aria-valuemax` stay `"140"`/`"170"`
+    (never `"135"`/`"175"`) and `aria-valuenow` stays in the resource's own `v+1000` format through a
+    mouse drag, `ArrowRight`, `Home` and `End`; (b) resource-writes-its-own-later case — asserts the
+    kit writes plain values at setup (nothing declared yet), then after the first mouse-driven
+    `alCambiar` writes its own `v*10`, the kit permanently backs off — `aria-valuenow` stays in the
+    resource's `v*10` format through the rest of the drag, `ArrowRight`, `Home` and `End`, and
+    `aria-valuemin`/`max` never move from their setup-time values.
+  - RED evidence: same `git checkout`/`git stash pop` cycle as T24 (single combined revert covered
+    both) — both new T25 browser tests failed exactly as expected: the D3 case with
+    `aria-valuemin` `'135' !== '140'` (the kit's axis min leaking into the resource's data-range
+    attribute) and the other case with `'3' !== '30'` (the kit's raw value overwriting the
+    resource's own `v*10`).
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → all pass (unaffected — T25 only
+    touches `arrastrar()`'s ARIA handling, no unit-level text assertion pins that code).
+    `npx tsx e2e/navegador-kit.ts` → all pass, same repeated-run evidence as T24 above (same run,
+    same file).
+  - Commit: `c25a0aa`.
+- Combined verification (both tasks, final state on `c25a0aa`): `npm run check` → clean.
+  `npx tsx e2e/unidad-kit.ts`, `npx tsx e2e/unidad.ts`, `npx tsx e2e/unidad-checklist.ts` → all
+  pass. `npx tsx e2e/navegador-kit.ts` → all pass. Flow checks against the mock (dev server on
+  :3000 was already running from a prior session, PID 1751479, reused per instructions — not
+  stopped, not started by this task): `npx tsx e2e/t11-autoprueba.ts`, `npx tsx
+  e2e/t12-checklist-pruebas.ts`, `npx tsx e2e/arnes-robustez.ts` → all pass. No leftover Chromium
+  or mock-proveedor process after any run (checked via `ps`).
+  Verification tier: RDD is off globally by the user's own choice (per memory/prior sessions) —
+  no native review ran. Verification was this writer's own functional checks plus the repeated
+  browser-test runs above to rule out flakiness before committing.
 
 ## Next step
 
