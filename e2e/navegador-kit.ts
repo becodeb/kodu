@@ -237,6 +237,28 @@ function construirPagina(): string {
     <div id="perilla-teclado-unidad" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"></div>
   </div>
 
+  <!-- Round 6, T25: caso D3 — el recurso ya declaró su propio rango ARIA
+       (aria-valuemin/max = rango de DATOS, 140..170) antes de llamar a
+       arrastrar() con el rango del EJE (135..175, distinto). Pista de
+       400px, 40 unidades de eje -> 10px/unidad. -->
+  <div id="pista-aria-recurso" style="position:relative;width:400px;height:20px;background:#ccc;">
+    <div
+      id="perilla-aria-recurso"
+      role="slider"
+      aria-valuemin="140"
+      aria-valuemax="170"
+      style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"
+    ></div>
+  </div>
+
+  <!-- Round 6, T25: sin ARIA declarada en el markup, pero el recurso escribe
+       su PROPIO aria-valuenow adentro de alCambiar (formato distinguible,
+       v*10, para probar que nunca es el valor crudo del kit). Pista de
+       300px, 0..10, paso 1. -->
+  <div id="pista-aria-propia-en-cambio" style="position:relative;width:300px;height:20px;background:#ccc;">
+    <div id="perilla-aria-propia-en-cambio" style="position:absolute;width:20px;height:20px;background:#333;left:0;top:0;"></div>
+  </div>
+
   <!-- dos arrastrables superpuestos: circulo-grande se pinta ENCIMA (va
        después en el DOM) pero su centro está más lejos del punto donde se
        agarra (el centro de circulo-chico) -->
@@ -455,6 +477,33 @@ function construirPagina(): string {
       valor: function () { return valorTecladoUnidad; },
       alCambiar: function (v) { valorTecladoUnidad = v; window.__test.tecladoUnidadCambios.push(v); },
       alSoltar: function (v) { window.__test.tecladoUnidadSoltar.push(v); }
+    });
+
+    // ── Round 6, T25: caso D3 — el recurso YA declaró su propio ARIA
+    // (140/170) antes de llamar a arrastrar() con el rango de EJE (135/175).
+    var valorAriaRecurso = 140;
+    kodu.arrastrar(document.getElementById('perilla-aria-recurso'), {
+      min: 135, max: 175, paso: 1,
+      valor: function () { return valorAriaRecurso; },
+      alCambiar: function (v) {
+        valorAriaRecurso = v;
+        // El recurso escribe SU PROPIO aria-valuenow (offset +1000, a
+        // propósito, para que sea imposible confundirlo con lo que
+        // escribiría el kit si no se hubiera apagado).
+        document.getElementById('perilla-aria-recurso').setAttribute('aria-valuenow', String(v + 1000));
+      }
+    });
+
+    // ── Round 6, T25: sin ARIA declarada en el markup, pero el recurso
+    // escribe su propio aria-valuenow (v*10) dentro de alCambiar.
+    var valorAriaPropia = 0;
+    kodu.arrastrar(document.getElementById('perilla-aria-propia-en-cambio'), {
+      min: 0, max: 10, paso: 1,
+      valor: function () { return valorAriaPropia; },
+      alCambiar: function (v) {
+        valorAriaPropia = v;
+        document.getElementById('perilla-aria-propia-en-cambio').setAttribute('aria-valuenow', String(v * 10));
+      }
     });
 
     kodu.arrastrar(document.getElementById('circulo-chico'), {
@@ -884,6 +933,12 @@ async function main(): Promise<void> {
         const estado = await page.evaluate(() => ({
           cambios: window.__test.unidadCambios.slice(),
           soltar: window.__test.unidadSoltar.slice(),
+          // Round 6, T25 (caso "sin ARIA declarada"): el kit tiene que
+          // seguir escribiendo los tres atributos en unidades del
+          // problema, como antes de T25.
+          ariaNow: document.getElementById('perilla-unidad')!.getAttribute('aria-valuenow'),
+          ariaMin: document.getElementById('perilla-unidad')!.getAttribute('aria-valuemin'),
+          ariaMax: document.getElementById('perilla-unidad')!.getAttribute('aria-valuemax'),
         }));
         assert.ok(estado.cambios.length > 0, 'tiene que haber al menos un alCambiar');
         assert.equal(estado.cambios[estado.cambios.length - 1], 5, 'valor inicial 3 + 2 = 5');
@@ -892,6 +947,9 @@ async function main(): Promise<void> {
         for (let i = 1; i < estado.cambios.length; i++) {
           assert.notEqual(estado.cambios[i], estado.cambios[i - 1], 'alCambiar no puede repetir el mismo valor consecutivo');
         }
+        assert.equal(estado.ariaNow, '5', 'sin ARIA propia, aria-valuenow tiene que quedar en el último valor emitido');
+        assert.equal(estado.ariaMin, '0');
+        assert.equal(estado.ariaMax, '10');
       },
     );
 
@@ -988,6 +1046,132 @@ async function main(): Promise<void> {
           'un keydown agregado DESPUÉS en el mismo elemento tampoco puede recibir las flechas',
         );
         assert.equal(estadoFinal.soltadas, 4, 'alSoltar tiene que dispararse una vez por cada tecla presionada (4)');
+      },
+    );
+
+    // ── Round 6, T25: caso D3 — el recurso YA declaró su propio ARIA ────
+    // (aria-valuemin=140/aria-valuemax=170, rango de DATOS) antes de llamar
+    // a arrastrar() con el rango del EJE (135/175, un número DISTINTO). El
+    // kit tiene que no tocar los tres atributos NUNCA — ni al armar, ni con
+    // mouse, ni con teclado (incluidos Home/End) — y el valor visible tiene
+    // que ser siempre el que el recurso escribió (v+1000), jamás 135/175 ni
+    // el valor crudo del kit.
+    await prueba(
+      'kodu.arrastrar (modo unidad): ARIA ya declarada por el recurso (caso D3) — el kit nunca la toca, ni con mouse ni con teclado',
+      async () => {
+        const antes = await page.evaluate(() => ({
+          min: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemin'),
+          max: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemax'),
+          now: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuenow'),
+        }));
+        assert.equal(antes.min, '140', 'el kit no puede tocar aria-valuemin al armar, ni con el 135 del eje');
+        assert.equal(antes.max, '170', 'el kit no puede tocar aria-valuemax al armar, ni con el 175 del eje');
+        assert.equal(antes.now, null, 'el kit no puede inventar un aria-valuenow que el recurso nunca declaró ni escribió');
+
+        // Mouse: pista de 400px, eje 135..175 (40 unidades) -> 10px/unidad.
+        // +50px = +5 unidades: 140 -> 145.
+        const caja = await cajaDe(page, '#perilla-aria-recurso');
+        await page.mouse.move(caja.x + 10, caja.y + caja.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(caja.x + 60, caja.y + caja.height / 2, { steps: 5 });
+        await page.mouse.up();
+
+        const trasMouse = await page.evaluate(() => ({
+          min: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemin'),
+          max: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemax'),
+          now: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuenow'),
+        }));
+        assert.equal(trasMouse.min, '140', 'sigue siendo el rango de DATOS del recurso, nunca 135');
+        assert.equal(trasMouse.max, '170', 'sigue siendo el rango de DATOS del recurso, nunca 175');
+        assert.equal(trasMouse.now, '1145', 'tiene que ser el propio formato del recurso (v+1000) para 145, no el crudo del kit');
+
+        // Teclado: ArrowRight (+1 -> 146), Home (-> 135, el mínimo del EJE),
+        // End (-> 175, el máximo del EJE). aria-valuemin/max no se mueven un
+        // pelo pase lo que pase con el eje.
+        await page.locator('#perilla-aria-recurso').focus();
+        await page.keyboard.press('ArrowRight');
+        const trasArrowRight = await page.evaluate(() =>
+          document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasArrowRight, '1146', 'ArrowRight: 145+1=146, formato propio del recurso');
+
+        await page.keyboard.press('Home');
+        const trasHome = await page.evaluate(() => ({
+          now: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuenow'),
+          min: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemin'),
+          max: document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuemax'),
+        }));
+        assert.equal(trasHome.now, '1135', 'Home va al mínimo del EJE (135), pero el recurso lo escribe como 1135');
+        assert.equal(trasHome.min, '140', 'aria-valuemin nunca se convierte en el 135 del eje');
+        assert.equal(trasHome.max, '170', 'aria-valuemax nunca se convierte en el 175 del eje');
+
+        await page.keyboard.press('End');
+        const trasEnd = await page.evaluate(() =>
+          document.getElementById('perilla-aria-recurso')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasEnd, '1175', 'End va al máximo del EJE (175), el recurso lo escribe como 1175');
+      },
+    );
+
+    // ── Round 6, T25: sin ARIA declarada al llamar arrastrar(), pero el ──
+    // recurso escribe su PROPIO aria-valuenow dentro de alCambiar (v*10).
+    // El kit escribe los tres al armar (nada declarado todavía), pero se
+    // apaga PARA SIEMPRE en cuanto el primer alCambiar del recurso pisa
+    // aria-valuenow — después de eso, ni el mouse ni el teclado lo tocan
+    // de nuevo, y el atributo queda siempre en el formato del recurso.
+    await prueba(
+      'kodu.arrastrar (modo unidad): sin ARIA declarada, pero el recurso escribe la suya en alCambiar — el kit se apaga para siempre',
+      async () => {
+        const alArmar = await page.evaluate(() => ({
+          min: document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuemin'),
+          max: document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuemax'),
+          now: document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuenow'),
+        }));
+        assert.equal(alArmar.min, '0', 'sin ARIA previa, el kit SÍ escribe al armar (todavía no hay pisada del recurso)');
+        assert.equal(alArmar.max, '10');
+        assert.equal(alArmar.now, '0', 'valor inicial 0, todavía en formato crudo del kit (el recurso no escribió nada aún)');
+
+        // Mouse: pista de 300px, 0..10 -> 30px/unidad. +90px = +3: 0 -> 3.
+        // El PRIMER alCambiar del recurso pisa aria-valuenow con 3*10=30 —
+        // el kit tiene que detectarlo y apagarse ahí mismo.
+        const caja = await cajaDe(page, '#perilla-aria-propia-en-cambio');
+        await page.mouse.move(caja.x + 3, caja.y + caja.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(caja.x + 93, caja.y + caja.height / 2, { steps: 5 });
+        await page.mouse.up();
+
+        const trasMouse = await page.evaluate(() =>
+          document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasMouse, '30', 'tiene que quedar el 3*10 del recurso, nunca el 3 crudo del kit');
+
+        // Teclado, después de apagarse: sigue siendo siempre v*10 del
+        // recurso, nunca el valor crudo.
+        await page.locator('#perilla-aria-propia-en-cambio').focus();
+        await page.keyboard.press('ArrowRight');
+        const trasArrowRight = await page.evaluate(() =>
+          document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasArrowRight, '40', 'ArrowRight: 3+1=4, el recurso lo escribe como 40, nunca "4"');
+
+        await page.keyboard.press('Home');
+        const trasHome = await page.evaluate(() =>
+          document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasHome, '0', 'Home: valor 0, el recurso escribe 0*10=0 (coincide con "0", pero sigue siendo SU escritura)');
+
+        await page.keyboard.press('End');
+        const trasEnd = await page.evaluate(() =>
+          document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuenow'),
+        );
+        assert.equal(trasEnd, '100', 'End: valor 10, el recurso lo escribe como 100, nunca "10"');
+
+        const rangoFinal = await page.evaluate(() => ({
+          min: document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuemin'),
+          max: document.getElementById('perilla-aria-propia-en-cambio')!.getAttribute('aria-valuemax'),
+        }));
+        assert.equal(rangoFinal.min, '0', 'aria-valuemin no cambia después de apagarse (el kit ya no vuelve a tocar nada)');
+        assert.equal(rangoFinal.max, '10');
       },
     );
 
@@ -1834,7 +2018,6 @@ async function mainAutoprueba(): Promise<void> {
         { id: 'p5', ok: true, detalle: 'sin id' },
       ]);
     });
-
 
     // ── Round 6, T24: kodu.ocupado() no puede tragarse los clics de ─────
     // __koduPruebas ni los del paso base durante el self-test. Sin el fix,

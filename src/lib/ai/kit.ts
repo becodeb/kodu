@@ -1350,6 +1350,23 @@ const SCRIPT_CENTINELA = `(function () {
  *        zona mínima), y nunca le roba el click a un control interactivo
  *        real fuera de esa zona (el handler de `pointerdown` decide por
  *        `evento.target`, no por esta selección).
+ *
+ *    Round 6 (T25, medición con DeepSeek real: D3 declaraba su propio rango
+ *    ARIA — `aria-valuemin=140`/`aria-valuemax=170`, el rango de datos
+ *    válido — y `arrastrar` con el rango del EJE, `min:135, max:175`; el
+ *    kit pisaba min/max con 135/175 y `aria-valuenow` con el valor crudo
+ *    del eje en cada movimiento, arriba de lo que el recurso ya había
+ *    puesto) decide quién es dueño de ARIA en vez de que el kit gane
+ *    siempre: si `el` ya tiene declarado alguno de `aria-valuemin`,
+ *    `aria-valuemax` o `aria-valuenow` ANTES del llamado a `arrastrar()`,
+ *    el kit no toca ninguno de los tres, nunca — ni al armar, ni al mover
+ *    con mouse/touch, ni con teclado (incluidos Home/End). Si no declaró
+ *    nada, el kit los escribe como en rounds anteriores, pero se apaga
+ *    PARA SIEMPRE la primera vez que encuentra `aria-valuenow` con un
+ *    valor que él mismo no escribió último — el recurso lo pisó a mano por
+ *    su cuenta, típicamente desde su propio `alCambiar`. `role="slider"` y
+ *    `tabindex` se siguen poniendo siempre, sin cambios: sólo los tres
+ *    atributos `aria-value*` cambian de dueño.
  *  - `despues`/`cancelarTemporizadores` (y `cada`, de yapa) — defecto 4: un
  *    `setTimeout` para "la próxima ronda" que ya estaba pedido cuando el
  *    alumno disparó otra ronda encima, y las dos rondas se pisaban. Un solo
@@ -1604,6 +1621,22 @@ const SCRIPT_KODU = `(function () {
     // comentario grande de arriba de window.kodu para el resumen.
     var modoUnidad = typeof opciones.alCambiar === 'function' || opciones.min != null || opciones.max != null;
 
+    // T25 (round 6): si el recurso YA declaró alguno de los tres atributos
+    // ARIA de rango antes de llamar a arrastrar(), es dueño de ARIA — el
+    // kit no toca aria-valuemin/max/now nunca (ver actualizarAria más
+    // abajo y el bloque de inicialización del modo unidad). Chequeo hecho
+    // ACÁ, antes de que este mismo arrastrar() escriba nada. Si no declaró
+    // nada, el kit escribe los tres como siempre, pero se apaga PARA
+    // SIEMPRE la primera vez que encuentra aria-valuenow con un valor que
+    // él mismo no escribió último (el recurso lo pisó a mano, por ejemplo
+    // desde su propio alCambiar) — ver actualizarAria.
+    var ariaActiva = modoUnidad && !(
+      el.hasAttribute('aria-valuemin') ||
+      el.hasAttribute('aria-valuemax') ||
+      el.hasAttribute('aria-valuenow')
+    );
+    var ultimoAriaEscrito = null;
+
     el.style.touchAction = 'none';
     el.style.cursor = 'grab';
     el.style.userSelect = 'none';
@@ -1673,8 +1706,23 @@ const SCRIPT_KODU = `(function () {
       return redondearA(ajustado, decimalesU);
     }
 
+    // T25: no-op si el recurso ya era dueño de ARIA desde el arranque
+    // (ariaActiva en false desde el constructor). Si el recurso NO era
+    // dueño al principio pero escribió aria-valuenow por su cuenta después
+    // (por ejemplo dentro de su propio alCambiar, que corre ANTES que esta
+    // llamada en alMoverPuntero/alTecla), el valor actual del atributo ya
+    // no coincide con el último que este helper escribió — ahí se apaga
+    // PARA SIEMPRE y deja de tocar los tres atributos, incluida esta
+    // escritura: el valor del recurso queda como está.
     function actualizarAria(v) {
-      el.setAttribute('aria-valuenow', String(v));
+      if (!ariaActiva) return;
+      if (ultimoAriaEscrito !== null && el.getAttribute('aria-valuenow') !== ultimoAriaEscrito) {
+        ariaActiva = false;
+        return;
+      }
+      var texto = String(v);
+      el.setAttribute('aria-valuenow', texto);
+      ultimoAriaEscrito = texto;
     }
 
     function spanPixels(rect) {
@@ -1777,9 +1825,13 @@ const SCRIPT_KODU = `(function () {
     }
 
     if (modoUnidad) {
+      // role/tabindex: sin cambios por T25, se ponen siempre (arriba,
+      // tabindex; acá, role) sin importar quién sea dueño de ARIA.
       if (!el.hasAttribute('role')) el.setAttribute('role', 'slider');
-      el.setAttribute('aria-valuemin', String(minU));
-      el.setAttribute('aria-valuemax', String(maxU));
+      if (ariaActiva) {
+        el.setAttribute('aria-valuemin', String(minU));
+        el.setAttribute('aria-valuemax', String(maxU));
+      }
       var valorInicialAria = obtenerValor ? Number(obtenerValor()) : NaN;
       var valorInicialUnidad = ajustarUnidad(isFinite(valorInicialAria) ? valorInicialAria : minU);
       actualizarAria(valorInicialUnidad);
