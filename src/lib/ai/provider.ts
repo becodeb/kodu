@@ -175,6 +175,23 @@ export async function requestCompletionStream(options: {
    * corte antes. `undefined`/`null` = `provider.maxTokens` de siempre.
    */
   maxTokensOverride?: number | null;
+  /**
+   * T20 (round 5, `arnes-robustez`): para una llamada AUXILIAR que nunca
+   * escribe el recurso (hoy sólo el checklist, `generarChecklist` en
+   * `stream.ts`), el pedido no manda NI `tools` NI `tool_choice` — se
+   * OMITEN las dos claves entero, no `tool_choice: 'none'`. Medido contra
+   * DeepSeek real: con `tools: RESOURCE_TOOLS` + `tool_choice: 'auto'` y
+   * razonamiento `none`, el modelo llamó `update_resource_code` y se puso a
+   * escribir HTML en vez de texto — 8 de 8 pedidos reales de checklist. Sin
+   * `tools` el mismo pedido devolvió 6 ítems en 188 tokens. Incompatible con
+   * `forzarHerramienta`: si viene `true` junto con `sinHerramientas: true`,
+   * `sinHerramientas` GANA y `forzarHerramienta` se ignora — no tiene
+   * sentido "forzar" una herramienta que ni se ofrece, y una llamada que ya
+   * pide "sin herramientas" es por definición una llamada que no escribe el
+   * recurso. `undefined`/`false` = comportamiento de siempre (`tools` +
+   * `tool_choice` según `forzarHerramienta`).
+   */
+  sinHerramientas?: boolean;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -190,7 +207,12 @@ export async function requestCompletionStream(options: {
   // La obligación de llamar la herramienta se puede aflojar sobre la marcha:
   // ver ToolChoiceNoSoportado. Es una sola vez, y no gasta ninguno de los
   // intentos reservados para la saturación.
-  let forzar = options.forzarHerramienta ?? false;
+  //
+  // T20: `sinHerramientas` gana por encima de `forzarHerramienta` — ver el
+  // comentario de `sinHerramientas` más arriba. No tiene sentido "aflojar"
+  // una obligación que nunca se mandó.
+  const sinHerramientas = options.sinHerramientas ?? false;
+  let forzar = !sinHerramientas && (options.forzarHerramienta ?? false);
   let yaAflojo = false;
   let saturaciones = 0;
 
@@ -204,6 +226,7 @@ export async function requestCompletionStream(options: {
         velocidad: options.velocidad,
         razonamientoOverride: options.razonamientoOverride,
         maxTokensOverride: options.maxTokensOverride,
+        sinHerramientas,
       });
     } catch (error) {
       if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
@@ -328,6 +351,7 @@ async function intentarUna(
     velocidad?: Speed | null;
     razonamientoOverride?: Record<string, unknown> | null;
     maxTokensOverride?: number | null;
+    sinHerramientas?: boolean;
   },
 ): Promise<Response> {
   const { provider } = options;
@@ -343,10 +367,17 @@ async function intentarUna(
       body: JSON.stringify({
         model: provider.model,
         messages: options.messages,
-        tools: RESOURCE_TOOLS,
-        tool_choice: options.forzarHerramienta
-          ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
-          : 'auto',
+        // T20: una llamada auxiliar que nunca escribe el recurso (hoy sólo
+        // el checklist) no manda NI `tools` NI `tool_choice` — `undefined`
+        // hace que `JSON.stringify` OMITA la clave entera, que es lo que
+        // hizo falta contra DeepSeek (`tool_choice: 'none'` no alcanza: el
+        // proveedor sigue viendo `tools` y puede llamarla igual).
+        tools: options.sinHerramientas ? undefined : RESOURCE_TOOLS,
+        tool_choice: options.sinHerramientas
+          ? undefined
+          : options.forzarHerramienta
+            ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
+            : 'auto',
         // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
         // conocen el parámetro contestan 400 si se les manda, así que el
         // default (NULL en el catálogo) es no mandarlo.

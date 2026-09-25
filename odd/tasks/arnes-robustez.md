@@ -1353,6 +1353,30 @@ branch, no PR (user instruction).
   fix — treated as environmental, not a regression.
   Commits: `92b4c06` (T18), `357e012` (T19), `4ef92cc` (the 7-script checklist-count adaptation).
 
+## Round 5 fix (2026-09-25): the checklist call never produced a checklist
+
+Found while measuring round 4 with real DeepSeek (`exp/medicion-arnes`,
+`experimentos/razonamiento/RESULTADOS-arnes.md`, "Ronda 5"). `generarChecklist` went out with
+`tools: RESOURCE_TOOLS` and `tool_choice: auto`; with reasoning `none`, DeepSeek called
+`update_resource_code` and started writing HTML, hit `CHECKLIST_MAX_TOKENS` (400), and
+`parsearChecklist` returned `[]` silently. 8 of 8 real generations. Without tools the same request
+returns 6 items in 188 tokens. The mock never calls tools, so no test saw it.
+
+Constraints: no paid calls, `npm run check` clean, regressions green, work-unit commits, no merge,
+no push. TDD: off (same source as above). Functional checks only.
+
+- [ ] T20 — `requestCompletionStream`/`intentarUna`: option to send NO `tools`/`tool_choice` for
+  auxiliary calls; `generarChecklist` uses it. Audit of the other callers: main turn, T7 revision,
+  retry, per-version generation, visual review and self-test correction all write the resource, so
+  they keep the tool. Route: delegated (2+ non-trivial files).
+- [ ] T21 — `console.warn` with the reason whenever the checklist ends empty (parse failure,
+  `finish_reason: length`, tool call instead of text, timeout, provider error).
+- [ ] T22 — Mock mode "eager to use the tool": with `tools` + `tool_choice: auto` it answers a
+  tool call. Test that would have caught this: checklist still generated in that mode, and the
+  checklist request carries no `tools`.
+- [ ] T23 — Resource tests use the checklist ids (c1…cN): the generation prompt names the exact
+  ids, and "Esto es lo que probé" matches by id (unit-tested).
+
 ## Next step
 
 Round 4 COMPLETA (T14–T19): kit + BASE_PROMPT del lado de `window.__koduPruebas` y

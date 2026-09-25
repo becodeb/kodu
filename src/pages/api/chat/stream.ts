@@ -506,6 +506,12 @@ const CHECKLIST_TIMEOUT_MS = 15_000;
  *  para escribir un recurso entero (`provider.maxTokens`). */
 const CHECKLIST_MAX_TOKENS = 400;
 
+/** Cuánto del texto crudo se loguea cuando el checklist termina vacío por
+ *  truncamiento o por fallar el parseo (T21) — sólo un adelanto, no el texto
+ *  entero, para no ensuciar el log con un HTML completo si el modelo
+ *  arrancó a escribir código en vez de la lista. */
+const CHECKLIST_LOG_EXCERPT = 120;
+
 /**
  * T16 (round 4, "checklist del docente"): un paso barato e INDEPENDIENTE
  * del generador — nunca fuerza la herramienta, nunca manda imágenes, sin
@@ -515,10 +521,15 @@ const CHECKLIST_MAX_TOKENS = 400;
  * que el código comparte la misma lectura equivocada del pedido, así que no
  * sirve de nada como red de seguridad (ver "Design decisions" de la tarea).
  *
+ * T20 (round 5): el pedido va SIN `tools` ni `tool_choice` (`sinHerramientas`
+ * en `requestCompletionStream`) — medido contra DeepSeek real, con las
+ * herramientas puestas el modelo las llamaba y se ponía a escribir HTML en
+ * vez de la lista, 8 de 8 pedidos reales.
+ *
  * Nunca tira ni bloquea el turno: cualquier falla, timeout
  * (`CHECKLIST_TIMEOUT_MS`) o muy pocos ítems válidos (`parsearChecklist`) se
- * loguea y devuelve `[]` — el llamador lo trata igual que "este turno no
- * tiene checklist", nunca como un error del turno.
+ * loguea con el motivo concreto (T21) y devuelve `[]` — el llamador lo trata
+ * igual que "este turno no tiene checklist", nunca como un error del turno.
  */
 async function generarChecklist(args: {
   pedido: string;
@@ -528,8 +539,19 @@ async function generarChecklist(args: {
   signal?: AbortSignal;
 }): Promise<ItemChecklist[]> {
   const controlador = new AbortController();
-  const timeout = setTimeout(() => controlador.abort(), CHECKLIST_TIMEOUT_MS);
-  const onAbortExterno = () => controlador.abort();
+  // T21: de dónde vino el abort, para poder distinguir "se pasó del tope
+  // propio de este paso" de "el turno entero se canceló desde afuera" en el
+  // catch de abajo. Sólo importa el PRIMERO que dispare (uno solo puede
+  // abortar el mismo AbortController).
+  let motivoAbort: 'timeout' | 'externo' | null = null;
+  const timeout = setTimeout(() => {
+    motivoAbort = 'timeout';
+    controlador.abort();
+  }, CHECKLIST_TIMEOUT_MS);
+  const onAbortExterno = () => {
+    motivoAbort ??= 'externo';
+    controlador.abort();
+  };
   args.signal?.addEventListener('abort', onAbortExterno, { once: true });
 
   try {
@@ -537,16 +559,20 @@ async function generarChecklist(args: {
       messages: construirMensajesChecklist(args.pedido),
       provider: args.provider,
       signal: controlador.signal,
-      forzarHerramienta: false,
       velocidad: 'fast',
       maxTokensOverride: CHECKLIST_MAX_TOKENS,
+      sinHerramientas: true,
     });
 
     let texto = '';
     let usage: MotorTokenUsage | null = null;
+    let llamoHerramienta = false;
+    let finishReason = '';
     for await (const event of readCompletionStream(respuesta)) {
       if (event.type === 'text') texto += event.delta;
       else if (event.type === 'usage') usage = event.usage;
+      else if (event.type === 'tool' || event.type === 'tool_start') llamoHerramienta = true;
+      else if (event.type === 'finish') finishReason = event.reason;
     }
 
     // Se registra el consumo AUNQUE `parsearChecklist` termine en `[]`: los
@@ -565,9 +591,39 @@ async function generarChecklist(args: {
       }).catch((error) => console.error('[chat/stream] checklist: no se pudo registrar el consumo:', error));
     }
 
-    return parsearChecklist(texto);
+    const items = parsearChecklist(texto);
+    if (items.length === 0) {
+      const excerpt = texto.slice(0, CHECKLIST_LOG_EXCERPT);
+      if (llamoHerramienta) {
+        // T20 debería haber evitado esto (sin `tools` no hay nada que
+        // llamar), pero si un proveedor igual lo hace, mejor loguearlo
+        // distinto de un simple parseo fallido.
+        console.warn(
+          '[chat/stream] checklist: vacío — el modelo contestó con una llamada a herramienta en vez de texto.',
+        );
+      } else if (finishReason === 'length') {
+        console.warn(
+          `[chat/stream] checklist: vacío — se cortó por el tope de ${CHECKLIST_MAX_TOKENS} tokens; ` +
+            `texto recibido: ${texto.length} caracteres, empieza así: "${excerpt}"`,
+        );
+      } else {
+        console.warn(
+          '[chat/stream] checklist: vacío — no se pudieron sacar suficientes ítems válidos; ' +
+            `texto recibido: ${texto.length} caracteres, empieza así: "${excerpt}"`,
+        );
+      }
+    }
+    return items;
   } catch (error) {
-    console.warn('[chat/stream] checklist: se sigue sin checklist:', (error as Error).message);
+    if (controlador.signal.aborted && motivoAbort) {
+      const razon =
+        motivoAbort === 'timeout'
+          ? `se pasó del tope de ${CHECKLIST_TIMEOUT_MS}ms de este paso`
+          : 'el turno se canceló desde afuera';
+      console.warn(`[chat/stream] checklist: vacío — timeout (${razon}).`);
+    } else {
+      console.warn('[chat/stream] checklist: vacío — el proveedor falló:', (error as Error).message);
+    }
     return [];
   } finally {
     clearTimeout(timeout);
