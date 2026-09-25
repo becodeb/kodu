@@ -66,6 +66,8 @@ declare global {
       cancelarTemporizadores: () => void;
       festejar: (opciones?: Record<string, unknown>) => void;
       mezclar: <T>(lista: T[]) => T[];
+      pantalla: (nombre: string) => Element | null;
+      ocupado: () => boolean;
     };
     confetti?: { (opciones?: Record<string, unknown>): unknown; reset: () => void };
     __test: {
@@ -115,6 +117,9 @@ declare global {
       moverZonaB: PuntoDrag[];
       moverPuntoCercaBoton: PuntoDrag[];
       clicksBotonCerca: number;
+      // Round 4, T14: kodu.pantalla / kodu.ocupado
+      pantallaClicksB: number;
+      documentKeydowns: number;
     };
   }
 }
@@ -312,6 +317,15 @@ function construirPagina(): string {
     <div id="etiqueta-sin-pointer-events-none" style="position:absolute;left:50px;top:50px;width:60px;height:40px;background:rgba(255,255,0,.6);font-size:10px;">Etiqueta</div>
   </div>
 
+  <!-- Round 4, T14: kodu.pantalla / kodu.ocupado — dos pantallas, B arranca
+       escondida como haría un recurso real antes de llamar a kodu.pantalla. -->
+  <div id="pantalla-a" data-pantalla="pantalla-a">
+    <button id="boton-pantalla-a" type="button">A</button>
+  </div>
+  <div id="pantalla-b" data-pantalla="pantalla-b" hidden>
+    <button id="boton-pantalla-b" type="button">B</button>
+  </div>
+
   <!-- fuerza scroll disponible: si ArrowUp/ArrowDown NO se previenen, esto se mueve -->
   <div id="relleno" style="height:3000px;"></div>
 
@@ -346,7 +360,9 @@ function construirPagina(): string {
       moverZonaA: [],
       moverZonaB: [],
       moverPuntoCercaBoton: [],
-      clicksBotonCerca: 0
+      clicksBotonCerca: 0,
+      pantallaClicksB: 0,
+      documentKeydowns: 0
       // svgSyncAlCargar NO se pisa acá: ya lo puso el script de la prueba
       // (a) más arriba, y Object.assign sobre el mismo objeto lo conserva.
     });
@@ -534,6 +550,14 @@ function construirPagina(): string {
     });
     kodu.arrastrar(document.getElementById('punto-bajo-etiqueta'), {
       mover: function (p) { window.__test.moverEtiqueta.push(p); }
+    });
+
+    // ── Round 4, T14: kodu.pantalla / kodu.ocupado ───────────────────────
+    document.getElementById('boton-pantalla-b').addEventListener('click', function () {
+      window.__test.pantallaClicksB++;
+    });
+    document.addEventListener('keydown', function () {
+      window.__test.documentKeydowns++;
     });
   </script>
 </body>
@@ -1272,6 +1296,95 @@ async function main(): Promise<void> {
       assert.equal(resultado.deNumero, true);
     });
 
+    // ── Round 4, T14: kodu.pantalla / kodu.ocupado ─────────────────────
+    await prueba('kodu.pantalla: muestra el destino, esconde el resto, devuelve el nodo', async () => {
+      const estado = await page.evaluate(() => {
+        var el = window.kodu.pantalla('pantalla-b');
+        return {
+          esElMismo: el === document.getElementById('pantalla-b'),
+          bHidden: (document.getElementById('pantalla-b') as HTMLElement).hidden,
+          aHidden: (document.getElementById('pantalla-a') as HTMLElement).hidden,
+        };
+      });
+      assert.equal(estado.esElMismo, true, 'pantalla() tiene que devolver el nodo mostrado');
+      assert.equal(estado.bHidden, false, 'el destino no puede quedar hidden');
+      assert.equal(estado.aHidden, true, 'la pantalla anterior tiene que quedar hidden');
+      // deja tiempo a que el candado de este cambio expire antes de la próxima prueba.
+      await page.waitForTimeout(500);
+    });
+
+    await prueba('kodu.pantalla: un nombre inexistente no toca nada y devuelve null', async () => {
+      const resultado = await page.evaluate(() => {
+        var antesA = (document.getElementById('pantalla-a') as HTMLElement).hidden;
+        var antesB = (document.getElementById('pantalla-b') as HTMLElement).hidden;
+        var el = window.kodu.pantalla('no-existe');
+        return {
+          el: el,
+          aSigueIgual: antesA === (document.getElementById('pantalla-a') as HTMLElement).hidden,
+          bSigueIgual: antesB === (document.getElementById('pantalla-b') as HTMLElement).hidden,
+        };
+      });
+      assert.equal(resultado.el, null);
+      assert.equal(resultado.aSigueIgual, true);
+      assert.equal(resultado.bSigueIgual, true);
+    });
+
+    await prueba('kodu.ocupado(): true justo después de pantalla(), false pasados los ~400ms', async () => {
+      const antes = await page.evaluate(() => {
+        window.kodu.pantalla('pantalla-a');
+        return window.kodu.ocupado();
+      });
+      assert.equal(antes, true, 'ocupado() tiene que ser true recién llamado a pantalla()');
+      await page.waitForTimeout(500);
+      const despues = await page.evaluate(() => window.kodu.ocupado());
+      assert.equal(despues, false, 'ocupado() tiene que ser false pasada la ventana del candado');
+    });
+
+    await prueba('kodu.pantalla: un click CONFIABLE durante el candado no llega al botón, uno después sí', async () => {
+      await page.evaluate(() => {
+        window.__test.pantallaClicksB = 0;
+        window.kodu.pantalla('pantalla-b');
+      });
+      const caja = await cajaDe(page, '#boton-pantalla-b');
+      const cx = caja.x + caja.width / 2;
+      const cy = caja.y + caja.height / 2;
+      await page.mouse.click(cx, cy);
+      const clicksDuranteCandado = await page.evaluate(() => window.__test.pantallaClicksB);
+      assert.equal(clicksDuranteCandado, 0, 'un click confiable durante el candado no puede llegar al botón');
+
+      await page.waitForTimeout(500);
+      await page.mouse.click(cx, cy);
+      const clicksDespues = await page.evaluate(() => window.__test.pantallaClicksB);
+      assert.equal(clicksDespues, 1, 'un click confiable después del candado tiene que llegar');
+      await page.waitForTimeout(500);
+    });
+
+    await prueba('kodu.pantalla: un clic SINTÉTICO (el.click()) durante el candado sí se procesa', async () => {
+      const resultado = await page.evaluate(() => {
+        window.__test.pantallaClicksB = 0;
+        window.kodu.pantalla('pantalla-b');
+        (document.getElementById('boton-pantalla-b') as HTMLButtonElement).click();
+        return window.__test.pantallaClicksB;
+      });
+      assert.equal(resultado, 1, 'un click sintético durante el candado tiene que procesarse igual (autoprueba/__koduPruebas no pueden quedar bloqueados)');
+      await page.waitForTimeout(500);
+    });
+
+    await prueba('kodu.pantalla: un keydown CONFIABLE durante el candado no llega a un listener en document', async () => {
+      await page.evaluate(() => {
+        window.__test.documentKeydowns = 0;
+        window.kodu.pantalla('pantalla-b');
+      });
+      await page.keyboard.press('Enter');
+      const durante = await page.evaluate(() => window.__test.documentKeydowns);
+      assert.equal(durante, 0, 'un keydown confiable durante el candado no puede llegar a document');
+
+      await page.waitForTimeout(500);
+      await page.keyboard.press('Enter');
+      const despues = await page.evaluate(() => window.__test.documentKeydowns);
+      assert.equal(despues, 1, 'un keydown confiable después del candado tiene que llegar');
+    });
+
     // ── sin errores de página ni de consola en todo el recorrido ───────
     await prueba('sin pageerror ni console.error en todo el recorrido de la prueba', () => {
       assert.deepEqual(erroresPagina, [], `se encontraron errores: ${erroresPagina.join(' | ')}`);
@@ -1308,6 +1421,7 @@ interface AutopruebaResultado {
   errores: DetalleErrorAutoprueba[];
   reinicioOk: boolean | null;
   exitoVisibleAlInicio: boolean;
+  pruebas: { id: string; ok: boolean; detalle: string }[] | null;
   detalles: {
     botonesTocados: string[];
     rangosMovidos: string[];
@@ -1521,6 +1635,20 @@ const RECURSO_PANTALLA_INICIO = construirRecurso(`
   </script>
 `);
 
+// ── Muestra 7 (round 4, T14): window.__koduPruebas — checklist del docente ──
+const RECURSO_CON_PRUEBAS = construirRecurso(`
+  <p id="marcador">listo</p>
+  <script>
+    window.__koduPruebas = [
+      { id: 'pasa', prueba: function (t) { return { ok: true, detalle: 'todo bien' }; } },
+      { id: 'falla', prueba: function (t) { return { ok: false, detalle: 'no coincide' }; } },
+      { id: 'tira', prueba: function (t) { throw new Error('boom'); } },
+      { id: 'cuelga', prueba: function (t) { return new Promise(function () {}); } },
+      { prueba: function (t) { return { ok: true, detalle: 'sin id' }; } }
+    ];
+  </script>
+`);
+
 async function mainAutoprueba(): Promise<void> {
   const browser = await chromium.launch({ executablePath, args: ['--no-sandbox', '--disable-gpu'] });
   const page = await (await browser.newContext()).newPage();
@@ -1539,6 +1667,7 @@ async function mainAutoprueba(): Promise<void> {
       assert.ok(resultado!.detalles.rangosMovidos.length >= 1, 'tiene que haber movido el input[type=range]');
       assert.equal(resultado!.detalles.incompleta, false);
       assert.ok(resultado!.detalles.duracionMs > 0);
+      assert.equal(resultado!.pruebas, null, 'sin window.__koduPruebas, pruebas tiene que ser null');
     });
 
     await prueba('autoprueba: un botón que tira una excepción queda registrado con accion y linea correctas', async () => {
@@ -1584,6 +1713,18 @@ async function mainAutoprueba(): Promise<void> {
       assert.deepEqual(resultado!.errores, []);
       assert.deepEqual(resultado!.detalles.botonesTocados, ['Empezar', 'Jugar']);
       assert.equal(resultado!.reinicioOk, true, 'reiniciar tiene que volver a la pantalla de inicio');
+    });
+
+    await prueba('autoprueba: window.__koduPruebas corre y normaliza cada resultado (pasa/falla/tira/cuelga/sin id)', async () => {
+      const { resultado } = await correrAutoprueba(page, RECURSO_CON_PRUEBAS);
+      assert.ok(resultado, 'tiene que llegar un autoprueba:resultado');
+      assert.deepEqual(resultado!.pruebas, [
+        { id: 'pasa', ok: true, detalle: 'todo bien' },
+        { id: 'falla', ok: false, detalle: 'no coincide' },
+        { id: 'tira', ok: false, detalle: 'error: boom' },
+        { id: 'cuelga', ok: false, detalle: 'la prueba tardó más de 3 s' },
+        { id: 'p5', ok: true, detalle: 'sin id' },
+      ]);
     });
 
     // ── Centinela sin autoprueba: los tres tipos de error llegan solos ──

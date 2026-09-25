@@ -972,6 +972,101 @@ const SCRIPT_CENTINELA = `(function () {
     return { items: lista.slice(0, tope), truncado: lista.length > tope };
   }
 
+  // ── window.__koduPruebas (round 4, T14): checklist del docente ───────
+  // El paso de checklist (T16, no esta tarea) le pide al modelo un test por
+  // ítem del checklist, guardado en window.__koduPruebas. Corren DESPUÉS
+  // de las verificaciones de base (después del reinicio final + diff), con
+  // presupuesto propio: hasta 8 pruebas, 3s cada una, SIN contar contra el
+  // tope de 20s de las verificaciones de base (ese tope sigue midiendo sólo
+  // la carga + reinicio + diff, como antes de T14) — así una prueba lenta
+  // nunca deja resultados de base a medio hacer, y las pruebas de base
+  // nunca le roban tiempo al checklist. Peor caso total: ~20s (base) + 8×3s
+  // = 44s (documentado en odd/tasks/arnes-robustez.md para que un trabajo
+  // futuro suba el timeout del lado del cliente).
+  var TOPE_PRUEBAS = 8;
+  var TIEMPO_PRUEBA_MS = 3000;
+  var TOPE_ESPERA_PRUEBA_MS = 2000;
+
+  function crearAyudantePrueba() {
+    return {
+      esperar: function (ms) {
+        var n = Number(ms);
+        if (!isFinite(n) || n < 0) n = 0;
+        if (n > TOPE_ESPERA_PRUEBA_MS) n = TOPE_ESPERA_PRUEBA_MS;
+        return esperarMs(n);
+      },
+      clic: function (selectorOEl) {
+        var el = typeof selectorOEl === 'string' ? document.querySelector(selectorOEl) : selectorOEl;
+        if (!el || typeof el.click !== 'function') {
+          throw new Error("t.clic: no se encontró el elemento ('" + String(selectorOEl) + "')");
+        }
+        el.click();
+      },
+      texto: function (selector) {
+        var el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+        return el ? textoDe(el) : '';
+      }
+    };
+  }
+
+  function idDePrueba(entrada, indice) {
+    var id = entrada && entrada.id != null ? String(entrada.id) : '';
+    id = id.trim();
+    if (!id) id = 'p' + (indice + 1);
+    return truncar(id, 40);
+  }
+
+  function normalizarResultadoPrueba(r) {
+    if (!r || typeof r !== 'object') {
+      return { ok: false, detalle: truncar('la prueba no devolvió un resultado válido', 200) };
+    }
+    return { ok: !!r.ok, detalle: truncar(r.detalle == null ? '' : r.detalle, 200) };
+  }
+
+  function correrUnaPrueba(entrada, indice, t) {
+    var id = idDePrueba(entrada, indice);
+    if (!entrada || typeof entrada.prueba !== 'function') {
+      return Promise.resolve({ id: id, ok: false, detalle: truncar('window.__koduPruebas: la entrada no tiene una función prueba', 200) });
+    }
+
+    var promesaPrueba = new Promise(function (resolve) {
+      try {
+        Promise.resolve(entrada.prueba(t)).then(
+          function (r) { resolve(normalizarResultadoPrueba(r)); },
+          function (err) { resolve({ ok: false, detalle: truncar('error: ' + (err && err.message ? err.message : String(err)), 200) }); }
+        );
+      } catch (err) {
+        resolve({ ok: false, detalle: truncar('error: ' + (err && err.message ? err.message : String(err)), 200) });
+      }
+    });
+
+    var promesaTimeout = new Promise(function (resolve) {
+      setTimeoutNativo(function () { resolve({ agotada: true }); }, TIEMPO_PRUEBA_MS);
+    });
+
+    return Promise.race([promesaPrueba, promesaTimeout]).then(function (r) {
+      var base = r && r.agotada ? { ok: false, detalle: 'la prueba tardó más de 3 s' } : r;
+      return { id: id, ok: base.ok, detalle: base.detalle };
+    });
+  }
+
+  function correrPruebas() {
+    var lista = window.__koduPruebas;
+    if (!Array.isArray(lista)) return Promise.resolve(null);
+    var recortada = lista.slice(0, TOPE_PRUEBAS);
+    var t = crearAyudantePrueba();
+    var resultados = [];
+    function paso(i) {
+      if (i >= recortada.length) return Promise.resolve(resultados);
+      accionActual = 'en window.__koduPruebas[' + i + ']';
+      return correrUnaPrueba(recortada[i], i, t).then(function (r) {
+        resultados.push(r);
+        return paso(i + 1);
+      });
+    }
+    return paso(0).then(function (r) { accionActual = 'al cargar'; return r; });
+  }
+
   function compararSnapshots(referencia, actual, volLineas, volControles) {
     var dl = diffConjuntos(filtrarPorIndice(referencia.lineas, volLineas), filtrarPorIndice(actual.lineas, volLineas));
 
@@ -1023,6 +1118,7 @@ const SCRIPT_CENTINELA = `(function () {
     var volLineas = {}, volControles = {};
     var rangosMovidos = [], botonesTocados = [], reinicioOk = null, detalleReinicio = 'sin boton';
     var diferencias = { textoQueFalta: [], textoQueSobra: [], controles: [], truncado: { textoQueFalta: false, textoQueSobra: false, controles: false } };
+    var pruebas = null;
 
     return esperarCarga()
       .then(function () { return esperarMs(800); })
@@ -1077,12 +1173,18 @@ const SCRIPT_CENTINELA = `(function () {
         });
       })
       .then(function () {
+        // Presupuesto propio (no cuenta contra tiempoAgotado(), que sigue
+        // midiendo sólo las verificaciones de base): hasta 8 pruebas × 3s.
+        return correrPruebas().then(function (r) { pruebas = r; });
+      })
+      .then(function () {
         var resultado = {
           kodu: 'autoprueba:resultado',
           id: id,
           errores: errores.slice(),
           reinicioOk: reinicioOk,
           exitoVisibleAlInicio: !!exitoInicial,
+          pruebas: pruebas,
           detalles: {
             botonesTocados: botonesTocados,
             rangosMovidos: rangosMovidos,
@@ -1100,6 +1202,7 @@ const SCRIPT_CENTINELA = `(function () {
           window.parent.postMessage({
             kodu: 'autoprueba:resultado', id: id, errores: errores.slice(),
             reinicioOk: null, exitoVisibleAlInicio: false,
+            pruebas: pruebas,
             detalles: {
               botonesTocados: botonesTocados, rangosMovidos: rangosMovidos, reinicio: 'sin boton',
               diferencias: diferencias, volatiles: { lineas: 0, controles: 0 },
@@ -1924,6 +2027,62 @@ const SCRIPT_KODU = `(function () {
     return copia;
   }
 
+  // ── kodu.pantalla / kodu.ocupado (round 4, T14) ───────────────────────
+  // Round 4 del blind test: un doble click/toque cae sobre el botón de la
+  // pantalla SIGUIENTE porque el navegador procesa el segundo evento antes
+  // de que el recurso termine de reaccionar al primero. pantalla(nombre)
+  // muestra [data-pantalla=nombre], esconde el resto, y abre una ventana
+  // corta (CANDADO_MS) donde cualquier evento de interacción CONFIABLE
+  // (pointerdown/mousedown/click/touchstart/keydown) se traga en fase de
+  // captura sobre window — antes de que llegue a ningún listener propio del
+  // recurso, incluido el pointerdown de captura de arrastrar() en document
+  // (captura va de window hacia el target, así que este candado corre
+  // primero). Un evento SINTÉTICO (evento.isTrusted === false, como el
+  // el.click()/dispatchEvent que usan la autoprueba y window.__koduPruebas)
+  // pasa siempre: el candado nunca frena un chequeo automático. No agrega
+  // ningún listener a el ni toca registroArrastre/alTecla: un
+  // arrastre YA EN CURSO cuando arranca el candado sigue recibiendo sus
+  // propios pointermove/pointerup en window (esos dos tipos no están en la
+  // lista bloqueada) hasta soltar — sólo un pointerdown NUEVO durante la
+  // ventana queda afuera.
+  var CANDADO_PANTALLA_MS = 400;
+  var candadoPantallaHasta = 0;
+
+  function ahoraPantalla() {
+    return (window.performance && performance.now) ? performance.now() : Date.now();
+  }
+
+  function ocupado() {
+    return ahoraPantalla() < candadoPantallaHasta;
+  }
+
+  function alEventoCandado(evento) {
+    if (!evento.isTrusted) return;
+    if (!ocupado()) return;
+    evento.preventDefault();
+    evento.stopImmediatePropagation();
+  }
+
+  var EVENTOS_CANDADO_PANTALLA = ['pointerdown', 'mousedown', 'click', 'touchstart', 'keydown'];
+  for (var iEvtCandado = 0; iEvtCandado < EVENTOS_CANDADO_PANTALLA.length; iEvtCandado++) {
+    window.addEventListener(EVENTOS_CANDADO_PANTALLA[iEvtCandado], alEventoCandado, true);
+  }
+
+  function pantalla(nombre) {
+    var destino = document.querySelector('[data-pantalla="' + nombre + '"]');
+    if (!destino) {
+      console.warn("kodu.pantalla: no existe [data-pantalla='" + nombre + "']");
+      return null;
+    }
+    var todas = document.querySelectorAll('[data-pantalla]');
+    for (var i = 0; i < todas.length; i++) {
+      if (todas[i] !== destino) todas[i].hidden = true;
+    }
+    destino.hidden = false;
+    candadoPantallaHasta = ahoraPantalla() + CANDADO_PANTALLA_MS;
+    return destino;
+  }
+
   window.kodu = {
     icono: icono,
     arrastrar: arrastrar,
@@ -1931,7 +2090,9 @@ const SCRIPT_KODU = `(function () {
     cada: cada,
     cancelarTemporizadores: cancelarTemporizadores,
     festejar: festejar,
-    mezclar: mezclar
+    mezclar: mezclar,
+    pantalla: pantalla,
+    ocupado: ocupado
   };
 })();`;
 
