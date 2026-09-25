@@ -986,11 +986,11 @@ branch, no PR (user instruction).
   tests in `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + browser tests).
 - [x] T15 — BASE_PROMPT: `__koduPruebas` doc with a short example (Part A) and Part B rules;
   `e2e/unidad.ts`; chars/tokens of each part. Route: delegated (same writer as T14).
-- [ ] T16 — Server: checklist step (`src/lib/ai/checklist.ts`), migration for
+- [x] T16 — Server: checklist step (`src/lib/ai/checklist.ts`), migration for
   `ChatMessage.checklist`, wiring in `stream.ts` (new resources only, SSE `checklist` event,
   TokenUsage row, injection into generation and adjustment turns), current-checklist lookup.
   Unit tests. Route: delegated (writer trigger: 3+ non-trivial files).
-- [ ] T17 — Correction with failed tests: `autoprueba.ts` types/`necesitaCorreccion`/message,
+- [x] T17 — Correction with failed tests: `autoprueba.ts` types/`necesitaCorreccion`/message,
   `autocorreccion.ts` schema, client runner timeout. Route: delegated (same writer as T16).
 - [ ] T18 — Editor UI "Esto es lo que probé" + initial checklist from the page. Route: delegated.
 - [ ] T19 — e2e in real Chromium with the mock: tests fail → corrected; tests pass; no
@@ -1103,15 +1103,165 @@ branch, no PR (user instruction).
     doesn't touch `kit.ts`).
   - Commit: `17586fe`.
 
+- T16 done. New `src/lib/ai/checklist.ts` (isomorphic: no Prisma/Node/`env.ts` at runtime — the
+  only import, `ChatMessage`'s TYPE from `provider.ts`, is erased at compile time):
+  `ItemChecklist = {id, texto}`; `MARCADOR_SISTEMA_CHECKLIST` (stable substring at the start of
+  the system prompt, so `e2e/mock-proveedor.ts` can recognize this call — see below);
+  `construirMensajesChecklist(pedido)` (2 messages: system + the raw teacher text, no history, no
+  images); `parsearChecklist(texto)` (accepts `- `, `* `, `N. ` prefixes; drops empty/>200-char
+  lines; caps at 6; `< 2` valid items → `[]`; ids `c1..cN`); `serializarChecklist`/`leerChecklist`
+  (zod-validated JSON round trip, same convention as `attachments`, never throws);
+  `bloqueChecklistParaGenerar`/`bloqueChecklistParaAjuste` (the two injection blocks — exact
+  wording in the report below).
+  New `src/lib/ai/checklist-db.ts` (server-only, imports Prisma): `checklistActual(projectId)` —
+  latest ASSISTANT `ChatMessage` with `checklist != null` and `undoneAt == null`, across any
+  thread of the project (same scope as `Project.currentHtml`) — reused by `stream.ts` (T16,
+  adjustment turns) and `autocorreccion.ts` (T17).
+  `prisma/schema.prisma`: `ChatMessage.checklist String?` (same convention as `attachments`);
+  migration `20261004000000_checklist_de_recurso` (hand-written `ALTER TABLE ... ADD COLUMN`,
+  same discipline as the rest of this change — `migrate deploy` runs without `tsx` in prod).
+  Applied with `npx prisma migrate deploy && npx prisma generate` against `kodu_db_dev`.
+  `src/lib/ai/provider.ts`: new `maxTokensOverride` option on `requestCompletionStream`/
+  `intentarUna` (same pattern as T12's `razonamientoOverride`) — the checklist call is 3-6 short
+  lines, not a resource, so it gets its own small `max_tokens` (400) instead of
+  `provider.maxTokens`.
+  `src/pages/api/chat/stream.ts`: `recursoInicial` hoisted (shared by `solicitaVersiones` and the
+  checklist gate, computed once). New `generarChecklist()` — one call, `forzarHerramienta:false`,
+  `velocidad:'fast'` (→ `razonamientoEfectivo(provider,'fast')`), `maxTokensOverride:400`, its own
+  15s `AbortController` (combined with `request.signal`) — never throws, logs and returns `[]` on
+  any failure/timeout/too-few-items; records its own `TokenUsage` row whenever the provider
+  reported usage (even if `parsearChecklist` ends in `[]` — the tokens were spent regardless).
+  Gated on `recursoInicial && forzar` (a turn that will actually call `update_resource_code`,
+  never a query, never an adjustment) — runs INSIDE `start()` (so it can emit SSE), right after
+  the "inicio" log line and before the provider-chain loop, so it always completes before any
+  motor of the main generation is asked. On success with items: emits `{type:'phase',
+  phase:'planificando'}` before the call and `{type:'checklist', items}` after; then mutates the
+  LAST message of `messages` **in place** (`ultimoMensaje.content = ...`, not reassigning the
+  array slot) — `messagesV2`/`messagesV3` (T9 versions) share that exact object by reference
+  (`messages.slice(1)` copies the array, not the objects inside), so one mutation reaches all
+  three variants for free, with zero changes to how versions are built. Persisted as
+  `checklist: serializarChecklist(checklistItems)` on the assistant `ChatMessage` created at the
+  end of a successful turn (covers both the plain and the versions path — same `create` call).
+  Adjustment turns: `checklistActual(project.id)` is fetched in the existing `Promise.all` (only
+  when `!recursoInicial` — `Promise.resolve([])` otherwise, no wasted query) and, when non-empty,
+  `bloqueChecklistParaAjuste(...)` is appended to `currentResourceBlock` (the "estado actual del
+  recurso" block, never mixed into the teacher's persisted `message`).
+  `src/lib/workspace-types.ts`/`AiStatus.tsx`: new `AiPhase` value `planificando` ("Armando qué
+  probar…", `state:'solving'`, same feel as `thinking`).
+  `src/lib/client/api.ts`: `StreamEvent`'s `phase` union gains `'planificando'`; new
+  `{type:'checklist', items: ItemChecklist[]}` member — wired for type-checking only, per the
+  task; the UI (T18) isn't built here.
+  Unit tests: new `e2e/unidad-checklist.ts` (16 tests, no DB — parse variants/caps/ids/too-few,
+  `leerChecklist` robustness including the 40/200/6 caps, both blocks contain ids, the two blocks
+  are distinct text).
+  **Mock/e2e adaptation (least invasive, per the task's own instruction to expect this):**
+  `e2e/mock-proveedor.ts` now recognizes a checklist request (system prompt contains
+  `MARCADOR_SISTEMA_CHECKLIST`, exported from `checklist.ts`) BEFORE touching the FIFO/conditional
+  queues, and answers it with a small synthetic 3-item checklist (plain text, no tool call) —
+  without consuming a slot from either queue. Without this, the checklist call (which every
+  new-resource turn in these scripts now makes, since their teacher messages are all real
+  imperative requests) would have silently eaten the next `programarRespuesta`/
+  `programarRespuestaCondicional` meant for the real turn, and the real turn would have fallen
+  back to the mock's unrelated default HTML. A script that wants to control the checklist reply
+  itself can still `programarRespuestaCondicional` matching that same marker — it's checked
+  first, so it wins over the default.
+  This still shifted `mock.llamadas` counts/indices in two PRE-EXISTING scripts (their assertions
+  count raw HTTP calls to the mock, and the checklist call is one more, real, distinguishable call
+  — the fix above only stops it from stealing a FIFO slot, it doesn't make it invisible to the
+  call log, nor should it): `e2e/t11-autoprueba.ts` (4 `mock.llamadas.length`/index assertions
+  across its 4 scenes, one `TokenUsage` count) and `e2e/t7-revision-automatica.ts` (its SSE-event-
+  sequence assertion, its `phase`-event-count assertion switched to filter by phase VALUE instead
+  of total count so a future new phase doesn't re-break it, and 7 `mock.llamadas.length`/index
+  assertions across scenes A–E). Every number was hand-derived from the actual turn shape (new
+  resource + forcing message → 1 checklist call; adjustment turn → 0); nothing was loosened or
+  guessed. No other `.ts` file under `e2e/` needed a change.
+  Token cost (measured, `checklist.ts`'s own `construirMensajesChecklist`/`parsearChecklist`/
+  `bloqueChecklistParaGenerar`, 3.37 chars/token fit used since T3):
+  - System prompt: 561 chars ≈ 166 tokens.
+  - A typical detailed teacher request (D1 "fracciones equivalentes" from
+    `exp/medicion-arnes:experimentos/razonamiento/prompts.json`, found via `git show`): 700
+    chars ≈ 208 tokens.
+  - Total input for that call (system + request, no history, no images): 1,261 chars ≈ 374
+    tokens.
+  - A typical 5-item output (same D1 checklist, model-shaped `- ...` lines): 310 chars ≈ 92
+    tokens.
+  - `bloqueChecklistParaGenerar` for those same 5 items (the extra text appended to the main
+    generation's last user message): **453 chars ≈ 134 tokens** of added INPUT on the main call.
+  - Mock's reported usage for the checklist call (synthetic, not a real provider number — only
+    reported because the task asked "if observable"): `prompt_tokens: 300, completion_tokens: 60`
+    (`e2e/mock-proveedor.ts`'s `responderChecklistPorDefecto`).
+  Checks: `npm run check` → clean. `npx tsx e2e/unidad-checklist.ts` → 16/16 pass.
+  `npx tsx e2e/unidad.ts` → 79/79 pass (73 before T17's +6, below). `npx tsx e2e/unidad-kit.ts` →
+  63/63 pass (unaffected). `npx tsx e2e/unidad-versiones.ts` → 22/22 pass (unaffected).
+  `npx tsx e2e/unidad-revision.ts` → 35/35 pass (unaffected). Dev server restarted (`npx astro dev
+  stop` then `npm run dev`, PID
+  1458588, left running) so the new column/routes were loaded. `npx tsx e2e/t11-autoprueba.ts` →
+  4/4 scenes pass (after the mock/index adaptation above). `npx tsx e2e/t7-revision-automatica.ts`
+  → scenes A–F pass (after the same kind of adaptation). No leftover Chromium/mock process from
+  these runs (`mock.detener()`/`browser.close()` in `finally`, port 4790 confirmed free
+  afterwards; unrelated Chromium processes already on the machine from other sessions were left
+  alone).
+  Commit: `902fff8`.
+
+- T17 done. `src/lib/ai/autoprueba.ts`: new `ResultadoPrueba = {id, ok, detalle}` (matches
+  `SCRIPT_CENTINELA`'s normalized `window.__koduPruebas` result exactly); `InformeAutoprueba`
+  gains `pruebas?: ResultadoPrueba[] | null`; `necesitaCorreccion` now also fires when any prueba
+  has `ok === false` (`pruebas` absent/`null`/all-`true` never triggers it alone);
+  `construirMensajeCorreccion` gains an optional `checklist?: ItemChecklist[]` param — for each
+  failed prueba it cites `- <id> «<texto del ítem, si está en el checklist>»: <detalle>`, preceded
+  by one instruction: decide first, against the teacher's request, whether the RESOURCE or the
+  TEST is wrong, fix only that, never weaken or delete a test to make it pass. Skipped entirely
+  when there are no failed pruebas (no "checklist" text appears in the message at all in that
+  case).
+  `src/pages/api/chat/autocorreccion.ts`: body schema gains `pruebas` (optional/nullable array,
+  ≤8, `id` ≤40, `detalle` ≤200, `ok` boolean — backward compatible with an old client that never
+  sends it); the endpoint now loads `checklistActual(project.id)` itself (never trusts a checklist
+  from the client) and passes it to `construirMensajeCorreccion`.
+  `src/lib/client/autoprueba.ts`: `ResultadoAutopruebaCliente.pruebas: ResultadoPrueba[] | null`
+  (mirrors the kit's `pruebas` result field); `TIMEOUT_MS_DEFECTO` raised **25s → 50s** — T14
+  documented a ~44s worst case for one autoprueba (20s base checks + 8×3s tests) that the old 25s
+  timeout was already shorter than, so any autoprueba that actually exercised
+  `window.__koduPruebas` was guaranteed to time out client-side before the iframe could ever
+  reply, regardless of what happened inside.
+  `src/components/workspace/Workspace.tsx`: `ejecutarAutopruebaYCorreccion` now sends
+  `pruebas: resultado.pruebas` in the `streamAutocorreccion` body; new `ultimasPruebas` state
+  (latest self-test `pruebas`, saved before deciding whether a correction is needed) for T18 to
+  read later — no UI built here. Cleared at every point `autopruebaAdvertencia` already gets
+  cleared (new turn, resume-after-reload, undo, version switch, manual edit): a stale result tied
+  to an HTML that's no longer current isn't useful to anyone.
+  Tests: extended `e2e/unidad.ts` (+6): `necesitaCorreccion` with a failed/passing/absent
+  `pruebas`; `construirMensajeCorreccion` citing the id, the checklist item's TEXT, and the exact
+  `detalle` of each failed prueba (and never a passing one), the "decide resource vs. test" and
+  "never weaken" instructions present, the checklist-vigente-less fallback (still cites id +
+  detalle, just no item text), and confirming no "checklist" section appears when nothing failed.
+  Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 79/79 pass (73 + the 6 new).
+  `npx tsx e2e/t11-autoprueba.ts` (dev server up, mock) → 4/4 scenes pass — its own escena 1
+  (`funcionQueNoExiste`) doesn't exercise the `pruebas` path (T19's job, out of scope here), but
+  confirms T17's schema/endpoint change didn't break the existing error/reinicio correction paths.
+  Commit: `24a1b3c`.
+
 ## Next step
 
-Round 4: T14–T15 completas (kit + BASE_PROMPT del lado de `window.__koduPruebas` y
-`kodu.pantalla`/`kodu.ocupado`), branch `feat/arnes-robustez` sin pushear ni mergear. Quedan
-T16–T19 (paso de checklist del servidor, corrección con tests fallidos, UI "Esto es lo que probé",
-e2e de todo el ciclo) — no asignadas a esta tarea. Pendiente de anotar para quien tome T16: el
-timeout del lado del cliente de la autoprueba (`ejecutarAutopruebaEnIframe`, T12, ~25s) queda
-corto contra el peor caso medido en T14 (~44s con 8 pruebas de `window.__koduPruebas`) y hay que
-subirlo quien wire T16-T19.
+Round 4: T14–T17 completas (kit + BASE_PROMPT del lado de `window.__koduPruebas` y
+`kodu.pantalla`/`kodu.ocupado`; paso de checklist del servidor; corrección con tests fallidos),
+branch `feat/arnes-robustez` sin pushear ni mergear. Quedan T18–T19 (UI "Esto es lo que probé" en
+el editor + checklist inicial pasado desde la página del proyecto, e2e del ciclo completo en
+Chromium real) — no asignadas a esta tarea.
+
+Pendiente de anotar para quien tome T18/T19:
+- `Workspace.tsx` ya trae `ultimasPruebas` (T17, el último resultado de `window.__koduPruebas`) y
+  recibe el evento SSE `checklist` (T16) sin guardarlo todavía en ningún estado — T18 necesita
+  agregar ese estado (o pasar el checklist inicial desde `project/[id].astro` vía
+  `checklistActual`, que ya existe en `src/lib/ai/checklist-db.ts`) para poder cruzar cada ítem
+  del checklist con su resultado por `id`.
+- El evento `checklist` nunca trae el HTML ni se persiste aparte del `ChatMessage.checklist` que
+  ya guarda T16 — no hace falta una tabla ni un endpoint nuevo para leerlo, `checklistActual` ya
+  alcanza.
+- T19 (e2e Chromium con el mock) va a necesitar que el mock devuelva un checklist real (ya lo
+  hace por defecto, ver `responderChecklistPorDefecto` en `mock-proveedor.ts`) y un HTML cuyo
+  `window.__koduPruebas` falle a propósito para ejercitar el camino nuevo de T17 — ninguno de los
+  chequeos corridos en T16/T17 lo hace todavía (T11 sigue probando sólo errores de JS/reinicio
+  roto, no pruebas de checklist).
 
 Round 3 completa (T9–T13). Pendiente fuera de esta tarea: endurecer `asegurarMotorMock` en
 `e2e/t7-revision-automatica.ts` y
