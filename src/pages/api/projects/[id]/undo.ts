@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../../lib/projects.ts';
+import { checklistActual } from '../../../../lib/ai/checklist-db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 
 const schema = z.object({
@@ -115,5 +116,12 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
     prisma.projectSnapshot.delete({ where: { id: snapshot.id } }),
   ]);
 
-  return ok({ currentHtml: snapshot.html, undoneMessageIds });
+  // T18 (round 4, "checklist del docente"): deshacer puede haber dejado
+  // atrás el checklist que ESTABA vigente (si el turno deshecho fue el que
+  // lo creó) — se lee de nuevo DESPUÉS de la transacción de arriba
+  // (`undoneAt` ya quedó puesto) para que el cliente actualice la UI de "Esto
+  // es lo que probé" sin tener que adivinar si corresponde o pedirlo aparte.
+  const checklist = await checklistActual(project.id);
+
+  return ok({ currentHtml: snapshot.html, undoneMessageIds, checklist });
 };

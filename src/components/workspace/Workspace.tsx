@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel, { type PreviewPanelHandle } from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
@@ -10,6 +10,8 @@ import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versio
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
 import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
+import { estadoDeChecklist } from '../../lib/client/checklist.ts';
+import type { ItemChecklist } from '../../lib/ai/checklist.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
@@ -50,6 +52,13 @@ interface WorkspaceProps {
    * propio control.
    */
   capacidades: CapacidadesEditor;
+  /**
+   * T18 (round 4, "checklist del docente"): el checklist VIGENTE del
+   * recurso al abrir la página (`checklistActual`, `project/[id].astro`).
+   * `[]` cuando el recurso no tiene uno (viejo, o el paso T16 nunca corrió)
+   * — PreviewPanel oculta "Esto es lo que probé" entero en ese caso.
+   */
+  initialChecklist: ItemChecklist[];
 }
 
 /**
@@ -184,16 +193,39 @@ export default function Workspace(props: WorkspaceProps) {
   const [autopruebaAdvertencia, setAutopruebaAdvertencia] = useState(false);
 
   /**
-   * T17 (round 4, "checklist del docente"): los resultados de
-   * `window.__koduPruebas` de la ÚLTIMA autoprueba corrida (antes o después
-   * de corregir) — sólo para que T18 los pueda mostrar más adelante, no hay
-   * UI todavía. `null` = no se llegó a correr ninguna, o el recurso no
-   * tiene `window.__koduPruebas`. Se limpia junto con `autopruebaAdvertencia`
-   * en todos los mismos puntos (nuevo turno, deshacer, edición manual,
-   * cambio de versión): un resultado de un HTML que ya no es el vigente no
-   * le sirve a nadie.
+   * T17/T18 (round 4, "checklist del docente"): los resultados de
+   * `window.__koduPruebas` de la ÚLTIMA autoprueba corrida sobre el HTML
+   * VIGENTE (antes o después de corregir). Tres estados, no dos —
+   * `estadoDeChecklist` (`lib/client/checklist.ts`) los distingue:
+   *  - `undefined`: todavía no corrió NINGUNA autoprueba sobre este HTML en
+   *    esta sesión (recién abierta la página, o el HTML acaba de cambiar y
+   *    su autoprueba no terminó) — "sin probar todavía".
+   *  - `null`: corrió, pero el recurso no tiene `window.__koduPruebas`.
+   *  - un array: corrió y el recurso sí tiene pruebas — sus resultados.
+   * Se limpia a `undefined` junto con `autopruebaAdvertencia` en todos los
+   * mismos puntos (nuevo turno, deshacer, edición manual, cambio de
+   * versión): un resultado de un HTML que ya no es el vigente no le sirve a
+   * nadie, y `undefined` (no `null`) es lo correcto ahí — todavía no se
+   * volvió a probar ESTE html, no "se probó y no tiene pruebas".
    */
-  const [ultimasPruebas, setUltimasPruebas] = useState<ResultadoPrueba[] | null>(null);
+  const [ultimasPruebas, setUltimasPruebas] = useState<ResultadoPrueba[] | null | undefined>(undefined);
+
+  /**
+   * T16/T18: el checklist VIGENTE del recurso — arranca con el que ya leyó
+   * el servidor (`project/[id].astro`, `checklistActual`) y se actualiza con
+   * el evento SSE `checklist` (sólo en un turno que crea un recurso NUEVO) o
+   * con lo que devuelve `POST .../undo` (T4: deshacer puede dejar atrás el
+   * turno que lo creó). Nunca lo toca un ajuste: el checklist es del
+   * recurso, no de cada turno, y un ajuste no manda ninguno nuevo.
+   */
+  const [checklist, setChecklist] = useState<ItemChecklist[]>(props.initialChecklist);
+
+  /** T18: cruza `checklist` con `ultimasPruebas` para la UI — recalculado
+   *  sólo cuando cualquiera de los dos cambia. */
+  const checklistConEstado = useMemo(
+    () => estadoDeChecklist(checklist, ultimasPruebas),
+    [checklist, ultimasPruebas],
+  );
 
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
@@ -396,7 +428,7 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
 
-      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string }>(
+      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string; checklist: ItemChecklist[] }>(
         `/api/projects/${projectId}/threads?threadId=${encodeURIComponent(activeThreadId)}`,
       ).then((result) => {
         if (cancelado || !result.ok) return;
@@ -409,7 +441,11 @@ export default function Workspace(props: WorkspaceProps) {
         setMessages(result.data.messages);
         setHtml(result.data.currentHtml);
         setAutopruebaAdvertencia(false);
-        setUltimasPruebas(null); // T17: mismo criterio, el HTML acá es otro.
+        setUltimasPruebas(undefined); // T17/T18: mismo criterio, el HTML acá es otro.
+        // T18: si el turno que quedó corriendo era de creación, pudo haber
+        // guardado un checklist nuevo que esta pestaña nunca vio (llegó por
+        // el SSE de la pestaña que se recargó) — se lee del mismo pedido.
+        setChecklist(result.data.checklist);
         setIsStreaming(false);
         setAiPhase('idle');
         setTurnoDesde(null);
@@ -435,7 +471,7 @@ export default function Workspace(props: WorkspaceProps) {
     // había quedado uno del turno anterior, ya no aplica al recurso que
     // está por escribirse.
     setAutopruebaAdvertencia(false);
-    setUltimasPruebas(null); // T17: mismo criterio.
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -565,6 +601,12 @@ export default function Workspace(props: WorkspaceProps) {
           // de siempre (con el puente de captura incluido).
           rawArgsBuffer = '';
           setPartialHtml(null);
+        } else if (event.type === 'checklist') {
+          // T16/T18: sólo llega en un turno que crea un recurso NUEVO, antes
+          // de cualquier "code" de este turno — nunca trae el HTML, sólo los
+          // ítems. Reemplaza entero al checklist anterior (un recurso
+          // recién creado no tenía ninguno todavía).
+          setChecklist(event.items);
         } else if (event.type === 'variant') {
           // T9 ("Varias versiones"): `ready: false` es el anuncio de que
           // este índice va a existir (las tres llegan juntas, apenas el
@@ -882,7 +924,7 @@ export default function Workspace(props: WorkspaceProps) {
       return;
     }
 
-    const result = await apiRequest<{ currentHtml: string; undoneMessageIds: string[] }>(
+    const result = await apiRequest<{ currentHtml: string; undoneMessageIds: string[]; checklist: ItemChecklist[] }>(
       `/api/projects/${projectId}/undo`,
       'POST',
       { messageId },
@@ -900,7 +942,11 @@ export default function Workspace(props: WorkspaceProps) {
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: deshacer cambió el recurso, cualquier aviso viejo ya no aplica.
-    setUltimasPruebas(null); // T17: mismo criterio.
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+    // T18: el turno deshecho puede haber sido el que creó el checklist
+    // vigente — el servidor ya recalculó cuál es el actual (o `[]` si no
+    // queda ninguno), nunca se infiere del lado del cliente.
+    setChecklist(result.data.checklist);
 
     const ahora = Date.now();
     setMessages((current) =>
@@ -938,7 +984,7 @@ export default function Workspace(props: WorkspaceProps) {
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: cambio de versión, cualquier aviso viejo ya no aplica.
-    setUltimasPruebas(null); // T17: mismo criterio.
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
 
     setMessages((current) =>
       current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
@@ -1169,7 +1215,7 @@ export default function Workspace(props: WorkspaceProps) {
           // vieja (design §6).
           if (screenshotUrl) setPortadaVieja(true);
           setAutopruebaAdvertencia(false); // T12: edición manual, cualquier aviso viejo ya no aplica.
-          setUltimasPruebas(null); // T17: mismo criterio.
+          setUltimasPruebas(undefined); // T17/T18: mismo criterio.
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
@@ -1197,6 +1243,7 @@ export default function Workspace(props: WorkspaceProps) {
         saving={saving}
         notice={notice}
         autopruebaAdvertencia={autopruebaAdvertencia}
+        checklist={checklistConEstado}
       />
       </div>
       </div>

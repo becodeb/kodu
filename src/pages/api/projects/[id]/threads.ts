@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../../lib/db.ts';
 import { findProjectForActor } from '../../../../lib/projects.ts';
+import { checklistActual } from '../../../../lib/ai/checklist-db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 
 const schema = z.object({
@@ -61,31 +62,40 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   });
   if (!thread) return fail('El hilo de conversación no existe.', 404);
 
-  const messages = await prisma.chatMessage.findMany({
-    where: { threadId: thread.id },
-    orderBy: { createdAt: 'asc' },
-    select: {
-      id: true,
-      role: true,
-      content: true,
-      attachments: true,
-      createdAt: true,
-      // T4: sólo si tiene instantánea y si ya se deshizo — el `select`
-      // anidado trae nada más que el `id` de la instantánea (nunca su
-      // `html`, que puede pesar lo que pesa el recurso entero) sólo para
-      // poder contestar "¿existe?".
-      undoneAt: true,
-      snapshot: { select: { id: true } },
-      // T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un
-      // recurso"): sólo el mensaje más nuevo del proyecto puede tener filas
-      // acá (stream.ts las borra al empezar cualquier turno posterior), así
-      // que no hace falta un caso especial para "es el más nuevo" — la
-      // tabla ya lo garantiza sola. Nunca el `html` de cada versión (sólo
-      // viaja al elegir, por POST /api/projects/[id]/variant).
-      chosenVariantIndex: true,
-      variants: { select: { index: true }, orderBy: { index: 'asc' } },
-    },
-  });
+  // T18 (round 4, "checklist del docente"): este endpoint también es el que
+  // usa Workspace.tsx para "retomar un turno que quedó corriendo en el
+  // servidor" (recarga de página a mitad de un turno) — si ese turno era de
+  // creación, terminó guardando un checklist nuevo que la página nunca vio
+  // (llegó por el SSE que esa pestaña se perdió). Del ámbito del PROYECTO,
+  // no de este hilo (mismo alcance que `currentHtml` acá abajo).
+  const [messages, checklist] = await Promise.all([
+    prisma.chatMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        role: true,
+        content: true,
+        attachments: true,
+        createdAt: true,
+        // T4: sólo si tiene instantánea y si ya se deshizo — el `select`
+        // anidado trae nada más que el `id` de la instantánea (nunca su
+        // `html`, que puede pesar lo que pesa el recurso entero) sólo para
+        // poder contestar "¿existe?".
+        undoneAt: true,
+        snapshot: { select: { id: true } },
+        // T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un
+        // recurso"): sólo el mensaje más nuevo del proyecto puede tener filas
+        // acá (stream.ts las borra al empezar cualquier turno posterior), así
+        // que no hace falta un caso especial para "es el más nuevo" — la
+        // tabla ya lo garantiza sola. Nunca el `html` de cada versión (sólo
+        // viaja al elegir, por POST /api/projects/[id]/variant).
+        chosenVariantIndex: true,
+        variants: { select: { index: true }, orderBy: { index: 'asc' } },
+      },
+    }),
+    checklistActual(project.id),
+  ]);
 
   // Se devuelve tambien el HTML porque el editor usa este endpoint para
   // retomar un turno que quedo corriendo en el servidor: sin el codigo, el
@@ -93,6 +103,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   // vieja hasta recargar de nuevo.
   return ok({
     currentHtml: project.currentHtml,
+    checklist,
     messages: messages.map((message) => ({
       id: message.id,
       role: message.role,

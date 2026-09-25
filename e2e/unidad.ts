@@ -23,6 +23,7 @@ import type { ItemChecklist } from '../src/lib/ai/checklist.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
 import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
+import { contarChecklistOk, estadoDeChecklist } from '../src/lib/client/checklist.ts';
 import type { WorkspaceMessage } from '../src/lib/workspace-types.ts';
 
 /**
@@ -1376,6 +1377,52 @@ await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) s
   assert.equal(esVelocidadValida('a_fondo'), false);
   assert.equal(esVelocidadValida(null), false);
   assert.equal(esVelocidadValida(''), false);
+});
+
+// ─────────────────────────────────────────────────────────────
+// estadoDeChecklist / contarChecklistOk (T18, "Esto es lo que probé")
+// ─────────────────────────────────────────────────────────────
+
+const ITEMS_CHECKLIST_UI: ItemChecklist[] = [
+  { id: 'c1', texto: 'Si arrastro el punto a 3/4, el texto muestra 3/4.' },
+  { id: 'c2', texto: 'Tocar "Reiniciar" borra el mensaje de la ronda anterior.' },
+  { id: 'c3', texto: 'Con 0 aciertos no aparece el festejo.' },
+];
+
+await prueba('estadoDeChecklist: sin ninguna corrida todavía (undefined), todos "sinProbar"', () => {
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, undefined);
+  assert.equal(resultado.length, 3);
+  assert.ok(resultado.every((item) => item.estado === 'sinProbar'));
+  assert.ok(resultado.every((item) => item.detalle === null));
+  assert.equal(contarChecklistOk(resultado), 0);
+});
+
+await prueba('estadoDeChecklist: corrida sin window.__koduPruebas (null), todos "sinPrueba"', () => {
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, null);
+  assert.ok(resultado.every((item) => item.estado === 'sinPrueba'));
+  assert.equal(contarChecklistOk(resultado), 0);
+});
+
+await prueba('estadoDeChecklist: cruza por id — ok/falla/sin prueba propia, nunca por posición', () => {
+  const pruebas: ResultadoPrueba[] = [
+    { id: 'c1', ok: true, detalle: '' },
+    { id: 'c3', ok: false, detalle: 'sigue apareciendo el festejo con 0 aciertos' },
+    // c2 sin entrada: el modelo no escribió una prueba para ese ítem.
+  ];
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, pruebas);
+
+  const porId = Object.fromEntries(resultado.map((item) => [item.id, item]));
+  assert.equal(porId.c1!.estado, 'ok');
+  assert.equal(porId.c1!.detalle, null, 'una prueba que pasó no lleva detalle');
+  assert.equal(porId.c2!.estado, 'sinPrueba', 'sin entrada con ese id, aunque SÍ corrieron pruebas');
+  assert.equal(porId.c3!.estado, 'falla');
+  assert.equal(porId.c3!.detalle, 'sigue apareciendo el festejo con 0 aciertos');
+  assert.equal(contarChecklistOk(resultado), 1, 'sólo c1 cuenta para el resumen "N de TOTAL"');
+});
+
+await prueba('estadoDeChecklist: [] de checklist da [] de resultado (nunca revienta con corrida vacía)', () => {
+  assert.deepEqual(estadoDeChecklist([], undefined), []);
+  assert.deepEqual(estadoDeChecklist([], []), []);
 });
 
 await prisma.$disconnect();
