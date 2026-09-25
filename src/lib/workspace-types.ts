@@ -126,6 +126,12 @@ export type AiPhase =
   | 'idle'
   /** Se subieron archivos y todavía están viajando. */
   | 'uploading'
+  /**
+   * T16 (round 4, "checklist del docente"): sólo en un turno que crea un
+   * recurso NUEVO, ANTES de la generación principal — un paso corto arma un
+   * checklist de comportamientos a partir del pedido. Nunca en un ajuste.
+   */
+  | 'planificando'
   /** El pedido salió y todavía no volvió nada. */
   | 'thinking'
   /** Está redactando la explicación en el chat. */

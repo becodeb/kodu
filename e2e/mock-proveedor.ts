@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { MARCADOR_SISTEMA_CHECKLIST } from '../src/lib/ai/checklist.ts';
 
 /**
  * Proveedor de IA simulado para los chequeos de integración de T3 en
@@ -7,9 +8,23 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
  * (`readCompletionStream`): deltas de texto, un tool call
  * `update_resource_code` con sus `arguments` repartidos en chunks chicos y
  * demorados (para poder ver la vista previa progresiva en acción),
- * `finish_reason` y un chunk final de `usage`. Sin dependencias — sólo
- * `node:http` — porque este repo no tiene test runner (openspec/context.md)
- * y no hace falta traer nada para levantar un servidor HTTP.
+ * `finish_reason` y un chunk final de `usage`. Sin dependencias externas —
+ * sólo `node:http` — porque este repo no tiene test runner
+ * (openspec/context.md) y no hace falta traer nada para levantar un
+ * servidor HTTP. El único import propio (`MARCADOR_SISTEMA_CHECKLIST`) es
+ * un string puro, no arrastra nada.
+ *
+ * T16 (round 4, "checklist del docente"): el paso de checklist de
+ * `stream.ts` manda su PROPIO pedido, ANTES del pedido principal de
+ * cualquier turno de creación, con un system prompt reconocible por
+ * `MARCADOR_SISTEMA_CHECKLIST`. Se responde APARTE de las colas
+ * FIFO/condicional de abajo (ver `manejarPedido`): si no, se comería el
+ * próximo `programarRespuesta` de cualquier script viejo que no sabe que
+ * este pedido existe (t7, t8, t11…), y el turno principal terminaría
+ * cayendo al HTML de ejemplo por defecto en vez de lo que ese script
+ * programó. Un script que sí quiera controlar la respuesta del checklist
+ * puede usar `programarRespuestaCondicional` matcheando ese mismo
+ * marcador: se revisa primero, así que gana sobre este default.
  *
  * Para apuntar un AiProvider/AiModel de desarrollo acá: `baseUrl` =
  * `http://127.0.0.1:<puerto>` (SIN `/v1/chat/completions` — eso lo agrega
@@ -232,6 +247,40 @@ function escribirChunk(res: ServerResponse, chunk: unknown) {
   res.write(`data: ${JSON.stringify(chunk)}\n\n`);
 }
 
+/**
+ * Respuesta de checklist por defecto (T16): texto plano, sin tool call —
+ * `parsearChecklist` (`src/lib/ai/checklist.ts`) sólo lee líneas que
+ * empiezan con "- ". Da un checklist real y no vacío a propósito: así
+ * cualquier chequeo end-to-end que corra CONTRA este mock por defecto (sin
+ * programar nada a mano) ejercita el camino completo — evento `checklist`,
+ * bloque en el último mensaje de usuario, columna persistida — en vez de
+ * "sin checklist" por una respuesta vacía.
+ */
+async function responderChecklistPorDefecto(res: ServerResponse, id: string, modelo: string): Promise<void> {
+  const lineas = [
+    '- Si arrastro el punto a 3/4, el texto muestra 3/4.',
+    '- Tocar "Reiniciar" borra el mensaje de la ronda anterior.',
+    '- Con 0 aciertos no aparece el festejo.',
+  ];
+
+  for (const linea of lineas) {
+    escribirChunk(res, {
+      ...chunkBase(id, modelo),
+      choices: [{ index: 0, delta: { content: `${linea}\n` }, finish_reason: null }],
+    });
+    await esperar(20);
+  }
+
+  escribirChunk(res, { ...chunkBase(id, modelo), choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+  escribirChunk(res, {
+    ...chunkBase(id, modelo),
+    choices: [],
+    usage: { prompt_tokens: 300, completion_tokens: 60, prompt_tokens_details: { cached_tokens: 0 } },
+  });
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 async function manejarPedido(
   req: IncomingMessage,
   res: ServerResponse,
@@ -260,6 +309,28 @@ async function manejarPedido(
       return false; // un `match` que tira no cuenta como matcheado
     }
   });
+
+  // T16: el pedido de checklist se reconoce ANTES de tocar ninguna de las
+  // dos colas — sólo cuando además nadie programó una condicional a propósito
+  // para él (si programaron una, gana esa, como con cualquier otro pedido).
+  const mensajes = Array.isArray(body.messages) ? (body.messages as Array<Record<string, unknown>>) : [];
+  const esPedidoDeChecklist =
+    indiceCondicional === -1 &&
+    typeof mensajes[0]?.content === 'string' &&
+    (mensajes[0]!.content as string).includes(MARCADOR_SISTEMA_CHECKLIST);
+
+  if (esPedidoDeChecklist) {
+    const id = `mock-${Date.now()}-${llamadas.length}`;
+    const modelo = typeof body.model === 'string' ? body.model : 'mock-model';
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    await responderChecklistPorDefecto(res, id, modelo);
+    return;
+  }
+
   const script =
     indiceCondicional !== -1
       ? colaCondicional.splice(indiceCondicional, 1)[0]!.respuesta

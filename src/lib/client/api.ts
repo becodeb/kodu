@@ -1,4 +1,5 @@
 import type { Speed } from '../workspace-types.ts';
+import type { ItemChecklist } from '../ai/checklist.ts';
 
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
@@ -68,12 +69,23 @@ export type StreamEvent =
   | { type: 'code_reset' }
   /**
    * T7 ("Revisión automática"): cambio de fase que no es ninguno de los
-   * eventos de arriba. Por ahora sólo `'revisando'` (terminó el primer
-   * pase, está corrigiendo lo que encontró el lint antes de entregar el
-   * recurso) — la vista previa sigue mostrando el `code` anterior mientras
-   * dura, nunca se manda un `code_delta` de esta pasada.
+   * eventos de arriba. `'revisando'` (terminó el primer pase, está
+   * corrigiendo lo que encontró el lint antes de entregar el recurso) —
+   * la vista previa sigue mostrando el `code` anterior mientras dura,
+   * nunca se manda un `code_delta` de esta pasada. `'planificando'` (T16,
+   * round 4): sólo al crear un recurso nuevo, ANTES de la generación
+   * principal — está armando el checklist de comportamientos.
    */
-  | { type: 'phase'; phase: 'revisando' }
+  | { type: 'phase'; phase: 'revisando' | 'planificando' }
+  /**
+   * T16 (round 4, "checklist del docente"): sólo en un turno que crea un
+   * recurso NUEVO y de verdad va a generar código. Llega, si llega, ANTES
+   * de cualquier `code`/`code_delta` de este turno — nunca trae el HTML,
+   * sólo los ítems (T18 los va a mostrar; este evento sólo hace que
+   * lleguen). Ausente cuando el paso falló, dio timeout o muy pocos ítems
+   * válidos: el turno sigue igual, simplemente sin checklist.
+   */
+  | { type: 'checklist'; items: ItemChecklist[] }
   /**
    * T9 ("Varias versiones al crear un recurso"): sólo en un turno de
    * versiones. `ready: false` es el anuncio de que ESTE índice va a existir

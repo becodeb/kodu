@@ -167,6 +167,14 @@ export async function requestCompletionStream(options: {
    * `null` = comportamiento de siempre (`razonamientoEfectivo`).
    */
   razonamientoOverride?: Record<string, unknown> | null;
+  /**
+   * T16 (round 4, `arnes-robustez`): pisa `provider.maxTokens` para UNA
+   * llamada puntual. El paso de checklist es texto corto (3 a 6 líneas), no
+   * un documento HTML — dejarle el tope pensado para "recurso entero" sólo
+   * arriesga que un modelo verborrágico se vaya de tema sin que nada lo
+   * corte antes. `undefined`/`null` = `provider.maxTokens` de siempre.
+   */
+  maxTokensOverride?: number | null;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -195,6 +203,7 @@ export async function requestCompletionStream(options: {
         forzarHerramienta: forzar,
         velocidad: options.velocidad,
         razonamientoOverride: options.razonamientoOverride,
+        maxTokensOverride: options.maxTokensOverride,
       });
     } catch (error) {
       if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
@@ -318,6 +327,7 @@ async function intentarUna(
     forzarHerramienta?: boolean;
     velocidad?: Speed | null;
     razonamientoOverride?: Record<string, unknown> | null;
+    maxTokensOverride?: number | null;
   },
 ): Promise<Response> {
   const { provider } = options;
@@ -353,8 +363,9 @@ async function intentarUna(
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de
-        // ~200 líneas vuelve cortado por la mitad.
-        max_tokens: provider.maxTokens,
+        // ~200 líneas vuelve cortado por la mitad. `maxTokensOverride` (T16)
+        // pisa esto para una llamada puntual que no escribe un recurso.
+        max_tokens: options.maxTokensOverride ?? provider.maxTokens,
         // Pide el conteo de tokens en el último chunk: es de dónde sale el
         // consumo que se registra por usuario.
         stream_options: { include_usage: true },

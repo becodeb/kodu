@@ -315,8 +315,13 @@ async function main(): Promise<void> {
     await enviar1.waitFor({ state: 'visible', timeout: 45_000 });
     console.log('✔ escena 1 (3/5): el turno completo (autoprueba + corrección) terminó, "Enviar" volvió');
 
-    assert.equal(mock.llamadas.length, 2, 'turno principal + EXACTAMENTE una corrección');
-    const pedidoCorreccion1 = mock.llamadas[1]!.body as unknown as PedidoMock;
+    // 3, no 2: T16 (round 4) agrega un pedido de checklist PROPIO antes del
+    // turno principal (proyecto nuevo == recurso inicial) — `mock-proveedor.ts`
+    // lo reconoce y responde aparte, así que sigue siendo checklist(0) +
+    // turno principal(1) + UNA corrección(2), nunca 2 correcciones ni una FIFO
+    // corrida.
+    assert.equal(mock.llamadas.length, 3, 'checklist + turno principal + EXACTAMENTE una corrección');
+    const pedidoCorreccion1 = mock.llamadas[2]!.body as unknown as PedidoMock;
     assert.equal(pedidoCorreccion1.reasoning_effort, 'low', 'la corrección tiene que pedir razonamiento "low"');
     const promptCorreccion1 = pedidoCorreccion1.messages.at(-1)!.content as string;
     assert.ok(promptCorreccion1.includes('funcionQueNoExiste'), 'tiene que citar el mensaje del error real');
@@ -336,10 +341,14 @@ async function main(): Promise<void> {
     const mensajesHilo1 = await prisma.chatMessage.count({ where: { threadId: proyecto1.threadId } });
     assert.equal(mensajesHilo1, 2, 'el hilo tiene que tener SOLO el mensaje del docente + el de la IA (nada extra de la corrección)');
     const usosHilo1 = await prisma.tokenUsage.count({ where: { projectId: proyecto1.id } });
-    assert.equal(usosHilo1, 2, 'TokenUsage tiene que sumar 2 filas: turno principal + la ronda de corrección');
+    // 3, no 2: T16 (round 4) registra su propia fila de TokenUsage para el
+    // pedido de checklist (`generarChecklist`, `recordUsage`), aparte de la
+    // del turno principal y la de la ronda de corrección — mismo criterio de
+    // "una fila por llamada al motor" que ya usan las dos de siempre.
+    assert.equal(usosHilo1, 3, 'TokenUsage tiene que sumar 3 filas: checklist + turno principal + la ronda de corrección');
     const instantaneas1 = await prisma.projectSnapshot.count({ where: { projectId: proyecto1.id } });
     assert.equal(instantaneas1, 1, 'sólo la instantánea del turno principal — la corrección no crea una propia');
-    console.log('✔ escena 1 (5/5): resultado final sano, 2 mensajes en el hilo, 2 filas de TokenUsage, 1 instantánea, sin aviso');
+    console.log('✔ escena 1 (5/5): resultado final sano, 2 mensajes en el hilo, 3 filas de TokenUsage, 1 instantánea, sin aviso');
 
     // ───────────────────────────────────────────────────────────
     // Escena 2 — sigue roto después de las 2 rondas: exactamente 2
@@ -353,7 +362,9 @@ async function main(): Promise<void> {
 
     await enviarTurnoPorUi(docentePage, proyecto2.id, 'Armame algo simple (T11-ESCENA-2)');
 
-    assert.equal(mock.llamadas.length, 3, 'turno principal + EXACTAMENTE 2 rondas de corrección, nunca una 3ra');
+    // 4, no 3: checklist(0) + turno principal(1) + 2 rondas de corrección(2,3) —
+    // ver la nota de la escena 1 sobre el pedido de checklist de T16.
+    assert.equal(mock.llamadas.length, 4, 'checklist + turno principal + EXACTAMENTE 2 rondas de corrección, nunca una 3ra');
     await frenteFrame(docentePage).locator('[data-marca="2c"]').waitFor({ state: 'attached', timeout: 10_000 });
     const htmlTras2 = await proyectoActual(proyecto2.id);
     assert.ok(htmlTras2.currentHtml.includes('data-marca="2c"'), 'el recurso queda con lo último que devolvió la 2da corrección, aunque siga roto');
@@ -372,7 +383,8 @@ async function main(): Promise<void> {
 
     await enviarTurnoPorUi(docentePage, proyecto3.id, 'Armame algo simple (T11-ESCENA-3)');
 
-    assert.equal(mock.llamadas.length, 1, 'sano a la primera: CERO pedidos de corrección');
+    // 2, no 1: checklist(0) + turno principal(1) — ver la nota de la escena 1.
+    assert.equal(mock.llamadas.length, 2, 'sano a la primera: checklist + turno principal, CERO pedidos de corrección');
     assert.equal(
       await docentePage.locator('text=Probamos el recurso y algo puede no funcionar bien.').count(),
       0,
@@ -391,8 +403,10 @@ async function main(): Promise<void> {
 
     await enviarTurnoPorUi(docentePage, proyecto4.id, 'Armame algo simple (T11-ESCENA-4)');
 
-    assert.equal(mock.llamadas.length, 2, 'reinicio parcial: turno principal + UNA corrección');
-    const pedidoCorreccion4 = mock.llamadas[1]!.body as unknown as PedidoMock;
+    // 3, no 2: checklist(0) + turno principal(1) + UNA corrección(2) — ver la
+    // nota de la escena 1.
+    assert.equal(mock.llamadas.length, 3, 'reinicio parcial: checklist + turno principal + UNA corrección');
+    const pedidoCorreccion4 = mock.llamadas[2]!.body as unknown as PedidoMock;
     const promptCorreccion4 = pedidoCorreccion4.messages.at(-1)!.content as string;
     assert.ok(
       promptCorreccion4.includes('Intentaste'),

@@ -21,6 +21,10 @@ const PHASES: Record<
   { state: 'connecting' | 'solving' | 'composing' | 'weaving'; label: string }
 > = {
   uploading: { state: 'connecting', label: 'Subiendo tus archivos' },
+  // T16 (round 4, "checklist del docente"): corre ANTES de "thinking" de la
+  // generación principal, sólo al crear un recurso nuevo. "solving" — misma
+  // sensación de "todavía decidiendo qué hacer" que "thinking".
+  planificando: { state: 'solving', label: 'Armando qué probar…' },
   thinking: { state: 'solving', label: 'Pensando cómo resolverlo' },
   writing: { state: 'composing', label: 'Escribiéndote la respuesta' },
   coding: { state: 'weaving', label: 'Armando el recurso' },
