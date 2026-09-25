@@ -982,9 +982,9 @@ branch, no PR (user instruction).
 
 ### Tasks
 
-- [ ] T14 — Kit: `__koduPruebas` runner in the self-test + `kodu.pantalla`/`kodu.ocupado`; browser
+- [x] T14 — Kit: `__koduPruebas` runner in the self-test + `kodu.pantalla`/`kodu.ocupado`; browser
   tests in `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + browser tests).
-- [ ] T15 — BASE_PROMPT: `__koduPruebas` doc with a short example (Part A) and Part B rules;
+- [x] T15 — BASE_PROMPT: `__koduPruebas` doc with a short example (Part A) and Part B rules;
   `e2e/unidad.ts`; chars/tokens of each part. Route: delegated (same writer as T14).
 - [ ] T16 — Server: checklist step (`src/lib/ai/checklist.ts`), migration for
   `ChatMessage.checklist`, wiring in `stream.ts` (new resources only, SSE `checklist` event,
@@ -999,10 +999,122 @@ branch, no PR (user instruction).
 
 ### Round 4 Progress
 
+- T14 done. `src/lib/ai/kit.ts`:
+  - **`window.__koduPruebas` runner** in `SCRIPT_CENTINELA`: added right after the
+    existing reset+diff checks, with its OWN budget (up to 8 tests × 3s each), on
+    top of — not counted against — the pre-existing 20s cap on the base checks (that
+    cap still only measures load + reinicio + diff, unchanged). Worst-case total for
+    one autoprueba: ~20s (base checks) + 8×3s = **~44s**. This is documented here so
+    a later task can raise the client-side iframe timeout (T12's
+    `ejecutarAutopruebaEnIframe`, currently ~25s) accordingly — not done in T14/T15,
+    out of scope.
+    - `t` helper: `esperar(ms)` (clamped to ≤2000ms, native timer), `clic(selectorOrElement)`
+      (`el.click()`, throws a clear error if not found), `texto(selector)` (trimmed
+      text via the existing `textoDe`, `''` if missing).
+    - Each test: sync or async, raced against its own 3s native timer. Normalizes to
+      `{ok: !!r.ok, detalle: String(r.detalle ?? '')}`; a thrown error or rejected
+      promise → `{ok:false, detalle:'error: '+message}`; timeout →
+      `{ok:false, detalle:'la prueba tardó más de 3 s'}`; non-object return →
+      `{ok:false, detalle:'...no devolvió un resultado válido'}`. `detalle` truncated
+      to 200 chars, `id` to 40 (missing/invalid → `'p'+(index+1)`). Runs sequentially,
+      at most 8 (`window.__koduPruebas.slice(0,8)`).
+    - Result field `pruebas: null | Array<{id,ok,detalle}>` (`null` when
+      `__koduPruebas` is absent or not an array) added to BOTH the success result and
+      the catch-fallback result.
+  - **`kodu.pantalla(nombre)` / `kodu.ocupado()`** in `SCRIPT_KODU`: shows
+    `[data-pantalla="nombre"]`, hides every other `[data-pantalla]`, returns the shown
+    element (`null` + `console.warn` if missing). Starts a 400ms lock: capture-phase
+    listeners on `window` for `pointerdown`/`mousedown`/`click`/`touchstart`/`keydown`
+    that, while locked AND `evento.isTrusted`, call `preventDefault()` +
+    `stopImmediatePropagation()`. Synthetic events (`el.click()`, dispatched events —
+    what the self-test and `__koduPruebas` use) always pass, verified with a real
+    trusted vs. synthetic comparison in the browser tests. Registered once at module
+    load (no-op — `ocupado()` false — until a resource actually calls `pantalla()`),
+    so it never touches any existing test that doesn't call it. Doesn't add any
+    listener to `el` or touch `registroArrastre`: a drag already in progress when the
+    lock starts keeps receiving its own `pointermove`/`pointerup` on `window`
+    (untouched by the lock) until release — only a NEW `pointerdown` during the
+    window is swallowed.
+  - Real bug hit while writing this: both `SCRIPT_CENTINELA` and `SCRIPT_KODU` are JS
+    **template literals** (backtick strings) — a literal backtick inside a `//`
+    comment INSIDE one of them (e.g. `` `window.__koduPruebas` ``) terminates the
+    template literal early and breaks the rest of the block into invalid syntax
+    (`tsc` caught it immediately as unrelated-looking `TS1005`/`TS1443` errors many
+    lines later). Fixed by never using backticks inside comments that live inside
+    `SCRIPT_CENTINELA`/`SCRIPT_KODU` (plain word/bracket references instead) —
+    backticks in JSDoc comments OUTSIDE those two template literals are fine and
+    already used throughout the file.
+  - New browser tests in `e2e/navegador-kit.ts`: `window.__koduPruebas` — one
+    resource with a passing test, a failing test, a throwing test, a never-resolving
+    test (proves the 3s per-test timeout) and a test with a missing id, asserting the
+    exact `pruebas` array (including the `'p5'` fallback id); the existing "recurso
+    sano" autoprueba test also asserts `pruebas === null` (no `__koduPruebas`, prior
+    fields unchanged). `kodu.pantalla`/`kodu.ocupado`: switching shows/hides the right
+    screens and returns the node; an unknown name returns `null` and touches nothing;
+    `ocupado()` true right after `pantalla()`, false after ~500ms; a TRUSTED
+    `page.mouse.click()` on the new screen's button during the lock never reaches it,
+    one after the lock does; a SYNTHETIC `el.click()` during the lock is processed
+    immediately; a TRUSTED `page.keyboard.press()` during the lock never reaches a
+    `keydown` listener on `document`, one after the lock does.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-kit.ts` → 64/64 pass
+    (unchanged — T14 only touches the non-legado branch, pinned legacy hash
+    unaffected). `npx tsx e2e/navegador-kit.ts` → 58/58 pass (50 previous + 8 new:
+    6 `kodu.pantalla`/`ocupado` + 1 `__koduPruebas` dedicated test + 1 added assertion
+    to an existing test), run twice, no flakiness. No new leftover Chromium process
+    (PID set identical before/after, `ps -eo pid,etime` diffed — several unrelated
+    Chromium processes from other sessions were already on the machine and were left
+    alone). `npx tsx e2e/unidad.ts` (against `kodu_db_dev`, already up) → 76/76 pass —
+    this task didn't touch `prompt.ts`, no regression expected or found.
+  - Commit: `75c0f8f`.
+
+- T15 done. `src/lib/ai/prompt.ts`, `BASE_PROMPT`'s `## Que funcione de verdad`:
+  - **Part A**: one paragraph documenting `window.__koduPruebas` (reset first, drive
+    via the resource's own functions or `t.clic`/`t.texto`/`t.esperar` ≤1s, return
+    `{ok, detalle}`, invisible to the student, never weaken a test) plus the one-line
+    example given by the task verbatim. **460 chars** (prose 284 + `\n` + example 175),
+    measured with `buildSystemPrompt` isolated (empty rules/assets,
+    `herramientaForzada:true`, same T10 method — avoids the escaped-backtick trap).
+    ≈**136.5 tokens** at the 3.37 chars/token fit used since T3 (prose alone ≈84
+    tokens; the example alone is ≈52 tokens at 3.37 or ≈70 at the pessimistic 2.5
+    for code-like lines) — essentially at the "≲130 tokens" budget (the example's
+    text was given by the task itself, not trimmable; prose was cut from an initial
+    349-char draft to fit).
+  - **Part B**: kept the `kodu.pantalla`/`kodu.ocupado()` helper-doc bullet, three new
+    one-line rules (14: branching progress shows steps/ending, never a fixed "3 de
+    10"; 15: a keyboard shortcut checks the same state as its button — nothing fires
+    with `kodu.ocupado()`, mid-transition, or a disabled button; 16: evaluate a
+    step/challenge's condition immediately on entry), and adjusted the EXISTING rule
+    8 in place instead of adding a new one (`kodu.festejar()` now also excluded from
+    "a negative ending", not just "0 aciertos") — per the task's own preference.
+    **493 chars** total (delta measured the same way, minus Part A's 460) ≈**146.3
+    tokens** at 3.37, under the "≤~150 tokens" budget. First draft was ≈524 chars
+    (≈156 tokens, over budget) — trimmed wording in rules 14/15 and the `pantalla`
+    bullet (dropped a redundant clause, shortened "ignora el segundo toque de un
+    doble clic/tap" to "ignora el doble toque") to land at 493.
+  - **Total BASE_PROMPT**: 12419 (after T10) → 13372 chars (+953, matches Part
+    A + Part B measured independently: 460 + 493).
+  - Tests: `e2e/unidad.ts` +2 (Part A: presence of `window.__koduPruebas`, `t.clic`,
+    `t.texto`, `t.esperar`, the "never weaken a test" warning, and the exact example
+    string; Part B: the `kodu.pantalla(nombre)` marker, the new "3 de 10" / `ocupado()`
+    shortcut / "evaluate on entry" rules, and the updated festejar rule's "final
+    negativo" marker).
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 76/76 pass (74
+    previous + 2 new). `npx tsx e2e/unidad-kit.ts` → 64/64 pass (unaffected, T15
+    doesn't touch `kit.ts`).
+  - Commit: `17586fe`.
+
 ## Next step
 
-Round 3 completa (T9–T13), branch `feat/arnes-robustez` sin pushear ni mergear. Pendiente fuera
-de esta tarea: endurecer `asegurarMotorMock` en `e2e/t7-revision-automatica.ts` y
+Round 4: T14–T15 completas (kit + BASE_PROMPT del lado de `window.__koduPruebas` y
+`kodu.pantalla`/`kodu.ocupado`), branch `feat/arnes-robustez` sin pushear ni mergear. Quedan
+T16–T19 (paso de checklist del servidor, corrección con tests fallidos, UI "Esto es lo que probé",
+e2e de todo el ciclo) — no asignadas a esta tarea. Pendiente de anotar para quien tome T16: el
+timeout del lado del cliente de la autoprueba (`ejecutarAutopruebaEnIframe`, T12, ~25s) queda
+corto contra el peor caso medido en T14 (~44s con 8 pruebas de `window.__koduPruebas`) y hay que
+subirlo quien wire T16-T19.
+
+Round 3 completa (T9–T13). Pendiente fuera de esta tarea: endurecer `asegurarMotorMock` en
+`e2e/t7-revision-automatica.ts` y
 `e2e/t8-revision-visual.ts` con el mismo filtro `enabled`/`apiKeyCipher` que ya usa
 `e2e/arnes-robustez.ts` (y ahora `e2e/t11-autoprueba.ts`), para no depender de limpiar la base a
 mano cada vez que la base de desarrollo compartida acumula filas deshabilitadas de otras
