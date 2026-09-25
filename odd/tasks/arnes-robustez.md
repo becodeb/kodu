@@ -1367,23 +1367,15 @@ regresiones, los 5 scripts de flujo con mock (`t3`, `t7`, `t11`, `arnes-robustez
 ajuste mínimo de conteo por la llamada nueva de checklist (T16), documentado arriba y en un commit
 aparte (`4ef92cc`).
 
-Pendiente, fuera del alcance de T18/T19 (no tocado a propósito):
-- `e2e/t4-deshacer.ts`: `asegurarProveedorYMotorMock` sigue sin el filtro
-  `enabled`/`apiKeyCipher` que ya tienen `t7`/`t8`/`t11`/`t12` (ver nota de Round 3 abajo, que ya
-  lo señalaba para t7/t8 pero nunca para t4) — volvió a fallar por esto en esta misma sesión
-  (pescó una fila deshabilitada dejada por otra sesión). Se arregló la base de desarrollo a mano
-  (dato, no código); el script en sí sigue con el gap.
-- El `## Que funcione de verdad` de BASE_PROMPT no menciona nada de `kodu.pantalla`/pantallas de
-  progreso en un checklist — no hace falta: el checklist es sobre COMPORTAMIENTOS observables, no
-  sobre la mecánica de pantallas de Part B (rondas independientes).
+All mock providers are now picked by `enabled`/`apiKeyCipher`: t7/t8 in a34b982 and t4 in cb90bfe.
+After the fix, the parent reran `npx tsx e2e/t4-deshacer.ts` and it passed.
+The parent also reran `npx tsx e2e/t12-checklist-pruebas.ts` and it passed.
+Verification tier: `gentle-ai review assess` over a34b982..HEAD returned `medium`, with `slice_budget_reached`. RDD is off by the user's choice, so no native review ran. Verification was the writers' own checks plus the parent's spot checks.
 
-Round 3 completa (T9–T13). Pendiente fuera de esta tarea: endurecer `asegurarMotorMock` en
-`e2e/t7-revision-automatica.ts` y
-`e2e/t8-revision-visual.ts` con el mismo filtro `enabled`/`apiKeyCipher` que ya usa
-`e2e/arnes-robustez.ts` (y ahora `e2e/t11-autoprueba.ts`/`e2e/t12-checklist-pruebas.ts`), para no
-depender de limpiar la base a mano cada vez que la base de desarrollo compartida acumula filas
-deshabilitadas de otras sesiones — round 4 volvió a pisar exactamente este mismo problema, ahora
-también en `t4-deshacer.ts` (no listado acá originalmente).
+Next: measure round 4 with DeepSeek on D3, D1, N2 and N1, the same protocol as round 4 of `exp/medicion-arnes`. Things to watch:
+- whether the model writes `__koduPruebas` that fail for the right reasons;
+- how many corrections they trigger;
+- the real token cost of the checklist call.
 
 Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
 session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
