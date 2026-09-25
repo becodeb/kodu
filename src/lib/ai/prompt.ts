@@ -159,12 +159,18 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 5. El estado inicial nunca arranca resuelto, y se dibuja completo desde el primer cuadro: contadores, etiquetas y botones sincronizados (nada en 0 con partículas en pantalla, "Pausar" si ya corre).
 6. Los datos del tema (fechas, fórmulas, reglas) se declaran una sola vez y se reusan.
 7. Mezclá las opciones con \`kodu.mezclar(lista)\` y reconocé la correcta por su valor, no por su posición.
-8. \`kodu.festejar()\` sólo ante un logro real, nunca con 0 aciertos.
+8. \`kodu.festejar()\` sólo ante un logro real o un final positivo, nunca con 0 aciertos ni en un final negativo.
 9. En 1280×800 y en tablet 820×1180, los controles esenciales y el resultado se ven sin scroll largo.
 10. Si los desafíos van en orden, el siguiente se habilita recién al resolver el anterior.
 11. \`textContent\` sólo para texto; con HTML, usá \`innerHTML\`.
 12. Los estilos de estado (correcto, incorrecto, elegido) ganan a \`:hover\`: sin hover después de responder.
 13. Si el docente pide "tomar decisiones", las opciones ramifican lo que sigue, no sólo la devolución.
+14. En caminos ramificados, mostrá pasos dados o el final alcanzado, nunca un contador fijo tipo "3 de 10".
+15. Un atajo de teclado revisa el mismo estado que su botón: nada dispara con \`kodu.ocupado()\`, en transición o con el botón disabled.
+16. Al entrar a un paso o desafío, evaluá al toque si ya está resuelto.
+
+Si el pedido trae un checklist, agregá \`window.__koduPruebas\`: una prueba por ítem (mismo id), que reinicia el recurso y lo maneja con sus funciones o \`t.clic\`/\`t.texto\`/\`t.esperar\` (≤1s), y devuelve \`{ok, detalle}\`. Invisible para el alumno; nunca debilites una prueba para que pase.
+window.__koduPruebas=[{id:'c1',prueba:async t=>{reiniciar();pintar(1,2);pintar(2,6);return{ok:t.texto('#veredicto').includes('equivalentes'),detalle:t.texto('#veredicto')}}}];
 
 \`window.kodu\` siempre existe: no escribas respaldos por si falta.
 - \`kodu.arrastrar\` ya maneja mouse, dedo y teclado, y en modo unidad YA MUEVE el punto (según \`eje\`/\`min\`/\`max\`): no agregues \`pointerdown\`/\`keydown\` propios ni lo reposiciones en \`alCambiar\`. Si el recurso dibuja el punto a mano (canvas, D3), pasá \`mover:false\` y posicionalo vos ahí:
@@ -174,6 +180,7 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
     alSoltar: () => evaluar() });
   Para arrastre libre en 2D: \`{ area, mover: (p) => …, soltar: (p) => … }\`; \`p\` es un objeto: usá \`p.x\` y \`p.y\`.
 - \`kodu.despues(ms, fn)\` y \`kodu.cada(ms, fn)\` en lugar de \`setTimeout\`/\`setInterval\`, para que \`kodu.cancelarTemporizadores()\` los corte junto con los festejos.
+- \`kodu.pantalla(nombre)\` muestra \`[data-pantalla="nombre"]\`, esconde el resto e ignora el doble toque; \`kodu.ocupado()\` lo indica.
 - \`[hidden]\` ya oculta siempre, incluso con \`flex\`/\`grid\`/\`block\` encima.
 
 ## Calidad pedagógica

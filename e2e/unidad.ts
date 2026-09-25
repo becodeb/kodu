@@ -692,6 +692,37 @@ await prueba('buildSystemPrompt: lleva las tres reglas nuevas de "Que funcione d
   }
 });
 
+// ── Round 4, T15 (arnes-robustez): window.__koduPruebas (Part A) y las
+// cinco reglas/helpers de Part B (kodu.pantalla, progreso en ramas, festejar
+// en finales negativos, atajos de teclado, evaluar al entrar) ──
+
+await prueba('buildSystemPrompt: documenta window.__koduPruebas con un ejemplo corto (Part A, T15)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(prompt.includes('window.__koduPruebas'), 'falta mencionar window.__koduPruebas');
+  assert.ok(prompt.includes('t.clic'), 'falta documentar el ayudante t.clic');
+  assert.ok(prompt.includes('t.texto'), 'falta documentar el ayudante t.texto');
+  assert.ok(prompt.includes('t.esperar'), 'falta documentar el ayudante t.esperar');
+  assert.ok(prompt.includes('nunca debilites una prueba'), 'falta la advertencia de no debilitar una prueba para que pase');
+  assert.ok(
+    prompt.includes("window.__koduPruebas=[{id:'c1',prueba:async t=>"),
+    'falta el ejemplo corto de window.__koduPruebas',
+  );
+});
+
+await prueba('buildSystemPrompt: lleva las cinco reglas/helpers de Part B (T15)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'kodu.pantalla(nombre)', // helper: pantallas + candado del doble toque
+    'contador fijo tipo "3 de 10"', // 14: progreso en caminos ramificados
+    'ni en un final negativo', // 8 (actualizada): festejar sólo en positivo
+    'nada dispara con `kodu.ocupado()`', // 15: atajos de teclado respetan el mismo estado
+    'evaluá al toque si ya está resuelto', // 16: evaluar al entrar a un paso/desafío
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla/helper de Part B (T15): "${marca}"`);
+  }
+});
+
 await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {
   // Marca del JSON embebido en `tailwind.config = {...}` (construirTailwindConfig):
   // NO se puede usar la cadena "tailwind.config" sola para probar el plegado,
