@@ -202,9 +202,13 @@ async function main(): Promise<void> {
       speed: 'fast',
     });
     assert.equal(statusFast, 200);
-    assert.equal(mock.llamadas.length, 1, 'un solo turno tiene que haber llegado al mock');
-    assert.equal(mock.llamadas[0]!.body.reasoning_effort, 'none', 'prime + Rápido tiene que mandar reasoning_effort "none"');
-    assert.ok(!('thinking' in mock.llamadas[0]!.body), 'nunca el nombre del otro dialecto');
+    // T16 (round 4, "checklist del docente"): `proyectoMarcado` es nuevo y
+    // éste es su primer turno (`esRecursoInicial`) — hay un pedido de
+    // checklist propio antes del turno principal, 2 pedidos, no 1. Se lee
+    // con `.at(-1)`, el turno principal, no el de checklist.
+    assert.equal(mock.llamadas.length, 2, 'checklist + turno principal tienen que haber llegado al mock');
+    assert.equal(mock.llamadas.at(-1)!.body.reasoning_effort, 'none', 'prime + Rápido tiene que mandar reasoning_effort "none"');
+    assert.ok(!('thinking' in mock.llamadas.at(-1)!.body), 'nunca el nombre del otro dialecto');
     console.log('✔ escena A: prime + Rápido → reasoning_effort "none"');
 
     // ───────────────────────────────────────────────────────────
@@ -248,9 +252,10 @@ async function main(): Promise<void> {
       speed: 'deep',
     });
     assert.equal(statusIgnorado, 200, 'el turno igual se resuelve, no un error ni un 403');
-    assert.equal(mock.llamadas.length, 1);
+    // T16: `proyectoNormal` también es nuevo — mismo motivo que la escena A.
+    assert.equal(mock.llamadas.length, 2, 'checklist + turno principal tienen que haber llegado al mock');
     assert.equal(
-      mock.llamadas[0]!.body.reasoning_effort,
+      mock.llamadas.at(-1)!.body.reasoning_effort,
       'low',
       'sin el permiso, "deep" por API se ignora: sigue viajando el nivel configurado tal cual',
     );

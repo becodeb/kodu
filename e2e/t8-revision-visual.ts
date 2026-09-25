@@ -313,7 +313,10 @@ async function main(): Promise<void> {
     });
     assert.equal(turnoA.status, 200);
     assert.equal(turnoA.done?.revisionVisualDisponible, true, 'A fondo + visión + cambió el recurso → se ofrece');
-    assert.equal(mock.llamadas.length, 1, 'el turno normal es UNA sola llamada (html limpio, sin corrección de T7)');
+    // T16 (round 4, "checklist del docente"): `proyectoA` es nuevo y éste es
+    // su primer turno (`esRecursoInicial`) — hay un pedido de checklist
+    // propio antes del turno principal, 2 pedidos, no 1.
+    assert.equal(mock.llamadas.length, 2, 'checklist + el turno normal (html limpio, sin corrección de T7)');
     console.log('✔ escena A (1/3): el "done" del turno normal trae revisionVisualDisponible: true');
 
     const htmlTrasTurnoA = (await proyectoActual(proyectoA.id)).currentHtml;
@@ -323,10 +326,10 @@ async function main(): Promise<void> {
       fingerprint: fingerprintHtml(htmlTrasTurnoA),
     });
     assert.equal(revisionA.status, 200, revisionA.body);
-    assert.equal(mock.llamadas.length, 2, 'la revisión visual es UNA llamada más al mismo motor');
+    assert.equal(mock.llamadas.length, 3, 'la revisión visual es UNA llamada más (checklist + turno + revisión)');
     console.log('✔ escena A (2/3): un resultado cambiado dispara UNA llamada más al mismo motor');
 
-    const segundoPedido = mock.llamadas[1]!.body as {
+    const segundoPedido = mock.llamadas[2]!.body as {
       messages: Array<{ role: string; content: unknown }>;
       tool_choice: unknown;
     };
@@ -396,7 +399,9 @@ async function main(): Promise<void> {
     });
     assert.equal(turnoC.status, 200);
     assert.equal(turnoC.done?.revisionVisualDisponible, false, 'Rápido nunca ofrece la revisión visual');
-    assert.equal(mock.llamadas.length, 1, 'ninguna llamada extra');
+    // T16: mismo motivo que la escena A — checklist + turno, ninguna
+    // llamada de revisión visual de más.
+    assert.equal(mock.llamadas.length, 2, 'ninguna llamada extra además de checklist + turno');
     console.log('✔ escena C: Rápido → revisionVisualDisponible: false, sin pedido de captura');
 
     // ───────────────────────────────────────────────────────────
@@ -432,14 +437,15 @@ async function main(): Promise<void> {
       modelId,
       speed: 'deep',
     });
-    assert.equal(mock.llamadas.length, 1);
+    // T16: checklist + turno, mismo motivo que las escenas de arriba.
+    assert.equal(mock.llamadas.length, 2);
 
     const revisionE = await pedirRevisionVisual(primePage, {
       projectId: proyectoE.id,
       fingerprint: fingerprintHtml('esto no es el HTML que está en currentHtml'),
     });
     assert.equal(revisionE.status, 409, revisionE.body);
-    assert.equal(mock.llamadas.length, 1, 'con la huella desactualizada, el motor NUNCA se llama');
+    assert.equal(mock.llamadas.length, 2, 'con la huella desactualizada, el motor NUNCA se llama (sigue en checklist + turno)');
     console.log('✔ escena E: huella desactualizada → 409, sin llamar al motor');
 
     // ───────────────────────────────────────────────────────────

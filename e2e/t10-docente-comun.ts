@@ -244,8 +244,15 @@ async function verificarDocenteComun(args: {
   // Fin del turno: el compositor vuelve a decir "Enviar" recién cuando
   // `isStreaming` pasa a `false` (mismo criterio que t3-t9).
   await botonEnviar.waitFor({ state: 'visible', timeout: 30_000 });
-  assert.equal(mock.llamadas.length, 1, `[${etiqueta}] un docente común tiene que generar UN solo pedido al motor`);
-  console.log(`✔ [${etiqueta}] 4/6: exactamente un pedido al motor`);
+  // T16 (round 4, "checklist del docente"): `proyecto` es nuevo, así que
+  // lleva su propio pedido de checklist ANTES del turno principal — 2
+  // pedidos, no 1 (nada que ver con prime: corre para cualquier docente).
+  assert.equal(
+    mock.llamadas.length,
+    2,
+    `[${etiqueta}] un docente común tiene que generar checklist + UN pedido al motor`,
+  );
+  console.log(`✔ [${etiqueta}] 4/6: exactamente checklist + un pedido al motor`);
 
   const proyectoTrasTurno = await proyectoActual(proyecto.id);
   assert.ok(
@@ -299,10 +306,23 @@ async function verificarDocenteComun(args: {
     variants: 3, // pedido a mano: sin permiso, T9 lo ignora
   });
 
-  assert.equal(mock.llamadas.length, 1, `[${etiqueta}] tampoco el turno crudo puede generar más de un pedido al motor`);
+  // T16: `proyectoCrudo` también es nuevo — checklist + turno, 2 pedidos.
+  assert.equal(
+    mock.llamadas.length,
+    2,
+    `[${etiqueta}] tampoco el turno crudo puede generar más de checklist + un pedido al motor`,
+  );
   const tipos = eventos.map((e) => e.type);
   assert.ok(tipos.includes('code_delta'), `[${etiqueta}] tiene que viajar al menos un "code_delta" (vinieron: ${tipos.join(', ')})`);
-  assert.ok(!tipos.includes('phase'), `[${etiqueta}] no puede aparecer ningún evento "phase" (vinieron: ${tipos.join(', ')})`);
+  // T16: un turno de creación manda su PROPIO "phase":"planificando" (el
+  // paso de checklist) sin importar si el docente tiene prime — no cuenta
+  // como el "revisando" de T7, que sí sigue vedado sin permiso.
+  const fasesVistas = eventos.filter((e) => e.type === 'phase').map((e) => e.phase);
+  assert.deepEqual(
+    fasesVistas,
+    ['planificando'],
+    `[${etiqueta}] sólo "planificando" (checklist) puede aparecer, nunca "revisando" sin permiso (vinieron: ${fasesVistas.join(', ')})`,
+  );
   assert.ok(!tipos.includes('variant'), `[${etiqueta}] no puede aparecer ningún evento "variant" (vinieron: ${tipos.join(', ')})`);
   const done = eventos.find((e) => e.type === 'done');
   assert.ok(done, `[${etiqueta}] el turno crudo tiene que terminar con "done"`);
@@ -311,7 +331,7 @@ async function verificarDocenteComun(args: {
     `[${etiqueta}] "revisionVisualDisponible" tiene que ser falso/ausente (vino: ${JSON.stringify(done!.revisionVisualDisponible)})`,
   );
   console.log(
-    `✔ [${etiqueta}] extra: turno crudo con speed="deep"+variants=3 a mano → 1 pedido, "code_delta" sí, "phase"/"variant" no, revisionVisualDisponible falso/ausente`,
+    `✔ [${etiqueta}] extra: turno crudo con speed="deep"+variants=3 a mano → checklist+1 pedido, "code_delta" sí, sólo "planificando" de "phase", "variant" no, revisionVisualDisponible falso/ausente`,
   );
 }
 

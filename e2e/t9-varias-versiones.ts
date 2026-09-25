@@ -5,6 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { DEFAULT_HTML, MENSAJE_VERSIONES_LISTAS } from '../src/lib/ai/versiones.ts';
+import { MARCADOR_SISTEMA_CHECKLIST } from '../src/lib/ai/checklist.ts';
 import { abrirNavegador, BASE_URL, iniciarSesion } from './harness.ts';
 import { iniciarMockProveedor, PUERTO_POR_DEFECTO } from './mock-proveedor.ts';
 import type { Page } from 'playwright';
@@ -209,6 +210,16 @@ async function variantesDe(chatMessageId: string) {
  *  sin depender del orden de llegada. La pasada de CORRECCIÓN (T7) no lleva
  *  esta directiva (reconstruye el system prompt sin ella), así que nunca
  *  matchea acá — cae sola al FIFO/default, que es justo lo que queremos. */
+/** T16 (round 4, "checklist del docente"): todo turno que crea un recurso
+ *  NUEVO manda su propio pedido de checklist ANTES de la generación
+ *  principal — hay que poder distinguirlo del resto para no contarlo como
+ *  una de las llamadas "de versión" que estas escenas miden. */
+function esPedidoDeChecklist(body: Record<string, unknown>): boolean {
+  const mensajes = body.messages as Array<{ role: string; content: unknown }> | undefined;
+  const sistema = mensajes?.[0];
+  return typeof sistema?.content === 'string' && sistema.content.includes(MARCADOR_SISTEMA_CHECKLIST);
+}
+
 function matchVersion(indice: 1 | 2 | 3) {
   const fragmento = indice === 1 ? 'una sola oración' : indice === 2 ? 'Priorizá lo visual' : 'Priorizá el juego';
   return (body: Record<string, unknown>) => {
@@ -293,9 +304,16 @@ async function main(): Promise<void> {
       variants: 3,
     });
     assert.equal(turnoA.status, 200, JSON.stringify(turnoA));
-    assert.equal(mock.llamadas.length, 3, `esperaba exactamente 3 llamadas, dio ${mock.llamadas.length}`);
+    // T16: `proyectoA` es nuevo, así que hay un pedido de checklist PROPIO
+    // (secuencial, antes de las 3 versiones) — 4 llamadas, no 3.
+    assert.equal(mock.llamadas.length, 4, `esperaba checklist + exactamente 3 llamadas, dio ${mock.llamadas.length}`);
 
-    const tiempos = mock.llamadas.map((l) => l.recibidaEn);
+    // La ventana de concurrencia sólo tiene sentido entre las 3 llamadas DE
+    // VERSIÓN — la de checklist corre antes y sola, ensancharía la medición
+    // sin decir nada sobre si las 3 versiones se dispararon juntas.
+    const llamadasDeVersion = mock.llamadas.filter((l) => !esPedidoDeChecklist(l.body));
+    assert.equal(llamadasDeVersion.length, 3);
+    const tiempos = llamadasDeVersion.map((l) => l.recibidaEn);
     const ventana = Math.max(...tiempos) - Math.min(...tiempos);
     assert.ok(ventana < 2_000, `las 3 llamadas deberían solaparse en el tiempo; ventana medida: ${ventana}ms`);
     console.log(`✔ escena A (1/5): 3 llamadas concurrentes (ventana de arribo: ${ventana}ms)`);
@@ -387,14 +405,20 @@ async function main(): Promise<void> {
     });
     assert.equal(turnoC.status, 200, JSON.stringify(turnoC));
     assert.equal(turnoC.done?.revisionVisualDisponible, false, 'versiones y revisión visual son excluyentes');
-    assert.equal(mock.llamadas.length, 6, `esperaba 3 pasadas + 3 correcciones = 6, dio ${mock.llamadas.length}`);
+    // T16: `proyectoC` también es nuevo — checklist + 3 pasadas + 3
+    // correcciones = 7, no 6.
+    assert.equal(
+      mock.llamadas.length,
+      7,
+      `esperaba checklist + 3 pasadas + 3 correcciones = 7, dio ${mock.llamadas.length}`,
+    );
 
     const variantesC = await variantesDe(turnoC.done!.messageId as string);
     assert.equal(variantesC.length, 3);
     for (const variante of variantesC) {
       assert.doesNotMatch(variante.html, /🎉/, `la versión ${variante.index} tiene que haber perdido el emoji al corregirse`);
     }
-    console.log('✔ escena C: A fondo + versiones → sin revisión visual, y cada versión se corrigió sola (6 llamadas)');
+    console.log('✔ escena C: A fondo + versiones → sin revisión visual, y cada versión se corrigió sola (7 llamadas)');
 
     // ───────────────────────────────────────────────────────────
     // Escena D — sin capacidad (ni prime, ni "para todos"): pedir variants:3
@@ -413,7 +437,9 @@ async function main(): Promise<void> {
       variants: 3,
     });
     assert.equal(turnoD.status, 200, JSON.stringify(turnoD));
-    assert.equal(mock.llamadas.length, 1, 'sin puedePedirVersiones, variants:3 se ignora del todo');
+    // T16: `proyectoD` es nuevo (aunque sin capacidad de versiones) — sigue
+    // llevando su propio pedido de checklist, 2 llamadas, no 1.
+    assert.equal(mock.llamadas.length, 2, 'sin puedePedirVersiones, variants:3 se ignora del todo (checklist + turno)');
     assert.equal(turnoD.eventos.some((e) => e.type === 'variant'), false);
     assert.notEqual(turnoD.done?.content, MENSAJE_VERSIONES_LISTAS);
     console.log('✔ escena D: docente sin capacidad + variants:3 → 1 sola llamada, sin "variant"');

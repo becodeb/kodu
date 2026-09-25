@@ -192,9 +192,12 @@ async function main(): Promise<void> {
       modelId,
     });
     assert.equal(resultadoA.status, 200, 'turno A: el pedido tiene que responder 200');
-    assert.equal(mock.llamadas.length, 1, 'turno A: tiene que sumar exactamente un pedido al mock');
+    // T16 (round 4, "checklist del docente"): `proyectoA` es nuevo, así que
+    // este turno lleva su propio pedido de checklist ANTES del turno
+    // principal — 2 pedidos, no 1.
+    assert.equal(mock.llamadas.length, 2, 'turno A: tiene que sumar checklist + el pedido principal al mock');
 
-    const pedidoA = mock.llamadas[0]!.body as unknown as PedidoMock;
+    const pedidoA = mock.llamadas.at(-1)!.body as unknown as PedidoMock;
     const sistemaA = pedidoA.messages[0]!.content as string;
     assert.equal(pedidoA.messages[0]!.role, 'system');
     assert.ok(sistemaA.includes('## Que funcione de verdad'), 'el system prompt tiene que llevar la sección nueva de T3/T4');

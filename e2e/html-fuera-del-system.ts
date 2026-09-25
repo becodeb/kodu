@@ -5,6 +5,7 @@ import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, iniciarSesion } from './harness.ts';
 import { iniciarMockProveedor, PUERTO_POR_DEFECTO } from './mock-proveedor.ts';
+import { MARCADOR_SISTEMA_CHECKLIST } from '../src/lib/ai/checklist.ts';
 import type { Page } from 'playwright';
 
 /**
@@ -162,6 +163,16 @@ interface PedidoMock {
   messages: Array<{ role: string; content: unknown }>;
 }
 
+/** T16 (round 4, "checklist del docente"): el turno 1 (`proyecto` es nuevo,
+ *  `esRecursoInicial`) manda su propio pedido de checklist ANTES del turno
+ *  principal — hay que poder sacarlo de `mock.llamadas` para que
+ *  `pedidos[i]` siga significando "el turno i+1", como antes de T16. */
+function esPedidoDeChecklist(body: Record<string, unknown>): boolean {
+  const mensajes = (body as { messages?: Array<{ role: string; content: unknown }> }).messages;
+  const sistema = mensajes?.[0];
+  return typeof sistema?.content === 'string' && sistema.content.includes(MARCADOR_SISTEMA_CHECKLIST);
+}
+
 async function main(): Promise<void> {
   const docenteId = await asegurarDocente(DOCENTE_EMAIL, DOCENTE_PASSWORD, 'Docente E2E T1 (html-fuera-del-system)');
 
@@ -204,11 +215,25 @@ async function main(): Promise<void> {
         modelId,
       });
       assert.equal(resultado.status, 200, `turno ${marca}: el pedido tiene que responder 200`);
-      assert.equal(mock.llamadas.length, indice + 1, `turno ${marca}: tiene que sumar exactamente un pedido al mock`);
+      // T16: el turno 1 (índice 0) es la creación del recurso y suma un
+      // pedido de checklist PROPIO además del turno principal — desde ahí
+      // en más, el offset de +1 se arrastra igual en cada turno posterior
+      // (ninguno de los otros tres es "recurso inicial", así que no suman
+      // un checklist propio): total acumulado = índice + 2, no índice + 1.
+      assert.equal(
+        mock.llamadas.length,
+        indice + 2,
+        `turno ${marca}: tiene que sumar exactamente un pedido al mock (más el checklist único del turno 1)`,
+      );
     }
-    console.log('✔ 4 turnos completados, un pedido al mock por turno');
+    console.log('✔ 4 turnos completados, un pedido al mock por turno (más el checklist único del turno 1)');
 
-    const pedidos = mock.llamadas.map((llamada) => llamada.body as unknown as PedidoMock);
+    // T16: se saca el pedido de checklist para que `pedidos[i]` siga
+    // significando "el turno i+1", exactamente como antes de T16.
+    const pedidos = mock.llamadas
+      .filter((llamada) => !esPedidoDeChecklist(llamada.body))
+      .map((llamada) => llamada.body as unknown as PedidoMock);
+    assert.equal(pedidos.length, 4, 'después de sacar el checklist, tienen que quedar los 4 turnos principales');
 
     // ── 1. Mensaje de sistema idéntico byte a byte dentro de cada régimen ──
     assert.equal(pedidos[0]!.messages[0]!.role, 'system');
