@@ -1514,7 +1514,7 @@ only. RDD: off globally by the user.
   Route: delegated (kit + browser harness, 2+ non-trivial files).
 - [x] T25 — Kit: unit-mode `arrastrar` leaves resource-owned ARIA alone and keeps problem units
   otherwise; Chromium e2e for mouse and keyboard drags. Route: delegated (same writer).
-- [ ] T26 — Branch merge-readiness summary (everything on `feat/arnes-robustez` since `main`,
+- [x] T26 — Branch merge-readiness summary (everything on `feat/arnes-robustez` since `main`,
   migrations, post-deploy configuration). Route: delegated mapper, summary inline.
 
 ### Round 6 fix — Progress
@@ -1620,6 +1620,44 @@ browser harness are 2+ non-trivial files).
   Verification tier: RDD is off globally by the user's own choice (per memory/prior sessions) —
   no native review ran. Verification was this writer's own functional checks plus the repeated
   browser-test runs above to rule out flakiness before committing.
+
+## Merge readiness (2026-09-25, T26)
+
+State at `c25a0aa` + docs: 54 commits over `main`, 37 files, +10055/-111. The merge base is the
+current `main` tip (`98fa485`); `main` has not moved, so there are no conflicts. No
+`experimentos/` files on this branch (they live on `exp/medicion-arnes`).
+
+What changes, by area:
+- Kit (`src/lib/ai/kit.ts`): `window.kodu` helpers (`icono`, `arrastrar` with unit mode,
+  `despues`/`cada`/`cancelarTemporizadores`, `festejar`, `mezclar`, `pantalla`/`ocupado`),
+  `[hidden]` CSS, the sentinel script (errors to the parent + self-test + `__koduPruebas`
+  runner). Saved resources carrying the pre-branch kit block are still recognized and upgraded.
+- BASE_PROMPT (`src/lib/ai/prompt.ts`): functional rules and helper docs, `__koduPruebas` doc.
+- Checklist (`src/lib/ai/checklist.ts`, `checklist-db.ts`, `stream.ts`): one extra call without
+  tools or reasoning per NEW resource (400 tokens max, 15 s timeout; empty result never blocks the
+  turn), stored in `ChatMessage.checklist`.
+- Self-test + auto-correction (`src/lib/client/autoprueba.ts`, `Workspace.tsx`,
+  `POST /api/chat/autocorreccion`): runs after every generation in a hidden iframe; on failure up to
+  2 correction rounds with reasoning `low`, one `TokenUsage` row per round, no ChatMessage or
+  snapshot. Client timeout 50 s.
+- Editor UI (`PreviewPanel.tsx`): "Esto es lo que probé" panel.
+- e2e: `navegador-kit.ts` (real Chromium), `t11`, `t12`, `arnes-robustez.ts`, unit suites; t4-t10
+  adjusted for the extra checklist call and for picking only enabled mock providers.
+
+Migrations: one, `20261004000000_checklist_de_recurso` (`ALTER TABLE "ChatMessage" ADD COLUMN
+"checklist" TEXT;`), nullable, no default, additive, safe on a populated table.
+`docker/prod-entrypoint.sh` runs `prisma migrate deploy` on start, so no manual step.
+
+After deploy:
+- No new environment variables, no compose/Dockerfile changes.
+- Recommended by the round 6 measurement: set the DeepSeek engine's reasoning level to `low` in
+  /admin (model form, `reasoningEffort`). The correction calls already use `low` internally.
+- Expect higher cost per new resource: one checklist call (~200 tokens) plus up to two correction
+  calls when the self-test fails, all charged to the teacher's quota.
+- Watch the production signals: self-test warnings shown to teachers and correction rate.
+
+Known leftovers: T4 parent checkbox is cosmetic (its subtasks are done); one pre-existing flake in
+`navegador-kit.ts` ("contenido al azar", two random renders can coincide).
 
 ## Next step
 
