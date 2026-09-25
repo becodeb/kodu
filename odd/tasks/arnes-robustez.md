@@ -992,8 +992,8 @@ branch, no PR (user instruction).
   Unit tests. Route: delegated (writer trigger: 3+ non-trivial files).
 - [x] T17 — Correction with failed tests: `autoprueba.ts` types/`necesitaCorreccion`/message,
   `autocorreccion.ts` schema, client runner timeout. Route: delegated (same writer as T16).
-- [ ] T18 — Editor UI "Esto es lo que probé" + initial checklist from the page. Route: delegated.
-- [ ] T19 — e2e in real Chromium with the mock: tests fail → corrected; tests pass; no
+- [x] T18 — Editor UI "Esto es lo que probé" + initial checklist from the page. Route: delegated.
+- [x] T19 — e2e in real Chromium with the mock: tests fail → corrected; tests pass; no
   `__koduPruebas` (old resource). Regressions: `t11`, `t7`, `unidad*`, `navegador-kit`. Route:
   delegated (same writer as T18).
 
@@ -1240,35 +1240,150 @@ branch, no PR (user instruction).
   confirms T17's schema/endpoint change didn't break the existing error/reinicio correction paths.
   Commit: `24a1b3c`.
 
+- T18 done. New `src/lib/client/checklist.ts` (pure): `EstadoItemChecklist = 'ok' | 'falla' |
+  'sinPrueba' | 'sinProbar'`; `estadoDeChecklist(items, ultimaCorrida)` crosses the checklist with
+  the latest `window.__koduPruebas` run — a THIRD state was needed beyond T17's `null`
+  (`ultimasPruebas: ResultadoPrueba[] | null | undefined` now): `undefined` = no run yet on THIS
+  html in this session ("sin probar todavía"), `null` = ran but the resource has no
+  `window.__koduPruebas` ("sin prueba automática"), an array = ran with real results (`ok`/`falla`
+  per item, by id — a checklist item with no matching test id also reads `sinPrueba`).
+  `contarChecklistOk` for the "N de TOTAL" summary. All of `Workspace.tsx`'s existing
+  `setUltimasPruebas(null)` reset points (new turn, undo, version switch, manual edit, resume-
+  after-reload) changed to `setUltimasPruebas(undefined)` — that's exactly the "haven't re-run
+  yet" case, not "ran and found nothing".
+  `src/pages/app/project/[id].astro`: reads `checklistActual(project.id)` and passes it as the new
+  `initialChecklist` prop. `Workspace.tsx`: new `checklist` state seeded from that prop, updated
+  by the SSE `checklist` event (T16, only on a creation turn); `checklistConEstado =
+  useMemo(() => estadoDeChecklist(checklist, ultimasPruebas), ...)` passed down to PreviewPanel.
+  Undo (T4): `POST .../undo` now also returns `checklist: await checklistActual(project.id)`
+  (read AFTER the transaction, since the undone message may have been the one that created it)
+  and the client applies it — the least invasive correct approach, per the task's own suggestion.
+  `GET .../threads?threadId=` (also used by the "resume a turn left running on the server" effect)
+  now returns `checklist` too, for the same reason: a resumed CREATION turn may have saved a
+  checklist this tab never saw over SSE.
+  `PreviewPanel.tsx`: "Esto es lo que probé" — a real `<details>`/`<summary>` (same pattern as
+  ChatPanel's attachment list, native keyboard/focus handling, no custom marker to avoid the
+  Safari `::-webkit-details-marker` trap), collapsed by default, right below the existing
+  `autopruebaAdvertencia` paragraph in the footer. Summary: "Esto es lo que probé · N de TOTAL".
+  Expanded: one `<li>` per item, a small hand-drawn SVG icon per state (check/warning
+  triangle/dash/clock — same inline-SVG convention as the rest of the workspace, no Lucide-in-
+  React), an `sr-only` state label before the item text (accessible even collapsed-icon-only),
+  and the `detalle` in small muted text only for `falla`. Hidden ENTIRELY when the checklist is
+  `[]` (never "0 de 0"). Colors stay discreet/ink-based per the design system (no green/amber
+  tokens exist here) — only `falla` breaks from ink-500/700 into `text-red-600`, same red already
+  used for destructive/warning affordances elsewhere in this file.
+  Tests: `e2e/unidad.ts` +4 (`estadoDeChecklist`'s four states — `undefined`→`sinProbar`,
+  `null`→`sinPrueba`, cross-by-id ok/falla/no-entry, empty-checklist edge case — plus
+  `contarChecklistOk`).
+  Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 83/83 pass (79 + 4 new).
+  Commit: `92b4c06`.
+
+- T19 done. New `e2e/t12-checklist-pruebas.ts`, same harness/pattern as `e2e/t11-autoprueba.ts`
+  (shared `kodu-mock-t3` provider/model, `reasoning_effort` dialect pisado a "none" so the
+  correction's "low" is provable). Fixture: three "desafíos" (input + Comprobar button + message),
+  each with its own `window.__koduPruebas[i]` test that sets the input, clicks, and reads the
+  message back — `c2`'s app handler has a real logic bug (`c2Bug: true` = always says "Correcto"
+  regardless of the answer), never a JS error, so it only shows up through the checklist test.
+  Checklist items are supplied to the mock via `programarRespuestaCondicional` matching
+  `MARCADOR_SISTEMA_CHECKLIST` (mock-proveedor.ts already exposes exactly that hook — no new API
+  needed on the mock, confirmed by reading its FIFO/conditional-queue code first).
+  **Scene A** (fails → corrected): 3 mock calls (checklist + main + ONE correction); the
+  correction request is asserted to contain `'c2'`, the checklist item's exact TEXT, the test's
+  exact `detalle`, and `'Nunca debilites ni borres una prueba para que pase'`; `currentHtml` ends
+  up sane; the assistant `ChatMessage.checklist` has the 3 items (read back with `leerChecklist`);
+  1 snapshot, 3 `TokenUsage` rows; UI reads "Esto es lo que probé · 3 de 3", expands to the 3 item
+  texts, no discreet warning. Screenshots (collapsed/expanded, 1280×800 and 360px wide) saved to
+  `/tmp/kodu-checklist-*.png` and inspected — mobile doesn't break the preview layout, the
+  disclosure sits cleanly under it.
+  **Scene A2** (adjustment, same project): 1 mock call total (no checklist call — asserted no
+  request's `messages[0]` carries `MARCADOR_SISTEMA_CHECKLIST`); the request's last user message
+  carries `bloqueChecklistParaAjuste`'s block (not the creation one) citing all 3 `id: texto`
+  pairs; UI still reads "3 de 3" (proof the self-test ran again on the adjusted html, since
+  `ultimasPruebas` resets to `undefined` at the start of every turn); after a page reload, the
+  summary reads "0 de 3" and all 3 items show the `sinProbar` state ("Se prueba después de cada
+  cambio") — the server-seeded checklist is there, but no run has happened yet in the fresh tab.
+  **Scene B** (sano a la primera): 2 calls (checklist + main), "3 de 3", zero corrections.
+  **Scene C** (old resource, no `window.__koduPruebas`): 2 calls, zero corrections, all 3 items
+  read "Sin prueba automática" (chosen wording — reported per the task's ask), summary "0 de 3",
+  no warning.
+  **Scene D** (still broken after 2 rounds): 4 calls (checklist + main + 2 corrections, never a
+  3rd); UI "2 de 3", the failed item shows its `detalle`, and the discreet
+  `autopruebaAdvertencia` paragraph is visible.
+  A `pageerror`/`console.error` listener on the whole run asserts zero across all five scenes.
+  Checks: `npm run check` → clean. `npx tsx e2e/t12-checklist-pruebas.ts` → all 5 scenes pass, run
+  twice, no flakiness, no leftover Chromium/mock process (port 4790 confirmed free after each
+  run).
+  **Regressions** (task's list, run in full): `npx tsx e2e/unidad.ts`,
+  `unidad-kit.ts`/`unidad-checklist.ts`/`unidad-versiones.ts`/`unidad-revision.ts`/
+  `unidad-revision-visual.ts`/`unidad-html-parcial.ts` → all pass unmodified.
+  `npx tsx e2e/navegador-kit.ts` → 58/58 pass unmodified. `npx tsx e2e/t11-autoprueba.ts` and
+  `npx tsx e2e/t7-revision-automatica.ts` → pass unmodified (T16's own writer had already adapted
+  both for the checklist call). `npx tsx e2e/t3-vista-previa-progresiva.ts` → passes unmodified.
+  Seven scripts DID need the same minimal adaptation T16 documented as expected — every one of
+  them asserted an exact `mock.llamadas.length`/`[0]`-index on a brand-new resource's FIRST turn,
+  which now also makes the checklist call: `e2e/t5-modo-prime.ts` (escena 2c), `e2e/t6-velocidad.ts`
+  (escenas A/C), `e2e/t8-revision-visual.ts` (escenas A/C/E), `e2e/t9-varias-versiones.ts` (escenas
+  A/C/D — the concurrency-window measurement in escena A also had to filter the checklist call out
+  before computing arrival-time spread, since it fires sequentially before the 3 concurrent version
+  calls), `e2e/t10-docente-comun.ts` (both the UI and the raw-turn path in the shared
+  `verificarDocenteComun`, which also had to allow the new unconditional `"phase":"planificando"`
+  event without weakening the existing "no `revisando` without permission" check),
+  `e2e/arnes-robustez.ts` (turno A), and `e2e/html-fuera-del-system.ts` (the 4-turn loop — only
+  turn 1 is a new resource, so `pedidos[]` is now built by filtering the checklist call out so
+  every existing index keeps meaning "turn i+1" unchanged). Every new number was hand-derived from
+  the actual turn shape (new resource + forcing message → 1 checklist call; adjustment or
+  already-non-empty resource → 0); nothing was loosened or guessed. Separate commit
+  (`4ef92cc`) from T18/T19, since it's cleanup that spans scripts outside this task's own new file.
+  `e2e/t4-deshacer.ts` also failed on the first run, but for an unrelated, PRE-EXISTING reason,
+  confirmed by direct DB inspection (not code reasoning alone): its `asegurarProveedorYMotorMock`
+  has no `enabled`/`apiKeyCipher` filter on its provider lookup (unlike the hardened helpers in
+  t7/t8/t11/t12, a gap already flagged in this file's own "Pendiente fuera de esta tarea" note for
+  t7/t8, just never listed for t4) — it picked up a disabled, keyless `AiProvider`/`AiModel` row
+  left over from an earlier session today, and BOTH turns silently fell back to the platform's real
+  (unconfigured) MiniMax default, replying "No pude completar el pedido...". Not a checklist
+  regression at all. Fixed by deleting that stale pair from the shared dev DB (data, not code —
+  `t4-deshacer.ts` itself was never touched); reran clean afterwards, including its own
+  `undo`-endpoint coverage (now also exercising the new `checklist` field in that response, without
+  any assertion on it — nothing to add there per this task's scope).
+  `e2e/t5-modo-prime.ts` ALSO hit two more, unrelated timeouts on its first two runs, at two
+  DIFFERENT later points each time (an admin ficha checkbox, then an admin dialog) — consistent
+  with a machine load spike observed at the time (`uptime` load average 7.68, ~99% memory used,
+  heavy swap, ~18 unrelated Chromium processes from other concurrent sessions). A third run, after
+  the load dropped back to ~1.2, passed end to end with no code changes beyond the checklist-count
+  fix — treated as environmental, not a regression.
+  Commits: `92b4c06` (T18), `357e012` (T19), `4ef92cc` (the 7-script checklist-count adaptation).
+
 ## Next step
 
-Round 4: T14–T17 completas (kit + BASE_PROMPT del lado de `window.__koduPruebas` y
-`kodu.pantalla`/`kodu.ocupado`; paso de checklist del servidor; corrección con tests fallidos),
-branch `feat/arnes-robustez` sin pushear ni mergear. Quedan T18–T19 (UI "Esto es lo que probé" en
-el editor + checklist inicial pasado desde la página del proyecto, e2e del ciclo completo en
-Chromium real) — no asignadas a esta tarea.
+Round 4 COMPLETA (T14–T19): kit + BASE_PROMPT del lado de `window.__koduPruebas` y
+`kodu.pantalla`/`kodu.ocupado`; paso de checklist del servidor; corrección con tests fallidos; UI
+"Esto es lo que probé" en el editor (checklist inicial desde la página del proyecto, actualizado
+por SSE y por deshacer); e2e del ciclo completo en Chromium real (5 escenas: falla y se corrige,
+ajuste sin checklist nuevo, sano a la primera, recurso viejo sin pruebas, sigue fallando 2 rondas).
+Branch `feat/arnes-robustez` sin pushear ni mergear (instrucción del usuario). Toda la ronda 4
+verificada de punta a punta: `npm run check` limpio, unitarios y `navegador-kit.ts` sin
+regresiones, los 5 scripts de flujo con mock (`t3`, `t7`, `t11`, `arnes-robustez.ts`,
+`html-fuera-del-system.ts`, `t5`, `t6`, `t8`, `t9`, `t10`) verdes — 7 de ellos necesitaron el mismo
+ajuste mínimo de conteo por la llamada nueva de checklist (T16), documentado arriba y en un commit
+aparte (`4ef92cc`).
 
-Pendiente de anotar para quien tome T18/T19:
-- `Workspace.tsx` ya trae `ultimasPruebas` (T17, el último resultado de `window.__koduPruebas`) y
-  recibe el evento SSE `checklist` (T16) sin guardarlo todavía en ningún estado — T18 necesita
-  agregar ese estado (o pasar el checklist inicial desde `project/[id].astro` vía
-  `checklistActual`, que ya existe en `src/lib/ai/checklist-db.ts`) para poder cruzar cada ítem
-  del checklist con su resultado por `id`.
-- El evento `checklist` nunca trae el HTML ni se persiste aparte del `ChatMessage.checklist` que
-  ya guarda T16 — no hace falta una tabla ni un endpoint nuevo para leerlo, `checklistActual` ya
-  alcanza.
-- T19 (e2e Chromium con el mock) va a necesitar que el mock devuelva un checklist real (ya lo
-  hace por defecto, ver `responderChecklistPorDefecto` en `mock-proveedor.ts`) y un HTML cuyo
-  `window.__koduPruebas` falle a propósito para ejercitar el camino nuevo de T17 — ninguno de los
-  chequeos corridos en T16/T17 lo hace todavía (T11 sigue probando sólo errores de JS/reinicio
-  roto, no pruebas de checklist).
+Pendiente, fuera del alcance de T18/T19 (no tocado a propósito):
+- `e2e/t4-deshacer.ts`: `asegurarProveedorYMotorMock` sigue sin el filtro
+  `enabled`/`apiKeyCipher` que ya tienen `t7`/`t8`/`t11`/`t12` (ver nota de Round 3 abajo, que ya
+  lo señalaba para t7/t8 pero nunca para t4) — volvió a fallar por esto en esta misma sesión
+  (pescó una fila deshabilitada dejada por otra sesión). Se arregló la base de desarrollo a mano
+  (dato, no código); el script en sí sigue con el gap.
+- El `## Que funcione de verdad` de BASE_PROMPT no menciona nada de `kodu.pantalla`/pantallas de
+  progreso en un checklist — no hace falta: el checklist es sobre COMPORTAMIENTOS observables, no
+  sobre la mecánica de pantallas de Part B (rondas independientes).
 
 Round 3 completa (T9–T13). Pendiente fuera de esta tarea: endurecer `asegurarMotorMock` en
 `e2e/t7-revision-automatica.ts` y
 `e2e/t8-revision-visual.ts` con el mismo filtro `enabled`/`apiKeyCipher` que ya usa
-`e2e/arnes-robustez.ts` (y ahora `e2e/t11-autoprueba.ts`), para no depender de limpiar la base a
-mano cada vez que la base de desarrollo compartida acumula filas deshabilitadas de otras
-sesiones.
+`e2e/arnes-robustez.ts` (y ahora `e2e/t11-autoprueba.ts`/`e2e/t12-checklist-pruebas.ts`), para no
+depender de limpiar la base a mano cada vez que la base de desarrollo compartida acumula filas
+deshabilitadas de otras sesiones — round 4 volvió a pisar exactamente este mismo problema, ahora
+también en `t4-deshacer.ts` (no listado acá originalmente).
 
 Round 2 done (T5-T8), branch not pushed or merged. Measure with DeepSeek in a later
 session, only the affected prompts (D3, D1, N2, N1), `high` x2 and `low` x1.
