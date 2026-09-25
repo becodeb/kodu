@@ -298,6 +298,14 @@ export async function* streamAutocorreccion(
         despues: string | number | boolean | null;
       }>;
     };
+    /**
+     * T17 (round 4, "checklist del docente"): los resultados de
+     * `window.__koduPruebas` de ESTA corrida de la autoprueba (T14).
+     * `null`/ausente = recurso sin checklist (viejo, o el paso T16 no
+     * generó uno) — mismo criterio de compatibilidad hacia atrás que el
+     * resto de este body.
+     */
+    pruebas?: Array<{ id: string; ok: boolean; detalle: string }> | null;
   },
   signal?: AbortSignal,
 ): AsyncGenerator<AutocorreccionEvent> {

@@ -17,6 +17,7 @@ import { normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { fingerprintHtml } from '../../../lib/ai/revision-visual.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
+import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -67,6 +68,15 @@ const controlDiffSchema = z.object({
   despues: z.union([z.string().max(500), z.number(), z.boolean(), z.null()]),
 });
 
+/** T17 (round 4, "checklist del docente"): un resultado de
+ *  `window.__koduPruebas[i]`, tal como lo normaliza el runner de
+ *  `SCRIPT_CENTINELA` (T14) — ver `ResultadoPrueba` en `autoprueba.ts`. */
+const pruebaSchema = z.object({
+  id: z.string().max(40),
+  ok: z.boolean(),
+  detalle: z.string().max(200),
+});
+
 const schema = z.object({
   projectId: z.string().min(1),
   /** `fingerprintHtml` del HTML que la autoprueba probó (T8: mismo criterio,
@@ -83,6 +93,9 @@ const schema = z.object({
     textoQueSobra: z.array(z.string().max(300)).max(5),
     controles: z.array(controlDiffSchema).max(5),
   }),
+  /** T17: opcional/nullable a propósito — un cliente viejo (o un recurso sin
+   *  checklist) sencillamente no lo manda. */
+  pruebas: z.array(pruebaSchema).max(8).optional().nullable(),
 });
 
 const encoder = new TextEncoder();
@@ -114,7 +127,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
-  const { projectId, fingerprint, ronda, errores, reinicioOk, exitoVisibleAlInicio, diferencias } = parsed.data;
+  const { projectId, fingerprint, ronda, errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas } =
+    parsed.data;
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -185,8 +199,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
     herramientaForzada: false,
   });
 
-  const informe: InformeAutoprueba = { errores, reinicioOk, exitoVisibleAlInicio, diferencias };
-  const mensajeCorreccion = construirMensajeCorreccion({ html: htmlPreCorreccion, informe, ronda });
+  const informe: InformeAutoprueba = { errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas };
+  // T17: el checklist VIGENTE lo carga el SERVIDOR (nunca lo que mande el
+  // cliente): es lo mismo que ya hace este endpoint con `htmlPreCorreccion`
+  // — el texto de cada ítem citado en la corrección tiene que ser el real.
+  const checklist = await checklistActual(project.id);
+  const mensajeCorreccion = construirMensajeCorreccion({ html: htmlPreCorreccion, informe, ronda, checklist });
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },

@@ -16,7 +16,13 @@
  *    (sólo manda el `informe` crudo), pero las dos puntas comparten el tipo
  *    `InformeAutoprueba` para que el body del POST y lo que lee el endpoint
  *    sean la misma forma.
+ *  - T17 (round 4, "checklist del docente"): `necesitaCorreccion` también
+ *    dispara con una prueba de `window.__koduPruebas` fallida, y
+ *    `construirMensajeCorreccion` cita el TEXTO de cada ítem fallido (no
+ *    sólo su id) cuando recibe el checklist vigente del proyecto.
  */
+
+import type { ItemChecklist } from './checklist.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Tipos: mismo vocabulario que `autoprueba:resultado` en kit.ts
@@ -43,6 +49,14 @@ export interface DiferenciasAutoprueba {
   controles: ControlDiff[];
 }
 
+/** T17 (round 4): un resultado de `window.__koduPruebas[i]`, tal como lo
+ *  normaliza el runner de `SCRIPT_CENTINELA` (T14, `kit.ts`). */
+export interface ResultadoPrueba {
+  id: string;
+  ok: boolean;
+  detalle: string;
+}
+
 /** Lo que necesita `construirMensajeCorreccion`/`necesitaCorreccion` — un
  *  SUBCONJUNTO de lo que manda `SCRIPT_CENTINELA` (sin `botonesTocados`,
  *  `rangosMovidos`, `volatiles`, `duracionMs`, `incompleta`: nada de eso
@@ -54,6 +68,10 @@ export interface InformeAutoprueba {
   reinicioOk: boolean | null;
   exitoVisibleAlInicio: boolean;
   diferencias: DiferenciasAutoprueba;
+  /** T17 (round 4): resultados de `window.__koduPruebas` de esta corrida.
+   *  `null`/ausente = recurso sin checklist (viejo, o T16 no llegó a
+   *  generar uno) — nunca cuenta como "hay una prueba fallida". */
+  pruebas?: ResultadoPrueba[] | null;
 }
 
 /**
@@ -68,9 +86,21 @@ export interface InformeAutoprueba {
  * (`ResultadoAutopruebaCliente`, que trae `diferencias` anidado adentro de
  * `detalles`, no al tope), y no tiene sentido reacomodar el objeto entero
  * sólo para esta pregunta.
+ *
+ * T17 (round 4): una prueba de `window.__koduPruebas` con `ok: false` cuenta
+ * igual que un error real — el checklist del docente es tan "el recurso no
+ * hace lo que tiene que hacer" como una excepción de JS.
  */
-export function necesitaCorreccion(informe: { errores: ErrorAutoprueba[]; reinicioOk: boolean | null }): boolean {
-  return informe.errores.length > 0 || informe.reinicioOk === false;
+export function necesitaCorreccion(informe: {
+  errores: ErrorAutoprueba[];
+  reinicioOk: boolean | null;
+  pruebas?: ResultadoPrueba[] | null;
+}): boolean {
+  return (
+    informe.errores.length > 0 ||
+    informe.reinicioOk === false ||
+    (informe.pruebas ?? []).some((prueba) => prueba.ok === false)
+  );
 }
 
 /**
@@ -122,8 +152,13 @@ export function construirMensajeCorreccion(args: {
   html: string;
   informe: InformeAutoprueba;
   ronda: 1 | 2;
+  /** T17 (round 4): el checklist VIGENTE del proyecto (`checklistActual`,
+   *  server-side), para citar el TEXTO de cada ítem fallido y no sólo su
+   *  id. `[]`/ausente cuando el proyecto no tiene checklist — las pruebas
+   *  fallidas se listan igual, sólo sin el texto del ítem. */
+  checklist?: ItemChecklist[];
 }): string {
-  const { html, informe, ronda } = args;
+  const { html, informe, ronda, checklist = [] } = args;
 
   const partes: string[] = [
     `${MARCADOR_CORRECCION_AUTOPRUEBA} Una autoprueba automática (un script que carga el recurso, mueve los controles y toca los botones) encontró problemas reales al usarlo (ronda ${ronda} de 2). Corregí SOLO esto, sin rediseñar ni tocar nada más del recurso:`,
@@ -154,6 +189,23 @@ export function construirMensajeCorreccion(args: {
           .map((c) => `${c.etiqueta} (antes: ${JSON.stringify(c.antes)}, ahora: ${JSON.stringify(c.despues)})`)
           .join('; ')}.`,
       );
+    }
+    indice++;
+  }
+
+  // T17 (round 4): pruebas del checklist del docente (`window.__koduPruebas`)
+  // que dieron `ok: false`. Antes de tocar nada, decidir CUÁL de los dos está
+  // mal (el recurso o la prueba) — un checklist mal escrito existe, y
+  // "arreglar" el recurso para que pase una prueba mal escrita rompería lo
+  // que el docente sí pidió.
+  const pruebasFallidas = (informe.pruebas ?? []).filter((prueba) => prueba.ok === false);
+  if (pruebasFallidas.length > 0) {
+    partes.push(
+      `${indice}. El recurso no cumple estas pruebas del checklist del docente. Para cada una, decidí primero, contra lo que pidió el docente, si lo que está mal es el RECURSO o la PRUEBA — corregí sólo lo que esté mal. Nunca debilites ni borres una prueba para que pase:`,
+    );
+    for (const prueba of pruebasFallidas) {
+      const texto = checklist.find((item) => item.id === prueba.id)?.texto;
+      partes.push(`   - ${prueba.id}${texto ? ` «${texto}»` : ''}: ${prueba.detalle}`);
     }
     indice++;
   }

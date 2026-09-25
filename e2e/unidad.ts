@@ -17,7 +17,9 @@ import {
   lineaFuente,
   necesitaCorreccion,
   type ErrorAutoprueba,
+  type ResultadoPrueba,
 } from '../src/lib/ai/autoprueba.ts';
+import type { ItemChecklist } from '../src/lib/ai/checklist.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
 import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
@@ -1261,6 +1263,110 @@ await prueba('construirMensajeCorreccion: exitoVisibleAlInicio agrega la nota, s
     ronda: 1,
   });
   assert.ok(!/completado|logrado/i.test(sinExito), 'sin exitoVisibleAlInicio no tiene que aparecer la nota');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Checklist del docente + pruebas fallidas (T17, round 4 de arnes-robustez)
+// ─────────────────────────────────────────────────────────────
+
+function pruebaDePrueba(extra: Partial<ResultadoPrueba> = {}): ResultadoPrueba {
+  return { id: 'c1', ok: false, detalle: 'el veredicto no dice "equivalentes"', ...extra };
+}
+
+await prueba('necesitaCorreccion: una prueba de window.__koduPruebas con ok:false dispara igual que un error', () => {
+  assert.equal(
+    necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: [pruebaDePrueba()] }),
+    true,
+  );
+});
+
+await prueba('necesitaCorreccion: pruebas todas ok:true no dispara nada por sí solas', () => {
+  assert.equal(
+    necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: [pruebaDePrueba({ ok: true, detalle: 'ok' })] }),
+    false,
+  );
+});
+
+await prueba('necesitaCorreccion: pruebas ausentes o null se tratan igual que "sin checklist"', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true }), false);
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: null }), false);
+});
+
+await prueba(
+  'construirMensajeCorreccion: cita el id, el TEXTO del ítem (por checklist) y el detalle de cada prueba fallida',
+  () => {
+    const checklist: ItemChecklist[] = [
+      { id: 'c1', texto: 'Si pinto 1/2 y 3/6, dice que son equivalentes' },
+      { id: 'c2', texto: 'Mover dos datos no cumple el desafío 1' },
+    ];
+    const mensaje = construirMensajeCorreccion({
+      html: 'x',
+      informe: {
+        errores: [],
+        reinicioOk: null,
+        exitoVisibleAlInicio: false,
+        diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+        pruebas: [
+          pruebaDePrueba({ id: 'c1', ok: false, detalle: 'el veredicto no dice "equivalentes"' }),
+          pruebaDePrueba({ id: 'c2', ok: true, detalle: 'todo bien' }),
+        ],
+      },
+      ronda: 1,
+      checklist,
+    });
+
+    assert.ok(mensaje.includes('c1'), 'tiene que citar el id de la prueba fallida');
+    assert.ok(
+      mensaje.includes('Si pinto 1/2 y 3/6, dice que son equivalentes'),
+      'tiene que citar el TEXTO del ítem, no sólo el id',
+    );
+    assert.ok(
+      mensaje.includes('el veredicto no dice "equivalentes"'),
+      'tiene que citar el detalle exacto que devolvió la prueba',
+    );
+    assert.ok(!mensaje.includes('c2'), 'una prueba con ok:true no se cita');
+    assert.ok(
+      /nunca debilites|nunca.*borres/i.test(mensaje),
+      'tiene que instruir a no debilitar ni borrar una prueba para que pase',
+    );
+    assert.ok(
+      /RECURSO.*PRUEBA|recurso.*prueba/i.test(mensaje),
+      'tiene que pedir decidir primero cuál de los dos (recurso o prueba) está mal',
+    );
+  },
+);
+
+await prueba('construirMensajeCorreccion: sin checklist, cita igual el id y el detalle (sin el texto del ítem)', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+      pruebas: [pruebaDePrueba({ id: 'c9', detalle: 'no coincide' })],
+    },
+    ronda: 1,
+  });
+
+  assert.ok(mensaje.includes('c9'));
+  assert.ok(mensaje.includes('no coincide'));
+});
+
+await prueba('construirMensajeCorreccion: sin pruebas fallidas, no aparece ninguna sección de checklist', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+      pruebas: [pruebaDePrueba({ ok: true })],
+    },
+    ronda: 1,
+  });
+
+  assert.ok(!/checklist/i.test(mensaje));
 });
 
 await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) son válidas', () => {

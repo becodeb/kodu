@@ -8,7 +8,7 @@ import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
 import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
-import { necesitaCorreccion } from '../../lib/ai/autoprueba.ts';
+import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import type {
   AiPhase,
@@ -182,6 +182,18 @@ export default function Workspace(props: WorkspaceProps) {
    * versión): ver los `setAutopruebaAdvertencia(false)` repartidos abajo.
    */
   const [autopruebaAdvertencia, setAutopruebaAdvertencia] = useState(false);
+
+  /**
+   * T17 (round 4, "checklist del docente"): los resultados de
+   * `window.__koduPruebas` de la ÚLTIMA autoprueba corrida (antes o después
+   * de corregir) — sólo para que T18 los pueda mostrar más adelante, no hay
+   * UI todavía. `null` = no se llegó a correr ninguna, o el recurso no
+   * tiene `window.__koduPruebas`. Se limpia junto con `autopruebaAdvertencia`
+   * en todos los mismos puntos (nuevo turno, deshacer, edición manual,
+   * cambio de versión): un resultado de un HTML que ya no es el vigente no
+   * le sirve a nadie.
+   */
+  const [ultimasPruebas, setUltimasPruebas] = useState<ResultadoPrueba[] | null>(null);
 
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
@@ -397,6 +409,7 @@ export default function Workspace(props: WorkspaceProps) {
         setMessages(result.data.messages);
         setHtml(result.data.currentHtml);
         setAutopruebaAdvertencia(false);
+        setUltimasPruebas(null); // T17: mismo criterio, el HTML acá es otro.
         setIsStreaming(false);
         setAiPhase('idle');
         setTurnoDesde(null);
@@ -422,6 +435,7 @@ export default function Workspace(props: WorkspaceProps) {
     // había quedado uno del turno anterior, ya no aplica al recurso que
     // está por escribirse.
     setAutopruebaAdvertencia(false);
+    setUltimasPruebas(null); // T17: mismo criterio.
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -747,6 +761,11 @@ export default function Workspace(props: WorkspaceProps) {
 
       if (!resultado) return; // timeout o "Detener": no se pudo probar, nada que avisar.
 
+      // T17: se guarda ANTES de decidir si hace falta corregir — así, si
+      // esta era la última ronda (sana o no), T18 tiene el resultado real
+      // de ESTE recurso, no el de una ronda anterior.
+      setUltimasPruebas(resultado.pruebas);
+
       if (!necesitaCorreccion(resultado)) {
         setAutopruebaAdvertencia(false); // sano: por si quedaba un aviso de una ronda anterior de ESTE turno.
         return;
@@ -772,6 +791,10 @@ export default function Workspace(props: WorkspaceProps) {
             reinicioOk: resultado.reinicioOk,
             exitoVisibleAlInicio: resultado.exitoVisibleAlInicio,
             diferencias: resultado.detalles.diferencias,
+            // T17 ("checklist del docente"): el servidor carga el checklist
+            // vigente por su cuenta (`checklistActual`) para citar el TEXTO
+            // de cada ítem — acá sólo van los resultados crudos.
+            pruebas: resultado.pruebas,
           },
           abortador.current.signal,
         )) {
@@ -877,6 +900,7 @@ export default function Workspace(props: WorkspaceProps) {
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: deshacer cambió el recurso, cualquier aviso viejo ya no aplica.
+    setUltimasPruebas(null); // T17: mismo criterio.
 
     const ahora = Date.now();
     setMessages((current) =>
@@ -914,6 +938,7 @@ export default function Workspace(props: WorkspaceProps) {
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: cambio de versión, cualquier aviso viejo ya no aplica.
+    setUltimasPruebas(null); // T17: mismo criterio.
 
     setMessages((current) =>
       current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
@@ -1144,6 +1169,7 @@ export default function Workspace(props: WorkspaceProps) {
           // vieja (design §6).
           if (screenshotUrl) setPortadaVieja(true);
           setAutopruebaAdvertencia(false); // T12: edición manual, cualquier aviso viejo ya no aplica.
+          setUltimasPruebas(null); // T17: mismo criterio.
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}

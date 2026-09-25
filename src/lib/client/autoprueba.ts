@@ -1,4 +1,4 @@
-import type { DiferenciasAutoprueba, ErrorAutoprueba } from '../ai/autoprueba.ts';
+import type { DiferenciasAutoprueba, ErrorAutoprueba, ResultadoPrueba } from '../ai/autoprueba.ts';
 
 /**
  * Cliente de la autoprueba (round 3, T12 de `arnes-robustez`): corre el
@@ -29,6 +29,11 @@ export interface ResultadoAutopruebaCliente {
   errores: ErrorAutoprueba[];
   reinicioOk: boolean | null;
   exitoVisibleAlInicio: boolean;
+  /** T17 (round 4, "checklist del docente"): resultados de
+   *  `window.__koduPruebas` (T14, `SCRIPT_CENTINELA`). `null` = el recurso
+   *  no tiene `window.__koduPruebas` (viejo, o sin checklist) — nunca
+   *  cuenta como "hay una prueba fallida" (`necesitaCorreccion`). */
+  pruebas: ResultadoPrueba[] | null;
   detalles: {
     botonesTocados: string[];
     rangosMovidos: string[];
@@ -52,10 +57,16 @@ export interface OpcionesAutopruebaIframe {
   timeoutMs?: number;
 }
 
-/** Mismo presupuesto que documenta `SCRIPT_CENTINELA` del lado del kit
- *  (~20s internos) más margen para el viaje de ida/vuelta del postMessage y
- *  la carga inicial del iframe. */
-const TIMEOUT_MS_DEFECTO = 25_000;
+/**
+ * T17 (round 4): subido de 25s a 50s. `SCRIPT_CENTINELA` documenta un peor
+ * caso de ~44s desde T14 (20s de verificaciones de base + hasta 8 pruebas de
+ * `window.__koduPruebas` × 3s cada una) — 25s se quedaba corto ANTES de que
+ * el iframe llegara a contestar, así que toda autoprueba con checklist
+ * terminaba en "no se pudo probar" por timeout del lado del cliente, nunca
+ * por lo que pasó adentro. 50s deja margen sobre esos ~44s más el viaje de
+ * ida/vuelta del postMessage y la carga inicial del iframe.
+ */
+const TIMEOUT_MS_DEFECTO = 50_000;
 
 /**
  * Corre la autoprueba sobre `html` en un iframe oculto, recién creado para
