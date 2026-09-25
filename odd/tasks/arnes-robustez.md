@@ -925,6 +925,80 @@ merge, no push. Prompt growth for Part A ≤ ~150 tokens.
     en `finally`); el único proceso Chromium visto en la máquina durante estas corridas ya
     estaba ahí antes (mismo PID, de otra sesión, no tocado).
 
+
+## Round 4 (2026-09-25): teacher checklist + in-resource tests, and five new patterns
+
+Source: `exp/medicion-arnes:experimentos/razonamiento/RESULTADOS-arnes.md` ("Ronda 4") and
+`resultados/ronda4-puntajes.json`. The self-test ran in all 12 generations and never triggered a
+correction: the remaining defects are LOGIC defects relative to what the teacher asked (a challenge
+stuck after moving two data points, a step already satisfied that is not marked on entry, a double
+click that lands on the next screen, a fixed "N of 3" counter on a branching path, confetti on a
+negative ending, Space firing during the victory pause).
+
+Constraints: no paid calls (mock provider only), `npm run check` clean, previous regressions green,
+work-unit commits, no merge, no push. Part B prompt growth ≤ ~150 tokens. TDD: off (no test runner
+configured; source: repo has none, `e2e/*.ts` scripts run with `npx tsx`). RDD: off globally by the
+user (2026-09-23), so verification is writer self-check + parent spot checks. Delivery: single
+branch, no PR (user instruction).
+
+### Design decisions (parent)
+
+- **Checklist = a separate cheap call** inside the same `/api/chat/stream` request, before the main
+  generation, only when `esRecursoInicial(project.currentHtml)` (new resource), never on
+  adjustments. Reasoning via `razonamientoEfectivo(provider, 'fast')` (= `none`). Independent of the
+  generator on purpose: tests written in the same pass as the code share the code's misreading of
+  the request. Output: 3–6 items, plain lines parsed server-side (portable across providers, no
+  tool/JSON-mode dependency). Failure or timeout (~15 s) never blocks the turn: it continues without
+  a checklist. One `TokenUsage` row for the call.
+- **Item shape**: `{ id: 'c1', texto: 'Si pinto 1/2 y 3/6, dice que son equivalentes' }`.
+- **Storage**: new nullable `ChatMessage.checklist String?` (JSON string, same convention as
+  `attachments`) on the ASSISTANT message of the turn that created it. Current checklist of a
+  project = latest assistant message with `checklist != null` and `undoneAt == null`. Undo (T4)
+  therefore drops it naturally.
+- **Generation**: the checklist travels in the last user message of the main call (never in the
+  teacher's stored `ChatMessage.content`), asking for one `__koduPruebas` entry per item id. In
+  later adjustment turns the current checklist is appended to the current-resource block so the
+  model keeps the tests aligned.
+- **`window.__koduPruebas` contract**:
+  `[{ id: 'c1', prueba: async (t) => ({ ok: boolean, detalle: string }) }]`; `t` =
+  `{ esperar(ms), clic(selectorOrElement), texto(selector) }`. Each test starts by calling the
+  resource's own reset. Invisible to the student: the array only runs on `kodu:autoprueba`.
+- **Runner** (kit, `SCRIPT_CENTINELA`): after the existing checks (after the reset check), run at
+  most 8 tests, 3 s timeout each, errors caught into `{ok:false, detalle}`; `detalle` truncated to
+  200 chars. Result gets `pruebas: null | [{id, ok, detalle}]` (`null` = no `__koduPruebas` or not
+  an array: old resources keep working). The client timeout grows to cover the test phase.
+- **Correction**: `necesitaCorreccion` also fires on any failed test; the correction body carries
+  the failed tests; the server loads the checklist text itself; the correction message tells the
+  model to decide whether the resource or the test is wrong against the teacher's request and never
+  weaken a test to make it pass. Still max 2 rounds.
+- **Teacher UI**: "Esto es lo que probé", collapsed by default, discreet, in the preview panel:
+  passed (check), failed after corrections (warning), no test for this item, not run yet. Visible
+  by default (no flag): it only states what was tested.
+- **Part B kit**: `kodu.pantalla(nombre)` shows `[data-pantalla=nombre]`, hides the other
+  `[data-pantalla]`, and for ~400 ms swallows TRUSTED pointerdown/click/keydown in capture phase
+  (synthetic clicks from the self-test and `__koduPruebas` pass). `kodu.ocupado()` reports the lock.
+  Prompt: one-line rules for branching progress, festejar only on positive endings, shortcuts
+  respect disabled/transition state, evaluate a step's condition on entry.
+
+### Tasks
+
+- [ ] T14 — Kit: `__koduPruebas` runner in the self-test + `kodu.pantalla`/`kodu.ocupado`; browser
+  tests in `e2e/navegador-kit.ts`. Route: delegated (writer trigger: kit + browser tests).
+- [ ] T15 — BASE_PROMPT: `__koduPruebas` doc with a short example (Part A) and Part B rules;
+  `e2e/unidad.ts`; chars/tokens of each part. Route: delegated (same writer as T14).
+- [ ] T16 — Server: checklist step (`src/lib/ai/checklist.ts`), migration for
+  `ChatMessage.checklist`, wiring in `stream.ts` (new resources only, SSE `checklist` event,
+  TokenUsage row, injection into generation and adjustment turns), current-checklist lookup.
+  Unit tests. Route: delegated (writer trigger: 3+ non-trivial files).
+- [ ] T17 — Correction with failed tests: `autoprueba.ts` types/`necesitaCorreccion`/message,
+  `autocorreccion.ts` schema, client runner timeout. Route: delegated (same writer as T16).
+- [ ] T18 — Editor UI "Esto es lo que probé" + initial checklist from the page. Route: delegated.
+- [ ] T19 — e2e in real Chromium with the mock: tests fail → corrected; tests pass; no
+  `__koduPruebas` (old resource). Regressions: `t11`, `t7`, `unidad*`, `navegador-kit`. Route:
+  delegated (same writer as T18).
+
+### Round 4 Progress
+
 ## Next step
 
 Round 3 completa (T9–T13), branch `feat/arnes-robustez` sin pushear ni mergear. Pendiente fuera
