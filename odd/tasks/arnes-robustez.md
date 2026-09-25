@@ -1365,17 +1365,121 @@ returns 6 items in 188 tokens. The mock never calls tools, so no test saw it.
 Constraints: no paid calls, `npm run check` clean, regressions green, work-unit commits, no merge,
 no push. TDD: off (same source as above). Functional checks only.
 
-- [ ] T20 — `requestCompletionStream`/`intentarUna`: option to send NO `tools`/`tool_choice` for
+- [x] T20 — `requestCompletionStream`/`intentarUna`: option to send NO `tools`/`tool_choice` for
   auxiliary calls; `generarChecklist` uses it. Audit of the other callers: main turn, T7 revision,
   retry, per-version generation, visual review and self-test correction all write the resource, so
   they keep the tool. Route: delegated (2+ non-trivial files).
-- [ ] T21 — `console.warn` with the reason whenever the checklist ends empty (parse failure,
+- [x] T21 — `console.warn` with the reason whenever the checklist ends empty (parse failure,
   `finish_reason: length`, tool call instead of text, timeout, provider error).
-- [ ] T22 — Mock mode "eager to use the tool": with `tools` + `tool_choice: auto` it answers a
+- [x] T22 — Mock mode "eager to use the tool": with `tools` + `tool_choice: auto` it answers a
   tool call. Test that would have caught this: checklist still generated in that mode, and the
   checklist request carries no `tools`.
-- [ ] T23 — Resource tests use the checklist ids (c1…cN): the generation prompt names the exact
+- [x] T23 — Resource tests use the checklist ids (c1…cN): the generation prompt names the exact
   ids, and "Esto es lo que probé" matches by id (unit-tested).
+
+### Round 5 fix — Progress
+
+- T20 done. `src/lib/ai/provider.ts`: `requestCompletionStream`/`intentarUna` gain
+  `sinHerramientas?: boolean`. When true, the request body OMITS both `tools` and `tool_choice`
+  entirely (`undefined` fields, dropped by `JSON.stringify` — not `tool_choice: 'none'`, which still
+  leaves `tools` visible to the model). Incompatible with `forzarHerramienta`: `sinHerramientas`
+  wins, `forzarHerramienta` is ignored when both are set (documented on the option and enforced in
+  `requestCompletionStream`, before the retry loop that handles `ToolChoiceNoSoportado`).
+  `src/pages/api/chat/stream.ts`: `generarChecklist` now passes `sinHerramientas: true`.
+  - Audit of every other `requestCompletionStream` caller (`grep -n
+    "requestCompletionStream(" src/`, 9 call sites total): main turn (~1089, `forzarHerramienta:
+    forzar`), T7 auto-review revision (~450 and ~1416, `forzarHerramienta: true`), retry after a
+    broken tool call (~1540, forces `update_resource_code` again), per-version generation (~388,
+    `forzarHerramienta: true`), `autocorreccion.ts` (~252, `forzarHerramienta: true`) and
+    `visual-review.ts` (~244, `forzarHerramienta: false` but still expects a possible
+    `update_resource_code` tool event — the model may decide nothing needs fixing, per its own
+    comment). All nine read a `'tool'` event with `UPDATE_RESOURCE_CODE` afterwards and apply the
+    result to the resource — confirmed by reading each call site, not just trusting the task
+    description. `generarChecklist` (~536) was the only call that builds a message-only
+    prompt (`construirMensajesChecklist`) and never reads a `'tool'` event — the one true auxiliary
+    call. No other non-resource auxiliary call exists.
+  - Checks: `npm run check` → clean.
+- T21 done. `generarChecklist` (`stream.ts`) now distinguishes, on an empty checklist:
+  timeout (own `CHECKLIST_TIMEOUT_MS` vs. an external abort — tracked via a `motivoAbort` flag set
+  by whichever `AbortController` listener fires first), provider error (the caught error's
+  message), a tool call instead of text (`llamoHerramienta`, set from either the `'tool_start'` or
+  `'tool'` stream event — kept as a safety log even though T20 should make it impossible), token-cap
+  truncation (`finish_reason === 'length'`, from the *already-existing* `'finish'` event in
+  `readCompletionStream` — no change needed there, it already carries `reason`), and parse failure
+  (fewer than 2 valid items). The truncation/parse-failure branches log the raw text length plus a
+  120-char excerpt (`CHECKLIST_LOG_EXCERPT`). Contract unchanged: never throws, always returns `[]`
+  on failure, usage still recorded before the empty-check.
+  - Checks: `npm run check` → clean.
+- T22 done. `e2e/mock-proveedor.ts`: new "ansioso con la herramienta" mode
+  (`MockProveedorOpciones.ansiosoConHerramienta` at start, or live via
+  `mock.establecerAnsiosoConHerramienta(activar)`). Checked at the very top of `manejarPedido`,
+  before the condicional queue, the checklist marker and the FIFO: any request with a non-empty
+  `tools` array AND `tool_choice` either `'auto'` or absent gets a one-shot
+  `update_resource_code` tool call (`responderConHerramientaAnsiosa`) instead of whatever would
+  otherwise answer it — including the checklist request when it still carries `tools` (pre-T20
+  behavior). A request without `tools` (the checklist post-T20) falls through untouched.
+  - Extended `e2e/t12-checklist-pruebas.ts` (already had the full checklist end-to-end harness)
+    with **Escena E**: turns the mode on, sends a new-resource turn, then asserts (a) the recorded
+    checklist request (`mock.llamadas`, matched by `MARCADOR_SISTEMA_CHECKLIST`) has neither a
+    `'tools'` nor a `'tool_choice'` key, and (b) the persisted `ChatMessage.checklist` still has
+    ≥2 items.
+  - Also a pure unit-level check in `e2e/unidad.ts` (no browser, no dev server): a throwaway
+    `node:http` server captures the body `requestCompletionStream` actually sends: with
+    `sinHerramientas: true` neither key exists; without it, `tools`/`tool_choice: 'auto'` are
+    there as always; with both `sinHerramientas: true` AND `forzarHerramienta: true`,
+    `sinHerramientas` wins (both keys still absent).
+  - **Fail→pass proof**: temporarily removed `sinHerramientas: true` from `generarChecklist`,
+    reran `npx tsx e2e/t12-checklist-pruebas.ts` → escena E FAILED exactly on the "no debe llevar
+    tools" assertion (`AssertionError: T20: el pedido de checklist no tiene que llevar la clave
+    "tools" en absoluto`, `e2e/t12-checklist-pruebas.ts:544`) — reproducing the real defect end to
+    end against the mock. Restored the fix, `npm run check` clean, reran the same script → all
+    scenes (A/A2/B/C/D/E) passed, including escena E.
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad.ts` → 89/89 pass (3 new
+    `requestCompletionStream`/`sinHerramientas` tests). `npx tsx e2e/t12-checklist-pruebas.ts` →
+    all 6 scenes pass, run twice (once for the fail→pass proof, once clean after).
+- T23 done. `src/lib/ai/checklist.ts`: `bloqueChecklistParaGenerar`/`bloqueChecklistParaAjuste`
+  (per-request blocks, NOT `BASE_PROMPT` — that stays untouched, size budget respected) now add
+  "Usá exactamente estos ids: c1, c2, …; no inventes otros ni cambies el orden" right after the
+  existing "mismo id" instruction, with the ids listed in the SAME order as the checklist items
+  (never re-sorted). Checked first whether an exact-ids assertion already existed
+  (`bloqueChecklistParaGenerar`/`Ajuste` tests in `e2e/unidad-checklist.ts` only used `.includes`
+  substring checks on id:texto lines, never asserted or required the OLD wording, so no existing
+  test needed updating).
+  - New unit tests: `e2e/unidad-checklist.ts` (3) — both blocks contain the exact-ids instruction
+    with the ids in order, and a dedicated test that the id list follows item order, not
+    alphabetical/numeric order. `e2e/unidad.ts` (1) — `estadoDeChecklist` with an autoprueba result
+    whose ids are all foreign (`prueba-reinicio`, `prueba-festejo`, `prueba-arrastre`, none of them
+    `c1`/`c2`/`c3`) leaves every item `'sinPrueba'`; the pre-existing "cruza por id" test already
+    covered the mixed case (`c1`/`c3` matching, `c2` missing) with `'ok'`/`'falla'`, so this new
+    one covers the "all foreign" scenario specifically, matching the real defect (a resource
+    without a checklist used its own invented ids for every test).
+  - Checks: `npm run check` → clean. `npx tsx e2e/unidad-checklist.ts` → 19/19 pass. `npx tsx
+    e2e/unidad.ts` → 89/89 pass.
+
+Full round-5 verification (all commands, run after T20-T23 were all in place):
+- `npm run check` → clean.
+- `npx tsx e2e/unidad-checklist.ts` → 19/19 pass. `npx tsx e2e/unidad.ts` → 89/89 pass. `npx tsx
+  e2e/unidad-kit.ts`, `e2e/unidad-html-parcial.ts`, `e2e/unidad-revision.ts`,
+  `e2e/unidad-revision-visual.ts`, `e2e/unidad-versiones.ts` → all pass (unaffected by this round,
+  reran anyway).
+- `npx tsx e2e/t12-checklist-pruebas.ts` (extended, escena E) → all 6 scenes pass.
+- `npx tsx e2e/arnes-robustez.ts` → A/B/C pass.
+- `npx tsx e2e/t11-autoprueba.ts` → all 4 scenes pass.
+- `npx tsx e2e/t7-revision-automatica.ts` → all 6 scenes (A-F) pass.
+- `npx tsx e2e/t8-revision-visual.ts` → all 8 scenes (A-H) pass.
+- `npx tsx e2e/t3-vista-previa-progresiva.ts` → all checks pass, including the `code_reset`
+  fallback sequence.
+- No paid model calls made (mock provider only, `e2e/mock-proveedor.ts`). Dev server on :3000 and
+  `kodu_db_dev` were already up (left by a previous session) — reused, not stopped (same standing
+  rule: only stop a server started in this task).
+- Route: delegated direct (writer trigger: 2+ non-trivial files touched per task — `provider.ts` +
+  `stream.ts` for T20/T21, `mock-proveedor.ts` + `t12-checklist-pruebas.ts` + `unidad.ts` for T22,
+  `checklist.ts` + `unidad-checklist.ts` + `unidad.ts` for T23).
+- Commits: `98accfd` (fix(chat): T20+T21), `26b8a2a` (test(e2e): T22), `42c3c0f` (fix(ai): T23).
+- Branch `feat/arnes-robustez`, no merge, no push (user's standing instruction).
+- RDD: off globally by the user's choice since 2026-09-23 — no native review lifecycle ran.
+  Verification was this writer's own checks (the parent orchestrator did not run a separate spot
+  check in this pass).
 
 ## Next step
 
