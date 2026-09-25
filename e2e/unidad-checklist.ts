@@ -170,6 +170,35 @@ await prueba('bloqueChecklistParaGenerar y bloqueChecklistParaAjuste son textos 
   assert.notEqual(bloqueChecklistParaGenerar(ITEMS_DE_PRUEBA), bloqueChecklistParaAjuste(ITEMS_DE_PRUEBA));
 });
 
+// T23: los recursos sin checklist salían con tests de ids propios (p. ej.
+// `prueba-reinicio`) en vez de `c1`/`c2` — el cruce por id de
+// `estadoDeChecklist` (src/lib/client/checklist.ts) no encuentra nada y
+// deja todo el checklist en "sinPrueba". Los dos bloques ahora piden los
+// ids EXACTOS, no sólo "el mismo id".
+
+await prueba('bloqueChecklistParaGenerar: pide los ids EXACTOS, en orden, sin inventar otros', () => {
+  const bloque = bloqueChecklistParaGenerar(ITEMS_DE_PRUEBA);
+  assert.ok(/exactamente estos ids/i.test(bloque));
+  assert.ok(bloque.includes('c1, c2'), 'los ids van en el mismo orden que los ítems');
+  assert.ok(/no inventes otros/i.test(bloque));
+});
+
+await prueba('bloqueChecklistParaAjuste: pide los ids EXACTOS, en orden, sin inventar otros', () => {
+  const bloque = bloqueChecklistParaAjuste(ITEMS_DE_PRUEBA);
+  assert.ok(/exactamente estos ids/i.test(bloque));
+  assert.ok(bloque.includes('c1, c2'), 'los ids van en el mismo orden que los ítems');
+  assert.ok(/no inventes otros/i.test(bloque));
+});
+
+await prueba('bloqueChecklistParaGenerar: la lista de ids sigue el orden de los ítems, no orden alfabético', () => {
+  const itemsDesordenados: ItemChecklist[] = [
+    { id: 'c3', texto: 'tercer ítem' },
+    { id: 'c1', texto: 'primer ítem' },
+  ];
+  const bloque = bloqueChecklistParaGenerar(itemsDesordenados);
+  assert.ok(bloque.includes('c3, c1'), 'la lista de ids respeta el orden recibido, no lo reordena');
+});
+
 if (fallas > 0) {
   console.error(`\n✖ e2e/unidad-checklist.ts: ${fallas} prueba(s) fallaron`);
   process.exitCode = 1;

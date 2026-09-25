@@ -1498,6 +1498,26 @@ await prueba('estadoDeChecklist: cruza por id — ok/falla/sin prueba propia, nu
   assert.equal(contarChecklistOk(resultado), 1, 'sólo c1 cuenta para el resumen "N de TOTAL"');
 });
 
+await prueba(
+  'estadoDeChecklist (T23): un recurso que probó con ids propios (no c1..cN) deja TODO el checklist "sinPrueba"',
+  () => {
+    // Reproduce el defecto real: sin la instrucción explícita de ids, el
+    // modelo escribió `window.__koduPruebas` con sus propios ids en vez de
+    // los del checklist — el cruce por id no encuentra ninguno.
+    const pruebasConIdsPropios: ResultadoPrueba[] = [
+      { id: 'prueba-reinicio', ok: true, detalle: '' },
+      { id: 'prueba-festejo', ok: false, detalle: 'no debería aparecer' },
+      { id: 'prueba-arrastre', ok: true, detalle: '' },
+    ];
+    const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, pruebasConIdsPropios);
+    assert.ok(
+      resultado.every((item) => item.estado === 'sinPrueba'),
+      'ningún id propio coincide con c1/c2/c3, así que ningún ítem se puede dar por probado',
+    );
+    assert.equal(contarChecklistOk(resultado), 0);
+  },
+);
+
 await prueba('estadoDeChecklist: [] de checklist da [] de resultado (nunca revienta con corrida vacía)', () => {
   assert.deepEqual(estadoDeChecklist([], undefined), []);
   assert.deepEqual(estadoDeChecklist([], []), []);

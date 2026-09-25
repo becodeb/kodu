@@ -121,10 +121,12 @@ export function leerChecklist(json: string | null): ItemChecklist[] {
  * en `window.__koduPruebas` (el runner ya documentado en BASE_PROMPT, T15).
  */
 export function bloqueChecklistParaGenerar(items: ItemChecklist[]): string {
+  const ids = items.map((item) => item.id).join(', ');
   const lineas = items.map((item) => `${item.id}: ${item.texto}`).join('\n');
   return (
     'Checklist de comportamientos que el recurso tiene que cumplir. Agregá window.__koduPruebas con una ' +
-    `prueba por ítem, con el mismo id:\n${lineas}`
+    `prueba por ítem, con el mismo id. Usá exactamente estos ids: ${ids}; no inventes otros ni cambies el ` +
+    `orden.\n${lineas}`
   );
 }
 
@@ -135,9 +137,11 @@ export function bloqueChecklistParaGenerar(items: ItemChecklist[]): string {
  * `window.__koduPruebas` alineado, no crearlo de cero.
  */
 export function bloqueChecklistParaAjuste(items: ItemChecklist[]): string {
+  const ids = items.map((item) => item.id).join(', ');
   const lineas = items.map((item) => `${item.id}: ${item.texto}`).join('\n');
   return (
     'Checklist vigente de este recurso: mantené window.__koduPruebas alineado con estos ítems (mismos ids). ' +
+    `Usá exactamente estos ids: ${ids}; no inventes otros ni cambies el orden. ` +
     `Si este cambio modifica un comportamiento que ya se prueba, actualizá esa prueba:\n${lineas}`
   );
 }
