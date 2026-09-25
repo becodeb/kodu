@@ -101,7 +101,12 @@ async function asegurarDocente(email: string, password: string, nombre: string):
 }
 
 async function asegurarMotorMock(adminPage: Page, mockUrl: string): Promise<string> {
-  const proveedorExistente = await prisma.aiProvider.findFirst({ where: { kind: PROVIDER_KIND } });
+  // Only a live, keyed account: the dev DB accumulates disabled leftovers under
+  // the shared kind, and picking one silently falls back to the default model.
+  const proveedorExistente = await prisma.aiProvider.findFirst({
+    where: { kind: PROVIDER_KIND, enabled: true, apiKeyCipher: { not: null } },
+    orderBy: { id: 'asc' },
+  });
   let providerId = proveedorExistente?.id ?? null;
 
   if (!providerId) {
