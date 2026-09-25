@@ -1481,6 +1481,42 @@ Full round-5 verification (all commands, run after T20-T23 were all in place):
   Verification was this writer's own checks (the parent orchestrator did not run a separate spot
   check in this pass).
 
+## Round 6 fix (2026-09-25): two kit defects found measuring with real DeepSeek
+
+Source: `exp/medicion-arnes`, `experimentos/razonamiento/RESULTADOS-arnes.md`, "Ronda 6".
+
+1. `kodu.ocupado()` swallows the synthetic clicks of `__koduPruebas`. N2 (Revolución de Mayo)
+   guards its handlers with `if (kodu.ocupado()) return;` as the prompt asks, and its tests do
+   `reiniciar()` (which calls `kodu.pantalla('juego')`) and then `t.clic(...)` within the 400 ms
+   lock. The click is ignored, the test fails, a useless correction runs and the teacher sees a
+   false alarm.
+2. Unit-mode `kodu.arrastrar` overwrites the resource's own `aria-valuemin/max/now`. D3 declares
+   `aria-valuemin=140`/`aria-valuemax=170` (valid data range) and calls `arrastrar` with the axis
+   range `min:135, max:175`; the kit rewrites min/max to 135/175 and `aria-valuenow` to the raw
+   axis value on every move, overriding what the resource wrote.
+
+Decision (parent): for defect 1, `kodu.ocupado()` returns false while the self-test runs (base
+checks + `__koduPruebas`), instead of making `t.clic` wait for the lock. Why: it also covers tests
+that call the resource's handlers directly, tests that do not `await t.clic`, and the base phase
+that clicks buttons; it changes no API. The real double-tap protection for students is the
+capture-phase lock on trusted events, which does not read this flag. Cost: a synthetic test can no
+longer simulate a double tap, which it never could tell apart from two deliberate clicks anyway.
+For defect 2, the resource owns ARIA when it declares any of the three attributes before calling
+`arrastrar`, or writes `aria-valuenow` itself later; otherwise the kit keeps writing them in
+problem units.
+
+Constraints: no paid calls, e2e in real Chromium for both cases, `npm run check` and regressions
+green, work-unit commits, no merge, no push. TDD: off (same source as above). Functional checks
+only. RDD: off globally by the user.
+
+- [ ] T24 — Kit: `kodu.ocupado()` is false while the self-test runs; Chromium e2e with a resource
+  that uses the pattern (screens + guarded handlers + tests that click right after `reiniciar()`).
+  Route: delegated (kit + browser harness, 2+ non-trivial files).
+- [ ] T25 — Kit: unit-mode `arrastrar` leaves resource-owned ARIA alone and keeps problem units
+  otherwise; Chromium e2e for mouse and keyboard drags. Route: delegated (same writer).
+- [ ] T26 — Branch merge-readiness summary (everything on `feat/arnes-robustez` since `main`,
+  migrations, post-deploy configuration). Route: delegated mapper, summary inline.
+
 ## Next step
 
 Round 4 COMPLETA (T14–T19): kit + BASE_PROMPT del lado de `window.__koduPruebas` y
