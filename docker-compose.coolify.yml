@@ -15,24 +15,23 @@
 #   Compose file location:    /docker-compose.coolify.yml
 #   Dominio (servicio `app`): https://kodu.becode.com.ar
 #
-# ── Sobre los montajes ───────────────────────────────────────────────────────
-# Los dos montajes apuntan a rutas absolutas del host A PROPÓSITO, y no a
-# volúmenes con nombre.
+# ── Sobre los volúmenes ──────────────────────────────────────────────────────
+# Se usan volúmenes con nombre (`pgdata`, `uploads`). Con
+# `compose_parsing_version: 5`, Coolify los prefija con el uuid del recurso e
+# ignora `name:` y `external: true`, así que en el servidor quedan como:
+#   · svs3pf21ca3h9mrx8h8lnkeg_pgdata   — base de datos de producción
+#   · svs3pf21ca3h9mrx8h8lnkeg_uploads  — subidas de la app
 #
-# Con `compose_parsing_version: 5`, Coolify reescribe toda referencia a un
-# volumen con nombre prefijándola con el uuid del recurso, y esa reescritura
-# ignora tanto `name:` como `external: true`. El resultado es un volumen nuevo
-# y vacío. Las rutas absolutas, en cambio, el parser las deja intactas.
+# Los datos se migraron el 2026-09-25 desde los volúmenes de los recursos
+# anteriores (postgres-data-wzz52stf5ofry13ajzdl24nm de `kodu-db` y
+# svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads), que antes se montaban por ruta
+# absoluta. Esos bind mounts hacían que Docker viera los volúmenes como
+# huérfanos y un `docker volume prune -a` borraba producción.
 #
-# Los dos directorios son los volúmenes que ya existen en el servidor y
-# contienen los datos de producción de los recursos anteriores:
-#   · postgres-data-wzz52stf5ofry13ajzdl24nm  — base administrada `kodu-db`
-#   · svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads   — subidas de la app `kodu`
-#
-# NO tocar estas rutas sin migrar los datos primero. Y ojo: un bind mount a una
-# ruta inexistente NO falla, Docker crea un directorio vacío. Después de
-# cualquier cambio acá, verificar en los logs de arranque que
-# `prisma migrate deploy` diga "No pending migrations to apply".
+# NO renombrar `pgdata` ni `uploads` sin migrar los datos primero: un nombre
+# nuevo es un volumen nuevo y vacío. Después de cualquier cambio acá,
+# verificar en los logs de arranque que `prisma migrate deploy` diga
+# "No pending migrations to apply".
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -44,7 +43,7 @@ services:
       POSTGRES_PASSWORD: $POSTGRES_PASSWORD
       POSTGRES_DB: $POSTGRES_DB
     volumes:
-      - /var/lib/docker/volumes/postgres-data-wzz52stf5ofry13ajzdl24nm/_data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       # $$ escapa la interpolación de compose: lo expande la shell del contenedor.
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -72,7 +71,7 @@ services:
     expose:
       - "3000"
     volumes:
-      - /var/lib/docker/volumes/svs3pf21ca3h9mrx8h8lnkeg-kodu-uploads/_data:/app/uploads
+      - uploads:/app/uploads
     healthcheck:
       # curl viene instalado en el stage `base` del Dockerfile.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3000/ >/dev/null || exit 1"]
@@ -81,3 +80,7 @@ services:
       retries: 5
       # El entrypoint corre `prisma migrate deploy` antes de servir.
       start_period: 90s
+
+volumes:
+  pgdata:
+  uploads:
