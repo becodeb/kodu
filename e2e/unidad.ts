@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
 import { cadenaDeMotores, invalidarCatalogo, motoresParaDocente, normalizarMotor } from '../src/lib/ai/catalogo.ts';
@@ -11,7 +12,13 @@ import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelD
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildCurrentResourceBlock, buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
-import { razonamiento, razonamientoCorreccion, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
+import {
+  razonamiento,
+  razonamientoCorreccion,
+  razonamientoEfectivo,
+  requestCompletionStream,
+  type ProviderConfig,
+} from '../src/lib/ai/provider.ts';
 import {
   construirMensajeCorreccion,
   lineaFuente,
@@ -533,6 +540,77 @@ function config(extra: Partial<ProviderConfig>): ProviderConfig {
     precios: null, ...extra,
   };
 }
+
+// ── sinHerramientas (T20, round 5) ─────────────────────────────────────────
+//
+// `intentarUna` (dentro de `provider.ts`, no exportada) arma el body real
+// que se manda por HTTP: no hay forma de probarlo sin de verdad mandar un
+// pedido. Un servidor HTTP efímero (mismo patrón que `e2e/mock-proveedor.ts`,
+// pero mínimo — sólo lee el body y contesta un SSE vacío) alcanza para esto
+// sin tocar ningún proveedor real ni la base de datos.
+
+/** Manda UN pedido con `requestCompletionStream` contra un servidor propio
+ *  que sólo devuelve el body que recibió (parseado). */
+async function bodyDelPedido(extra: { sinHerramientas?: boolean; forzarHerramienta?: boolean }): Promise<Record<string, unknown>> {
+  let capturado: Record<string, unknown> | null = null;
+
+  const server = createServer((req, res) => {
+    const trozos: Buffer[] = [];
+    req.on('data', (trozo: Buffer) => trozos.push(trozo));
+    req.on('end', () => {
+      try {
+        capturado = JSON.parse(Buffer.concat(trozos).toString('utf8')) as Record<string, unknown>;
+      } catch {
+        capturado = {};
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.write('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = server.address();
+    const puerto = address && typeof address === 'object' ? address.port : 0;
+    const respuesta = await requestCompletionStream({
+      messages: [{ role: 'user', content: 'hola' }],
+      provider: config({ baseUrl: `http://127.0.0.1:${puerto}` }),
+      ...extra,
+    });
+    // Se agota el body: si no, `server.close()` puede quedar esperando la
+    // conexión keep-alive.
+    for await (const _chunk of respuesta.body as any) void _chunk;
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+
+  assert.ok(capturado, 'el servidor de prueba tiene que haber recibido el pedido');
+  return capturado!;
+}
+
+await prueba('requestCompletionStream: sinHerramientas OMITE "tools" y "tool_choice" enteras, no las vacía', async () => {
+  const body = await bodyDelPedido({ sinHerramientas: true });
+  assert.ok(!('tools' in body), 'la clave "tools" no tiene que existir en absoluto');
+  assert.ok(!('tool_choice' in body), 'la clave "tool_choice" no tiene que existir en absoluto (no "none")');
+});
+
+await prueba('requestCompletionStream: sin sinHerramientas, el comportamiento de siempre (tools + tool_choice)', async () => {
+  const body = await bodyDelPedido({});
+  assert.ok(Array.isArray(body.tools) && (body.tools as unknown[]).length > 0);
+  assert.equal(body.tool_choice, 'auto');
+});
+
+await prueba('requestCompletionStream: sinHerramientas gana por encima de forzarHerramienta', async () => {
+  const body = await bodyDelPedido({ sinHerramientas: true, forzarHerramienta: true });
+  assert.ok(!('tools' in body), 'sinHerramientas tiene que ignorar forzarHerramienta, no combinarlos');
+  assert.ok(!('tool_choice' in body));
+});
 
 await prueba('razonamiento: sin nivel cargado no se manda NADA', () => {
   assert.deepEqual(razonamiento(config({})), {});

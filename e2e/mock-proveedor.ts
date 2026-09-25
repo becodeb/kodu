@@ -108,6 +108,21 @@ export interface MockProveedor {
   /** Se va llenando en vivo: podés leerla en cualquier momento (no hace
    *  falta esperar a `detener()`). */
   llamadas: LlamadaRegistrada[];
+  /**
+   * T22 (round 5, `arnes-robustez`): prende o apaga, en caliente, el modo
+   * "ansioso con la herramienta" — imita un modelo que, apenas ve `tools` +
+   * `tool_choice: 'auto'` (o `tool_choice` ausente, que el dialecto OpenAI
+   * trata igual), prefiere llamar la herramienta en vez de contestar texto.
+   * Con el modo prendido, CUALQUIER pedido en esa forma recibe un tool call
+   * `update_resource_code` en vez de la respuesta que le tocaría — incluido
+   * el pedido de checklist (T16), que en el flujo normal esquiva las dos
+   * colas por `MARCADOR_SISTEMA_CHECKLIST` (ver `manejarPedido`). Un pedido
+   * SIN `tools` (el checklist después de T20) sigue su camino de siempre.
+   * Apagado por defecto: los scripts viejos no se enteran de que esto
+   * existe. Reproduce, de punta a punta contra este mock, el defecto real
+   * medido contra DeepSeek (odd/tasks/arnes-robustez.md, "Round 5 fix").
+   */
+  establecerAnsiosoConHerramienta(activar: boolean): void;
   /** Encola una respuesta para el PRÓXIMO pedido que llegue (FIFO). Sin
    *  nada encolado, se usa la respuesta por defecto. */
   programarRespuesta(respuesta: RespuestaScript): void;
@@ -281,12 +296,52 @@ async function responderChecklistPorDefecto(res: ServerResponse, id: string, mod
   res.end();
 }
 
+/**
+ * T22 ("ansioso con la herramienta"): la respuesta de un modelo que, con
+ * `tools` ofrecidas en modo libre, prefiere llamar `update_resource_code`
+ * en vez de contestar texto. No hace falta un HTML grande ni troceado
+ * lento (esto no ejercita la vista previa progresiva) — un tool call de una
+ * sola tanda, ya completo, alcanza para reproducir el defecto: el llamador
+ * ve `finish_reason: 'tool_calls'` y ningún delta de texto.
+ */
+async function responderConHerramientaAnsiosa(res: ServerResponse, id: string, modelo: string): Promise<void> {
+  const argumentos = JSON.stringify({ html: htmlDeEjemplo(2_000) });
+
+  escribirChunk(res, {
+    ...chunkBase(id, modelo),
+    choices: [
+      {
+        index: 0,
+        delta: {
+          tool_calls: [
+            { index: 0, id: `call_${id}`, type: 'function', function: { name: UPDATE_RESOURCE_CODE, arguments: '' } },
+          ],
+        },
+        finish_reason: null,
+      },
+    ],
+  });
+  escribirChunk(res, {
+    ...chunkBase(id, modelo),
+    choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: argumentos } }] }, finish_reason: null }],
+  });
+  escribirChunk(res, { ...chunkBase(id, modelo), choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+  escribirChunk(res, {
+    ...chunkBase(id, modelo),
+    choices: [],
+    usage: { prompt_tokens: 200, completion_tokens: 90, prompt_tokens_details: { cached_tokens: 0 } },
+  });
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 async function manejarPedido(
   req: IncomingMessage,
   res: ServerResponse,
   llamadas: LlamadaRegistrada[],
   colaRespuestas: RespuestaScript[],
   colaCondicional: RespuestaCondicional[],
+  estado: { ansiosoConHerramienta: boolean },
 ): Promise<void> {
   const crudo = await leerCuerpo(req);
   let body: Record<string, unknown>;
@@ -299,6 +354,26 @@ async function manejarPedido(
   }
 
   llamadas.push({ recibidaEn: Date.now(), body });
+
+  // T22: en modo "ansioso con la herramienta", CUALQUIER pedido que ofrezca
+  // `tools` en modo libre (`tool_choice: 'auto'` o ausente — el dialecto
+  // OpenAI trata las dos formas igual) recibe un tool call, ANTES de mirar
+  // la cola condicional, el marcador de checklist o el FIFO — ninguno de
+  // esos decide nada para este pedido. Un pedido sin `tools` (el checklist,
+  // después de T20) sigue de largo hacia el camino de siempre.
+  const toolsOfrecidas = Array.isArray(body.tools) && body.tools.length > 0;
+  const eligeLibremente = body.tool_choice === 'auto' || body.tool_choice === undefined;
+  if (estado.ansiosoConHerramienta && toolsOfrecidas && eligeLibremente) {
+    const id = `mock-${Date.now()}-${llamadas.length}`;
+    const modelo = typeof body.model === 'string' ? body.model : 'mock-model';
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+    });
+    await responderConHerramientaAnsiosa(res, id, modelo);
+    return;
+  }
 
   // T9: se prueba primero la cola condicional (por contenido) y recién si
   // ninguna matchea se cae al FIFO de siempre — ver `programarRespuestaCondicional`.
@@ -436,6 +511,10 @@ async function manejarPedido(
 
 export interface MockProveedorOpciones {
   puerto?: number;
+  /** T22: arranca directamente en modo "ansioso con la herramienta" — ver
+   *  `establecerAnsiosoConHerramienta`. Default: apagado (comportamiento
+   *  de siempre). También se puede prender/apagar después, en caliente. */
+  ansiosoConHerramienta?: boolean;
 }
 
 export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {}): Promise<MockProveedor> {
@@ -443,6 +522,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
   const llamadas: LlamadaRegistrada[] = [];
   const colaRespuestas: RespuestaScript[] = [];
   const colaCondicional: RespuestaCondicional[] = [];
+  const estado = { ansiosoConHerramienta: opciones.ansiosoConHerramienta ?? false };
 
   const server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/salud') {
@@ -457,7 +537,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
       return;
     }
 
-    manejarPedido(req, res, llamadas, colaRespuestas, colaCondicional).catch((error) => {
+    manejarPedido(req, res, llamadas, colaRespuestas, colaCondicional, estado).catch((error) => {
       console.error('[mock-proveedor] error atendiendo el pedido:', error);
       try {
         if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -477,6 +557,9 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
     url: `http://127.0.0.1:${puerto}`,
     puerto,
     llamadas,
+    establecerAnsiosoConHerramienta: (activar: boolean) => {
+      estado.ansiosoConHerramienta = activar;
+    },
     programarRespuesta: (respuesta: RespuestaScript) => colaRespuestas.push(respuesta),
     programarRespuestaCondicional: (match, respuesta) => colaCondicional.push({ match, respuesta }),
     detener: () =>

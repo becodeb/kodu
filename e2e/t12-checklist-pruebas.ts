@@ -31,6 +31,9 @@ import type { Page } from 'playwright';
  *       automática".
  *  D  — sigue fallando después de las 2 rondas: exactamente 2 correcciones,
  *       el ítem queda en "falla" con su detalle, y aparece el aviso discreto.
+ *  E  — T22 (round 5): el mock en modo "ansioso con la herramienta" — el
+ *       turno igual termina CON checklist, y el pedido de checklist no
+ *       lleva `tools` ni `tool_choice` (T20).
  *
  * Requiere la pila de desarrollo levantada (`docker compose up -d db`,
  * `npm run dev` en el puerto 3000). Corre con:
@@ -515,6 +518,55 @@ async function main(): Promise<void> {
       'tiene que verse el aviso discreto después de agotar las 2 rondas',
     );
     console.log('✔ escena D: 2 correcciones exactas, "2 de 3" con el detalle de c2, aviso discreto visible');
+
+    // ───────────────────────────────────────────────────────────
+    // Escena E (T22, round 5 de `arnes-robustez`) — el mock en modo "ansioso
+    // con la herramienta": CUALQUIER pedido con `tools` en modo libre recibe
+    // un tool call en vez de texto. Éste es el test que habría atrapado el
+    // defecto real: antes de T20, el pedido de checklist SIEMPRE llevaba
+    // `tools` + `tool_choice: 'auto'`, así que en este modo el mock también
+    // lo hubiera interceptado con un tool call — `parsearChecklist('')`
+    // hubiera dado `[]` y el turno hubiera seguido SIN checklist, en
+    // silencio. Con T20 (`sinHerramientas: true` en `generarChecklist`), el
+    // pedido de checklist no lleva ninguna de las dos claves, así que este
+    // mock ni lo mira: el turno termina CON checklist igual.
+    // ───────────────────────────────────────────────────────────
+    const proyectoE = await crearProyecto(docentePage, 'T12 — checklist con modelo ansioso de la herramienta', modelId);
+    mock.llamadas.length = 0;
+    mock.establecerAnsiosoConHerramienta(true);
+    mock.programarRespuesta({ texto: '', html: htmlConPruebas('e1', { c2Bug: false }), chunkDelayMs: 5, chunkBytes: 20_000 });
+
+    try {
+      await enviarTurnoPorUi(docentePage, proyectoE.id, 'Armame tres desafíos con el modelo ansioso (T12-ESCENA-E)');
+
+      const llamadaChecklistE = mock.llamadas.find((llamada) => matchChecklist(llamada.body));
+      assert.ok(llamadaChecklistE, 'tiene que haber un pedido de checklist en este turno, aunque el modelo sea "ansioso"');
+      assert.ok(
+        !('tools' in llamadaChecklistE!.body),
+        'T20: el pedido de checklist no tiene que llevar la clave "tools" en absoluto',
+      );
+      assert.ok(
+        !('tool_choice' in llamadaChecklistE!.body),
+        'T20: el pedido de checklist no tiene que llevar la clave "tool_choice" en absoluto',
+      );
+
+      const mensajeAsistenteE = await prisma.chatMessage.findFirst({
+        where: { threadId: proyectoE.threadId, role: 'assistant' },
+        select: { checklist: true },
+      });
+      const checklistPersistidoE = leerChecklist(mensajeAsistenteE?.checklist ?? null);
+      assert.ok(
+        checklistPersistidoE.length >= 2,
+        `T22: el turno tiene que terminar CON checklist aunque el modelo sea "ansioso con la herramienta" ` +
+          `(tuvo ${checklistPersistidoE.length} ítems)`,
+      );
+      console.log(
+        `✔ escena E: modelo "ansioso con la herramienta" — checklist de ${checklistPersistidoE.length} ítems, ` +
+          'el pedido de checklist no lleva "tools" ni "tool_choice"',
+      );
+    } finally {
+      mock.establecerAnsiosoConHerramienta(false);
+    }
 
     assert.equal(erroresDeConsola.length, 0, `sin errores de JS en la pestaña del editor:\n${erroresDeConsola.join('\n')}`);
     console.log('✔ ninguna de las 5 escenas dejó un error de JS/consola en la pestaña del editor');
