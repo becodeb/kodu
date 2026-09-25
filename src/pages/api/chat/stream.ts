@@ -618,9 +618,9 @@ async function generarChecklist(args: {
     if (controlador.signal.aborted && motivoAbort) {
       const razon =
         motivoAbort === 'timeout'
-          ? `se pasó del tope de ${CHECKLIST_TIMEOUT_MS}ms de este paso`
+          ? `timeout, se pasó del tope de ${CHECKLIST_TIMEOUT_MS}ms de este paso`
           : 'el turno se canceló desde afuera';
-      console.warn(`[chat/stream] checklist: vacío — timeout (${razon}).`);
+      console.warn(`[chat/stream] checklist: vacío — ${razon}.`);
     } else {
       console.warn('[chat/stream] checklist: vacío — el proveedor falló:', (error as Error).message);
     }
