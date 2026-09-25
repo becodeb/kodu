@@ -785,6 +785,23 @@ const SCRIPT_CENTINELA = `(function () {
   var EXITO_RE = /completaste|¡logrado|lo lograste|acertaste|¡correcto|you did it|well done/i;
   var ejecutadas = {};
 
+  // ── T24 (round 6): bandera compartida "hay una autoprueba corriendo" ──
+  // window.__koduAutoprobando es un contador (no un booleano: dos
+  // autopruebas con id distinto pueden solaparse) expuesto como propiedad
+  // de SÓLO LECTURA — sin setter, configurable:false — así un recurso no
+  // puede pisarla ni por accidente (window.__koduAutoprobando = true es un
+  // no-op silencioso) ni redefinirla. SCRIPT_KODU, que se inyecta DESPUÉS
+  // de este script en el mismo documento (ver construirBloque), la lee
+  // para que kodu.ocupado() devuelva false mientras esta corre: ver el
+  // comentario sobre kodu.ocupado/pantalla para el motivo completo.
+  var contadorAutoprueba = 0;
+  try {
+    Object.defineProperty(window, '__koduAutoprobando', {
+      get: function () { return contadorAutoprueba > 0; },
+      configurable: false
+    });
+  } catch (e) {}
+
   function esperarMs(ms) {
     return new Promise(function (resolve) { setTimeoutNativo(resolve, ms); });
   }
@@ -1102,7 +1119,12 @@ const SCRIPT_CENTINELA = `(function () {
     };
   }
 
+  function finAutoprueba() {
+    if (contadorAutoprueba > 0) contadorAutoprueba--;
+  }
+
   function ejecutarAutoprueba(id, numBotones) {
+    contadorAutoprueba++;
     var inicio = ahora();
     var incompleta = false;
     function tiempoAgotado() { return ahora() - inicio > 20000; }
@@ -1178,6 +1200,10 @@ const SCRIPT_CENTINELA = `(function () {
         return correrPruebas().then(function (r) { pruebas = r; });
       })
       .then(function () {
+        // T24: se libera ANTES de postear el resultado — cualquier reacción
+        // sincrónica al postMessage (el padre podría, por ejemplo, disparar
+        // un clic real) ya encuentra kodu.ocupado() en su estado normal.
+        finAutoprueba();
         var resultado = {
           kodu: 'autoprueba:resultado',
           id: id,
@@ -1198,6 +1224,9 @@ const SCRIPT_CENTINELA = `(function () {
         try { window.parent.postMessage(resultado, '*'); } catch (e) {}
       })
       .catch(function () {
+        // T24: mismo motivo que arriba — también hay que liberarla si la
+        // cadena falla (cualquier error no atrapado en algún paso).
+        finAutoprueba();
         try {
           window.parent.postMessage({
             kodu: 'autoprueba:resultado', id: id, errores: errores.slice(),
@@ -2045,6 +2074,23 @@ const SCRIPT_KODU = `(function () {
   // propios pointermove/pointerup en window (esos dos tipos no están en la
   // lista bloqueada) hasta soltar — sólo un pointerdown NUEVO durante la
   // ventana queda afuera.
+  //
+  // T24 (round 6), EXCEPCIÓN a lo anterior: kodu.pantalla deja el candado
+  // ARMADO igual que siempre (candadoPantallaHasta no cambia), pero la
+  // función PÚBLICA kodu.ocupado() — la que un recurso consulta a mano con
+  // 'if (kodu.ocupado()) return;' — devuelve false mientras una autoprueba
+  // está corriendo (window.__koduAutoprobando, contador de sólo lectura
+  // definido en SCRIPT_CENTINELA). Motivo: window.__koduPruebas hace
+  // reiniciar() (que llama a kodu.pantalla('juego'), armando el candado)
+  // y clickea de inmediato, SIN esperar los 400ms, incluso sin esperar
+  // t.clic(...) o llamando al handler del recurso directo — ese clic caía
+  // dentro de la ventana del candado, el propio 'if (kodu.ocupado()) return;'
+  // del recurso lo descartaba, la prueba fallaba y el docente veía una
+  // corrección disparada por una alarma falsa, no por un defecto real. La
+  // protección de verdad contra el doble toque de un alumno es el candado de
+  // eventos CONFIABLES de abajo (alEventoCandado): NO lee esta bandera —
+  // usa el estado real del candado directo — así que sigue frenando esos
+  // eventos exactamente igual que antes de T24, autoprueba o no.
   var CANDADO_PANTALLA_MS = 400;
   var candadoPantallaHasta = 0;
 
@@ -2052,13 +2098,18 @@ const SCRIPT_KODU = `(function () {
     return (window.performance && performance.now) ? performance.now() : Date.now();
   }
 
-  function ocupado() {
+  function candadoPantallaActivo() {
     return ahoraPantalla() < candadoPantallaHasta;
+  }
+
+  function ocupado() {
+    if (window.__koduAutoprobando) return false;
+    return candadoPantallaActivo();
   }
 
   function alEventoCandado(evento) {
     if (!evento.isTrusted) return;
-    if (!ocupado()) return;
+    if (!candadoPantallaActivo()) return;
     evento.preventDefault();
     evento.stopImmediatePropagation();
   }

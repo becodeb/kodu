@@ -1649,6 +1649,114 @@ const RECURSO_CON_PRUEBAS = construirRecurso(`
   </script>
 `);
 
+// ── Muestra 8 (round 6, T24): kodu.pantalla/kodu.ocupado + __koduPruebas ──
+// que clickean justo DESPUÉS de reiniciar(), sin esperar nada — el defecto
+// real de N2 (Revolución de Mayo): reiniciar() arma el candado con
+// kodu.pantalla('juego'), y un test SINCRÓNICO cae adentro de esos 400ms.
+// Cada handler de "acción" está guardado con `if (kodu.ocupado()) return;`,
+// tal como pide BASE_PROMPT. También agrega un listener de diagnóstico
+// propio (sólo para esta prueba, no parte del kit) que el test de más abajo
+// usa DESPUÉS de recibir el resultado del self-test, para comprobar que
+// kodu.ocupado()/window.__koduAutoprobando vuelven a su estado normal.
+const RECURSO_PANTALLA_OCUPADO_AUTOPRUEBA = construirRecurso(`
+  <div id="pantalla-inicio-t24" data-pantalla="inicio">
+    <button id="empezar-t24" type="button">Empezar</button>
+  </div>
+  <div id="pantalla-juego-t24" data-pantalla="juego" hidden>
+    <button id="accion-t24" type="button">Accionar</button>
+    <button id="continuar-t24" type="button">Continuar</button>
+    <p id="marcador-t24">0</p>
+  </div>
+  <div id="pantalla-fin-t24" data-pantalla="fin" hidden>
+    <button id="reiniciar-t24" type="button">Reiniciar</button>
+    <p id="fin-msg-t24">Fin</p>
+  </div>
+  <script>
+    var contadorT24 = 0;
+    function reiniciarT24() {
+      contadorT24 = 0;
+      document.getElementById('marcador-t24').textContent = '0';
+      window.kodu.pantalla('juego');
+    }
+    document.getElementById('empezar-t24').addEventListener('click', function () {
+      reiniciarT24();
+    });
+    document.getElementById('accion-t24').addEventListener('click', function () {
+      if (window.kodu.ocupado()) return;
+      contadorT24++;
+      document.getElementById('marcador-t24').textContent = String(contadorT24);
+    });
+    document.getElementById('continuar-t24').addEventListener('click', function () {
+      if (window.kodu.ocupado()) return;
+      window.kodu.pantalla('fin');
+    });
+    document.getElementById('reiniciar-t24').addEventListener('click', function () {
+      if (window.kodu.ocupado()) return;
+      contadorT24 = 0;
+      document.getElementById('marcador-t24').textContent = '0';
+      window.kodu.pantalla('inicio');
+    });
+
+    window.__koduPruebas = [
+      {
+        id: 'clic-justo-tras-reiniciar',
+        prueba: function (t) {
+          reiniciarT24();
+          // SIN esperar nada: este clic cae DENTRO de los 400ms del
+          // candado que reiniciarT24() acaba de armar.
+          t.clic('#accion-t24');
+          return { ok: t.texto('#marcador-t24') === '1', detalle: 'marcador=' + t.texto('#marcador-t24') };
+        }
+      },
+      {
+        id: 'handler-directo-tras-reiniciar',
+        prueba: function (t) {
+          reiniciarT24();
+          // Llama al handler directo (element.click()), no vía t.clic.
+          document.getElementById('accion-t24').click();
+          return { ok: t.texto('#marcador-t24') === '1', detalle: 'marcador=' + t.texto('#marcador-t24') };
+        }
+      },
+      {
+        id: 'cadena-sin-esperar-entre-pantallas',
+        prueba: function (t) {
+          reiniciarT24();
+          // Encadena clics a través de DOS transiciones de pantalla, sin
+          // esperar nada entre medio: cada kodu.pantalla() rearma el
+          // candado de 400ms.
+          t.clic('#continuar-t24');
+          t.clic('#reiniciar-t24');
+          var enInicio = !document.getElementById('pantalla-inicio-t24').hidden;
+          return { ok: enInicio, detalle: 'pantalla-inicio visible=' + enInicio };
+        }
+      },
+      {
+        id: 'flag-de-solo-lectura',
+        prueba: function (t) {
+          var antes = window.__koduAutoprobando;
+          try { window.__koduAutoprobando = false; } catch (e) {}
+          try { Object.defineProperty(window, '__koduAutoprobando', { value: false, configurable: true }); } catch (e) {}
+          var despues = window.__koduAutoprobando;
+          return { ok: antes === true && despues === true, detalle: 'antes=' + antes + ' despues=' + despues };
+        }
+      }
+    ];
+
+    window.addEventListener('message', function (evento) {
+      if (evento.source !== window.parent) return;
+      var datos = evento.data;
+      if (!datos || datos.kodu !== 'diagnostico') return;
+      try {
+        window.parent.postMessage({
+          kodu: 'diagnostico:resultado',
+          ocupado: window.kodu.ocupado(),
+          autoprobando: window.__koduAutoprobando
+        }, '*');
+      } catch (e) {}
+    });
+  </script>
+`);
+
 async function mainAutoprueba(): Promise<void> {
   const browser = await chromium.launch({ executablePath, args: ['--no-sandbox', '--disable-gpu'] });
   const page = await (await browser.newContext()).newPage();
@@ -1726,6 +1834,105 @@ async function mainAutoprueba(): Promise<void> {
         { id: 'p5', ok: true, detalle: 'sin id' },
       ]);
     });
+
+
+    // ── Round 6, T24: kodu.ocupado() no puede tragarse los clics de ─────
+    // __koduPruebas ni los del paso base durante el self-test. Sin el fix,
+    // el clic sincrónico justo después de reiniciar() cae dentro de los
+    // 400ms del candado y la prueba 'clic-justo-tras-reiniciar' falla sola
+    // (falsa alarma).
+    await prueba(
+      'autoprueba: kodu.ocupado() no traga los clics de __koduPruebas ni del paso base (N2, Revolución de Mayo)',
+      async () => {
+        const { resultado } = await correrAutoprueba(page, RECURSO_PANTALLA_OCUPADO_AUTOPRUEBA, { botones: 3 });
+        assert.ok(resultado, 'tiene que llegar un autoprueba:resultado');
+        assert.deepEqual(resultado!.errores, [], `no puede haber errores: ${JSON.stringify(resultado!.errores)}`);
+        assert.equal(
+          resultado!.reinicioOk, true,
+          `el reinicio final (paso base) tiene que volver a la pantalla de inicio: ${JSON.stringify(resultado!.detalles.diferencias)}`,
+        );
+        assert.ok(Array.isArray(resultado!.pruebas), 'tiene que haber corrido window.__koduPruebas');
+        assert.equal(resultado!.pruebas!.length, 4);
+        const fallidas = resultado!.pruebas!.filter((p) => !p.ok);
+        assert.deepEqual(
+          fallidas, [],
+          `ninguna prueba puede fallar por una falsa alarma de kodu.ocupado(): ${JSON.stringify(resultado!.pruebas)}`,
+        );
+      },
+    );
+
+    // ── Round 6, T24: fuera del self-test, kodu.ocupado()/el flag vuelven ──
+    // a su estado normal. Se pide un diagnóstico propio del recurso RECIÉN
+    // DESPUÉS de recibir el autoprueba:resultado — así se observa el estado
+    // real DESPUÉS de que termina el self-test, no durante (contadorAutoprueba
+    // sólo se puede leer en 0 desde afuera de la propia corrida).
+    await prueba(
+      'T24: kodu.ocupado()/window.__koduAutoprobando vuelven a su estado normal después de postear el resultado',
+      async () => {
+        const diagnostico = (await page.evaluate((html) => {
+          return new Promise((resolve) => {
+            const estado: Record<string, any> = { resultado: null, diagnostico: null };
+            estado.iframe = document.createElement('iframe');
+            estado.iframe.setAttribute('sandbox', 'allow-scripts');
+
+            estado.onMessage = function (evento: MessageEvent) {
+              if (evento.source !== estado.iframe.contentWindow) return;
+              const datos = evento.data as { kodu?: string } | null;
+              if (!datos || !datos.kodu) return;
+              if (datos.kodu === 'autoprueba:resultado' && !estado.resultado) {
+                estado.resultado = datos;
+                // Espera 1.5s (bastante más que CANDADO_PANTALLA_MS = 400,
+                // con margen generoso para un entorno cargado) ANTES de
+                // pedir el diagnóstico: el paso base del self-test termina
+                // con un clic real sobre "Reiniciar", que llama a
+                // kodu.pantalla('inicio') y arma el candado REAL de verdad
+                // — eso es correcto y no tiene nada que ver con T24. La
+                // espera aísla lo que sí prueba este test (que
+                // window.__koduAutoprobando/la parte de kodu.ocupado() que
+                // depende de él vuelven a su estado normal) de ese candado
+                // legítimo y ajeno que igual sigue vigente un instante.
+                setTimeout(function () {
+                  estado.iframe.contentWindow!.postMessage({ kodu: 'diagnostico' }, '*');
+                }, 1500);
+              } else if (datos.kodu === 'diagnostico:resultado' && !estado.diagnostico) {
+                estado.diagnostico = datos;
+              }
+            };
+            window.addEventListener('message', estado.onMessage);
+
+            estado.iframe.addEventListener('load', function () {
+              estado.iframe.contentWindow!.postMessage({ kodu: 'autoprueba', id: 1, botones: 3 }, '*');
+            });
+
+            estado.iframe.srcdoc = html;
+            document.body.appendChild(estado.iframe);
+
+            const inicio = Date.now();
+            const iv = setInterval(function () {
+              if (!estado.diagnostico && Date.now() - inicio <= 25000) return;
+              clearInterval(iv);
+              window.removeEventListener('message', estado.onMessage);
+              estado.iframe.remove();
+              resolve({ resultado: estado.resultado, diagnostico: estado.diagnostico });
+            }, 100);
+          });
+        }, RECURSO_PANTALLA_OCUPADO_AUTOPRUEBA)) as {
+          resultado: AutopruebaResultado | null;
+          diagnostico: { ocupado: boolean; autoprobando: boolean } | null;
+        };
+
+        assert.ok(diagnostico.resultado, 'tiene que llegar el resultado del self-test antes del diagnóstico');
+        assert.ok(diagnostico.diagnostico, 'tiene que llegar la respuesta de diagnóstico');
+        assert.equal(
+          diagnostico.diagnostico!.autoprobando, false,
+          'window.__koduAutoprobando tiene que volver a false después de postear el resultado',
+        );
+        assert.equal(
+          diagnostico.diagnostico!.ocupado, false,
+          'kodu.ocupado() tiene que volver a su estado normal (sin autoprueba activa) después de postear el resultado',
+        );
+      },
+    );
 
     // ── Centinela sin autoprueba: los tres tipos de error llegan solos ──
     await prueba('centinela: consola, carga y promesa rota llegan como kodu:error sin pedir autoprueba', async () => {
