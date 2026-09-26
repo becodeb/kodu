@@ -14,6 +14,19 @@ export interface MotorPublico {
 }
 
 /**
+ * T6 (`odd/tasks/verificador.md`, follow-up 2026-09-26): un desplegable con
+ * una sola opción no le sirve al docente — se OCULTA entero (junto con el
+ * aviso de repunteo, que se refiere a un control que no puede ver) cuando la
+ * lista que le corresponde tiene 0 o 1 motores. Con 2+ sigue exactamente
+ * igual que antes. Función pura, compartida entre `project/[id].astro`
+ * (decide el aviso) y `ChatPanel.tsx` (decide si renderiza
+ * `SelectorDeMotor`) — una sola fuente de verdad para el corte.
+ */
+export function debeMostrarSelectorDeMotor(motores: MotorPublico[]): boolean {
+  return motores.length >= 2;
+}
+
+/**
  * Lo que el editor le puede ofrecer a ESTE docente (T5, odd/tasks/modo-prime.md
  * — "Discreto" en las decisiones del dueño: la palabra "prime" y cualquier
  * bandera de `AppSettings` NUNCA cruzan al cliente, sólo lo que puede hacer).

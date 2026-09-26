@@ -31,7 +31,8 @@ import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
 import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
 import { contarChecklistOk, estadoDeChecklist } from '../src/lib/client/checklist.ts';
-import type { WorkspaceMessage } from '../src/lib/workspace-types.ts';
+import { debeMostrarSelectorDeMotor } from '../src/lib/workspace-types.ts';
+import type { MotorPublico, WorkspaceMessage } from '../src/lib/workspace-types.ts';
 
 /**
  * Pruebas unitarias sin test runner (no hay uno en este repo — ver context.md).
@@ -1521,6 +1522,26 @@ await prueba(
 await prueba('estadoDeChecklist: [] de checklist da [] de resultado (nunca revienta con corrida vacía)', () => {
   assert.deepEqual(estadoDeChecklist([], undefined), []);
   assert.deepEqual(estadoDeChecklist([], []), []);
+});
+
+// ── T6 (odd/tasks/verificador.md, follow-up 2026-09-26): ocultar el
+//    selector de motor con un solo motor elegible ──
+
+function motorDePrueba(id: string): MotorPublico {
+  return { id, displayName: `Motor ${id}`, description: null, supportsVision: false };
+}
+
+await prueba('debeMostrarSelectorDeMotor: 0 motores → false (nada que elegir)', () => {
+  assert.equal(debeMostrarSelectorDeMotor([]), false);
+});
+
+await prueba('debeMostrarSelectorDeMotor: 1 motor → false (un desplegable de una sola opción no le sirve a nadie)', () => {
+  assert.equal(debeMostrarSelectorDeMotor([motorDePrueba('a')]), false);
+});
+
+await prueba('debeMostrarSelectorDeMotor: 2+ motores → true (exactamente el comportamiento de siempre)', () => {
+  assert.equal(debeMostrarSelectorDeMotor([motorDePrueba('a'), motorDePrueba('b')]), true);
+  assert.equal(debeMostrarSelectorDeMotor([motorDePrueba('a'), motorDePrueba('b'), motorDePrueba('c')]), true);
 });
 
 await prisma.$disconnect();

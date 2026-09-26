@@ -580,6 +580,38 @@ async function main(): Promise<void> {
     await pageDocente.waitForSelector(`#selector-motor:has-text("${NOMBRE_MOTOR}")`);
     console.log('✔ la misma elección funciona con tap, sin pasar por hover (item 16)');
 
+    // T6 (odd/tasks/verificador.md, follow-up 2026-09-26): de acá para abajo
+    // `motorCreado` se apaga (11) y, apagado, sólo iba a quedar MiniMax M3
+    // seleccionable — con un solo motor elegible el selector ahora se OCULTA
+    // ENTERO, lo que taparía la prueba de repunteo de más abajo (12), que es
+    // sobre el AVISO, no sobre cuántos motores hay. Se da de alta un SEGUNDO
+    // motor elegible, independiente del que se apaga, para que el selector
+    // siga con 2+ opciones durante 12 — igual que antes de T6. Queda
+    // limpiado solo por `limpiarEstado()` (misma cuenta `PROVIDER_KIND`). El
+    // nombre NO puede contener `NOMBRE_MOTOR` como substring — `opcionMotor`
+    // (arriba) lo matchea por `hasText`, y un "Motor E2E M3 — algo" cuenta
+    // como el mismo motor para ese locator.
+    // `contexto`/`page` (la sesión admin original) ya se cerró más arriba
+    // (paso 9), así que esto abre su propia sesión admin de corta vida —
+    // mismo patrón que el paso 11, un poco más abajo.
+    const contextoMotorDeApoyo = await browser.newContext();
+    const pageMotorDeApoyo = await contextoMotorDeApoyo.newPage();
+    await iniciarSesion(pageMotorDeApoyo, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
+    const respuestaMotorDeApoyo = await pageMotorDeApoyo.request.post(`${BASE_URL}/api/admin/models`, {
+      data: {
+        providerId: proveedorCreado.id,
+        providerModel: 'test-e2e-refuerzo-selector-t6',
+        displayName: 'Refuerzo selector T6',
+      },
+    });
+    assert.equal(
+      respuestaMotorDeApoyo.status(),
+      200,
+      `crear el motor de apoyo para la prueba de repunteo debería dar 200, dio ${respuestaMotorDeApoyo.status()}`,
+    );
+    await contextoMotorDeApoyo.close();
+    console.log('✔ motor de apoyo creado para que el selector siga con 2+ opciones durante la prueba de repunteo (T6)');
+
     // 11. Deshabilitarlo lo saca del selector (Requirement "Ordering,
     //     enable/disable, single default" — ya no es default, así que se puede).
     const respuestaApagado = await pageDocente.request.patch(`${BASE_URL}/api/admin/models/${motorCreado.id}`, {
