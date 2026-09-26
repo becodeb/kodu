@@ -315,6 +315,14 @@ export interface MiembroOrganizacion {
    */
   createdAt: string;
   esAdmin: boolean;
+  /**
+   * odd/tasks/organizaciones.md (T8): CONTEO de recursos, nunca el recurso en
+   * sí — "el admin de organización ve conteos, no contenido" (decisión del
+   * dueño). Mismo criterio que `listarUsuariosAdmin` (src/lib/admin/usuarios.ts).
+   */
+  recursos: number;
+  /** ISO o `null` si nunca generó nada ni tocó un recurso — ver `haceTiempo`. */
+  ultimaActividad: string | null;
 }
 
 export async function listarMiembros(actor: ActorGestion, organizationId: string): Promise<MiembroOrganizacion[]> {
@@ -332,14 +340,28 @@ export async function listarMiembros(actor: ActorGestion, organizationId: string
   ]);
   const adminIds = new Set(admins.map((fila) => fila.userId));
 
-  return miembros.map((miembro) => ({
-    id: miembro.id,
-    name: miembro.name,
-    email: miembro.email,
-    emailVerificationSource: miembro.emailVerificationSource,
-    createdAt: miembro.createdAt.toISOString(),
-    esAdmin: adminIds.has(miembro.id),
-  }));
+  const ids = miembros.map((m) => m.id);
+  // Un solo `groupBy` para TODOS los docentes de la sede (mismo criterio que
+  // `listarUsuariosAdmin`), no un `count`/`aggregate` por fila.
+  const proyectosPorUsuario =
+    ids.length > 0
+      ? await prisma.project.groupBy({ by: ['userId'], where: { userId: { in: ids } }, _count: { _all: true }, _max: { updatedAt: true } })
+      : [];
+  const proyectosMapa = new Map(proyectosPorUsuario.map((fila) => [fila.userId, fila]));
+
+  return miembros.map((miembro) => {
+    const proyectoInfo = proyectosMapa.get(miembro.id);
+    return {
+      id: miembro.id,
+      name: miembro.name,
+      email: miembro.email,
+      emailVerificationSource: miembro.emailVerificationSource,
+      createdAt: miembro.createdAt.toISOString(),
+      esAdmin: adminIds.has(miembro.id),
+      recursos: proyectoInfo?._count._all ?? 0,
+      ultimaActividad: proyectoInfo?._max.updatedAt ? proyectoInfo._max.updatedAt.toISOString() : null,
+    };
+  });
 }
 
 /**
