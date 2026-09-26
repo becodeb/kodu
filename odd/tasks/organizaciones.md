@@ -128,7 +128,7 @@ une a una organización.
   oscuro. Check: e2e de navegador.
 - [x] **T9 — Aislamiento.** _(fdae39e, escritor delegado con postura adversarial)_ e2e explícitos: el admin de A no ve ni muta nada de B (páginas y APIs, ids ajenos
   adivinados); el admin de una sede no ve la sede hermana; el de la red ve solo sus sedes; un docente no entra a `/org`.
-- [ ] **T10 — Cierre.** Docs, regresión de las suites existentes afectadas (m1, m5, m6, m7), aviso de merge de
+- [x] **T10 — Cierre.** _(c91d2d6 docs + 8ded4ca m8, orquestador + diagnóstico delegado)_ Docs, regresión de las suites existentes afectadas (m1, m5, m6, m7), aviso de merge de
   `stream.ts`.
 
 ## Progreso
@@ -221,6 +221,30 @@ une a una organización.
   `miembros/[userId]` autoriza con la sede REAL del docente; `lista-blanca/[emailId]` y `admins/[userId]` borran con
   `where: { id, organizationId }`, así que un id ajeno no afecta nada. La suite volvió a pasar (155/155).
 
+- 2026-09-26: **T10 hecha.** README y `.env.example` describen organizaciones y verificación. Regresión completa en serie
+  (36 suites): 32 verdes. De las 4 rojas: `m8-proyectos-ajenos` era regresión de T2 (sus docentes nacían sin
+  organización y ahora son cuentas personales) → fixture con organización (8ded4ca), verde aislada 2 veces y en el
+  control del orquestador. `m3-motores` y `t11-autoprueba` pasan aisladas (contaminación de estado o RAM en la corrida
+  larga; `m3` verde en el control del orquestador). `t2-versiones-por-proyecto` es inestable también en `main`
+  (93e3504: 1 de 5 falla; rama: 4 de 5), por una carrera de ~250 ms entre la UI y la lectura de la base; no se tocó.
+  Ojo: la rama falla más seguido, y no está probado que sea solo ruido.
+
+## Para mergear (decide el dueño)
+
+- La rama tiene 34 commits sobre `93e3504`; no está pusheada ni mergeada.
+- **Coinciden con `feat/generacion-simple-y-reanudable` 3 archivos:** `prisma/schema.prisma` (modelos nuevos en
+  ambas), `src/pages/api/chat/stream.ts` (acá solo 3 líneas `purpose:` dentro de las llamadas a `recordUsage`; la
+  otra rama desacopló la generación de la conexión, así que hay que reubicarlas), `src/pages/app/project/[id].astro`
+  (acá solo el gate de 8 líneas). `purpose` es obligatorio en `recordUsage`: si alguna llamada queda sin él después
+  del merge, `tsc` la marca.
+- **Migraciones:** `20261010000000_organizaciones` y `20261010300000_exclusiones_de_organizacion`, escritas a mano;
+  en producción se aplican con `migrate deploy` después de las `20261006-20261009` de la otra rama.
+- **Antes del deploy:** revisar los `AuthorizedDomain` de producción; un comodín como `*.edu.ar` pasa a Reditinere y
+  uniría a Reditinere a cualquier docente de un `.edu.ar`. Cargar `RESEND_API_KEY` y `RESEND_FROM` (dominio verificado
+  en Resend); mientras falten, toda cuenta nueva se toma como verificada y `/admin` lo avisa.
+- Abiertos sin decidir: organizaciones archivadas en las métricas; link "Mi organización" para el superadmin;
+  "última actividad" con consumo; el 404 en JSON de `/org?sede=<ajena>`.
+
 ## Siguiente paso
 
-T10.
+Que el dueño revise y decida el merge. Nada más pendiente dentro del alcance.
