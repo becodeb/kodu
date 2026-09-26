@@ -1,0 +1,226 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import TendenciaMetricas from '../../components/admin/TendenciaMetricas.tsx';
+import DetalleFilaMetricas from '../../components/admin/DetalleFilaMetricas.astro';
+import { metricasDelMes, tendenciaMensual, formatearSumaUsd, type FilaMetricasOrganizacion } from '../../lib/admin/metricas.ts';
+import { mesActualBA, ultimosMeses, etiquetaMes } from '../../lib/metricas/consumo.ts';
+import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
+
+/**
+ * `/admin/metricas` (odd/tasks/organizaciones.md T7) — página superadmin-only
+ * (el middleware ya lo garantiza en todo `/admin/**`, mismo comentario que
+ * `organizaciones/index.astro`).
+ *
+ * Cómo se calcula cada número (ver también `src/lib/metricas/consumo.ts`):
+ *  - El mes es un mes CALENDARIO en huso de Argentina (UTC-3, sin horario de
+ *    verano) — un turno del 31 a las 23:30 hora Argentina cuenta para el mes
+ *    anterior aunque en UTC ya sea el día 1.
+ *  - "Docentes hoy" es membresía ACTUAL (no hay historial de membresía);
+ *    "Docentes activos" es quién efectivamente usó la IA ESE mes.
+ *  - "Recursos nuevos" cuenta proyectos distintos con alguna fila
+ *    `GENERATION` en el mes (un primer turno fallido deja el HTML por
+ *    defecto y el siguiente vuelve a ser `GENERATION`, así que no duplica).
+ *  - Un costo con el signo "≥" es un PISO: alguna fila del grupo no tiene
+ *    precio conocido (un motor sin tarifa cargada ese día) y nunca se suma
+ *    como si fuera 0.
+ */
+
+const mesesDisponibles = ultimosMeses(12);
+const mesPedido = Astro.url.searchParams.get('mes');
+const mes = mesPedido && mesesDisponibles.includes(mesPedido) ? mesPedido : mesActualBA();
+
+const [datos, tendencia] = await Promise.all([metricasDelMes(mes), tendenciaMensual(mes, 6)]);
+
+const filasConTotal: FilaMetricasOrganizacion[] = [...datos.filas, datos.total];
+
+function nombreConIndentacion(fila: FilaMetricasOrganizacion): string {
+  return fila.nivel === 1 ? `↳ ${fila.nombre}` : fila.nombre;
+}
+---
+
+<AdminLayout title="Métricas">
+  <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h2 class="font-display text-xl font-bold text-ink-900">Métricas de precio</h2>
+      <p class="mt-1 text-sm text-ink-500">
+        Consumo y costo por organización, {datos.etiquetaMes.toLowerCase()}.
+      </p>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <form method="get" class="flex items-center gap-2">
+        <label for="mes" class="sr-only">Mes</label>
+        <select
+          id="mes"
+          name="mes"
+          onchange="this.form.requestSubmit()"
+          class="rounded-lg border border-linea bg-superficie px-3 py-2 text-sm text-ink-900"
+        >
+          {
+            [...mesesDisponibles].reverse().map((valor) => (
+              <option value={valor} selected={valor === mes}>
+                {etiquetaMes(valor)}
+              </option>
+            ))
+          }
+        </select>
+        <button type="submit" class="kodu-btn-secondary text-sm">
+          Ver
+        </button>
+      </form>
+
+      <a href={`/api/admin/metricas.csv?mes=${mes}`} class="kodu-btn-secondary text-sm">
+        Descargar CSV
+      </a>
+    </div>
+  </div>
+
+  {
+    /*
+      Dos layouts, nunca los dos visibles a la vez (odd/tasks/organizaciones.md
+      T6, deuda para T7/T8): la tabla ancha (8 columnas) NO cabe a 360px y
+      `overflow-x-auto` ya mintió una vez en una isla — acá directamente no se
+      renderiza en celular: abajo de `sm:` sólo existen las tarjetas, así que
+      no hay ancho de tabla que pueda desbordar la página.
+    */
+  }
+  <div class="kodu-card mb-6 hidden overflow-x-auto p-4 sm:block">
+    {/* id: `DetalleFilaMetricas` anida su PROPIA tabla ("Costo por paso")
+        adentro de cada fila, así que un e2e que busque "table tbody tr" a
+        secas encuentra también esas filas internas — este id es el gancho
+        para escribir `#tabla-metricas > tbody > tr` (hijos DIRECTOS) y
+        quedarse sólo con las filas de organización. */}
+    <table id="tabla-metricas" class="w-full min-w-[720px] text-left text-sm">
+      <thead>
+        <tr class="border-b border-linea text-xs tracking-wide text-ink-500 uppercase">
+          <th class="py-2 pr-3 font-medium">Organización</th>
+          <th class="py-2 px-3 text-right font-medium">Docentes hoy</th>
+          <th class="py-2 px-3 text-right font-medium">Activos</th>
+          <th class="py-2 px-3 text-right font-medium">Recursos nuevos</th>
+          <th class="py-2 px-3 text-right font-medium">Ajustes</th>
+          <th class="py-2 px-3 text-right font-medium">Turnos</th>
+          <th class="py-2 px-3 text-right font-medium">Tokens</th>
+          <th class="py-2 pl-3 text-right font-medium">Costo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          filasConTotal.map((fila) => {
+            const esTotal = fila.nombre === 'Total';
+            return (
+              <>
+                {
+                  /* data-fila-nombre: un e2e no puede usar hasText con el
+                     nombre a secas — el detalle de CUALQUIER fila con tokens
+                     dice "... de N totales.", y "totales" contiene "total"
+                     como subcadena (case-insensitive), así que un hasText
+                     suelto para "Total" cae en la primera fila con consumo,
+                     no en la fila Total de verdad. El atributo es exacto. */
+                }
+                <tr data-fila-nombre={fila.nombre} class={`border-b border-linea ${esTotal ? 'bg-sutil font-semibold' : ''}`}>
+                  <td class={`py-2 pr-3 text-ink-900 ${fila.nivel === 1 ? 'pl-4' : ''}`}>
+                    {nombreConIndentacion(fila)}
+                    {fila.archivada && <span class="ml-1.5 text-xs font-normal text-ink-500">(archivada)</span>}
+                  </td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.docentesHoy}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.docentesActivos}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.recursosNuevos}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.ajustes}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
+                  <td class="py-2 px-3 text-right tabular-nums text-ink-700">
+                    {formatearTokensCompacto(fila.agregado.tokens)}
+                  </td>
+                  <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
+                    {formatearSumaUsd(fila.agregado.costoTotal)}
+                  </td>
+                </tr>
+                <tr class="border-b border-linea">
+                  <td colspan={8} class="py-1.5">
+                    <DetalleFilaMetricas fila={fila} />
+                  </td>
+                </tr>
+              </>
+            );
+          })
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="mb-6 space-y-3 sm:hidden">
+    {
+      filasConTotal.map((fila) => {
+        const esTotal = fila.nombre === 'Total';
+        return (
+          <div class={`kodu-card p-4 ${esTotal ? 'bg-sutil' : ''} ${fila.nivel === 1 ? 'ml-4' : ''}`}>
+            <p class="font-semibold text-ink-900">
+              {nombreConIndentacion(fila)}
+              {fila.archivada && <span class="ml-1.5 text-xs font-normal text-ink-500">(archivada)</span>}
+            </p>
+            <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-ink-700">
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Docentes hoy</dt>
+                <dd class="tabular-nums">{fila.docentesHoy}</dd>
+              </div>
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Activos</dt>
+                <dd class="tabular-nums">{fila.agregado.docentesActivos}</dd>
+              </div>
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Recursos nuevos</dt>
+                <dd class="tabular-nums">{fila.agregado.recursosNuevos}</dd>
+              </div>
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Ajustes</dt>
+                <dd class="tabular-nums">{fila.agregado.ajustes}</dd>
+              </div>
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Turnos</dt>
+                <dd class="tabular-nums">{fila.agregado.turnos}</dd>
+              </div>
+              <div class="flex justify-between gap-2">
+                <dt class="text-ink-500">Tokens</dt>
+                <dd class="tabular-nums">{formatearTokensCompacto(fila.agregado.tokens)}</dd>
+              </div>
+            </dl>
+            <p class="mt-2 text-sm font-semibold text-ink-900">{formatearSumaUsd(fila.agregado.costoTotal)}</p>
+            <div class="mt-2">
+              <DetalleFilaMetricas fila={fila} />
+            </div>
+          </div>
+        );
+      })
+    }
+  </div>
+
+  <div class="kodu-card p-4">
+    <h3 class="mb-3 text-sm font-semibold text-ink-900">Tendencia — últimos {tendencia.length} meses</h3>
+    <TendenciaMetricas puntos={tendencia} />
+  </div>
+
+  <details class="mt-6 text-sm text-ink-500">
+    <summary class="cursor-pointer text-ink-700 hover:underline">Cómo se calcula</summary>
+    <ul class="mt-2 list-disc space-y-1 pl-5">
+      <li>El mes es un mes calendario en huso de Argentina (UTC-3, sin horario de verano).</li>
+      <li>
+        <b class="text-ink-700">Docentes hoy</b>: quiénes pertenecen HOY a la organización — no hay historial de
+        membresía, así que no es "en ese mes".
+      </li>
+      <li>
+        <b class="text-ink-700">Docentes activos</b>: distintos docentes con al menos un turno ESE mes.
+      </li>
+      <li>
+        <b class="text-ink-700">Recursos nuevos</b>: proyectos distintos con al menos una fila de generación ese mes.
+      </li>
+      <li>
+        <b class="text-ink-700">Turnos</b>: generaciones más ajustes (no incluye checklist, corrección, verificación
+        ni versión extra, que son auxiliares del mismo turno).
+      </li>
+      <li>Un costo o un promedio con "≥" es un piso: alguna fila no tiene precio conocido y nunca se suma como 0.</li>
+      <li>
+        Los promedios comparados con "PLAN-produccion.md §4" son los supuestos de costo por recurso nuevo, por ajuste
+        y por docente activo (DeepSeek directo) — el de ajuste es el supuesto que este cambio existe para poder medir.
+      </li>
+    </ul>
+  </details>
+</AdminLayout>

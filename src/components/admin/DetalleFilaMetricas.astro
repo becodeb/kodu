@@ -1,0 +1,81 @@
+---
+import { formatearSumaUsd, formatearPromedio, ETIQUETA_PROPOSITO, type FilaMetricasOrganizacion } from '../../lib/admin/metricas.ts';
+import {
+  PLAN_COSTO_RECURSO_NUEVO_USD,
+  PLAN_COSTO_AJUSTE_USD,
+  PLAN_COSTO_POR_DOCENTE_ACTIVO_USD,
+} from '../../lib/metricas/consumo.ts';
+import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
+import { formatearCostoUsd } from '../../lib/format/costo.ts';
+
+/**
+ * odd/tasks/organizaciones.md (T7): el detalle de UNA fila de
+ * `/admin/metricas` (costo por paso + los tres promedios contra el plan) —
+ * factorizado en un componente propio porque `metricas.astro` lo usa DOS
+ * veces con el mismo `fila`: adentro de la tabla ancha (`sm:` y arriba) y
+ * adentro de la tarjeta angosta (debajo de `sm:`, la tabla no se renderiza
+ * ahí — ver el comentario de "sin overflow horizontal a 360px" en
+ * `metricas.astro`). Es un `<details>` nativo: sin JavaScript, sin estado
+ * de React, expandir/colapsar es comportamiento del navegador.
+ */
+interface Props {
+  fila: FilaMetricasOrganizacion;
+}
+
+const { fila } = Astro.props;
+---
+
+<details>
+  <summary class="cursor-pointer py-1 text-xs text-brand-600 hover:underline">Detalle de costo — {fila.nombre}</summary>
+  <div class="mt-2 mb-1 grid gap-4 sm:grid-cols-2">
+    <div>
+      <h3 class="mb-1.5 text-xs font-semibold text-ink-700 uppercase">Costo por paso</h3>
+      <table class="w-full text-xs">
+        <tbody>
+          {
+            fila.agregado.costoPorPaso.map((paso) => (
+              <tr class="border-b border-linea last:border-0">
+                <td class="py-1 pr-2 text-ink-700">{paso.purpose ? ETIQUETA_PROPOSITO[paso.purpose] : 'Sin clasificar'}</td>
+                <td class="py-1 px-2 text-right tabular-nums text-ink-500">{paso.filas} filas</td>
+                <td class="py-1 pl-2 text-right tabular-nums text-ink-900">{formatearSumaUsd(paso.costo)}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h3 class="mb-1.5 text-xs font-semibold text-ink-700 uppercase">Promedios, contra el plan</h3>
+      <ul class="space-y-1 text-xs text-ink-700">
+        <li>
+          Por recurso nuevo: <b class="text-ink-900">{formatearPromedio(fila.agregado.costoPromedioRecursoNuevo)}</b>{' '}
+          (plan: {formatearCostoUsd(PLAN_COSTO_RECURSO_NUEVO_USD)})
+        </li>
+        <li>
+          Por ajuste: <b class="text-ink-900">{formatearPromedio(fila.agregado.costoPromedioAjuste)}</b> (plan:{' '}
+          {formatearCostoUsd(PLAN_COSTO_AJUSTE_USD)})
+        </li>
+        <li>
+          Por docente activo: <b class="text-ink-900">{formatearPromedio(fila.agregado.costoPorDocenteActivo)}</b>{' '}
+          (plan, DeepSeek directo: {formatearCostoUsd(PLAN_COSTO_POR_DOCENTE_ACTIVO_USD)})
+        </li>
+        {
+          fila.agregado.filasSinAtribuir > 0 && (
+            <li class="text-ink-500">
+              {fila.agregado.filasSinAtribuir} filas sin atribuir a recurso nuevo ni ajuste (histórico, se excluyen de
+              los dos promedios).
+            </li>
+          )
+        }
+        {
+          fila.agregado.tokens > 0 && (
+            <li class="text-ink-500">
+              {formatearTokensCompacto(fila.agregado.tokensCacheados)} tokens cacheados de{' '}
+              {formatearTokensCompacto(fila.agregado.tokens)} totales.
+            </li>
+          )
+        }
+      </ul>
+    </div>
+  </div>
+</details>
