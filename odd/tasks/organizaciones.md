@@ -112,7 +112,7 @@ une a una organización.
 - [x] **T3 — Verificación de email.** _(653061a + 6d60cfd + corrección de color, escritor delegado)_ Cliente de Resend por `fetch` (sin dependencia nueva), token de verificación,
   registro con contraseña sin verificar, endpoint de verificación, fallback `NO_PROVIDER` sin key, aviso en `/admin`.
   Check: e2e con y sin key (key falsa contra un mock local).
-- [ ] **T4 — Invitaciones y elección de sede.** Página `/invitacion/[token]` (aceptar con sesión o registrarse),
+- [x] **T4 — Invitaciones y elección de sede.** _(7938caf + 6244da5 + corrección de `next`, escritor delegado)_ Página `/invitacion/[token]` (aceptar con sesión o registrarse),
   vencimiento, cupo, revocación; selector de sede para quien entra por un dominio de red. Check: e2e.
 - [ ] **T5 — Propósito del consumo.** `recordUsage` recibe `purpose` y calcula la sede y `forNewResource`; tocar solo
   las líneas de llamada en `stream.ts`, más `autocorreccion.ts` y `verificar.ts`. Check: e2e con el mock que
@@ -154,6 +154,18 @@ une a una organización.
   reemplazar `amber-*` (no existe en el repo y no cambia en oscuro) por los tokens de `BannerAdmin`.
   Env nuevas: `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_API_URL` (en `.env.example`).
 
+- 2026-09-26: **T4 hecha.** `src/lib/orgs/alcance.ts` es el ÚNICO punto que decide qué administra alguien
+  (`alcanceDeAdmin`, `puedeAdministrar`, `campusesAdministrables`, `requireOrgAdmin`, `requireFreshOrgAdmin`; una fila
+  de `OrganizationAdmin` solo cuenta si la persona pertenece a esa sede o a una sede de esa red; organización ajena →
+  404). Invitaciones con hash, aceptación con un UPDATE condicional dentro de una transacción, página
+  `/invitacion/[token]`, selector de sede, `next` en registro, login y Google.
+  Evidencia: `tsc` limpio; `org-invitaciones` 16/16 (incluye aislamiento entre sedes hermanas, red y organización
+  ajena, y dos aceptaciones concurrentes de cupo 1); `org-acceso` 7/7; `verificacion-email` 10/10.
+  Corrección del orquestador: el chequeo de `next` (`/` pero no `//`, heredado de `main` en `login.astro`) dejaba
+  pasar `/\evil.com`, que el navegador convierte en `//evil.com`. Ahora `nextSeguro()` en `src/lib/http.ts` resuelve
+  contra un origen fijo, en los 4 lugares; `org-invitaciones` 16/16 con los dos bypass agregados.
+  Invitaciones: el token se muestra UNA vez (solo se guarda el hash); para compartirlo de nuevo se crea otro.
+
 ## Siguiente paso
 
-T4.
+T5.
