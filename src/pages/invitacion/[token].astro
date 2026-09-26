@@ -1,0 +1,118 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AceptarInvitacion from '../../components/AceptarInvitacion.tsx';
+import { prisma } from '../../lib/db.ts';
+import { resolverInvitacionPublica } from '../../lib/orgs/invitaciones.ts';
+
+/**
+ * odd/tasks/organizaciones.md (T4): destino del enlace de invitación.
+ * Pública a propósito — el middleware sólo gatea "/app", "/admin" y "/org"
+ * (src/middleware.ts), así que esto anda con o sin sesión abierta. Nunca
+ * revela POR QUÉ un enlace no sirve (desconocido/vencido/agotado/revocado/
+ * organización archivada): un solo cartel genérico para los cinco motivos,
+ * mismo criterio que `verificar-email.astro`.
+ */
+const token = Astro.params.token ?? '';
+const resolucion = await resolverInvitacionPublica(token);
+
+const sessionUser = Astro.locals.user;
+
+type EstadoUsuario =
+  | { tipo: 'anonimo' }
+  | { tipo: 'demo' }
+  | { tipo: 'misma_sede' }
+  | { tipo: 'otra_organizacion'; nombre: string }
+  | { tipo: 'puede_unirse' };
+
+let estadoUsuario: EstadoUsuario = { tipo: 'anonimo' };
+
+if (resolucion.valida && sessionUser) {
+  const fila = await prisma.user.findUnique({
+    where: { id: sessionUser.id },
+    select: { isDemo: true, organizationId: true, organization: { select: { name: true } } },
+  });
+
+  if (fila?.isDemo) {
+    estadoUsuario = { tipo: 'demo' };
+  } else if (fila?.organizationId === resolucion.organizacion.id) {
+    estadoUsuario = { tipo: 'misma_sede' };
+  } else if (fila?.organizationId) {
+    estadoUsuario = { tipo: 'otra_organizacion', nombre: fila.organization?.name ?? 'otra organización' };
+  } else {
+    estadoUsuario = { tipo: 'puede_unirse' };
+  }
+}
+
+// Sólo rutas relativas propias, nunca "//host" ni un origen ajeno (mismo
+// criterio anti open-redirect que login.astro) — acá el valor lo construimos
+// nosotros mismos a partir del token, así que ya nace seguro.
+const next = `/invitacion/${encodeURIComponent(token)}`;
+---
+
+<BaseLayout title="Invitación">
+  <div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
+    {
+      !resolucion.valida ? (
+        <>
+          <h1 class="font-display text-xl font-bold text-ink-900">Este enlace no sirve</h1>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Este enlace ya no sirve, pedile uno nuevo a tu colegio.
+          </p>
+          <a
+            href="/login"
+            class="mt-6 inline-block rounded-lg border border-linea px-4 py-2 text-sm font-medium text-ink-700 transition-colors hover:border-ink-500"
+          >
+            Ir a iniciar sesión
+          </a>
+        </>
+      ) : (
+        <>
+          <h1 class="font-display text-xl font-bold text-ink-900">Te invitaron a {resolucion.organizacion.name}</h1>
+          {resolucion.red && <p class="mt-1 text-sm text-ink-500">Parte de la red {resolucion.red.name}</p>}
+
+          {estadoUsuario.tipo === 'anonimo' && (
+            <>
+              <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+                Creá tu cuenta o ingresá con la tuya para sumarte.
+              </p>
+              <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+                <a href={`/register?next=${encodeURIComponent(next)}`} class="kodu-btn-primary">
+                  Crear cuenta
+                </a>
+                <a
+                  href={`/login?next=${encodeURIComponent(next)}`}
+                  class="rounded-lg border border-linea px-4 py-2 text-sm font-medium text-ink-700 transition-colors hover:border-ink-500"
+                >
+                  Ya tengo cuenta
+                </a>
+              </div>
+            </>
+          )}
+
+          {estadoUsuario.tipo === 'puede_unirse' && (
+            <AceptarInvitacion client:load token={token} sedeName={resolucion.organizacion.name} />
+          )}
+
+          {estadoUsuario.tipo === 'misma_sede' && (
+            <p class="mx-auto mt-6 max-w-md text-sm text-ink-600">
+              Ya sos parte de {resolucion.organizacion.name}.
+            </p>
+          )}
+
+          {estadoUsuario.tipo === 'otra_organizacion' && (
+            <p class="mx-auto mt-6 max-w-md text-sm text-ink-600">
+              Tu cuenta ya pertenece a {estadoUsuario.nombre}. Su administrador te tiene que sacar de
+              ahí antes de que puedas sumarte a otra.
+            </p>
+          )}
+
+          {estadoUsuario.tipo === 'demo' && (
+            <p class="mx-auto mt-6 max-w-md text-sm text-ink-600">
+              La cuenta de demo no puede aceptar invitaciones.
+            </p>
+          )}
+        </>
+      )
+    }
+  </div>
+</BaseLayout>
