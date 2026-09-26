@@ -17,6 +17,152 @@ enum Role {
   ADMIN
 }
 
+/// odd/tasks/organizaciones.md (T1): un colegio (sede) o una red de colegios.
+/// Una `NETWORK` no tiene `parentId` (es la raíz); una `CAMPUS` puede colgar
+/// de una `NETWORK` (una sede de esa red) o no tener padre (colegio
+/// standalone). Ninguna migración crea una `NETWORK` todavía — Reditinere
+/// nace como `CAMPUS` sin padre (ver la migración de este cambio).
+enum OrganizationKind {
+  CAMPUS
+  NETWORK
+}
+
+/// odd/tasks/organizaciones.md (T1): vende Kodu por sede o por red. Reemplaza
+/// a `AuthorizedDomain` como dueña de "qué dominios habilitan la IA" — ver
+/// `OrganizationDomain` — y agrega lista blanca por email, invitaciones y
+/// admins propios (T2/T4/T6). `archivedAt` (no un DELETE) porque una
+/// organización dada de baja no puede arrastrar en cascada a los docentes que
+/// ya tiene: `puedeUsarLaIa` la trata como si no existiera, sin borrar nada
+/// (design.md — "Costo congelado por organización" pide que el historial
+/// sobreviva).
+model Organization {
+  id         String           @id @default(uuid())
+  name       String
+  kind       OrganizationKind
+  /// Sólo para una `CAMPUS` que pertenece a una `NETWORK`. `onDelete: SetNull`:
+  /// si la red se borra, la sede queda standalone en vez de desaparecer con
+  /// ella — nunca se pierden datos de un colegio por una baja ajena.
+  parentId   String?
+  parent     Organization?    @relation("OrganizationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children   Organization[]   @relation("OrganizationHierarchy")
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  archivedAt DateTime?
+
+  domains       OrganizationDomain[]
+  allowedEmails OrganizationAllowedEmail[]
+  invites       OrganizationInvite[]
+  admins        OrganizationAdmin[]
+  /// Docentes que pertenecen a esta organización (siempre una `CAMPUS`, regla
+  /// de aplicación — no hay forma de expresar "sólo CAMPUS" en un FK plano).
+  members       User[]
+  /// Consumo con la sede congelada al momento de la llamada (design.md).
+  tokenUsage    TokenUsage[]
+
+  @@index([parentId])
+}
+
+/// odd/tasks/organizaciones.md (T1): reemplaza a `AuthorizedDomain`. El
+/// patrón sigue siendo único GLOBAL (no por organización): dos colegios no
+/// pueden reclamar el mismo dominio, y el comodín `*.edu.ar` sigue matcheando
+/// sólo subdominios (mismo criterio que `domains.ts`, portado sin tocar). Un
+/// dominio de una `NETWORK` es compartido por todas sus sedes — quien entra
+/// por ese dominio elige su sede la primera vez (T4).
+model OrganizationDomain {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// "rededucativa.edu.ar" o "*.edu.ar". Siempre en minúsculas, sin "@".
+  pattern        String       @unique
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+/// odd/tasks/organizaciones.md (T1): lista blanca de emails puntuales (no todo
+/// un dominio) que unen a una organización — siempre una `CAMPUS` (regla de
+/// aplicación). Email único GLOBAL, mismo criterio que `pattern` en
+/// `OrganizationDomain`: dos colegios no pueden reclamar la misma casilla.
+model OrganizationAllowedEmail {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String       @unique
+  createdAt      DateTime     @default(now())
+  createdById    String?
+  createdBy      User?        @relation("OrganizationAllowedEmailCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+}
+
+/// odd/tasks/organizaciones.md (T1/T4): enlace de invitación a una `CAMPUS`.
+/// Guarda el HASH del token, nunca el token en claro (mismo criterio que
+/// `passwordHash`) — perderlo no compromete nada, y aceptar el enlace nunca
+/// exige email verificado (decisión del dueño: tener el enlace es la
+/// prueba). `maxUses`/`expiresAt` opcionales: `NULL` = sin tope/sin
+/// vencimiento.
+model OrganizationInvite {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tokenHash      String       @unique
+  expiresAt      DateTime?
+  maxUses        Int?
+  uses           Int          @default(0)
+  revokedAt      DateTime?
+  createdById    String?
+  createdBy      User?        @relation("OrganizationInviteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+/// odd/tasks/organizaciones.md (T1): quién administra qué organización (una
+/// `CAMPUS` o una `NETWORK` — regla de aplicación en T6/T9: para administrar
+/// una sede hay que pertenecer a ella o pertenecer a una sede de su red). Un
+/// admin de organización puede promover o quitar a otros admins de la SUYA
+/// (decisión del dueño) — eso es simplemente crear/borrar filas acá, sin
+/// tocar `User.role` (que sigue siendo el rol GLOBAL de superadmin).
+model OrganizationAdmin {
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
+  createdById    String?
+  createdBy      User?        @relation("OrganizationAdminCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@id([userId, organizationId])
+  @@index([organizationId])
+}
+
+/// odd/tasks/organizaciones.md (T1/T3): de dónde salió `User.emailVerifiedAt`.
+/// `GOOGLE` = Google ya lo confirmó; `EMAIL` = verificado por el enlace de
+/// Resend; `NO_PROVIDER` = se tomó como verificado porque no hay
+/// `RESEND_API_KEY` en el entorno (decisión del dueño — fallback sin Resend).
+/// Se puede auditar sin quitarle nada a nadie cuando se carga la key.
+enum EmailVerificationSource {
+  GOOGLE
+  EMAIL
+  NO_PROVIDER
+}
+
+/// odd/tasks/organizaciones.md (T1, usada recién en T3): token de
+/// verificación de email por Resend. Hash, nunca el token en claro — mismo
+/// criterio que `OrganizationInvite.tokenHash`.
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
 enum ModelChoice {
   /// Fuera de servicio desde 2026-08-27 (dejo de ser gratuito). Se conserva
   /// porque hay consumo historico que lo referencia.
@@ -48,6 +194,19 @@ model User {
   /// Ver el indice unico parcial en la migracion 20260922000000: a lo sumo
   /// una fila en true, igual que AiModel.isDefault.
   isDemo       Boolean      @default(false)
+  /// odd/tasks/organizaciones.md (T1/T2): la sede a la que pertenece (siempre
+  /// una `Organization` de kind `CAMPUS`, regla de aplicación — un docente
+  /// pertenece a UNA sola, decisión del dueño). `NULL` = cuenta personal.
+  /// `onDelete: SetNull`: borrar la organización nunca borra al docente, lo
+  /// deja personal de nuevo.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// odd/tasks/organizaciones.md (T1/T3): cuándo (y por qué medio,
+  /// `emailVerificationSource`) se confirmó el email. `NULL` = todavía no
+  /// verificado — sólo posible en un registro con contraseña con
+  /// `RESEND_API_KEY` cargada (ver `src/lib/orgs/membresia.ts#emailConfiable`).
+  emailVerifiedAt         DateTime?
+  emailVerificationSource EmailVerificationSource?
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
@@ -61,6 +220,16 @@ model User {
   /// M8: turnos de chat que esta cuenta escribió actuando como admin sobre
   /// un recurso que no le pertenece. Back-relation de ChatMessage.authorUser.
   authoredMessages   ChatMessage[] @relation("ChatMessageAuthor")
+  /// odd/tasks/organizaciones.md: back-relations de las tablas de
+  /// organización (T1). Ninguna cambia el borrado de esta cuenta — todas son
+  /// onDelete: SetNull o Cascade del OTRO lado (ver cada modelo).
+  organizationAdmins               OrganizationAdmin[]
+  organizationAdminsCreated        OrganizationAdmin[]        @relation("OrganizationAdminCreatedBy")
+  organizationAllowedEmailsCreated OrganizationAllowedEmail[] @relation("OrganizationAllowedEmailCreatedBy")
+  organizationInvitesCreated       OrganizationInvite[]       @relation("OrganizationInviteCreatedBy")
+  emailVerificationTokens          EmailVerificationToken[]
+
+  @@index([organizationId])
 }
 
 /// Fila unica de interruptores de toda la app (design.md #9): hoy solo la
@@ -80,17 +249,18 @@ model AppSettings {
   updatedAt          DateTime @updatedAt
 }
 
-/// Dominios de correo que habilitan el uso de la IA (design.md #10) — NO el
-/// registro ni el login, que quedan abiertos a cualquiera desde M6. Reemplaza
-/// a `ALLOWED_EMAIL_DOMAINS` como fuente de verdad en tiempo de ejecucion; el
-/// env var solo se usa como semilla inicial (`prisma/seed.ts`).
-model AuthorizedDomain {
-  id        String   @id @default(uuid())
-  /// "rededucativa.edu.ar" o "*.edu.ar" (comodin de subdominio). Siempre en
-  /// minusculas, sin "@".
-  pattern   String   @unique
-  note      String?
-  createdAt DateTime @default(now())
+/// odd/tasks/organizaciones.md (T1): enum `UsagePurpose` — para qué fue cada
+/// llamada, nulo en las filas históricas (nunca se backfillea: es un dato que
+/// no existía antes de esta columna). Es el supuesto más débil de
+/// `experimentos/razonamiento/PLAN-produccion.md` §4/§6.2: sin esto no se
+/// puede medir el costo de un ajuste contra el de una generación nueva.
+enum UsagePurpose {
+  GENERATION
+  ADJUSTMENT
+  CHECKLIST
+  CORRECTION
+  VERIFICATION
+  EXTRA_VERSION
 }
 
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
@@ -120,11 +290,30 @@ model TokenUsage {
   priceOutputSnapshot      Decimal? @db.Decimal(12, 6)
   priceCachedInputSnapshot Decimal? @db.Decimal(12, 6)
   createdAt        DateTime     @default(now())
+  /// odd/tasks/organizaciones.md (T1): la sede CONGELADA al momento de la
+  /// llamada (decisión del dueño — "costo congelado por organización"). Si el
+  /// docente cambia de sede después, este historial no se mueve. `NULL` en
+  /// las filas de la demo (queda fuera de toda organización) y en todo lo
+  /// histórico de una cuenta personal. `onDelete: SetNull`: borrar la
+  /// organización no borra el consumo ya facturado.
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// Para qué fue este turno. `NULL` en toda fila histórica (T1) — nunca se
+  /// inventa un propósito para consumo que ya pasó.
+  purpose        UsagePurpose?
+  /// odd/tasks/organizaciones.md (T1): si este turno correspondía a un
+  /// recurso NUEVO (para sumar su costo total contra el de un ajuste). Las
+  /// correcciones y verificaciones lo heredan de la última fila
+  /// GENERATION/ADJUSTMENT del mismo proyecto y usuario (T5) — acá sólo se
+  /// declara la columna. `NULL` en las filas históricas, mismo criterio que
+  /// `purpose`.
+  forNewResource Boolean?
 
   @@index([userId, provider])
   @@index([createdAt])
   @@index([projectId])
   @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
 }
 
 model Project {
