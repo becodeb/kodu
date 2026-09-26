@@ -535,7 +535,7 @@ await limpiarMotoresDePrueba();
 function config(extra: Partial<ProviderConfig>): ProviderConfig {
   return {
     id: 'x', label: 'x', apiKey: 'k', baseUrl: 'http://localhost:0', model: 'm',
-    maxTokens: 1, userTokenLimit: 0, userTokenWindowHours: 0, maxInputChars: 1,
+    apiFormat: 'chat', maxTokens: 1, userTokenLimit: 0, userTokenWindowHours: 0, maxInputChars: 1,
     supportsVision: false, reasoningEffort: null, reasoningParam: null,
     precios: null, ...extra,
   };

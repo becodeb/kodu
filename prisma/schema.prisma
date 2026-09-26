@@ -221,6 +221,11 @@ model AiProvider {
   /// formulario de motor: "GMI — cuenta de la escuela".
   label String
   baseUrl String
+  /// T2 (verificador): "chat" (Chat Completions, todo lo que había antes de
+  /// esta columna) o "responses" (OpenAI Responses API — la única que
+  /// combina function tools con razonamiento). String, no enum: mismo
+  /// criterio que `kind` en esta misma tabla.
+  apiFormat String @default("chat")
 
   /// AES-256-GCM. Formato "v1.<nonce>.<ct>.<tag>" en base64url. Nunca sale del server.
   apiKeyCipher String?

@@ -104,6 +104,10 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     // lo rechaza con 503 antes de pegarle a la red).
     apiKey: clavePlano(fila) ?? '',
     baseUrl: fila.provider.baseUrl,
+    // T2 (verificador): cualquier valor que no sea "responses" se trata como
+    // "chat" — mismo criterio defensivo que el resto de este archivo (nunca
+    // un throw por un dato de fila inesperado, ver `clavePlano` más arriba).
+    apiFormat: fila.provider.apiFormat === 'responses' ? 'responses' : 'chat',
     model: fila.providerModel,
     maxTokens: fila.maxOutputTokens,
     userTokenLimit: fila.userTokenLimit,

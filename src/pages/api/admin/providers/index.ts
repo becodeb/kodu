@@ -25,6 +25,9 @@ const crearProveedorSchema = z.object({
     .regex(/^[a-z0-9][a-z0-9-]*$/, 'El tipo va en minúsculas, sin espacios (ej: "gmi").'),
   label: z.string().trim().min(1, 'Falta el nombre de la cuenta').max(120),
   baseUrl: z.string().trim().min(1, 'Falta la URL base').max(300),
+  /** T2 (verificador): sin mandarlo, la columna cae a su default "chat" —
+   *  mismo comportamiento que tenía toda cuenta antes de esta columna. */
+  apiFormat: z.enum(['chat', 'responses']).optional(),
   apiKey: z.string().trim().min(1).max(500).optional(),
   enabled: z.boolean().optional(),
 });
@@ -73,6 +76,7 @@ export const POST: APIRoute = async ({ request }) => {
       kind: datos.kind,
       label: datos.label,
       baseUrl: datos.baseUrl,
+      apiFormat: datos.apiFormat ?? 'chat',
       apiKeyCipher,
       apiKeyHint,
       enabled: datos.enabled ?? true,

@@ -11,6 +11,8 @@ export interface ProveedorAdmin {
   kind: string;
   label: string;
   baseUrl: string;
+  /** T2 (verificador): "chat" (default) o "responses". */
+  apiFormat: string;
   /** Nunca la clave ni el cifrado: sólo si hay una cargada. */
   tieneClave: boolean;
   apiKeyHint: string | null;
@@ -25,6 +27,7 @@ export function serializarProveedor(fila: AiProvider & { _count?: { modelos: num
     kind: fila.kind,
     label: fila.label,
     baseUrl: fila.baseUrl,
+    apiFormat: fila.apiFormat,
     tieneClave: fila.apiKeyCipher !== null,
     apiKeyHint: fila.apiKeyHint,
     enabled: fila.enabled,

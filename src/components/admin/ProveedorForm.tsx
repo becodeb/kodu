@@ -25,6 +25,7 @@ export default function ProveedorForm(props: ProveedorFormProps) {
   const [kind, setKind] = useState(proveedor?.kind ?? '');
   const [label, setLabel] = useState(proveedor?.label ?? '');
   const [baseUrl, setBaseUrl] = useState(proveedor?.baseUrl ?? '');
+  const [apiFormat, setApiFormat] = useState(proveedor?.apiFormat ?? 'chat');
   const [apiKey, setApiKey] = useState('');
   const [enabled, setEnabled] = useState(proveedor?.enabled ?? true);
 
@@ -46,6 +47,7 @@ export default function ProveedorForm(props: ProveedorFormProps) {
       kind: kind.trim(),
       label: label.trim(),
       baseUrl: baseUrl.trim(),
+      apiFormat,
     };
     if (proveedor) payload.enabled = enabled;
     if (apiKey.trim() !== '') payload.apiKey = apiKey.trim();
@@ -121,6 +123,25 @@ export default function ProveedorForm(props: ProveedorFormProps) {
             className="kodu-input"
             required
           />
+        </div>
+
+        <div>
+          <label className="kodu-label" htmlFor={`${idBase}-apiFormat`}>
+            Formato de API
+          </label>
+          <select
+            id={`${idBase}-apiFormat`}
+            value={apiFormat}
+            onChange={(event) => setApiFormat(event.target.value)}
+            className="kodu-input"
+          >
+            <option value="chat">Chat Completions (la mayoría)</option>
+            <option value="responses">Responses (OpenAI)</option>
+          </select>
+          <p className="mt-1 text-xs text-ink-500">
+            Los modelos de razonamiento de OpenAI (como gpt-6-luna) sólo aceptan herramientas junto con
+            razonamiento a través de Responses.
+          </p>
         </div>
 
         <div>

@@ -102,6 +102,44 @@ export interface RespuestaCondicional {
   respuesta: RespuestaScript;
 }
 
+/**
+ * T2 (verificador): una respuesta programada para `/v1/responses`, el
+ * dialecto de la Responses API que habla un `AiProvider` con
+ * `apiFormat: 'responses'` (`src/lib/ai/provider.ts`, `readCompletionStream`
+ * con el segundo argumento en `'responses'`). Deliberadamente más chica que
+ * `RespuestaScript`: no ejercita vista previa progresiva (nadie la necesita
+ * todavía en este dialecto) ni las colas condicionales/checklist de arriba
+ * — sólo lo que hace falta para que T3/T4 puedan e2e un motor verificador:
+ * texto de una sola vez, y un `function_call` cuando el pedido ofrece
+ * `tools` con un `tool_choice` que fuerza una en particular (igual que el
+ * default de la cola de Chat Completions llama la herramienta, PERO acá no
+ * hay default implícito: sin `tools`/`tool_choice` forzado en el pedido, NO
+ * hay function_call, sea cual sea el script — un verificador manda
+ * `sinHerramientas`, así que nunca corresponde inventarle uno).
+ */
+export interface RespuestaResponsesScript {
+  /** HTTP status alternativo (429, 500, …) en vez de streaming. */
+  status?: number;
+  /** Demora antes del primer byte, en ms. */
+  demoraInicialMs?: number;
+  /** Texto de `response.output_text.delta`. Default: un JSON vacío de
+   *  "sin hallazgos", útil como default no vacío para un verificador. */
+  texto?: string;
+  /** Los `arguments` (JSON crudo) de la función forzada, si el pedido la
+   *  fuerza. Default: `{"html": htmlDeEjemplo(2000)}`. */
+  argumentosFuncion?: string;
+  /** `response.completed` (default), `response.incomplete` (truncado) o
+   *  `response.failed`. */
+  finishReason?: 'completed' | 'incomplete' | 'failed';
+  /** Mensaje de `response.failed`, o del evento `error` si `viaErrorEvent`. */
+  errorMessage?: string;
+  /** En vez de terminar con `response.failed`, corta con un evento
+   *  `type: 'error'` a mitad de stream (sin `response.completed` después) —
+   *  el otro camino de error que puede mandar la Responses API real. */
+  viaErrorEvent?: boolean;
+  usage?: UsageScript;
+}
+
 export interface MockProveedor {
   url: string;
   puerto: number;
@@ -140,6 +178,9 @@ export interface MockProveedor {
     match: (body: Record<string, unknown>) => boolean,
     respuesta: RespuestaScript,
   ): void;
+  /** T2 (verificador): igual que `programarRespuesta`, pero para el FIFO
+   *  aparte de `/v1/responses` — ver `RespuestaResponsesScript`. */
+  programarRespuestaResponses(respuesta: RespuestaResponsesScript): void;
   detener(): Promise<void>;
 }
 
@@ -335,6 +376,111 @@ async function responderConHerramientaAnsiosa(res: ServerResponse, id: string, m
   res.end();
 }
 
+function escribirEventoResponses(res: ServerResponse, type: string, extra: Record<string, unknown> = {}) {
+  res.write(`data: ${JSON.stringify({ type, ...extra })}\n\n`);
+}
+
+/**
+ * T2 (verificador): si el pedido ofrece `tools` Y las fuerza con
+ * `tool_choice: {type:'function', name}` (`aResponsesBody` en
+ * `provider.ts` sólo manda esa forma o `'auto'`, nunca un string suelto
+ * salvo `'auto'`), devuelve el nombre forzado. `'auto'` o sin `tools`: sin
+ * function_call — mismo criterio que documenta `RespuestaResponsesScript`.
+ */
+function funcionForzadaDelPedido(body: Record<string, unknown>): string | null {
+  const tools = Array.isArray(body.tools) ? body.tools : [];
+  if (tools.length === 0) return null;
+  const toolChoice = body.tool_choice;
+  if (toolChoice && typeof toolChoice === 'object' && (toolChoice as Record<string, unknown>).type === 'function') {
+    const nombre = (toolChoice as Record<string, unknown>).name;
+    return typeof nombre === 'string' ? nombre : UPDATE_RESOURCE_CODE;
+  }
+  return null;
+}
+
+/**
+ * T2 (verificador): el handler de `/v1/responses` — ver
+ * `RespuestaResponsesScript` para lo que puede scriptear un test.
+ */
+async function manejarPedidoResponses(
+  req: IncomingMessage,
+  res: ServerResponse,
+  llamadas: LlamadaRegistrada[],
+  colaRespuestas: RespuestaResponsesScript[],
+): Promise<void> {
+  const crudo = await leerCuerpo(req);
+  let body: Record<string, unknown>;
+  try {
+    body = crudo ? (JSON.parse(crudo) as Record<string, unknown>) : {};
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'mock-proveedor: el body no es JSON válido' } }));
+    return;
+  }
+
+  llamadas.push({ recibidaEn: Date.now(), body });
+
+  const script = colaRespuestas.shift() ?? {};
+
+  if (script.status && script.status !== 200) {
+    res.writeHead(script.status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: `mock-proveedor: status ${script.status} scripteado` } }));
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+
+  const id = `resp-${Date.now()}-${llamadas.length}`;
+
+  if (script.demoraInicialMs) await esperar(script.demoraInicialMs);
+
+  if (script.viaErrorEvent) {
+    // Corte de red/error de la Responses API a mitad de stream: nunca llega
+    // `response.completed` después de esto — `readResponsesStream`
+    // (`provider.ts`) tiene que tirar acá, no devolver un turno vacío.
+    escribirEventoResponses(res, 'error', { message: script.errorMessage ?? 'mock-proveedor: error scripteado' });
+    res.end();
+    return;
+  }
+
+  // Una sola tanda alcanza: este dialecto no ejercita vista previa
+  // progresiva (a diferencia de `/v1/chat/completions` arriba).
+  const texto = script.texto ?? '{"problemas":[]}';
+  escribirEventoResponses(res, 'response.output_text.delta', { delta: texto });
+
+  const nombreFuncion = funcionForzadaDelPedido(body);
+  if (nombreFuncion) {
+    const itemId = `item_${id}`;
+    escribirEventoResponses(res, 'response.output_item.added', {
+      item: { id: itemId, type: 'function_call', call_id: `call_${id}`, name: nombreFuncion },
+    });
+    const argumentos = script.argumentosFuncion ?? JSON.stringify({ html: htmlDeEjemplo(2_000) });
+    escribirEventoResponses(res, 'response.function_call_arguments.delta', { item_id: itemId, delta: argumentos });
+  }
+
+  const usage = script.usage ?? { prompt_tokens: 500, completion_tokens: 150, cached_tokens: 0 };
+  const tipoFinal = script.finishReason ?? 'completed';
+  escribirEventoResponses(res, `response.${tipoFinal}`, {
+    response: {
+      usage: {
+        input_tokens: usage.prompt_tokens,
+        output_tokens: usage.completion_tokens,
+        input_tokens_details: { cached_tokens: usage.cached_tokens ?? 0 },
+      },
+      ...(tipoFinal === 'failed'
+        ? { error: { message: script.errorMessage ?? 'mock-proveedor: response.failed scripteado' } }
+        : {}),
+    },
+  });
+
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 async function manejarPedido(
   req: IncomingMessage,
   res: ServerResponse,
@@ -522,12 +668,28 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
   const llamadas: LlamadaRegistrada[] = [];
   const colaRespuestas: RespuestaScript[] = [];
   const colaCondicional: RespuestaCondicional[] = [];
+  const colaRespuestasResponses: RespuestaResponsesScript[] = [];
   const estado = { ansiosoConHerramienta: opciones.ansiosoConHerramienta ?? false };
 
   const server = createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/salud') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('ok');
+      return;
+    }
+
+    // T2 (verificador): dialecto aparte, cola aparte — ver
+    // `manejarPedidoResponses`/`RespuestaResponsesScript`.
+    if (req.method === 'POST' && req.url?.endsWith('/v1/responses')) {
+      manejarPedidoResponses(req, res, llamadas, colaRespuestasResponses).catch((error) => {
+        console.error('[mock-proveedor] error atendiendo el pedido de /v1/responses:', error);
+        try {
+          if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'mock-proveedor: error interno' } }));
+        } catch {
+          /* la conexión ya se había cortado */
+        }
+      });
       return;
     }
 
@@ -562,6 +724,7 @@ export async function iniciarMockProveedor(opciones: MockProveedorOpciones = {})
     },
     programarRespuesta: (respuesta: RespuestaScript) => colaRespuestas.push(respuesta),
     programarRespuestaCondicional: (match, respuesta) => colaCondicional.push({ match, respuesta }),
+    programarRespuestaResponses: (respuesta: RespuestaResponsesScript) => colaRespuestasResponses.push(respuesta),
     detener: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
