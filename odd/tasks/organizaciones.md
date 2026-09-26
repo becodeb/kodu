@@ -98,7 +98,7 @@ Dominios, así que no compilan por separado. La pestaña Dominios se quita en T2
 Una cuenta personal conserva sus recursos (no se borran) pero no entra al editor; vuelven a estar disponibles si se
 une a una organización.
 
-- [ ] **T1 — Esquema y migración.** Modelos `Organization` (`CAMPUS` | `NETWORK`, `parentId` para sedes de una red),
+- [x] **T1 — Esquema y migración.** _(d51e3d2, escritor delegado)_ Modelos `Organization` (`CAMPUS` | `NETWORK`, `parentId` para sedes de una red),
   `OrganizationDomain` (reemplaza a `AuthorizedDomain`, patrón único global), `OrganizationAllowedEmail` (email único
   global), `OrganizationInvite` (hash del token, vencimiento y cupo opcionales, usos, revocado),
   `OrganizationAdmin` (usuario ↔ organización que administra), `EmailVerificationToken`. En `User`:
@@ -106,7 +106,7 @@ une a una organización.
   `forNewResource`. Backfill: Reditinere, sus dominios, todos los usuarios no demo, `TokenUsage.organizationId`
   histórico, `emailVerifiedAt` para cuentas de Google. Borrar `AuthorizedDomain` y todas sus referencias.
   Check: migración aplicada, 3 índices parciales presentes, `tsc` limpio.
-- [ ] **T2 — Membresía y acceso.** `src/lib/orgs/`: resolver la organización de un email (dominio / lista blanca),
+- [x] **T2 — Membresía y acceso.** _(6cc5ed9 + ee46672, escritor delegado + corrección inline)_ `src/lib/orgs/`: resolver la organización de un email (dominio / lista blanca),
   unir en el momento, nueva regla `puedeUsarLaIa` (override → organización), gate de cuenta personal en `/app` y en
   las APIs de trabajo (pantalla "cuenta personal"). Check: e2e de acceso.
 - [ ] **T3 — Verificación de email.** Cliente de Resend por `fetch` (sin dependencia nueva), token de verificación,
@@ -134,7 +134,18 @@ une a una organización.
 ## Progreso
 
 - 2026-09-26: exploración y decisiones del dueño. Documento creado.
+- 2026-09-26: **T1 + T2 hechas.** Evidencia: `tsc` limpio; 3 índices parciales presentes; `prisma migrate diff` solo
+  muestra columnas de la migración ajena `20261007…`; `rg` sin referencias vivas a `AuthorizedDomain`;
+  `e2e/org-acceso.ts` 7/7 (reemplaza a `m6-acceso.ts`); `m1-admin-shell` y `m7-demo` verdes; seed idempotente.
+  El escritor verificó el backfill sobre una tabla `AuthorizedDomain` vacía; lo repetí en una base descartable con 2
+  dominios y un usuario de Google: los dominios pasan a Reditinere, Google queda verificado, cero usuarios no demo sin
+  organización.
+  Corrección del orquestador: el escritor había movido todo `app/project/[id].astro` a un componente nuevo; ese
+  archivo lo cambia la otra rama, así que se revirtió a un gate de 8 líneas (redirige a `/app`) con su escenario en el
+  e2e.
+  **Para el deploy:** si en producción `AuthorizedDomain` tiene un comodín amplio (`*.edu.ar`), pasa a ser de
+  Reditinere y todo docente de un `.edu.ar` se uniría a Reditinere. Revisar la lista de producción antes de mergear.
 
 ## Siguiente paso
 
-T1.
+T3.
