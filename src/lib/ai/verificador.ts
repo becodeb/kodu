@@ -220,16 +220,28 @@ export function parsearVerificacion(texto: string): { problemas: Problema[] } | 
 
 const ORDEN_GRAVEDAD: Record<GravedadProblema, number> = { alta: 0, media: 1, baja: 2 };
 
-/** Palabras "de contenido" de un texto: en minúsculas, sin puntuación, sin
- *  las de 2 letras o menos (artículos, preposiciones cortas) — para que la
- *  comparación de solapamiento no la decidan "el", "de", "un". */
+/** Frequent 3+ letter function words that would otherwise inflate overlap. */
+const PALABRAS_VACIAS = new Set(
+  'los las del que con para por una uno como pero aunque sin sus ese esa esta este cada mas muy desde hasta entre sobre tambien despues antes cuando donde mientras asi ademas'.split(
+    ' ',
+  ),
+);
+
+/** Content-word stems of a text: lowercase, accents and punctuation removed,
+ *  function words dropped, each word cut to its first 5 letters so that
+ *  "evalúan"/"evaluarlos" or "desafío"/"desafíos" match. Two passes of the
+ *  same model describe one finding with different wording, so exact words
+ *  are not enough. */
 function palabrasDe(texto: string): Set<string> {
   return new Set(
     texto
+      .normalize('NFD')
+      .replace(/\p{M}/gu, '')
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s]/gu, ' ')
       .split(/\s+/)
-      .filter((palabra) => palabra.length > 2),
+      .filter((palabra) => palabra.length > 2 && !PALABRAS_VACIAS.has(palabra))
+      .map((palabra) => palabra.slice(0, 5)),
   );
 }
 
@@ -248,11 +260,12 @@ function solapamiento(a: Set<string>, b: Set<string>): number {
   return comunes / Math.min(a.size, b.size);
 }
 
-/** A partir de qué solapamiento de palabras de `que` dos problemas del
- *  MISMO `tipo` se tratan como el mismo hallazgo, reportado por más de una
- *  pasada. Calibrado a ojo: alto a propósito (dos problemas DISTINTOS del
- *  mismo tipo casi nunca comparten más del 60% de sus palabras de "que"). */
-const UMBRAL_DUPLICADO = 0.6;
+/** From which stem overlap of `que` two problems of the SAME `tipo` count as
+ *  one finding reported by more than one pass. Calibrated on real
+ *  gpt-6-luna output (T5, 2026-09-26): the paraphrased duplicates scored
+ *  0.45 and 0.52, while distinct findings of the same resource scored 0.14
+ *  or less. The previous 0.6 let both duplicates through. */
+const UMBRAL_DUPLICADO = 0.4;
 
 /**
  * Combina las listas de una o más pasadas en una sola (T3: un recurso NUEVO

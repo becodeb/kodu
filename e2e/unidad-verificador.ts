@@ -229,9 +229,9 @@ await prueba('normalizarProblema: no-objeto o campos faltantes → null', () => 
 
 await prueba('unirPasadas: una sola pasada — se ordena por gravedad y se topea a 6', () => {
   const lista = [
-    problema({ gravedad: 'baja', que: 'problema baja' }),
-    problema({ gravedad: 'alta', que: 'problema alta' }),
-    problema({ gravedad: 'media', que: 'problema media' }),
+    problema({ gravedad: 'baja', que: 'el confeti tapa el botón' }),
+    problema({ gravedad: 'alta', que: 'el puntaje se suma dos veces' }),
+    problema({ gravedad: 'media', que: 'la fecha de la batalla está mal' }),
   ];
   const resultado = unirPasadas([lista]);
   assert.deepEqual(
@@ -269,6 +269,38 @@ await prueba('unirPasadas: mismo tipo pero "que" distinto NO se fusiona', () => 
   const pasada2 = [problema({ tipo: 'logica', que: 'El cronómetro sigue corriendo después de terminar el juego' })];
   const resultado = unirPasadas([pasada1, pasada2]);
   assert.equal(resultado.length, 2, 'son dos problemas de lógica DISTINTOS, no un duplicado');
+});
+
+// Real gpt-6-luna output from T5 (two passes over the same resource): the
+// same finding, paraphrased, must merge; the distinct ones must not.
+await prueba('unirPasadas: paraphrased duplicates from real passes merge, distinct findings stay', () => {
+  const explorar1 = problema({
+    tipo: 'logica',
+    gravedad: 'media',
+    que: 'Los desafíos se evalúan y se marcan como logrados también en modo Explorar. Tanto los cambios de puntos como agregar/quitar datos llaman a `evaluarDesafios()`, y al entrar en Desafío `aplicarModo()` vuelve a evaluarlos. Así, una consigna puede aparecer cumplida antes de que el alumno entre al desafío.',
+  });
+  const explorar2 = problema({
+    tipo: 'logica',
+    gravedad: 'media',
+    que: 'Los desafíos se evalúan también en modo Explorar y al cambiar de modo no se reinician. Como los logros quedan guardados, un alumno puede completar consignas antes de abrir el panel de desafíos, que entonces aparece con logros ya marcados. Además, si modifica varios datos en Explorar, la primera consigna sigue comparando contra el conjunto original y no contra el estado al comenzar el desafío.',
+  });
+  const escala = problema({
+    tipo: 'logica',
+    gravedad: 'alta',
+    que: 'La escala usada para arrastrar no coincide con la escala en la que se dibujan los puntos. Los puntos se ubican entre 135 y 175 (`pctDe`), pero `kodu.arrastrar` calcula el cambio usando 140–170 a lo largo de todo el ancho de la recta.',
+  });
+  const orden1 = problema({
+    tipo: 'pedido',
+    gravedad: 'media',
+    que: 'Los desafíos no se habilitan en orden: cada uno se marca como completado en cuanto se cumple su condición, aunque los anteriores sigan pendientes.',
+  });
+  const orden2 = problema({
+    tipo: 'pedido',
+    gravedad: 'media',
+    que: 'Los desafíos se pueden completar fuera de orden: se marca cualquier desafío que coincida con las barras, sin esperar a que se resuelva el anterior.',
+  });
+  assert.equal(unirPasadas([[escala, explorar1], [explorar2]]).length, 2);
+  assert.equal(unirPasadas([[orden1], [orden2]]).length, 1);
 });
 
 await prueba('unirPasadas: mismo texto pero tipo distinto NO se fusiona', () => {
