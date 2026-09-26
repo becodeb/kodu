@@ -123,7 +123,7 @@ une a una organización.
 - [x] **T7 — Superadmin: métricas de precio.** _(7c73181 + 7c7eb60 + corrección, escritor delegado)_ Por organización y mes: docentes registrados, activos, recursos
   creados, turnos, tokens y USD; costo promedio por recurso nuevo y por ajuste; costo por docente activo; filas sin
   precio marcadas como incompletas (nunca sumar NULL como 0). Check: e2e con filas sembradas y cifras calculadas a mano.
-- [ ] **T8 — Panel de la organización.** `/org`: docentes (lista, baja → cuenta personal, lista blanca, enlaces,
+- [x] **T8 — Panel de la organización.** _(5f672bd + 79bfc71 + 4233674, escritor delegado)_ `/org`: docentes (lista, baja → cuenta personal, lista blanca, enlaces,
   admins), recursos por docente, tokens y costo por docente y por mes, desglose por sede en una red. Móvil y modo
   oscuro. Check: e2e de navegador.
 - [ ] **T9 — Aislamiento.** e2e explícitos: el admin de A no ve ni muta nada de B (páginas y APIs, ids ajenos
@@ -201,6 +201,17 @@ une a una organización.
   marca "(archivada)". Las tablas `sr-only` de `GraficoColumnas`/`GraficoBarras` tienen el mismo riesgo de desborde
   a 360 px que se arregló acá con `table-layout: fixed`.
 
+- 2026-09-26: **T8 hecha.** `/org` (docentes, acceso, consumo; "Toda la red" con desglose por sede), 7 APIs bajo
+  `/api/org/**` por `alcance.ts` + `gestion.ts`, `src/lib/orgs/panel.ts`, `MiembrosLista` compartida (tarjetas en
+  celular) que también reemplazó la tabla del detalle de superadmin (deuda de T6 saldada, capturas revisadas), link
+  "Mi organización" en el header (chequeo barato de `OrganizationAdmin`; `/org` hace el control real).
+  Evidencia: `tsc` limpio; `org-panel` 16/16 (incluye título de recurso ausente del HTML, costo congelado por sede tras
+  mover a un docente, 404 con ids adivinados); `admin-organizaciones` 11/11; `org-invitaciones` 16/16; `m1` 11/11.
+  Detalle menor: `/org?sede=<ajena>` responde el 404 en JSON (mismo que las APIs), no una página; solo se ve
+  adulterando la URL.
+  Abiertos para el dueño: si el superadmin también ve el link "Mi organización"; si "última actividad" debería
+  considerar el consumo además de `Project.updatedAt`.
+
 ## Siguiente paso
 
-T8.
+T9.
