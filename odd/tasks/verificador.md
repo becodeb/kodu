@@ -53,6 +53,14 @@ teacher decides with a button.
 - **T5, real check:** one real verification of a resource, plus one Responses probe with tools,
   both with gpt-6-luna and the OpenAI test key.
 
+## Follow-up scope (user request, 2026-09-26)
+
+- T6: when a teacher has one eligible engine (after the prime filter), the engine selector is
+  not rendered, and neither is the "Cambiamos el motor…" notice, which refers to a control
+  the teacher cannot see.
+- T7: with no verifier engine configured in /admin, Kodu behaves exactly as before: no
+  request to `/api/chat/verificar`, no panel, and no console errors or notices.
+
 ## Constraints
 
 - The OpenAI test key (`~/.credentials/openai-echo.env`, `OPENAI_TEST_API_KEY`) is echo's
@@ -79,6 +87,8 @@ teacher decides with a button.
 - [x] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
 - [x] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
 - [x] T5: real gpt-6-luna check (cents). Route: inline, bounded.
+- [ ] T6: hide the teacher engine selector when only one engine is eligible (and the re-pointing notice with it). Route: delegated writer (2+ files + e2e).
+- [ ] T7: verifier strictly optional: with no verifier engine the client never calls /api/chat/verificar (flag from the page), no errors or notices. Route: same writer.
 
 ## Acceptance criteria
 
