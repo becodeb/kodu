@@ -1,0 +1,418 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PanelDocentes from '../../components/orgs/PanelDocentes.tsx';
+import AccesoOrganizacion from '../../components/orgs/AccesoOrganizacion.tsx';
+import { alcanceDeAdmin, requireOrgAdmin } from '../../lib/orgs/alcance.ts';
+import {
+  obtenerDetalleOrganizacion,
+  listarMiembros,
+  listarOrganizacionesSuperadmin,
+  GestionError,
+  type DetalleOrganizacion,
+} from '../../lib/orgs/gestion.ts';
+import { listarInvitaciones } from '../../lib/orgs/invitaciones.ts';
+import { consumoDelPanel } from '../../lib/orgs/panel.ts';
+import { mesActualBA, ultimosMeses, etiquetaMes } from '../../lib/metricas/consumo.ts';
+import { formatearSumaUsd } from '../../lib/admin/metricas.ts';
+import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
+
+/**
+ * odd/tasks/organizaciones.md (T8): panel de la organización — para
+ * cualquier docente cuyo `alcanceDeAdmin` no esté vacío (admin de sede o de
+ * red); el superadmin puede entrar también (ve un selector sobre TODO), pero
+ * no es su herramienta principal (esa sigue siendo `/admin`).
+ *
+ * Resolución del "scope" (ver alcance.ts): un admin NO superadmin sólo puede
+ * tener UNA red propia (la de su sede actual) o UNA sede propia — nunca las
+ * dos a la vez, y nunca más de una de cada una (una fila de OrganizationAdmin
+ * sólo cuenta si la persona pertenece HOY a esa organización o a una sede de
+ * esa red, y sólo pertenece a UNA sede). El único caso realmente abierto es
+ * el superadmin sin `?sede` (ve un listado para elegir, como
+ * `/admin/organizaciones`).
+ */
+
+const actor = Astro.locals.user!;
+const alcance = await alcanceDeAdmin(actor);
+
+if (!alcance.esSuperadmin && alcance.campusIds.size === 0 && alcance.redIds.size === 0) {
+  return Astro.redirect('/app', 302);
+}
+
+const sedeParam = Astro.url.searchParams.get('sede');
+let organizationId: string | null = null;
+
+if (sedeParam) {
+  // "Validar por el chokepoint, 404 si no" — literal: la MISMA guarda que
+  // usan las APIs, así que un id adivinado de una sede/red ajena da
+  // exactamente el mismo 404 acá que en `/api/org/**`.
+  const auth = await requireOrgAdmin(Astro.locals, sedeParam);
+  if (auth instanceof Response) return auth;
+  organizationId = sedeParam;
+} else if (alcance.redIds.size > 0) {
+  organizationId = [...alcance.redIds][0]!;
+} else if (alcance.campusIds.size > 0) {
+  organizationId = [...alcance.campusIds][0]!;
+}
+// Sólo puede quedar `null` acá para el superadmin sin `?sede` — para
+// cualquier otro actor, el redirect de arriba ya garantiza que uno de los
+// dos `Set` no está vacío.
+
+let detalle: DetalleOrganizacion | null = null;
+if (organizationId !== null) {
+  try {
+    detalle = await obtenerDetalleOrganizacion(actor, organizationId);
+  } catch (error) {
+    if (error instanceof GestionError) return Astro.redirect('/app', 302);
+    throw error;
+  }
+}
+
+const arbolSuperadmin = detalle === null ? await listarOrganizacionesSuperadmin(actor) : null;
+
+const esRed = detalle?.kind === 'NETWORK';
+
+// La red PROPIA del actor (si es admin de red) — para la barra de sedes,
+// esté hoy parado en la red o en una de sus sedes. Evita una segunda vuelta
+// a la base cuando `detalle` YA es esa red.
+const redIdPropio = !alcance.esSuperadmin && alcance.redIds.size > 0 ? [...alcance.redIds][0]! : null;
+const redDetalle = redIdPropio
+  ? esRed
+    ? detalle
+    : await obtenerDetalleOrganizacion(actor, redIdPropio)
+  : null;
+
+const puedeMover = alcance.esSuperadmin || alcance.redIds.size > 0;
+
+const miembros = detalle && !esRed ? await listarMiembros(actor, detalle.id) : [];
+const invitaciones = detalle && !esRed ? await listarInvitaciones(detalle.id) : [];
+
+const campusIdsConsumo = detalle ? (esRed ? detalle.sedes.map((s) => s.id) : [detalle.id]) : [];
+const mesesDisponibles = ultimosMeses(12);
+const mesPedido = Astro.url.searchParams.get('mes');
+const mes = mesPedido && mesesDisponibles.includes(mesPedido) ? mesPedido : mesActualBA();
+const consumo = detalle ? await consumoDelPanel(campusIdsConsumo, mes) : null;
+
+function urlConSede(sede: string | null, mesParam?: string): string {
+  const params = new URLSearchParams();
+  if (sede) params.set('sede', sede);
+  if (mesParam) params.set('mes', mesParam);
+  const query = params.toString();
+  return query ? `/org?${query}` : '/org';
+}
+---
+
+<BaseLayout title="Mi organización">
+  <div class="space-y-6">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Mi organización</h1>
+      {alcance.esSuperadmin && (
+        <a href="/org" class="text-xs text-ink-500 hover:text-brand-600">
+          ← Elegir otra organización
+        </a>
+      )}
+    </div>
+
+    {
+      detalle === null ? (
+        <div class="kodu-card p-4">
+          <p class="text-sm text-ink-500">Elegí una organización para administrar.</p>
+          {arbolSuperadmin && (
+            <div class="mt-3 space-y-4">
+              {arbolSuperadmin.redes.map((red) => (
+                <div>
+                  <a href={urlConSede(red.id)} class="font-medium text-ink-900 hover:text-brand-600">
+                    {red.name}
+                  </a>
+                  <ul class="mt-1 ml-4 space-y-1">
+                    {red.sedes.map((sede) => (
+                      <li>
+                        <a href={urlConSede(sede.id)} class="text-sm text-ink-700 hover:text-brand-600">
+                          ↳ {sede.name}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+              {arbolSuperadmin.standalone.map((campus) => (
+                <a href={urlConSede(campus.id)} class="block text-sm text-ink-900 hover:text-brand-600">
+                  {campus.name}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <div>
+            <p class="flex flex-wrap items-center gap-2 text-sm text-ink-500">
+              <span class="text-lg font-semibold text-ink-900">{detalle.name}</span>
+              <span>· {esRed ? 'Red de colegios' : 'Colegio'}</span>
+              {detalle.archivada && <span class="text-red-600">· Archivada</span>}
+            </p>
+          </div>
+
+          {redDetalle && (
+            <nav class="flex flex-wrap gap-2 border-b border-linea pb-3 text-sm">
+              <a
+                href={urlConSede(redDetalle.id)}
+                aria-current={esRed ? 'page' : undefined}
+                class={`rounded-lg border px-3 py-1.5 ${esRed ? 'border-brand-300 bg-sutil text-brand-700' : 'border-linea text-ink-700 hover:border-ink-500'}`}
+              >
+                Toda la red
+              </a>
+              {redDetalle.sedes.map((sede) => (
+                <a
+                  href={urlConSede(sede.id)}
+                  aria-current={!esRed && detalle!.id === sede.id ? 'page' : undefined}
+                  class={`rounded-lg border px-3 py-1.5 ${!esRed && detalle!.id === sede.id ? 'border-brand-300 bg-sutil text-brand-700' : 'border-linea text-ink-700 hover:border-ink-500'}`}
+                >
+                  {sede.name}
+                </a>
+              ))}
+            </nav>
+          )}
+
+          <section class="kodu-card p-4">
+            <h2 class="text-sm font-semibold text-ink-900">Docentes</h2>
+            {esRed ? (
+              <p class="mt-3 text-sm text-ink-500">Elegí una sede (arriba) para administrar sus docentes.</p>
+            ) : (
+              <div class="mt-3">
+                <PanelDocentes
+                  client:load
+                  organizationId={detalle.id}
+                  organizationNombre={detalle.name}
+                  initialMiembros={miembros}
+                  puedeMover={puedeMover}
+                />
+              </div>
+            )}
+          </section>
+
+          <section>
+            <h2 class="mb-3 text-sm font-semibold text-ink-900">Acceso</h2>
+            {esRed ? (
+              <div class="kodu-card p-4">
+                <h3 class="text-sm font-semibold text-ink-900">Dominios de la red</h3>
+                <p class="mt-1 text-xs text-ink-500">
+                  Un dominio de red no une a nadie solo: quien entra por él elige su sede. La lista blanca y los
+                  enlaces de invitación se administran por sede (arriba).
+                </p>
+                {detalle.dominios.length > 0 ? (
+                  <ul class="mt-3 divide-y divide-linea">
+                    {detalle.dominios.map((dominio) => (
+                      <li class="py-2 text-sm">
+                        <span class="min-w-0 break-all font-mono text-ink-700">{dominio.pattern}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p class="mt-3 text-sm text-ink-500">Todavía no tiene ningún dominio.</p>
+                )}
+              </div>
+            ) : (
+              <AccesoOrganizacion
+                client:load
+                organizationId={detalle.id}
+                initialListaBlanca={detalle.listaBlanca}
+                initialInvitaciones={invitaciones}
+                dominios={detalle.dominios}
+              />
+            )}
+          </section>
+
+          <section class="kodu-card p-4">
+            <div class="mb-3 flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h2 class="text-sm font-semibold text-ink-900">Consumo</h2>
+                <p class="mt-1 text-xs text-ink-500">
+                  {consumo!.etiquetaMes.toLowerCase()} · {consumo!.total.docentesActivos} docente
+                  {consumo!.total.docentesActivos === 1 ? '' : 's'} activo{consumo!.total.docentesActivos === 1 ? '' : 's'}
+                </p>
+              </div>
+              <form method="get" class="flex items-center gap-2">
+                {organizationId && <input type="hidden" name="sede" value={organizationId} />}
+                <label for="mes" class="sr-only">Mes</label>
+                <select
+                  id="mes"
+                  name="mes"
+                  onchange="this.form.requestSubmit()"
+                  class="rounded-lg border border-linea bg-superficie px-3 py-2 text-sm text-ink-900"
+                >
+                  {[...mesesDisponibles].reverse().map((valor) => (
+                    <option value={valor} selected={valor === mes}>
+                      {etiquetaMes(valor)}
+                    </option>
+                  ))}
+                </select>
+                <button type="submit" class="kodu-btn-ghost text-sm">Ver</button>
+              </form>
+            </div>
+
+            {consumo!.porCampus && (
+              <div class="mb-6">
+                <h3 class="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">Por sede</h3>
+
+                <div class="hidden overflow-x-auto sm:block">
+                  <table class="w-full min-w-[640px] text-left text-sm">
+                    <thead class="border-b border-linea text-xs text-ink-500 uppercase">
+                      <tr>
+                        <th class="py-2 pr-3 font-medium">Sede</th>
+                        <th class="py-2 px-3 text-right font-medium">Recursos nuevos</th>
+                        <th class="py-2 px-3 text-right font-medium">Ajustes</th>
+                        <th class="py-2 px-3 text-right font-medium">Turnos</th>
+                        <th class="py-2 px-3 text-right font-medium">Tokens</th>
+                        <th class="py-2 pl-3 text-right font-medium">Costo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {consumo!.porCampus.map((fila) => (
+                        <tr class="border-b border-linea last:border-0">
+                          <td class="py-2 pr-3 text-ink-900">{fila.nombre}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.recursosNuevos}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.ajustes}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">
+                            {formatearTokensCompacto(fila.agregado.tokens)}
+                          </td>
+                          <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
+                            {formatearSumaUsd(fila.agregado.costoTotal)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="space-y-2 sm:hidden">
+                  {consumo!.porCampus.map((fila) => (
+                    <div class="kodu-card p-3">
+                      <p class="font-medium text-ink-900">{fila.nombre}</p>
+                      <dl class="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink-700">
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Recursos nuevos</dt>
+                          <dd class="tabular-nums">{fila.agregado.recursosNuevos}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Ajustes</dt>
+                          <dd class="tabular-nums">{fila.agregado.ajustes}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Turnos</dt>
+                          <dd class="tabular-nums">{fila.agregado.turnos}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Tokens</dt>
+                          <dd class="tabular-nums">{formatearTokensCompacto(fila.agregado.tokens)}</dd>
+                        </div>
+                      </dl>
+                      <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(fila.agregado.costoTotal)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <h3 class="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">Por docente</h3>
+            {consumo!.porDocente.length === 0 ? (
+              <p class="text-sm text-ink-500">Sin consumo registrado este mes.</p>
+            ) : (
+              <>
+                <div class="hidden overflow-x-auto sm:block">
+                  <table class="w-full min-w-[720px] text-left text-sm">
+                    <thead class="border-b border-linea text-xs text-ink-500 uppercase">
+                      <tr>
+                        <th class="py-2 pr-3 font-medium">Docente</th>
+                        {consumo!.porCampus && <th class="py-2 px-3 font-medium">Sede</th>}
+                        <th class="py-2 px-3 text-right font-medium">Recursos nuevos</th>
+                        <th class="py-2 px-3 text-right font-medium">Ajustes</th>
+                        <th class="py-2 px-3 text-right font-medium">Turnos</th>
+                        <th class="py-2 px-3 text-right font-medium">Tokens</th>
+                        <th class="py-2 pl-3 text-right font-medium">Costo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {consumo!.porDocente.map((fila) => (
+                        <tr class="border-b border-linea last:border-0">
+                          <td class="py-2 pr-3">
+                            <p class="truncate text-ink-900">{fila.nombre}</p>
+                            <p class="truncate text-xs text-ink-500">{fila.email}</p>
+                          </td>
+                          {consumo!.porCampus && <td class="py-2 px-3 text-ink-700">{fila.organizationNombre}</td>}
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.recursosNuevos}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.ajustes}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
+                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">
+                            {formatearTokensCompacto(fila.agregado.tokens)}
+                          </td>
+                          <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
+                            {formatearSumaUsd(fila.agregado.costoTotal)}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr class="bg-sutil font-semibold">
+                        <td class="py-2 pr-3 text-ink-900" colspan={consumo!.porCampus ? 2 : 1}>
+                          Total
+                        </td>
+                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.recursosNuevos}</td>
+                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.ajustes}</td>
+                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.turnos}</td>
+                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">
+                          {formatearTokensCompacto(consumo!.total.tokens)}
+                        </td>
+                        <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
+                          {formatearSumaUsd(consumo!.total.costoTotal)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="space-y-2 sm:hidden">
+                  {consumo!.porDocente.map((fila) => (
+                    <div class="kodu-card p-3">
+                      <p class="truncate font-medium text-ink-900">{fila.nombre}</p>
+                      <p class="truncate text-xs text-ink-500">
+                        {fila.email}
+                        {consumo!.porCampus && ` · ${fila.organizationNombre}`}
+                      </p>
+                      <dl class="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink-700">
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Recursos nuevos</dt>
+                          <dd class="tabular-nums">{fila.agregado.recursosNuevos}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Ajustes</dt>
+                          <dd class="tabular-nums">{fila.agregado.ajustes}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Turnos</dt>
+                          <dd class="tabular-nums">{fila.agregado.turnos}</dd>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <dt class="text-ink-500">Tokens</dt>
+                          <dd class="tabular-nums">{formatearTokensCompacto(fila.agregado.tokens)}</dd>
+                        </div>
+                      </dl>
+                      <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(fila.agregado.costoTotal)}</p>
+                    </div>
+                  ))}
+                  <div class="kodu-card bg-sutil p-3">
+                    <p class="font-semibold text-ink-900">Total</p>
+                    <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(consumo!.total.costoTotal)}</p>
+                  </div>
+                </div>
+              </>
+            )}
+
+            <p class="mt-3 text-xs text-ink-500">
+              "≥" significa que alguna fila no tiene precio conocido y nunca se suma como si fuera 0. Sólo se cuentan
+              recursos y consumo — nunca su contenido.
+            </p>
+          </section>
+        </>
+      )
+    }
+  </div>
+</BaseLayout>
