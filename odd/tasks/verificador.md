@@ -87,8 +87,8 @@ teacher decides with a button.
 - [x] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
 - [x] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
 - [x] T5: real gpt-6-luna check (cents). Route: inline, bounded.
-- [ ] T6: hide the teacher engine selector when only one engine is eligible (and the re-pointing notice with it). Route: delegated writer (2+ files + e2e).
-- [ ] T7: verifier strictly optional: with no verifier engine the client never calls /api/chat/verificar (flag from the page), no errors or notices. Route: same writer.
+- [x] T6: hide the teacher engine selector when only one engine is eligible (and the re-pointing notice with it). Route: delegated writer (2+ files + e2e).
+- [x] T7: verifier strictly optional: with no verifier engine the client never calls /api/chat/verificar (flag from the page), no errors or notices. Route: same writer.
 
 ## Acceptance criteria
 
@@ -628,6 +628,110 @@ created (`openai-t5`) was left disabled with its key wiped from the dev DB.
   `unidad-verificador-cliente.ts` pass. `verificador-endpoint.ts` followed by
   `verificador-editor.ts` both pass back to back (5/5 scenes, including 390 px). I checked
   the dark-mode screenshot myself.
+
+### T6 — hide the engine selector with a single eligible engine (2026-09-26)
+
+- `src/lib/workspace-types.ts`: new pure `debeMostrarSelectorDeMotor(motores)`
+  (`motores.length >= 2`) — the single decision point for "is a selector
+  worth showing", shared by the server (the notice) and the client (the
+  selector itself).
+- `src/pages/app/project/[id].astro`: `motoresParaElSelector` now computed
+  BEFORE `avisoDeMotorRepunteado` (it needed reordering — the notice depends
+  on the selector's list, not the other way around); the notice's condition
+  gained `&& debeMostrarSelectorDeMotor(motoresParaElSelector)`. The silent
+  persistence of a repointed `aiModelId` is untouched — only whether the
+  notice text ever renders.
+- `src/components/workspace/ChatPanel.tsx`: `<SelectorDeMotor>` is wrapped in
+  `{debeMostrarSelectorDeMotor(props.motoresDisponibles) && (...)}` — OMITTED
+  entirely (not rendered empty), so the header's `space-y-*` never leaves a
+  gap where it would have been. Verified at both desktop and ~390px widths
+  via the new e2e (scene A/B) and the existing 390px scene in
+  `verificador-editor.ts` (unaffected — that project always has 2+ motores).
+- Design decision: "eligible" for this cutoff is exactly the list a docente
+  can pick from server-side (`motoresParaDocente` output, or its
+  currently-assigned motor as the sole fallback entry) — the same list that
+  already drives the notice's `motorOriginal`/`motorCambio` logic, never a
+  second independent count.
+- Existing suites updated (all depended, directly or indirectly, on how many
+  motores are selectable in this SHARED dev DB, which now has more than the
+  seed's original one thanks to the mock fixtures every verificador-family
+  script leaves behind as its resting state):
+  - `e2e/m2-catalogo.ts`: its "the selector shows MiniMax M3" check now asks
+    `motoresParaDocente(false)` first and asserts either branch
+    (`debeMostrarSelectorDeMotor`) instead of assuming a fixed count — the
+    ambient DB currently has 2 (MiniMax M3 + the shared `kodu-mock-t3`
+    fixture), so it exercises the "visible" branch today, but stays correct
+    if that ever drops back to 1.
+  - `e2e/m3-motores.ts`: the repunteo/notice scenario (item 12) disables its
+    own `motorCreado`, which would otherwise have left exactly one
+    selectable motor (MiniMax M3) and hidden the selector mid-test — added a
+    second throwaway motor ("Refuerzo selector T6", deliberately NOT
+    containing the substring `NOMBRE_MOTOR` so it doesn't collide with the
+    existing `opcionMotor` locator) so the selector stays at 2+ through that
+    section, preserving the original notice assertions unchanged.
+  - `e2e/unidad.ts`: 3 new cases for `debeMostrarSelectorDeMotor` (0/1/2+).
+- New e2e: `e2e/selector-y-verificador-opcional.ts` (see T7 below — scenes A
+  and B cover T6, scene C covers T7, one shared setup).
+- Checks: `npx tsc --noEmit` clean. With `npm run dev` + the mock:
+  `e2e/m2-catalogo.ts`, `e2e/m3-motores.ts`, `e2e/t5-modo-prime.ts` (unchanged
+  — its scenarios always have 2 or 3 selectable motores, never touched) all
+  pass. Dev server stopped with `npx astro dev stop` afterward.
+- Commit: `383d38b` (`feat(workspace): hide engine selector with a single
+  eligible engine`).
+
+### T7 — the verifier is strictly optional (2026-09-26)
+
+- `src/pages/app/project/[id].astro`: new `verificadorActivo = (await
+  motorVerificador()) !== null` — resolved once, server-side, with the EXACT
+  same function `/api/chat/verificar` already uses to decide "is the
+  verifier on" — never a second criterion — and passed to `<Workspace>`.
+- `src/components/workspace/Workspace.tsx`: `verificadorDesactivadoRef`
+  (T4's existing "cache the 'desactivado' answer for the rest of the
+  session" ref) now initializes to `useRef(!props.verificadorActivo)`
+  instead of `useRef(false)`. With no usable verifier engine, the ref starts
+  already "tripped": `iniciarVerificacion` returns on its very first line,
+  before touching `setVerificador` or `fetch` — so there is never a request
+  to `/api/chat/verificar`, the panel state never leaves `inactivo` (so
+  `PreviewPanel` never renders that block at all), and there is nothing to
+  log (the only `console.warn('[verificador] ...')` calls live inside
+  `handleArreglarVerificador`, which is unreachable without a panel/button).
+  The endpoint's `{estado:'desactivado'}` answer and the client's handling
+  of it are untouched — they're the safety net for a verifier that gets
+  turned off mid-session (already-open tab).
+- `e2e/verificador-editor.ts`: scene 1 previously asserted EXACTLY ONE
+  `/api/chat/verificar` call with no verifier engine (T4's old contract —
+  "ask once, cache the 'desactivado' answer"). Updated to assert ZERO calls,
+  matching T7's stricter contract ("never ask when the page already knows").
+  Scenes 2-5 are unaffected (they all run after `isVerifier` is turned on,
+  before that project's page loads).
+- New `e2e/selector-y-verificador-opcional.ts` (browser, dev server + mock),
+  against a non-prime docente, self-contained against this SHARED dev DB
+  (neutralizes every selectable motor except the seed's MiniMax M3, and any
+  leftover `isVerifier: true`, through the admin API — never assumed, always
+  restored in `finally`):
+  - scene A: exactly one eligible motor — `#selector-motor` absent, AND a
+    project whose previously-assigned motor got disabled (a REAL repunteo,
+    confirmed by reading `aiModelId` back from the DB, not just "never had
+    one") shows no re-pointing notice (T6).
+  - scene B: two eligible motores — selector visible again, listbox has
+    exactly 2 options (T6).
+  - scene C: no `isVerifier` motor anywhere — after a real generation turn
+    through the mock generator, zero requests to `/api/chat/verificar`,
+    zero requests to `/v1/responses`, no verifier panel text ("Revisando el
+    recurso…", "Revisé el recurso", "Revisá este dato:"), and zero
+    `console.error`/`console.warn`/`pageerror` mentioning "verificador"
+    (collected via `page.on('console'/'pageerror')` for the whole scene) —
+    T7.
+- Checks: `npx tsc --noEmit` clean. With `npm run dev` + the mock:
+  `e2e/selector-y-verificador-opcional.ts` (new), `e2e/verificador-editor.ts`
+  (5 scenes) and `e2e/verificador-endpoint.ts` (6 scenes) all pass. Dev
+  server stopped with `npx astro dev stop` afterward — confirmed no leftover
+  `astro` process, only `kodu_db_dev` still running.
+- Left open: same as T5 — nothing new. `PLAN §6.4` (verify → correct → blind
+  re-evaluation) and the production `/admin` setup are still the two items
+  under "Next step" below.
+- Commit: `a398e22` (`feat(verificador): make the verifier strictly
+  optional`).
 
 ## Next step
 
