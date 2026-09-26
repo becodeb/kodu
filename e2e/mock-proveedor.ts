@@ -51,6 +51,15 @@ export const UPDATE_RESOURCE_CODE = 'update_resource_code';
 export interface LlamadaRegistrada {
   recibidaEn: number;
   body: Record<string, unknown>;
+  /**
+   * T4 (odd/tasks/generacion-simple-y-reanudable.md): `true` si la conexión
+   * se cerró ANTES de que este mock terminara de responder normalmente (sea
+   * por `cortarEnFraccion`, o porque el que llamaba abortó su propio fetch —
+   * el caso que le importa a T4: verificar que "Detener" corta la conexión
+   * del SERVIDOR de kodu con el proveedor, no sólo la del navegador con
+   * kodu). `false` mientras la respuesta sigue en curso o ya terminó sola.
+   */
+  cortadoTemprano: boolean;
 }
 
 export interface UsageScript {
@@ -295,6 +304,35 @@ function leerCuerpo(req: IncomingMessage): Promise<string> {
   });
 }
 
+/**
+ * T4: engancha el ciclo de vida real de la conexión ANTES de leer el body
+ * (`leerCuerpo`, más abajo) — probado a mano: si el listener de `req.on
+ * ('close', …)` se registra DESPUÉS de que el body ya terminó de leerse
+ * (`req` ya emitió su propio `'end'`), Node puede no volver a emitirlo (el
+ * cierre real de la conexión, más tarde, no dispara nada porque el listener
+ * llegó tarde). Por eso esto se llama apenas arranca el handler, sobre un
+ * tracker propio — recién cuando se conoce el `body` (después de
+ * `leerCuerpo`) se cuelga ese tracker de la `LlamadaRegistrada` que se
+ * empuja a la cola, vía el getter de abajo.
+ *
+ * `res.on('finish', …)` marca "terminó sola" (cualquier salida normal del
+ * handler, sea cual sea el script); si `req` se cierra ANTES de eso,
+ * `cortadoTemprano` queda en `true`. Nunca al revés (`res.destroy()` de
+ * `cortarEnFraccion` también cuenta, a propósito: es OTRA forma de "no llegó
+ * a terminar sola").
+ */
+function seguirCierreTemprano(req: IncomingMessage, res: ServerResponse): { cortadoTemprano: boolean } {
+  const seguimiento = { cortadoTemprano: false };
+  let terminoSola = false;
+  res.on('finish', () => {
+    terminoSola = true;
+  });
+  req.on('close', () => {
+    if (!terminoSola) seguimiento.cortadoTemprano = true;
+  });
+  return seguimiento;
+}
+
 function chunkBase(id: string, modelo: string) {
   return { id, object: 'chat.completion.chunk' as const, created: Math.floor(Date.now() / 1000), model: modelo };
 }
@@ -408,6 +446,7 @@ async function manejarPedidoResponses(
   llamadas: LlamadaRegistrada[],
   colaRespuestas: RespuestaResponsesScript[],
 ): Promise<void> {
+  const seguimiento = seguirCierreTemprano(req, res);
   const crudo = await leerCuerpo(req);
   let body: Record<string, unknown>;
   try {
@@ -418,7 +457,13 @@ async function manejarPedidoResponses(
     return;
   }
 
-  llamadas.push({ recibidaEn: Date.now(), body });
+  llamadas.push({
+    recibidaEn: Date.now(),
+    body,
+    get cortadoTemprano() {
+      return seguimiento.cortadoTemprano;
+    },
+  });
 
   const script = colaRespuestas.shift() ?? {};
 
@@ -489,6 +534,7 @@ async function manejarPedido(
   colaCondicional: RespuestaCondicional[],
   estado: { ansiosoConHerramienta: boolean },
 ): Promise<void> {
+  const seguimiento = seguirCierreTemprano(req, res);
   const crudo = await leerCuerpo(req);
   let body: Record<string, unknown>;
   try {
@@ -499,7 +545,13 @@ async function manejarPedido(
     return;
   }
 
-  llamadas.push({ recibidaEn: Date.now(), body });
+  llamadas.push({
+    recibidaEn: Date.now(),
+    body,
+    get cortadoTemprano() {
+      return seguimiento.cortadoTemprano;
+    },
+  });
 
   // T22: en modo "ansioso con la herramienta", CUALQUIER pedido que ofrezca
   // `tools` en modo libre (`tool_choice: 'auto'` o ausente — el dialecto

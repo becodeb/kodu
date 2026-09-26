@@ -11,6 +11,7 @@ import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
+import { pendienteChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
 
 const user = Astro.locals.user!;
@@ -148,6 +149,13 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
 // checklist nunca corrió) — PreviewPanel lo oculta entero en ese caso.
 const checklistDelRecurso = await checklistActual(project.id);
 
+// T5 (odd/tasks/generacion-simple-y-reanudable.md): si el turno más nuevo
+// que cambió el HTML nunca pasó por el self-test/corrección/verificador del
+// navegador (el docente cerró la pestaña antes de que corrieran), esto le
+// dice a `Workspace` cuál es y con qué reclamarlo — `null` en el caso común
+// (ya se marcó, es un turno viejo "legacy", o no hay ninguno).
+const chequeosPosterioresPendientes = await pendienteChequeosPosteriores(project.id);
+
 // Armado a mano, campo por campo, para que agregar una clave a `Capacidades`
 // el día de mañana no la filtre acá sin querer.
 const capacidadesEditor: CapacidadesEditor = {
@@ -245,5 +253,6 @@ const capacidadesEditor: CapacidadesEditor = {
     capacidades={capacidadesEditor}
     initialChecklist={checklistDelRecurso}
     verificadorActivo={verificadorActivo}
+    pendingPostChecks={chequeosPosterioresPendientes}
   />
 </BaseLayout>

@@ -48,6 +48,9 @@ import {
 } from '../../../lib/ai/tools.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
+import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
+import { marcarChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
+import { registrarTurnoEnCurso, type MotivoAbortTurno } from '../../../lib/ai/turnos-en-curso.ts';
 
 /**
  * POST /api/chat/stream — proxy de streaming contra DeepSeek (SPEC §2 y §4).
@@ -139,6 +142,18 @@ const HEARTBEAT_MS = 10_000;
 
 /** Cuántos intentos se le anuncian al docente (primer intento + reintentos). */
 const REINTENTOS_VISIBLES = 10;
+
+/**
+ * T4 (odd/tasks/generacion-simple-y-reanudable.md): tope duro del lado del
+ * servidor para un turno entero (generación principal + reintento forzado +
+ * checklist + versiones). Ya no depende de `request.signal` — cerrar la
+ * pestaña no lo frena, ver `turnoAbort` más abajo — así que hace falta un
+ * techo propio para que un motor colgado no deje un turno corriendo para
+ * siempre. Mismo valor que la ventana de 30 minutos que ya espera
+ * `Workspace.tsx` al reanudar (`MAX_INTENTOS * 4_000` ahí): pasado esto, el
+ * cliente ya se rindió igual, así que no tiene sentido seguir más.
+ */
+const TURNO_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
  * ¿Este mensaje pide tocar el recurso?
@@ -853,6 +868,31 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      /**
+       * T4: el pedido al proveedor ya NO se ata a `request.signal` — cerrar
+       * la pestaña no debe frenar la generación, sólo la entrega por SSE
+       * (ver `send`/`closed` más abajo). `turnoAbort` es el ÚNICO signal que
+       * viaja a partir de acá a `pedirA`/`generarChecklist`/el re-pedido
+       * forzado/`generarVersionSecundaria`, y sólo lo dispara: (a) el botón
+       * "Detener" (`/api/chat/cancel` → `cancelarTurnoEnCurso`, registrado
+       * abajo), o (b) `TURNO_TIMEOUT_MS`.
+       *
+       * `motivoAbortTurno` (nunca reescrito una vez puesto — `??=`) es lo
+       * que distingue, en el `finally` grande de más abajo, un corte
+       * EXPLÍCITO del docente (donde no hay que crear un segundo mensaje:
+       * `/api/chat/cancel` ya deja constancia con "Frenaste este pedido") de
+       * cualquier otro final de turno (donde sí corresponde el mensaje de
+       * siempre, timeout incluido).
+       */
+      const turnoAbort = new AbortController();
+      let motivoAbortTurno: MotivoAbortTurno | null = null;
+      function abortarTurno(motivo: MotivoAbortTurno) {
+        motivoAbortTurno ??= motivo;
+        turnoAbort.abort();
+      }
+      const desregistrarTurno = registrarTurnoEnCurso(thread.id, { abortar: abortarTurno });
+      const turnoTimeoutId = setTimeout(() => abortarTurno('timeout'), TURNO_TIMEOUT_MS);
+
       // Una vez que el navegador se va, el controller queda cerrado y cualquier
       // enqueue tira ERR_INVALID_STATE. Envolverlo evita que un cliente que se
       // desconecta rompa el guardado del turno.
@@ -980,7 +1020,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           provider,
           userId: user.id,
           projectId: project.id,
-          signal: request.signal,
+          signal: turnoAbort.signal,
         });
 
         if (checklistItems.length > 0) {
@@ -1013,7 +1053,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         requestCompletionStream({
           messages,
           provider: usado,
-          signal: request.signal,
+          signal: turnoAbort.signal,
           forzarHerramienta: forzar,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
@@ -1100,7 +1140,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               temaProyecto,
               userId: user.id,
               projectId: project.id,
-              signal: request.signal,
+              signal: turnoAbort.signal,
             })
               .then((html) => {
                 // `ready: true` SÓLO si de verdad generó algo: una que
@@ -1120,8 +1160,26 @@ export const POST: APIRoute = async ({ request, locals }) => {
           promesaV3 = generar(3, messagesV3);
         }
       } catch (error) {
+        desregistrarTurno();
+        clearTimeout(turnoTimeoutId);
         console.error(`[chat/stream] fallaron todos los motores a los ${transcurrido()}:`, (error as Error).message);
         const detalle = (error as Error).message;
+
+        // T4: el docente tocó "Detener" antes de que ni siquiera un motor
+        // contestara — `/api/chat/cancel` ya dejó constancia en el hilo
+        // ("Frenaste este pedido"). Crear OTRO mensaje acá lo duplicaría.
+        if (motivoAbortTurno === 'stop') {
+          clearInterval(heartbeat);
+          if (!closed) {
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              /* el navegador ya se había ido */
+            }
+          }
+          return;
+        }
 
         // Sin botón de "probar con otro": la cadena entera ya se recorrió, así
         // que ofrecerlo sería mandarlo a repetir lo que acaba de fallar.
@@ -1271,7 +1329,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               },
             ],
             provider: proveedorUsado,
-            signal: request.signal,
+            signal: turnoAbort.signal,
             forzarHerramienta: true,
           });
 
@@ -1305,6 +1363,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
         console.error('[chat/stream]', error);
         send({ type: 'error', message: 'Se cortó la conexión con el motor de IA.' });
       } finally {
+        desregistrarTurno();
+        clearTimeout(turnoTimeoutId);
+
         // T3: no debe quedar un timer de batching de code_delta corriendo
         // después de este punto.
         limpiarTimerCodeDelta();
@@ -1340,6 +1401,36 @@ export const POST: APIRoute = async ({ request, locals }) => {
         const [resultadoV2, resultadoV3] = solicitaVersiones
           ? await Promise.all([promesaV2, promesaV3])
           : [null, null];
+
+        /**
+         * T4: el docente tocó "Detener" — `/api/chat/cancel` ya abortó
+         * `turnoAbort` (que es como llegamos acá) Y ya dejó constancia en el
+         * hilo ("Frenaste este pedido"). Si ya había código generado antes
+         * del corte, igual se guarda (mismo espíritu de "persistir pase lo
+         * que pase" de abajo) — pero SIN crear un segundo mensaje
+         * "assistant": eso duplicaría el aviso que el docente ya vio.
+         */
+        if (motivoAbortTurno === 'stop') {
+          try {
+            if (generatedHtml) {
+              await prisma.project.update({ where: { id: project.id }, data: { currentHtml: generatedHtml } });
+            }
+          } catch (error) {
+            console.error('[chat/stream] no se pudo persistir el HTML tras "Detener":', error);
+          }
+
+          clearInterval(heartbeat);
+          console.log(`[chat/stream] fin (Detener) en ${transcurrido()} codigo=${Boolean(generatedHtml)}`);
+          if (!closed) {
+            closed = true;
+            try {
+              controller.close();
+            } catch {
+              /* el navegador ya se había ido */
+            }
+          }
+          return;
+        }
 
         // Persistir pase lo que pase: si el docente cierra la pestaña a mitad de
         // camino, lo generado hasta ahí queda guardado.
@@ -1389,6 +1480,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 ]
               : [];
 
+          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
+          // cambió el recurso — comparado contra el HTML con el que arrancó,
+          // no contra si el modelo llamó o no a la herramienta (podría haber
+          // devuelto el documento igual, letra por letra). Calculado ANTES
+          // del `create` de abajo (T5 lo necesita ahí, para la huella).
+          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
+
           const saved = await prisma.chatMessage.create({
             data: {
               threadId: thread.id,
@@ -1402,18 +1500,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
               ...(versionesParaGuardar.length > 0
                 ? { chosenVariantIndex: 1, variants: { create: versionesParaGuardar } }
                 : {}),
+              // T5: la huella de lo que este turno deja como
+              // `Project.currentHtml` — sólo tiene sentido cuando de verdad
+              // cambió algo (si no, este mensaje nunca va a ser candidato de
+              // `pendienteChequeosPosteriores`, que sólo mira mensajes con
+              // instantánea).
+              ...(cambioElHtml ? { resultHtmlFingerprint: fingerprintHtml(generatedHtml!) } : {}),
             },
             select: { id: true },
           });
 
-          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
-          // cambió el recurso — comparado contra el HTML con el que arrancó,
-          // no contra si el modelo llamó o no a la herramienta (podría haber
-          // devuelto el documento igual, letra por letra). Una falla acá
+          // Una falla en lo de abajo (instantánea, marca de "sin chequeos")
           // nunca puede tirar abajo el turno: ya está guardado y respondido,
-          // esto es sólo la posibilidad de deshacerlo después.
-          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
-
+          // esto es sólo la posibilidad de deshacerlo después / de saltear
+          // el pipeline del navegador más tarde.
           if (cambioElHtml) {
             try {
               await prisma.projectSnapshot.create({
@@ -1440,6 +1540,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
               }
             } catch (error) {
               console.error('[chat/stream] no se pudo guardar la instantánea para deshacer:', error);
+            }
+
+            // T5: un turno de versiones NUNCA corre el self-test/corrección/
+            // verificador del navegador (T2/T9: no hay "el" recurso vigente
+            // hasta que el docente elige una) — se marca acá mismo, en el
+            // momento, para que jamás quede "pendiente" y una apertura
+            // posterior del proyecto no le dispare el pipeline sin sentido.
+            if (solicitaVersiones) {
+              try {
+                await marcarChequeosPosteriores({
+                  projectId: project.id,
+                  messageId: saved.id,
+                  fingerprint: fingerprintHtml(generatedHtml!),
+                });
+              } catch (error) {
+                console.error('[chat/stream] no se pudo marcar el turno de versiones como chequeado:', error);
+              }
             }
           }
 
