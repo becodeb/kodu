@@ -110,11 +110,11 @@ async function main(): Promise<void> {
 
         await page.waitForSelector('h1:has-text("Panel")');
         const pestañas = page.locator('nav[aria-label="Secciones del panel"] a');
-        // 6: Docentes, Recursos, Proveedores, Motores, Generación, Demo.
-        // "Dominios" se quitó en odd/tasks/organizaciones.md (T2):
-        // `AuthorizedDomain` ya no existe, la reemplaza `OrganizationDomain`;
-        // "Organizaciones" llega recién en T6.
-        await assertCantidad(pestañas, 6, `la fila de pestañas debe tener 6 links (tema ${tema})`);
+        // 7: Docentes, Organizaciones, Recursos, Proveedores, Motores,
+        // Generación, Demo. "Dominios" se quitó en odd/tasks/organizaciones.md
+        // (T2): `AuthorizedDomain` ya no existe, la reemplaza
+        // `OrganizationDomain`; "Organizaciones" la reemplaza recién en T6.
+        await assertCantidad(pestañas, 7, `la fila de pestañas debe tener 7 links (tema ${tema})`);
 
         const pillPanel = page.locator('a[href="/admin"]', { hasText: 'Panel' });
         await assertVisible(pillPanel, `el nav debe mostrar el pill "Panel" para ADMIN (tema ${tema})`);

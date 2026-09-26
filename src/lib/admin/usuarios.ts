@@ -68,6 +68,8 @@ export interface FilaUsuarioAdmin {
   accesoIa: string;
   /** `null` = cuenta personal, sin organización. */
   organizationName: string | null;
+  /** odd/tasks/organizaciones.md (T6): para linkear a `/admin/organizaciones/[id]`. `null` junto con `organizationName`. */
+  organizationId: string | null;
   proyectos: number;
   tokens: number;
   /** Ya formateado: "≈ US$ 1,24" | "US$ 0,00" | "—". */
@@ -165,6 +167,7 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
       aiAccessOverride: usuario.aiAccessOverride,
       accesoIa: textoAccesoIa(usuario.aiAccessOverride, org),
       organizationName: org?.name ?? null,
+      organizationId: usuario.organizationId,
       proyectos: proyectoInfo?._count._all ?? 0,
       tokens: uso?.tokens ?? 0,
       costoDisplay: formatearCostoAdminUsd(uso === undefined ? null : uso.sinPrecio ? null : uso.costUsd.toString()),
@@ -185,6 +188,7 @@ export interface DetalleUsuarioAdmin {
   creadoDisplay: string;
   accesoIa: string;
   organizationName: string | null;
+  organizationId: string | null;
   tokens: number;
   costoDisplay: string;
   proyectosCount: number;
@@ -225,6 +229,7 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
     creadoDisplay: `se sumó el ${fechaLarga(usuario.createdAt)}`,
     accesoIa: textoAccesoIa(usuario.aiAccessOverride, org),
     organizationName: org?.name ?? null,
+    organizationId: usuario.organizationId,
     tokens,
     costoDisplay: formatearCostoAdminUsd(costUsd?.toString() ?? null),
     proyectosCount,

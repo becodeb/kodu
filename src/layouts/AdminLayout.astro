@@ -29,6 +29,11 @@ const resendApagado = !hasResendApiKey();
 
 const PESTAÑAS = [
   { href: '/admin/usuarios', etiqueta: 'Docentes' },
+  // odd/tasks/organizaciones.md (T6): reemplaza a "Dominios" (la quitó T2,
+  // AuthorizedDomain ya no existe) — va justo después de Docentes porque es
+  // la otra pantalla que decide QUIÉN entra ("con qué acceso" vive acá,
+  // "quién administra" vive en Organizaciones).
+  { href: '/admin/organizaciones', etiqueta: 'Organizaciones' },
   { href: '/admin/proyectos', etiqueta: 'Recursos' },
   { href: '/admin/proveedores', etiqueta: 'Proveedores' },
   { href: '/admin/motores', etiqueta: 'Motores' },

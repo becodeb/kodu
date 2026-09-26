@@ -127,7 +127,15 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-ink-700">{usuario.role === 'ADMIN' ? 'Admin' : 'Docente'}</td>
-                <td className="px-4 py-3 text-ink-700">{usuario.organizationName ?? 'Cuenta personal'}</td>
+                <td className="px-4 py-3 text-ink-700">
+                  {usuario.organizationName && usuario.organizationId ? (
+                    <a href={`/admin/organizaciones/${usuario.organizationId}`} className="hover:text-brand-600">
+                      {usuario.organizationName}
+                    </a>
+                  ) : (
+                    'Cuenta personal'
+                  )}
+                </td>
                 <td className="px-4 py-3 text-ink-700">{usuario.accesoIa}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-ink-700">{usuario.proyectos}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-ink-700">

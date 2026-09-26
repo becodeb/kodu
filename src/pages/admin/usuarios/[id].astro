@@ -66,8 +66,15 @@ const porModelo = porModeloRaw.map((fila) => ({
     </div>
     <div class="flex flex-wrap items-center gap-3">
       <p class="rounded-lg border border-linea bg-sutil px-3 py-1.5 text-sm text-ink-700">
-        {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} · {usuario.organizationName ?? 'Cuenta personal'} ·
-        Acceso a la IA: {usuario.accesoIa}
+        {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} ·{' '}
+        {usuario.organizationName && usuario.organizationId ? (
+          <a href={`/admin/organizaciones/${usuario.organizationId}`} class="text-brand-600 hover:underline">
+            {usuario.organizationName}
+          </a>
+        ) : (
+          'Cuenta personal'
+        )}{' '}
+        · Acceso a la IA: {usuario.accesoIa}
       </p>
     </div>
   </div>
