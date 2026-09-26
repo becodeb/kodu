@@ -117,7 +117,7 @@ une a una organización.
 - [x] **T5 — Propósito del consumo.** _(3fe9f01, escritor delegado)_ `recordUsage` recibe `purpose` y calcula la sede y `forNewResource`; tocar solo
   las líneas de llamada en `stream.ts`, más `autocorreccion.ts` y `verificar.ts`. Check: e2e con el mock que
   confirme el propósito de cada fila.
-- [ ] **T6 — Superadmin: organizaciones.** Pestaña Organizaciones (reemplaza a Dominios): alta de colegio, red y sede;
+- [x] **T6 — Superadmin: organizaciones.** _(a98a60a + 8de7c7e + a98e739 + corrección, escritor delegado)_ Pestaña Organizaciones (reemplaza a Dominios): alta de colegio, red y sede;
   dominios; lista blanca; nombrar al primer admin; mover docentes. Actualizar el conteo de pestañas de
   `e2e/m1-admin-shell.ts`. Check: e2e.
 - [ ] **T7 — Superadmin: métricas de precio.** Por organización y mes: docentes registrados, activos, recursos
@@ -177,6 +177,18 @@ une a una organización.
   por dominio; una invitación o volver a agregarlo a la lista blanca la levanta. Sin ella, la baja de alguien que entró
   por dominio se deshacía en el siguiente login.
 
+- 2026-09-26: **T6 hecha.** `OrganizationExclusion` (migración `20261010300000_exclusiones_de_organizacion`, índices
+  parciales confirmados), `src/lib/orgs/gestion.ts` (todas las operaciones pasan por `alcance.ts`; T8 las reusa),
+  APIs `/api/admin/organizaciones/**`, pestaña Organizaciones después de Docentes, detalle con dominios, lista blanca,
+  admins y docentes (mover / dar de baja).
+  Evidencia: `tsc` limpio; `admin-organizaciones` 15/15; `m1-admin-shell` (7 pestañas); `org-invitaciones` 16/16;
+  `org-acceso` 7/7. Capturas revisadas por el orquestador (escritorio claro, 360 oscuro).
+  Correcciones del orquestador: el escritor dio por "preexistente" el fallo de `m5-usuarios`, pero lo había roto T2 (la
+  tabla ganó la columna Organización y el texto "Sí · por dominio" ya no existe); se realinearon los índices y pasa.
+  "standalone" y "fallback" pasaron a castellano en la interfaz.
+  **Deuda para T8:** en 360 px la tabla de docentes del detalle queda apretada (nombres cortados, "Dar de baja" en 3
+  renglones). T8 hace una lista de docentes compartida, con tarjetas en celular, y la reusa acá.
+
 ## Siguiente paso
 
-T6.
+T7.
