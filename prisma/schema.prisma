@@ -371,6 +371,28 @@ model ChatMessage {
   /// (`checklistActual`, `src/lib/ai/checklist-db.ts`) — deshacer ese turno
   /// lo descarta solo, sin lógica aparte.
   checklist    String?
+  /// T5 (odd/tasks/generacion-simple-y-reanudable.md): la huella
+  /// (`fingerprintHtml`) del HTML que este turno dejó como
+  /// `Project.currentHtml`, capturada al persistir el turno y REFRESCADA
+  /// cuando el chequeo posterior se marca (una autocorrección puede mover
+  /// `currentHtml` de nuevo después de la generación). `NULL` en cualquier
+  /// mensaje sin `snapshot` (nunca cambió el HTML) — sólo esos importan acá.
+  resultHtmlFingerprint String?
+  /// T5: cuándo terminaron (o se saltearon "by design", turno de versiones)
+  /// los chequeos del navegador — self-test → corrección → verificador —
+  /// para `resultHtmlFingerprint`. `NULL` = todavía pendiente, PERO sólo una
+  /// fila creada DESPUÉS de la migración que agregó esta columna es de
+  /// verdad candidata: las filas viejas se backfillearon a un instante fijo
+  /// "legacy" (no `NULL`) para que se lean como "ya resueltas" para siempre,
+  /// nunca como pendientes — ver la migración.
+  postChecksAt DateTime?
+  /// T5: una pestaña que está A PUNTO de correr el pipeline reanudado
+  /// reclama acá (UPDATE atómico, `post-checks-db.ts`) para que dos
+  /// pestañas abiertas al mismo proyecto nunca lo corran las dos. Un reclamo
+  /// que nunca terminó en `postChecksAt` (la pestaña se cerró a mitad de
+  /// camino) queda viejo pasados `POST_CHECKS_CLAIM_STALE_MS` y cualquier
+  /// otra pestaña puede reintentar.
+  postChecksClaimedAt DateTime?
 
   @@index([threadId, createdAt])
 }

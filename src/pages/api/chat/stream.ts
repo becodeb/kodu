@@ -48,6 +48,8 @@ import {
 } from '../../../lib/ai/tools.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
+import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
+import { marcarChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { registrarTurnoEnCurso, type MotivoAbortTurno } from '../../../lib/ai/turnos-en-curso.ts';
 
 /**
@@ -1478,6 +1480,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 ]
               : [];
 
+          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
+          // cambió el recurso — comparado contra el HTML con el que arrancó,
+          // no contra si el modelo llamó o no a la herramienta (podría haber
+          // devuelto el documento igual, letra por letra). Calculado ANTES
+          // del `create` de abajo (T5 lo necesita ahí, para la huella).
+          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
+
           const saved = await prisma.chatMessage.create({
             data: {
               threadId: thread.id,
@@ -1491,18 +1500,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
               ...(versionesParaGuardar.length > 0
                 ? { chosenVariantIndex: 1, variants: { create: versionesParaGuardar } }
                 : {}),
+              // T5: la huella de lo que este turno deja como
+              // `Project.currentHtml` — sólo tiene sentido cuando de verdad
+              // cambió algo (si no, este mensaje nunca va a ser candidato de
+              // `pendienteChequeosPosteriores`, que sólo mira mensajes con
+              // instantánea).
+              ...(cambioElHtml ? { resultHtmlFingerprint: fingerprintHtml(generatedHtml!) } : {}),
             },
             select: { id: true },
           });
 
-          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
-          // cambió el recurso — comparado contra el HTML con el que arrancó,
-          // no contra si el modelo llamó o no a la herramienta (podría haber
-          // devuelto el documento igual, letra por letra). Una falla acá
+          // Una falla en lo de abajo (instantánea, marca de "sin chequeos")
           // nunca puede tirar abajo el turno: ya está guardado y respondido,
-          // esto es sólo la posibilidad de deshacerlo después.
-          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
-
+          // esto es sólo la posibilidad de deshacerlo después / de saltear
+          // el pipeline del navegador más tarde.
           if (cambioElHtml) {
             try {
               await prisma.projectSnapshot.create({
@@ -1529,6 +1540,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
               }
             } catch (error) {
               console.error('[chat/stream] no se pudo guardar la instantánea para deshacer:', error);
+            }
+
+            // T5: un turno de versiones NUNCA corre el self-test/corrección/
+            // verificador del navegador (T2/T9: no hay "el" recurso vigente
+            // hasta que el docente elige una) — se marca acá mismo, en el
+            // momento, para que jamás quede "pendiente" y una apertura
+            // posterior del proyecto no le dispare el pipeline sin sentido.
+            if (solicitaVersiones) {
+              try {
+                await marcarChequeosPosteriores({
+                  projectId: project.id,
+                  messageId: saved.id,
+                  fingerprint: fingerprintHtml(generatedHtml!),
+                });
+              } catch (error) {
+                console.error('[chat/stream] no se pudo marcar el turno de versiones como chequeado:', error);
+              }
             }
           }
 

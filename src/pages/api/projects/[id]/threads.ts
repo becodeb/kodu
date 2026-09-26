@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../../lib/db.ts';
 import { findProjectForActor } from '../../../../lib/projects.ts';
 import { checklistActual } from '../../../../lib/ai/checklist-db.ts';
+import { pendienteChequeosPosteriores } from '../../../../lib/ai/post-checks-db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 
 const schema = z.object({
@@ -68,7 +69,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   // creación, terminó guardando un checklist nuevo que la página nunca vio
   // (llegó por el SSE que esa pestaña se perdió). Del ámbito del PROYECTO,
   // no de este hilo (mismo alcance que `currentHtml` acá abajo).
-  const [messages, checklist] = await Promise.all([
+  const [messages, checklist, pendingPostChecks] = await Promise.all([
     prisma.chatMessage.findMany({
       where: { threadId: thread.id },
       orderBy: { createdAt: 'asc' },
@@ -95,6 +96,11 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
       },
     }),
     checklistActual(project.id),
+    // T5: este mismo pedido es el que usa Workspace.tsx para "retomar un
+    // turno que quedó corriendo" — si ESE turno era el que cambió el HTML y
+    // nunca corrió el pipeline del navegador, la pestaña que lo reanuda
+    // necesita saberlo apenas termina de esperar, sin recargar de nuevo.
+    pendienteChequeosPosteriores(project.id),
   ]);
 
   // Se devuelve tambien el HTML porque el editor usa este endpoint para
@@ -104,6 +110,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
   return ok({
     currentHtml: project.currentHtml,
     checklist,
+    pendingPostChecks,
     messages: messages.map((message) => ({
       id: message.id,
       role: message.role,

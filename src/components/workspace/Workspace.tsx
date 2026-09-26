@@ -19,6 +19,7 @@ import type { ItemChecklist } from '../../lib/ai/checklist.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
+  ChequeosPosterioresPendientes,
   MotorPublico,
   VersionEnCurso,
   WorkspaceAsset,
@@ -70,6 +71,15 @@ interface WorkspaceProps {
    * nunca llega a pedirse.
    */
   verificadorActivo: boolean;
+  /**
+   * T5 (odd/tasks/generacion-simple-y-reanudable.md): el turno más nuevo que
+   * cambió el HTML y todavía no pasó por el self-test/corrección/verificador
+   * del navegador (el docente cerró la pestaña antes de que corrieran).
+   * `null` en el caso común. Calculado server-side
+   * (`pendienteChequeosPosteriores`) — ver el efecto que lo consume, más
+   * abajo.
+   */
+  pendingPostChecks: ChequeosPosterioresPendientes | null;
 }
 
 /**
@@ -251,6 +261,16 @@ export default function Workspace(props: WorkspaceProps) {
     () => estadoDeChecklist(checklist, ultimasPruebas),
     [checklist, ultimasPruebas],
   );
+
+  /**
+   * T5: el turno pendiente de chequeos posteriores, si hay uno — arranca con
+   * el que ya calculó el servidor al cargar la página y se reemplaza por el
+   * que devuelve el poll de "retomar un turno" (más abajo) si ESE turno es
+   * el que resulta pendiente. El efecto que lo consume vive junto a ese poll.
+   */
+  const [pendingPostChecks, setPendingPostChecks] = useState(props.pendingPostChecks);
+  /** Un solo intento por candidato — recargar la página es lo que reintenta. */
+  const intentoPostChecksRef = useRef<string | null>(null);
 
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
@@ -448,9 +468,12 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
 
-      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string; checklist: ItemChecklist[] }>(
-        `/api/projects/${projectId}/threads?threadId=${encodeURIComponent(activeThreadId)}`,
-      ).then((result) => {
+      void apiRequest<{
+        messages: WorkspaceMessage[];
+        currentHtml: string;
+        checklist: ItemChecklist[];
+        pendingPostChecks: ChequeosPosterioresPendientes | null;
+      }>(`/api/projects/${projectId}/threads?threadId=${encodeURIComponent(activeThreadId)}`).then((result) => {
         if (cancelado || !result.ok) return;
 
         const llegoRespuesta = result.data.messages.at(-1)?.role === 'assistant';
@@ -467,6 +490,11 @@ export default function Workspace(props: WorkspaceProps) {
         // guardado un checklist nuevo que esta pestaña nunca vio (llegó por
         // el SSE de la pestaña que se recargó) — se lee del mismo pedido.
         setChecklist(result.data.checklist);
+        // T5: el turno que se acaba de reanudar puede ser justo el que
+        // necesita el pipeline del navegador — se recalcula acá, con datos
+        // frescos, en vez de confiar en lo que se calculó al cargar la
+        // página (antes de que este turno existiera).
+        setPendingPostChecks(result.data.pendingPostChecks);
         setIsStreaming(false);
         setAiPhase('idle');
         setTurnoDesde(null);
@@ -482,6 +510,59 @@ export default function Workspace(props: WorkspaceProps) {
     // Sólo al montar: es la reanudación después de recargar la página.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * T5 (odd/tasks/generacion-simple-y-reanudable.md): si `pendingPostChecks`
+   * señala un turno que nunca corrió el self-test/corrección/verificador del
+   * navegador, se intenta correrlo UNA vez.
+   *
+   * Espera a que el ÚLTIMO mensaje NO sea del docente (chequeado con
+   * `messages`, no con `isStreaming`): al montar con un turno todavía en
+   * curso, `pendingPostChecks` de las props ya está calculado contra el
+   * candidato VIEJO (el turno en curso todavía no existía cuando el servidor
+   * lo calculó) y hay que esperar al poll de arriba, que lo recalcula con
+   * datos frescos apenas termina — recién ahí este efecto vuelve a evaluar.
+   *
+   * El reclamo (`POST /api/chat/post-checks`, acción `claim`) es atómico del
+   * lado del servidor: si otra pestaña ya se quedó con este turno, o dejó de
+   * corresponder, `claimed` vuelve en `false` y acá no se hace nada más.
+   */
+  useEffect(() => {
+    if (!pendingPostChecks) return;
+    const ultimoMensaje = messages[messages.length - 1];
+    if (ultimoMensaje && ultimoMensaje.role === 'user') return;
+    if (intentoPostChecksRef.current === pendingPostChecks.messageId) return;
+    intentoPostChecksRef.current = pendingPostChecks.messageId;
+
+    const candidato = pendingPostChecks;
+
+    void (async () => {
+      const reclamo = await apiRequest<{ claimed: boolean }>('/api/chat/post-checks', 'POST', {
+        projectId,
+        action: 'claim',
+        messageId: candidato.messageId,
+      });
+      if (!reclamo.ok || !reclamo.data.claimed) return;
+
+      const esInicial = esRecursoInicial(candidato.htmlAntes);
+      const htmlTrasAutoprueba = await ejecutarAutopruebaYCorreccion(html);
+      setAiPhase('idle'); // mismo reseteo que hace el `finally` de handleSend tras un turno normal.
+      void iniciarVerificacion(candidato.htmlAntes, htmlTrasAutoprueba, esInicial);
+
+      void apiRequest('/api/chat/post-checks', 'POST', {
+        projectId,
+        action: 'complete',
+        messageId: candidato.messageId,
+        fingerprint: fingerprintHtml(htmlTrasAutoprueba),
+      });
+    })();
+    // `html` a propósito NO está en las dependencias: este efecto sólo tiene
+    // que dispararse cuando cambia el CANDIDATO (montaje, o el poll de
+    // reanudación de arriba), nunca por un cambio de HTML que no venga de
+    // ahí — el valor de `html` que importa es el que hay en el momento en
+    // que el candidato queda fijado, capturado por closure más arriba.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPostChecks, messages]);
 
   async function handleSend(message: string, isRetry = false) {
     setError(null);
@@ -554,8 +635,19 @@ export default function Workspace(props: WorkspaceProps) {
     // arriba: hace falta leerlo de forma síncrona después del `for await`,
     // en el manejo de "done".
     let versionesDelTurno: VersionEnCurso[] | null = null;
+    // T5: id del mensaje "assistant" que va a cerrar este turno, para poder
+    // marcar los chequeos posteriores sobre ÉL cuando el pipeline termine
+    // (se completa en el manejo de "done", más abajo).
+    let mensajeIdDelTurno: string | null = null;
 
     try {
+      // T5: si el pipeline de chequeos reanudados (el efecto de arriba)
+      // estaba corriendo en segundo plano sobre un turno VIEJO, un turno
+      // NUEVO lo corta acá — mismo espíritu que "Detener" ("cancel it
+      // exactly as today's post-turn pipeline gets cancelled"). No-op si no
+      // había nada corriendo (`abortador.current` ya es `null` en el caso
+      // normal).
+      abortador.current?.abort();
       abortador.current = new AbortController();
 
       for await (const event of streamChat(
@@ -640,6 +732,7 @@ export default function Workspace(props: WorkspaceProps) {
           }
           if (event.registerUrl) setRegisterUrl(event.registerUrl);
         } else if (event.type === 'done') {
+          mensajeIdDelTurno = event.messageId;
           // T9: las versiones que de verdad llegaron a existir — cualquier
           // índice que se haya quedado en `ready: false` (nunca llegó su
           // "variant" de `ready: true`) se descarta acá, nunca se ofrece un
@@ -685,7 +778,7 @@ export default function Workspace(props: WorkspaceProps) {
       // paralelo no hay "el" recurso vigente todavía hasta que el docente
       // elige una, y probarlas las 3 triplicaría costo y tiempo.
       const htmlParaAutoprueba = ultimoHtmlDelTurno;
-      if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba) {
+      if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba && mensajeIdDelTurno) {
         const htmlTrasAutoprueba = await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
         // T4 (`odd/tasks/verificador.md`): en SEGUNDO PLANO — a propósito
         // NUNCA esperada (`void`): el chat se reactiva en el `finally` de
@@ -693,6 +786,17 @@ export default function Workspace(props: WorkspaceProps) {
         // pasada). `esRecursoInicial(htmlAlInicioDelTurno)` es la MISMA
         // noción que ya usa el servidor para el checklist (T16/T18).
         void iniciarVerificacion(htmlAlInicioDelTurno, htmlTrasAutoprueba, esRecursoInicial(htmlAlInicioDelTurno));
+        // T5: deja constancia de que los chequeos posteriores YA corrieron
+        // para este turno — si el docente cierra la pestaña ahora, no se
+        // vuelven a pedir al reabrir (`pendienteChequeosPosteriores`). Los
+        // turnos de versiones (`pedirVersiones`, arriba) no pasan por acá:
+        // T2/T9 los saltea "by design" y `stream.ts` ya los marca solo.
+        void apiRequest('/api/chat/post-checks', 'POST', {
+          projectId,
+          action: 'complete',
+          messageId: mensajeIdDelTurno,
+          fingerprint: fingerprintHtml(htmlTrasAutoprueba),
+        });
       }
     } catch (error) {
       // Un abort es el docente tocando "Detener": no es una falla que reportar.

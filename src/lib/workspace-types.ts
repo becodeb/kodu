@@ -43,6 +43,26 @@ export interface CapacidadesEditor {
   puedePedirVersiones: boolean;
 }
 
+/**
+ * T5 (odd/tasks/generacion-simple-y-reanudable.md): un turno que cambió el
+ * HTML y todavía no pasó por el self-test/corrección/verificador del
+ * navegador (el docente cerró la pestaña antes de que corrieran). Lo
+ * calcula `pendienteChequeosPosteriores` (`src/lib/ai/post-checks-db.ts`),
+ * server-only — el cliente sólo lo recibe ya resuelto, ni siquiera importa
+ * `decidirResumenChequeosPosteriores` para re-derivarlo.
+ */
+export interface ChequeosPosterioresPendientes {
+  messageId: string;
+  /** La huella de `Project.currentHtml` en el momento en que se calculó
+   *  esto — hay que devolverla tal cual al marcar (`POST
+   *  /api/chat/post-checks`, acción `complete`), fingerprinteando el HTML
+   *  con el que de verdad terminó el pipeline. */
+  fingerprint: string;
+  /** El HTML de ANTES de este turno (`ProjectSnapshot.html`): lo necesita
+   *  el cliente para decidir `tipo` ('nuevo'/'ajuste') del verificador. */
+  htmlAntes: string;
+}
+
 export interface WorkspaceProject {
   id: string;
   title: string;
