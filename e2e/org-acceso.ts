@@ -310,6 +310,17 @@ async function main(): Promise<void> {
         `archivar la organización debe cortar el acceso en la próxima request (dio ${despues.status()})`,
       );
 
+      // El recurso que ya tenía no se borra, pero el editor tampoco se abre:
+      // la URL directa rebota a /app, que muestra la pantalla de cuenta personal.
+      const { project: proyectoPrevio } = await antes.json();
+      const editor = await page.request.get(`${BASE_URL}/app/project/${proyectoPrevio.id}`, { maxRedirects: 0 });
+      assert.equal(editor.status(), 302, 'una cuenta personal no debe abrir el editor de un recurso propio');
+      assert.equal(editor.headers()['location'], '/app', 'el editor debe rebotar a /app');
+      assert.ok(
+        await prisma.project.findUnique({ where: { id: proyectoPrevio.id }, select: { id: true } }),
+        'el recurso de una cuenta que quedó personal no se borra',
+      );
+
       const usuarioTrasArchivar = await prisma.user.findUniqueOrThrow({
         where: { id: body.user.id },
         select: { organizationId: true },
