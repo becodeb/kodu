@@ -394,7 +394,11 @@ export default function OrganizacionDetalle(props: Props) {
           <ul className="mt-3 divide-y divide-linea">
             {org.dominios.map((dominio) => (
               <li key={dominio.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                <span className="font-mono text-ink-700">{dominio.pattern}</span>
+                {/* min-w-0 + break-all: un dominio es UNA palabra larga sin
+                    espacios — sin esto, el flex item nunca se achica y
+                    empuja overflow horizontal a la PÁGINA entera a 360px
+                    (chromium-headless-500px-clamp.md lo hizo evidente). */}
+                <span className="min-w-0 font-mono break-all text-ink-700">{dominio.pattern}</span>
                 <button
                   type="button"
                   disabled={pending}
@@ -430,7 +434,7 @@ export default function OrganizacionDetalle(props: Props) {
             <ul className="mt-3 divide-y divide-linea">
               {org.listaBlanca.map((item) => (
                 <li key={item.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                  <span className="text-ink-700">{item.email}</span>
+                  <span className="min-w-0 break-all text-ink-700">{item.email}</span>
                   <button
                     type="button"
                     disabled={pending}
@@ -473,7 +477,7 @@ export default function OrganizacionDetalle(props: Props) {
           <ul className="mt-3 divide-y divide-linea">
             {org.adminsLista.map((admin) => (
               <li key={admin.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <span>
+                <span className="min-w-0 break-all">
                   <span className="text-ink-900">{admin.name}</span>{' '}
                   <span className="text-xs text-ink-500">{admin.email}</span>
                 </span>
@@ -492,17 +496,35 @@ export default function OrganizacionDetalle(props: Props) {
       </section>
 
       {org.kind === 'CAMPUS' && (
-        <section className="kodu-card overflow-x-auto p-4">
+        <section className="kodu-card p-4">
           <h2 className="text-sm font-semibold text-ink-900">Docentes</h2>
           {miembros.length === 0 ? (
             <p className="mt-3 text-sm text-ink-500">Todavía no tiene ningún docente.</p>
           ) : (
-            <table className="mt-3 w-full text-left text-sm">
+            // `table-fixed` + anchos fijos por columna en vez de
+            // `overflow-x-auto`: un nombre/email largo es UNA palabra sin
+            // espacios (`truncate`, no `break-all` acá — a diferencia de
+            // dominios/lista blanca de arriba, esta columna SÍ tiene lugar
+            // para achicarse) y las dos acciones se apilan en vez de ir
+            // lado a lado. `table-layout:auto` dejaba que el ancho mínimo de
+            // la tabla se filtrara a `document.documentElement.scrollWidth`
+            // a 360px incluso adentro de un contenedor `overflow-x-auto`
+            // (astro-island es `inline`, y esa caja intermedia no lo
+            // contenía para ese cálculo puntual del navegador) — con
+            // `table-fixed` la tabla NUNCA es más ancha que su contenedor,
+            // así que no hay nada que se pueda filtrar.
+            <table className="mt-3 w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[42%]" />
+                <col className="w-[26%]" />
+                <col className="w-[14%]" />
+                <col className="w-[18%]" />
+              </colgroup>
               <thead className="border-b border-linea text-xs text-ink-500 uppercase">
                 <tr>
-                  <th className="py-2 pr-3 font-medium">Docente</th>
-                  <th className="py-2 pr-3 font-medium">Verificación</th>
-                  <th className="py-2 pr-3 font-medium">Admin</th>
+                  <th className="truncate py-2 pr-2 font-medium">Docente</th>
+                  <th className="truncate py-2 pr-2 font-medium">Verificación</th>
+                  <th className="truncate py-2 pr-2 font-medium">Admin</th>
                   <th className="py-2 text-right font-medium">
                     <span className="sr-only">Acciones</span>
                   </th>
@@ -511,14 +533,18 @@ export default function OrganizacionDetalle(props: Props) {
               <tbody>
                 {miembros.map((miembro) => (
                   <tr key={miembro.id} className="border-b border-linea last:border-0">
-                    <td className="py-2 pr-3">
-                      <p className="font-medium text-ink-900">{miembro.name}</p>
-                      <p className="text-xs text-ink-500">{miembro.email}</p>
+                    <td className="py-2 pr-2">
+                      <p className="truncate font-medium text-ink-900" title={miembro.name}>
+                        {miembro.name}
+                      </p>
+                      <p className="truncate text-xs text-ink-500" title={miembro.email}>
+                        {miembro.email}
+                      </p>
                     </td>
-                    <td className="py-2 pr-3 text-ink-700">{verificacionLabel(miembro.emailVerificationSource)}</td>
-                    <td className="py-2 pr-3 text-ink-700">{miembro.esAdmin ? 'Sí' : '—'}</td>
+                    <td className="py-2 pr-2 text-xs text-ink-700">{verificacionLabel(miembro.emailVerificationSource)}</td>
+                    <td className="py-2 pr-2 text-ink-700">{miembro.esAdmin ? 'Sí' : '—'}</td>
                     <td className="py-2 text-right">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-col items-end gap-1">
                         <button
                           type="button"
                           disabled={pending}
