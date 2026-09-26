@@ -21,6 +21,15 @@ import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE } from './tools.ts';
  */
 export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 
+/**
+ * T2 (verificador): "chat" (Chat Completions, el dialecto de siempre) o
+ * "responses" (OpenAI Responses API — la única que combina function tools
+ * con razonamiento para gpt-6-luna). Viene de `AiProvider.apiFormat`
+ * (catalogo.ts), no de `AiModel`: es la cuenta entera la que habla un
+ * dialecto u otro, no un motor puntual.
+ */
+export type ApiFormat = 'chat' | 'responses';
+
 /** Lo que hace falta para pedirle un turno a un motor concreto. */
 export interface ProviderConfig {
   /** El `id` de la fila `AiModel` que produjo esta config. */
@@ -30,6 +39,9 @@ export interface ProviderConfig {
   baseUrl: string;
   model: string;
   maxTokens: number;
+  /** T2: campo requerido — no hay default acá, el catálogo (o el test que
+   *  arme un `ProviderConfig` a mano) siempre lo manda explícito. */
+  apiFormat: ApiFormat;
   /** Tope de tokens por usuario. 0 = sin tope. */
   userTokenLimit: number;
   /** Ventana móvil sobre la que se mide el tope, en horas. 0 = desde siempre. */
@@ -62,8 +74,20 @@ export type ContentPart =
   | { type: 'image_url'; image_url: { url: string } };
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | ContentPart[];
+  /**
+   * T2 (verificador): sólo tiene sentido con `role: 'assistant'`, mismo
+   * shape que el `tool_calls` de una respuesta real de Chat Completions.
+   * Ningún llamador de esta app arma HOY un historial con tool round-trip
+   * (cada turno llama la herramienta una vez y termina, nunca se le
+   * devuelve el resultado como mensaje 'tool' para que siga la conversación)
+   * — existe para que `aResponsesBody` (más abajo) tenga a qué traducir si
+   * eso cambia, sin quedar corto contra la forma real de Chat Completions.
+   */
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  /** T2: sólo con `role: 'tool'` — a qué `tool_calls[].id` responde. */
+  tool_call_id?: string;
 }
 
 /**
@@ -202,7 +226,10 @@ export async function requestCompletionStream(options: {
     );
   }
 
-  const endpoint = `${provider.baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
+  // T2: la Responses API vive en otro path del mismo `baseUrl` — el resto de
+  // la cadena de reintentos (429, tool_choice no soportado) no cambia según
+  // el formato, así que sólo el path se bifurca acá.
+  const endpoint = `${provider.baseUrl.replace(/\/+$/, '')}/v1/${provider.apiFormat === 'responses' ? 'responses' : 'chat/completions'}`;
 
   // La obligación de llamar la herramienta se puede aflojar sobre la marcha:
   // ver ToolChoiceNoSoportado. Es una sola vez, y no gasta ninguno de los
@@ -341,6 +368,162 @@ export function razonamientoCorreccion(provider: ProviderConfig): Record<string,
   return { reasoning_effort: 'low' };
 }
 
+/**
+ * El razonamiento del verificador (T3, `odd/tasks/verificador.md`): "medium"
+ * fijo, sin importar el nivel configurado en el motor — ni el "flojo" que
+ * puede dar `razonamientoEfectivo` ni el "low" de `razonamientoCorreccion`.
+ * A diferencia de la corrección mecánica de la autoprueba (el error exacto
+ * ya viaja en el prompt), un revisor tiene que releer el HTML entero y
+ * razonar sobre lógica/contenido/pedido desde cero.
+ *
+ * Mismo dialecto que el resto de este archivo: sin `reasoningEffort`
+ * cargado (proveedor de dialecto desconocido) no se manda nada. MiniMax no
+ * tiene niveles — mismo criterio que `razonamientoCorreccion`: cualquier
+ * nivel prendido alcanza para "medium" (`thinking: {type: 'enabled'}`).
+ */
+export function razonamientoVerificador(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    return { thinking: { type: 'enabled' } };
+  }
+
+  return { reasoning_effort: 'medium' };
+}
+
+/**
+ * De los niveles que puede tener `AiModel.reasoningEffort` (y el nivel
+ * "medium" interno que sólo usa `razonamientoOverride`, T3 del verificador)
+ * al vocabulario de `reasoning.effort` en la Responses API. "max" no es un
+ * nivel real ahí: se manda como "high", el tope que la propia app conoce
+ * (ver `razonamientoEfectivo` más arriba) — nunca se inventa un nivel nuevo.
+ */
+const NIVEL_RESPONSES: Record<string, string> = {
+  none: 'none',
+  low: 'low',
+  medium: 'medium',
+  high: 'high',
+  max: 'high',
+};
+
+/**
+ * Traduce el objeto que ya arma `razonamiento()`/`razonamientoEfectivo()`
+ * (dialecto Chat Completions: `{reasoning_effort: nivel}`, o si el motor
+ * fuera MiniMax `{thinking: {...}}`) al de la Responses API:
+ * `{reasoning: {effort}}`. Un motor `apiFormat: 'responses'` es siempre
+ * OpenAI (la única API que combina tools con razonamiento), así que el
+ * único dialecto de entrada que puede llegar acá es `reasoning_effort` —
+ * cualquier otra forma (o el objeto vacío de un motor sin razonamiento
+ * configurado) no manda nada, mismo criterio de "no inventarle un parámetro
+ * a un proveedor" que ya sigue `razonamiento()`.
+ */
+function razonamientoParaResponses(chatReasoning: Record<string, unknown>): Record<string, unknown> {
+  const nivel = chatReasoning.reasoning_effort;
+  if (typeof nivel !== 'string') return {};
+  return { reasoning: { effort: NIVEL_RESPONSES[nivel] ?? nivel } };
+}
+
+/** El texto plano de un `content` de `ChatMessage`, ignorando las partes de
+ *  imagen — mismo criterio que `texto()` en `proxy-responses.mjs`. */
+function textoDeContenido(content: string | ContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content.map((parte) => (parte.type === 'text' ? parte.text : '')).join('');
+}
+
+/** El `content` de un mensaje 'user' en la forma que espera `input` de la
+ *  Responses API: string tal cual, o partes `input_text`/`input_image`. */
+function partesDeContenido(content: string | ContentPart[]): string | Array<Record<string, unknown>> {
+  if (typeof content === 'string') return content;
+  return content.map((parte) =>
+    parte.type === 'image_url'
+      ? { type: 'input_image', image_url: parte.image_url.url }
+      : { type: 'input_text', text: parte.text },
+  );
+}
+
+/**
+ * `messages` (dialecto Chat Completions) a `input` (Responses API), ported
+ * de `aResponses` en `experimentos/razonamiento/proxy-responses.mjs`:
+ * system → `{role:'system'}`, user → partes `input_text`/`input_image`,
+ * assistant (texto + `tool_calls`) → texto suelto más un `function_call` por
+ * cada llamada, `tool` → `function_call_output`. Ver el comentario de
+ * `tool_calls`/`tool_call_id` en `ChatMessage` más arriba: hoy ningún
+ * llamador arma un mensaje 'tool' o un 'assistant' con `tool_calls`, pero el
+ * mapeo los soporta igual.
+ */
+function aResponsesInput(messages: ChatMessage[]): Array<Record<string, unknown>> {
+  const input: Array<Record<string, unknown>> = [];
+  for (const mensaje of messages) {
+    if (mensaje.role === 'system') {
+      input.push({ role: 'system', content: textoDeContenido(mensaje.content) });
+    } else if (mensaje.role === 'user') {
+      input.push({ role: 'user', content: partesDeContenido(mensaje.content) });
+    } else if (mensaje.role === 'assistant') {
+      const texto = textoDeContenido(mensaje.content);
+      if (texto) input.push({ role: 'assistant', content: texto });
+      for (const llamada of mensaje.tool_calls ?? []) {
+        input.push({
+          type: 'function_call',
+          call_id: llamada.id,
+          name: llamada.function.name,
+          arguments: llamada.function.arguments ?? '',
+        });
+      }
+    } else if (mensaje.role === 'tool') {
+      input.push({
+        type: 'function_call_output',
+        call_id: mensaje.tool_call_id ?? '',
+        output: textoDeContenido(mensaje.content),
+      });
+    }
+  }
+  return input;
+}
+
+/**
+ * El body de un pedido a `/v1/responses` (T2, `apiFormat: 'responses'`).
+ * `forzarHerramienta`/`sinHerramientas` ya llegan resueltos por el llamador
+ * (`requestCompletionStream` ya aplicó "sinHerramientas gana" antes de
+ * pasarlos para acá) — acá sólo falta decidir si la clave `tools`/
+ * `tool_choice` viaja o no, igual que en el body de Chat Completions.
+ * Nunca manda `temperature` (los modelos de razonamiento de OpenAI la
+ * rechazan) y siempre `store: false` (nada de este turno se guarda del lado
+ * de OpenAI).
+ */
+function aResponsesBody(options: {
+  provider: ProviderConfig;
+  messages: ChatMessage[];
+  forzarHerramienta: boolean;
+  sinHerramientas: boolean;
+  razonamiento: Record<string, unknown>;
+  maxTokens: number;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: options.provider.model,
+    input: aResponsesInput(options.messages),
+    store: false,
+    stream: true,
+  };
+
+  if (!options.sinHerramientas) {
+    body.tools = RESOURCE_TOOLS.map((tool) => ({
+      type: 'function' as const,
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters,
+    }));
+    body.tool_choice = options.forzarHerramienta ? { type: 'function', name: UPDATE_RESOURCE_CODE } : 'auto';
+  }
+
+  Object.assign(body, razonamientoParaResponses(options.razonamiento));
+
+  // Mismo motivo que `max_tokens` en Chat Completions: sin esto la API
+  // aplica su propio default y un recurso grande vuelve cortado a la mitad.
+  body.max_output_tokens = options.maxTokens;
+
+  return body;
+}
+
 async function intentarUna(
   endpoint: string,
   options: {
@@ -356,6 +539,61 @@ async function intentarUna(
 ): Promise<Response> {
   const { provider } = options;
 
+  // T2: la Responses API habla un dialecto de body enteramente distinto
+  // (`input` en vez de `messages`, `reasoning.effort` en vez de
+  // `reasoning_effort`/`thinking`, `max_output_tokens`, sin `temperature`) —
+  // ver `aResponsesBody` más arriba. El resto de esta función (fetch,
+  // manejo de errores, 429, `tool_choice` no soportado) es idéntico para los
+  // dos formatos: el detalle de la respuesta HTTP se sigue leyendo como
+  // texto plano y el mismo regex de `tool_choice` sirve para las dos APIs.
+  const cuerpo =
+    provider.apiFormat === 'responses'
+      ? aResponsesBody({
+          provider,
+          messages: options.messages,
+          forzarHerramienta: options.forzarHerramienta ?? false,
+          sinHerramientas: options.sinHerramientas ?? false,
+          razonamiento: options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null),
+          maxTokens: options.maxTokensOverride ?? provider.maxTokens,
+        })
+      : {
+          model: provider.model,
+          messages: options.messages,
+          // T20: una llamada auxiliar que nunca escribe el recurso (hoy sólo
+          // el checklist) no manda NI `tools` NI `tool_choice` — `undefined`
+          // hace que `JSON.stringify` OMITA la clave entera, que es lo que
+          // hizo falta contra DeepSeek (`tool_choice: 'none'` no alcanza: el
+          // proveedor sigue viendo `tools` y puede llamarla igual).
+          tools: options.sinHerramientas ? undefined : RESOURCE_TOOLS,
+          tool_choice: options.sinHerramientas
+            ? undefined
+            : options.forzarHerramienta
+              ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
+              : 'auto',
+          // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
+          // conocen el parámetro contestan 400 si se les manda, así que el
+          // default (NULL en el catálogo) es no mandarlo.
+          //
+          // En DeepSeek va en 'none': armar un HTML es escritura larga, no
+          // razonamiento. El thinking cobra tokens y latencia a cambio de poco,
+          // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
+          // el temperature de acá abajo. T6: pisado por la velocidad efectiva
+          // del turno cuando corresponde (`razonamientoEfectivo`); sin ella, es
+          // exactamente `razonamiento(provider)` de siempre. T12:
+          // `razonamientoOverride` (si vino) manda por encima de las dos — ver
+          // el comentario en `requestCompletionStream`.
+          ...(options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null)),
+          stream: true,
+          temperature: 0.6,
+          // Sin esto la API aplica su default (4.096) y todo recurso que pase de
+          // ~200 líneas vuelve cortado por la mitad. `maxTokensOverride` (T16)
+          // pisa esto para una llamada puntual que no escribe un recurso.
+          max_tokens: options.maxTokensOverride ?? provider.maxTokens,
+          // Pide el conteo de tokens en el último chunk: es de dónde sale el
+          // consumo que se registra por usuario.
+          stream_options: { include_usage: true },
+        };
+
   let response: Response;
   try {
     response = await fetch(endpoint, {
@@ -364,43 +602,7 @@ async function intentarUna(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${provider.apiKey}`,
       },
-      body: JSON.stringify({
-        model: provider.model,
-        messages: options.messages,
-        // T20: una llamada auxiliar que nunca escribe el recurso (hoy sólo
-        // el checklist) no manda NI `tools` NI `tool_choice` — `undefined`
-        // hace que `JSON.stringify` OMITA la clave entera, que es lo que
-        // hizo falta contra DeepSeek (`tool_choice: 'none'` no alcanza: el
-        // proveedor sigue viendo `tools` y puede llamarla igual).
-        tools: options.sinHerramientas ? undefined : RESOURCE_TOOLS,
-        tool_choice: options.sinHerramientas
-          ? undefined
-          : options.forzarHerramienta
-            ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
-            : 'auto',
-        // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
-        // conocen el parámetro contestan 400 si se les manda, así que el
-        // default (NULL en el catálogo) es no mandarlo.
-        //
-        // En DeepSeek va en 'none': armar un HTML es escritura larga, no
-        // razonamiento. El thinking cobra tokens y latencia a cambio de poco,
-        // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
-        // el temperature de acá abajo. T6: pisado por la velocidad efectiva
-        // del turno cuando corresponde (`razonamientoEfectivo`); sin ella, es
-        // exactamente `razonamiento(provider)` de siempre. T12:
-        // `razonamientoOverride` (si vino) manda por encima de las dos — ver
-        // el comentario en `requestCompletionStream`.
-        ...(options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null)),
-        stream: true,
-        temperature: 0.6,
-        // Sin esto la API aplica su default (4.096) y todo recurso que pase de
-        // ~200 líneas vuelve cortado por la mitad. `maxTokensOverride` (T16)
-        // pisa esto para una llamada puntual que no escribe un recurso.
-        max_tokens: options.maxTokensOverride ?? provider.maxTokens,
-        // Pide el conteo de tokens en el último chunk: es de dónde sale el
-        // consumo que se registra por usuario.
-        stream_options: { include_usage: true },
-      }),
+      body: JSON.stringify(cuerpo),
       signal: options.signal,
     });
   } catch (error) {
@@ -489,7 +691,20 @@ interface PendingToolCall {
  *    (la secuencia real es `\r\n\r\n`): sin normalizar, el stream entero queda
  *    en el buffer y el turno termina mudo. Por eso se normalizan los saltos.
  */
-export async function* readCompletionStream(response: Response): AsyncGenerator<StreamEvent> {
+export async function* readCompletionStream(
+  response: Response,
+  apiFormat: ApiFormat = 'chat',
+): AsyncGenerator<StreamEvent> {
+  // T2: mismo `StreamEvent` de salida, dialecto de SSE completamente
+  // distinto de entrada — ver `readResponsesStream` más abajo. El default
+  // 'chat' es a propósito: todo llamador viejo (y todo test viejo) que no
+  // sabe que este segundo parámetro existe sigue viendo el comportamiento de
+  // siempre, byte a byte.
+  if (apiFormat === 'responses') {
+    yield* readResponsesStream(response);
+    return;
+  }
+
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const toolCalls = new Map<number, PendingToolCall>();
@@ -609,6 +824,172 @@ export async function* readCompletionStream(response: Response): AsyncGenerator<
 
     // Si el proveedor cerró sin `finish_reason`, no perdemos el tool call.
     yield* flushToolCalls();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Igual que `readCompletionStream` pero para el SSE de la Responses API (T2,
+ * `apiFormat: 'responses'`): mismo `StreamEvent` de salida, dialecto de
+ * eventos totalmente distinto — ported de la mitad de streaming de
+ * `experimentos/razonamiento/proxy-responses.mjs`.
+ *
+ * Tres detalles que no tiene Chat Completions:
+ *  - los tool calls se identifican por `item_id`/`call_id` (un string), no
+ *    por un `index` numérico — se arma acá el mismo índice incremental que
+ *    ya espera el resto de la app (`tool_delta.index`);
+ *  - el consumo (`usage`) viaja adentro de `response.completed` /
+ *    `response.incomplete` / `response.failed`, nunca en un chunk aparte;
+ *  - un `type: 'error'` o `response.failed` a mitad de stream NO es un final
+ *    silencioso: Chat Completions nunca deja pasar un error hasta acá (lo
+ *    corta antes, por status HTTP, en `intentarUna`) — así que quien itera
+ *    este generador nunca antes vio un throw DESPUÉS de haber recibido texto.
+ *    Es la única manera de no devolverle al docente un turno vacío como si
+ *    hubiese salido bien.
+ */
+async function* readResponsesStream(response: Response): AsyncGenerator<StreamEvent> {
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+
+  // `item_id` (Responses) → índice incremental (lo que espera `tool_delta`/
+  // `tool_start` del resto de la app, igual que el `index` de Chat Completions).
+  const indicePorItem = new Map<string, number>();
+  const nombrePorIndice = new Map<number, string>();
+  const argsPorIndice = new Map<number, string>();
+  let announcedTool = false;
+
+  let buffer = '';
+  let doneReading = false;
+  let terminalVisto = false;
+
+  function* flush(truncated: boolean): Generator<StreamEvent> {
+    for (const [indice, nombre] of [...nombrePorIndice.entries()].sort((a, b) => a[0] - b[0])) {
+      if (nombre) yield { type: 'tool', name: nombre, arguments: argsPorIndice.get(indice) ?? '', truncated };
+    }
+    nombrePorIndice.clear();
+    argsPorIndice.clear();
+  }
+
+  try {
+    while (!doneReading) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      // Mismo motivo que en `readCompletionStream`: se normaliza el buffer
+      // completo, no el chunk suelto, porque un `\r\n` puede quedar partido
+      // justo en el corte entre dos chunks TCP.
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n');
+
+      let separator = buffer.indexOf('\n\n');
+      while (separator !== -1) {
+        const rawEvent = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        separator = buffer.indexOf('\n\n');
+
+        const payload = rawEvent
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trim())
+          .join('');
+
+        if (!payload) continue;
+        if (payload === '[DONE]') {
+          doneReading = true;
+          break;
+        }
+
+        let ev: Record<string, any>;
+        try {
+          ev = JSON.parse(payload);
+        } catch {
+          continue; // fragmento inválido: se ignora en vez de cortar el stream
+        }
+
+        switch (ev.type) {
+          case 'response.output_text.delta':
+            if (typeof ev.delta === 'string' && ev.delta.length > 0) {
+              yield { type: 'text', delta: ev.delta };
+            }
+            break;
+
+          case 'response.output_item.added':
+            if (ev.item?.type === 'function_call') {
+              const indice = indicePorItem.size;
+              indicePorItem.set(ev.item.id, indice);
+              nombrePorIndice.set(indice, ev.item.name ?? '');
+              argsPorIndice.set(indice, '');
+              if (!announcedTool && ev.item.name) {
+                announcedTool = true;
+                yield { type: 'tool_start', name: ev.item.name };
+              }
+            }
+            break;
+
+          case 'response.function_call_arguments.delta': {
+            if (typeof ev.delta !== 'string') break;
+            const indice = indicePorItem.get(ev.item_id) ?? 0;
+            const nombre = nombrePorIndice.get(indice) ?? '';
+            argsPorIndice.set(indice, (argsPorIndice.get(indice) ?? '') + ev.delta);
+            if (ev.delta.length > 0) {
+              yield { type: 'tool_delta', index: indice, name: nombre, delta: ev.delta };
+            }
+            break;
+          }
+
+          case 'response.completed':
+          case 'response.incomplete':
+          case 'response.failed': {
+            terminalVisto = true;
+
+            const usage = ev.response?.usage;
+            if (usage) {
+              yield {
+                type: 'usage',
+                usage: {
+                  promptTokens: Number(usage.input_tokens ?? 0),
+                  completionTokens: Number(usage.output_tokens ?? 0),
+                  // Subconjunto de promptTokens, no un extra — mismo
+                  // comentario que en la interfaz `TokenUsage` más arriba.
+                  cachedTokens: Number(usage.input_tokens_details?.cached_tokens ?? 0),
+                },
+              };
+            }
+
+            if (ev.type === 'response.failed') {
+              const detalle =
+                typeof ev.response?.error?.message === 'string'
+                  ? ev.response.error.message
+                  : 'La Responses API devolvió response.failed.';
+              throw new ProviderError(detalle);
+            }
+
+            const finishReason = ev.type === 'response.incomplete' ? 'length' : nombrePorIndice.size > 0 ? 'tool_calls' : 'stop';
+            yield* flush(finishReason === 'length');
+            yield { type: 'finish', reason: finishReason };
+            break;
+          }
+
+          case 'error': {
+            const detalle =
+              typeof ev.message === 'string'
+                ? ev.message
+                : typeof ev.error?.message === 'string'
+                  ? ev.error.message
+                  : 'La Responses API mandó un evento de error.';
+            throw new ProviderError(detalle);
+          }
+
+          default:
+            break; // resúmenes de razonamiento y demás eventos: se ignoran a propósito
+        }
+      }
+    }
+
+    // Si el proveedor cerró sin ningún response.completed/incomplete/failed,
+    // no perdemos el tool call ya acumulado — mismo criterio que
+    // `readCompletionStream`.
+    if (!terminalVisto) yield* flush(false);
   } finally {
     reader.releaseLock();
   }

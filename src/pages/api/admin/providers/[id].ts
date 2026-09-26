@@ -27,6 +27,7 @@ const actualizarProveedorSchema = z.object({
     .optional(),
   label: z.string().trim().min(1).max(120).optional(),
   baseUrl: z.string().trim().min(1).max(300).optional(),
+  apiFormat: z.enum(['chat', 'responses']).optional(),
   /** `undefined` = dejar la clave como está, `null` = borrarla, string = reemplazarla. */
   apiKey: z.string().trim().min(1).max(500).nullable().optional(),
   enabled: z.boolean().optional(),
@@ -50,6 +51,7 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.kind !== undefined) cambios.kind = datos.kind;
   if (datos.label !== undefined) cambios.label = datos.label;
   if (datos.baseUrl !== undefined) cambios.baseUrl = datos.baseUrl;
+  if (datos.apiFormat !== undefined) cambios.apiFormat = datos.apiFormat;
   if (datos.enabled !== undefined) cambios.enabled = datos.enabled;
 
   if (datos.apiKey !== undefined) {

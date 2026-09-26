@@ -17,6 +17,12 @@ import { normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { fingerprintHtml } from '../../../lib/ai/revision-visual.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
+import {
+  construirMensajeCorreccionVerificador,
+  normalizarProblema,
+  problemasAccionables,
+  type Problema,
+} from '../../../lib/ai/verificador.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
@@ -77,6 +83,24 @@ const pruebaSchema = z.object({
   detalle: z.string().max(200),
 });
 
+/**
+ * T3 (verificador): la forma CRUDA de un `Problema` (`verificador.ts`) tal
+ * como puede llegar en el body — validación laxa a propósito (strings
+ * sueltos, sin acotar el vocabulario cerrado ni el largo acá): la
+ * normalización de verdad (gravedad/tipo dentro del vocabulario, campos
+ * recortados y topeados, entradas inválidas descartadas) es
+ * `normalizarProblema`, la MISMA función que usa `parsearVerificacion` para
+ * lo que devuelve el modelo — "validado como más arriba" es justamente no
+ * duplicar ese criterio acá con un segundo schema.
+ */
+const problemaVerificadorInputSchema = z.object({
+  gravedad: z.string(),
+  tipo: z.string(),
+  que: z.string(),
+  como_reproducir: z.string(),
+  arreglo: z.string(),
+});
+
 const schema = z.object({
   projectId: z.string().min(1),
   /** `fingerprintHtml` del HTML que la autoprueba probó (T8: mismo criterio,
@@ -96,6 +120,14 @@ const schema = z.object({
   /** T17: opcional/nullable a propósito — un cliente viejo (o un recurso sin
    *  checklist) sencillamente no lo manda. */
   pruebas: z.array(pruebaSchema).max(8).optional().nullable(),
+  /** T3 (verificador): alternativa a los campos de la autoprueba de arriba
+   *  — cuando viene, y trae al menos un problema ACCIONABLE (no `contenido`,
+   *  ver `problemasAccionables`), la corrección se arma a partir de estos
+   *  problemas en vez del informe de la autoprueba. El resto del body
+   *  (huella, ronda, motor, TokenUsage) sigue funcionando exactamente igual
+   *  — esto es un INSUMO más para el mensaje de corrección, no una forma de
+   *  pedido nueva. */
+  problemasVerificador: z.array(problemaVerificadorInputSchema).min(1).max(6).optional(),
 });
 
 const encoder = new TextEncoder();
@@ -127,7 +159,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
-  const { projectId, fingerprint, ronda, errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas } =
+  const { projectId, fingerprint, ronda, errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas, problemasVerificador } =
     parsed.data;
 
   const project = await findProjectForActor(projectId, user);
@@ -204,7 +236,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // cliente): es lo mismo que ya hace este endpoint con `htmlPreCorreccion`
   // — el texto de cada ítem citado en la corrección tiene que ser el real.
   const checklist = await checklistActual(project.id);
-  const mensajeCorreccion = construirMensajeCorreccion({ html: htmlPreCorreccion, informe, ronda, checklist });
+
+  // T3 (verificador): `problemasVerificador`, normalizado con la MISMA
+  // función que usa el propio verificador para lo que devuelve el modelo
+  // (`normalizarProblema`), y filtrado a los ACCIONABLES (nunca `contenido`
+  // — ver `problemasAccionables`/`construirMensajeCorreccionVerificador`).
+  // Con al menos uno accionable, ESE es el insumo de la corrección; si no
+  // (nada vino, o todo lo que vino era `contenido`/inválido), se sigue el
+  // camino de siempre a partir del informe de la autoprueba.
+  const problemasVerificadorNormalizados: Problema[] = (problemasVerificador ?? [])
+    .map(normalizarProblema)
+    .filter((problema): problema is Problema => problema !== null);
+  const problemasVerificadorAccionables = problemasAccionables(problemasVerificadorNormalizados);
+
+  const mensajeCorreccion =
+    problemasVerificadorAccionables.length > 0
+      ? construirMensajeCorreccionVerificador(problemasVerificadorAccionables)
+      : construirMensajeCorreccion({ html: htmlPreCorreccion, informe, ronda, checklist });
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -260,7 +308,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         let htmlFinal: string | null = null;
         const totales: { usage: MotorTokenUsage | null } = { usage: null };
 
-        for await (const event of readCompletionStream(respuesta)) {
+        for await (const event of readCompletionStream(respuesta, provider.apiFormat)) {
           if (event.type === 'usage') {
             totales.usage = event.usage;
             continue;

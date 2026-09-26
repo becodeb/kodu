@@ -8,7 +8,7 @@ import {
   type AssetContext,
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
-import { aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
+import { aislarPruebasKit, aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
   ProviderError,
@@ -240,7 +240,13 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
  * cambio.
  */
 export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
-  return aplicarKitConRedDeSeguridad(html, { temaPrevio });
+  // T1 (verificador): después del kit, nunca antes — `aislarPruebasKit`
+  // busca el bloque canónico (`buscarBloque`) para nunca tocarlo, y
+  // `aplicarKitConRedDeSeguridad` es quien lo inserta o actualiza. El orden
+  // no cambia el resultado (aislarPruebasKit ignora ese bloque de cualquier
+  // forma), pero así queda documentado un único orden, no dos que hay que
+  // razonar por separado.
+  return aislarPruebasKit(aplicarKitConRedDeSeguridad(html, { temaPrevio }));
 }
 
 /**
@@ -394,7 +400,7 @@ async function generarVersionSecundaria(args: {
     });
 
     let usage: MotorTokenUsage | null = null;
-    for await (const event of readCompletionStream(respuesta)) {
+    for await (const event of readCompletionStream(respuesta, args.provider.apiFormat)) {
       if (event.type === 'usage') {
         usage = event.usage;
       } else if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
@@ -465,7 +471,7 @@ async function generarVersionSecundaria(args: {
 
     let htmlCorregido: string | null = null;
     let usageRevision: MotorTokenUsage | null = null;
-    for await (const event of readCompletionStream(respuestaRevision)) {
+    for await (const event of readCompletionStream(respuestaRevision, args.provider.apiFormat)) {
       if (event.type === 'usage') {
         usageRevision = event.usage;
       } else if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
@@ -568,7 +574,7 @@ async function generarChecklist(args: {
     let usage: MotorTokenUsage | null = null;
     let llamoHerramienta = false;
     let finishReason = '';
-    for await (const event of readCompletionStream(respuesta)) {
+    for await (const event of readCompletionStream(respuesta, args.provider.apiFormat)) {
       if (event.type === 'text') texto += event.delta;
       else if (event.type === 'usage') usage = event.usage;
       else if (event.type === 'tool' || event.type === 'tool_start') llamoHerramienta = true;
@@ -1321,7 +1327,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
       /** Consume un pase completo del proveedor, acumulando en las variables. */
       async function consumir(respuesta: Response) {
-        for await (const event of readCompletionStream(respuesta)) {
+        for await (const event of readCompletionStream(respuesta, proveedorUsado.apiFormat)) {
           if (event.type === 'text') {
             assistantText += event.delta;
             send({ type: 'text', delta: event.delta });
@@ -1489,7 +1495,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               velocidad: 'fast',
             });
 
-            for await (const event of readCompletionStream(respuestaRevision)) {
+            for await (const event of readCompletionStream(respuestaRevision, proveedorUsado.apiFormat)) {
               // A propósito NUNCA se reenvían `code_start`/`code_delta` de
               // esta llamada: la vista previa tiene que seguir mostrando el
               // primer pase completo hasta que la corrección termine — de

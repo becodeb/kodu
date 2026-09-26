@@ -4,7 +4,8 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, iniciarSesion } from './harness.ts';
-import { cadenaDeMotores, invalidarCatalogo } from '../src/lib/ai/catalogo.ts';
+import { cadenaDeMotores, invalidarCatalogo, motoresParaDocente } from '../src/lib/ai/catalogo.ts';
+import { debeMostrarSelectorDeMotor } from '../src/lib/workspace-types.ts';
 import { cifrar } from '../src/lib/crypto/secretos.ts';
 
 /**
@@ -83,12 +84,29 @@ async function main(): Promise<void> {
     );
     console.log('✔ el recurso se asigna al motor por defecto sembrado (MiniMax M3) al abrirse');
 
-    // El selector del chat muestra el motor por su nombre, nunca su id interno.
-    // Desde publicacion-likes-y-motores el selector es un listbox
-    // (`#selector-motor`, design §8), no el grupo de botones segmentado
-    // anterior — el disparador cerrado ya muestra el `displayName` elegido.
-    await page.waitForSelector('#selector-motor:has-text("MiniMax M3")');
-    console.log('✔ el selector del chat muestra "MiniMax M3" como motor activo');
+    // T6 (odd/tasks/verificador.md, follow-up 2026-09-26): en LA SEMILLA,
+    // MiniMax M3 es el único motor con selectableByTeacher=true (M2.7 y
+    // DeepSeek son sólo respaldo automático) — pero esta base de dev es
+    // COMPARTIDA con el resto de la familia de scripts (m3/t5/verificador-*),
+    // que dejan sus propios motores mock seleccionables como estado de
+    // reposo, así que "cuántos motores ve este docente" no es un número fijo
+    // acá. Se pregunta lo mismo que ya resuelve `motoresParaDocente` (misma
+    // fuente que usa `project/[id].astro`) para saber si corresponde un
+    // selector visible o no, en vez de asumir un conteo.
+    invalidarCatalogo();
+    const elegiblesDocente = await motoresParaDocente(false);
+    await page.getByPlaceholder('Preguntale a Kodu…').waitFor();
+    if (debeMostrarSelectorDeMotor(elegiblesDocente)) {
+      await page.waitForSelector('#selector-motor:has-text("MiniMax M3")');
+      console.log('✔ con 2+ motores elegibles, el selector del chat muestra "MiniMax M3" como motor activo');
+    } else {
+      assert.equal(
+        await page.locator('#selector-motor').count(),
+        0,
+        'con 0 o 1 motor elegible el selector no debería existir en el DOM',
+      );
+      console.log('✔ con un solo motor elegible, el selector de motor no se muestra (T6)');
+    }
 
     // 2. Un docente manda un mensaje: el turno recorre la cadena de motores
     //    (los tres están sin clave en este entorno) y falla de forma prolija

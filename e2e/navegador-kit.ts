@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { chromium, type Page } from 'playwright';
-import { aplicarKit } from '../src/lib/ai/kit.ts';
+import { aislarPruebasKit, aplicarKit, ID_PRUEBA_CARGA } from '../src/lib/ai/kit.ts';
 
 /**
  * Verificación en Chromium real de `window.kodu` (T2 de
@@ -1632,6 +1632,18 @@ function construirRecurso(cuerpo: string): string {
   return aplicarKit(html);
 }
 
+/**
+ * Igual que `construirRecurso`, pero también pasa por `aislarPruebasKit`
+ * (T1, verificador) — mismo orden que `aplicarKitAlTurno` en `stream.ts`:
+ * kit primero, aislamiento de pruebas después. Usada por las pruebas que
+ * necesitan un `<script data-kodu-pruebas>` de verdad ENVUELTO (no el texto
+ * crudo que escribiría el modelo), para probar el sistema completo —
+ * normalizador + centinela — y no sólo el centinela solo.
+ */
+function construirRecursoConPruebasAisladas(cuerpo: string): string {
+  return aislarPruebasKit(construirRecurso(cuerpo));
+}
+
 /** Línea 1-based donde empieza `buscado` dentro de `html` — para verificar que `linea` del centinela apunta al lugar real. */
 function numeroDeLinea(html: string, buscado: string): number {
   const idx = html.indexOf(buscado);
@@ -1941,6 +1953,44 @@ const RECURSO_PANTALLA_OCUPADO_AUTOPRUEBA = construirRecurso(`
   </script>
 `);
 
+// ── Muestra 9 (T1, verificador): checklist con un error de sintaxis ──────
+// El modelo (o `aislarPruebasKit`, si lo dejó inline) separó las pruebas en
+// su propio <script data-kodu-pruebas>, pero esa vez el checklist tiene un
+// error de sintaxis real (falta cerrar el objeto/arreglo/función). Antes de
+// T1 esto tiraba un `SyntaxError` global que el centinela reportaba como un
+// error DEL RECURSO — acá probamos que, con `aislarPruebasKit` de por
+// medio, el envoltorio `try{eval(...)}catch` se traga el error y el recurso
+// (botón de reinicio incluido) sigue andando normal.
+const RECURSO_PRUEBAS_ROTAS = construirRecursoConPruebasAisladas(`
+  <input id="rango" type="range" min="0" max="10" value="0" aria-label="Velocidad">
+  <button id="reiniciar" type="button">Reiniciar</button>
+  <p id="mensaje"></p>
+  <script>
+    document.getElementById('reiniciar').addEventListener('click', function () {
+      document.getElementById('rango').value = '0';
+      document.getElementById('mensaje').textContent = '';
+    });
+    document.getElementById('mensaje').textContent = 'vivo';
+  </script>
+  <script data-kodu-pruebas>
+    window.__koduPruebas = [{ id: 'c1', prueba: function (t) { return { ok: true } ;
+  </script>
+`);
+
+// ── Muestra 10 (T1, verificador): checklist que tira una excepción AL
+// EVALUARSE (no dentro de una prueba puntual) ────────────────────────────
+// Sintácticamente válido, pero el propio cuerpo del script de pruebas llama
+// a algo que no existe ANTES de terminar de armar el arreglo — sin el
+// envoltorio, esto también sería un error global atribuido al recurso.
+const RECURSO_PRUEBAS_TIRAN_EXCEPCION = construirRecursoConPruebasAisladas(`
+  <p id="mensaje">vivo</p>
+  <script>document.getElementById('mensaje').textContent = 'vivo';</script>
+  <script data-kodu-pruebas>
+    funcionQueNoExiste();
+    window.__koduPruebas = [{ id: 'c1', prueba: function (t) { return { ok: true }; } }];
+  </script>
+`);
+
 async function mainAutoprueba(): Promise<void> {
   const browser = await chromium.launch({ executablePath, args: ['--no-sandbox', '--disable-gpu'] });
   const page = await (await browser.newContext()).newPage();
@@ -2018,6 +2068,52 @@ async function mainAutoprueba(): Promise<void> {
         { id: 'p5', ok: true, detalle: 'sin id' },
       ]);
     });
+
+    await prueba(
+      'autoprueba: un error de SINTAXIS en <script data-kodu-pruebas> no rompe el recurso y se reporta como pruebas rotas',
+      async () => {
+        const { resultado, erroresReenviados } = await correrAutoprueba(page, RECURSO_PRUEBAS_ROTAS, { botones: 0 });
+        assert.ok(resultado, 'tiene que llegar un autoprueba:resultado (el recurso no puede quedar colgado)');
+        assert.deepEqual(
+          erroresReenviados,
+          [],
+          'el error de sintaxis del checklist NUNCA tiene que reportarse como un error del recurso',
+        );
+        assert.deepEqual(
+          resultado!.errores,
+          [],
+          'tampoco dentro del propio resultado de la autoprueba',
+        );
+        assert.equal(resultado!.reinicioOk, true, 'el botón de reiniciar del recurso sigue funcionando normal');
+        assert.ok(Array.isArray(resultado!.pruebas), 'tiene que reportar un pseudo-resultado de pruebas');
+        assert.deepEqual(resultado!.pruebas, [
+          { id: ID_PRUEBA_CARGA, ok: false, detalle: resultado!.pruebas![0]!.detalle },
+        ]);
+        assert.ok(
+          /syntax/i.test(resultado!.pruebas![0]!.detalle),
+          `el detalle debería mencionar el error de sintaxis real: ${resultado!.pruebas![0]!.detalle}`,
+        );
+      },
+    );
+
+    await prueba(
+      'autoprueba: una excepción al EVALUAR <script data-kodu-pruebas> (no dentro de una prueba) también queda aislada',
+      async () => {
+        const { resultado, erroresReenviados } = await correrAutoprueba(page, RECURSO_PRUEBAS_TIRAN_EXCEPCION, {
+          botones: 0,
+        });
+        assert.ok(resultado, 'tiene que llegar un autoprueba:resultado');
+        assert.deepEqual(erroresReenviados, [], 'la excepción no tiene que reportarse como un error del recurso');
+        assert.deepEqual(resultado!.errores, []);
+        assert.deepEqual(resultado!.pruebas, [
+          { id: ID_PRUEBA_CARGA, ok: false, detalle: resultado!.pruebas![0]!.detalle },
+        ]);
+        assert.ok(
+          /funcionQueNoExiste/.test(resultado!.pruebas![0]!.detalle),
+          `el detalle debería mencionar la excepción real: ${resultado!.pruebas![0]!.detalle}`,
+        );
+      },
+    );
 
     // ── Round 6, T24: kodu.ocupado() no puede tragarse los clics de ─────
     // __koduPruebas ni los del paso base durante el self-test. Sin el fix,

@@ -6,12 +6,12 @@ import BannerAdmin from '../../../components/admin/BannerAdmin.astro';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
 import { findWorkspaceProjectForActor, portadaDesactualizada } from '../../../lib/projects.ts';
-import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { motoresParaDocente, motorVerificador, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
-import type { CapacidadesEditor } from '../../../lib/workspace-types.ts';
+import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
 
 const user = Astro.locals.user!;
 
@@ -97,16 +97,6 @@ if (motorCambio && motorVigente) {
   await prisma.project.update({ where: { id: project.id }, data: { aiModelId: motorVigente.id } });
 }
 
-// El aviso se muestra UNA vez porque el `update` de arriba ya persistió el
-// nuevo `aiModelId`: la próxima carga de esta misma página, `motorOriginal`
-// va a ser igual a `motorVigente.id`, `motorCambio` va a dar `false` solo, y
-// esta cuenta también. No hace falta ninguna columna nueva ni timestamp de
-// "ya lo vio" (M2 lo había diferido a M3; M3 nunca lo retomó, se cierra acá).
-const avisoDeMotorRepunteado =
-  motorCambio && motorOriginal !== null
-    ? 'Cambiamos el motor de este proyecto porque el anterior ya no está disponible.'
-    : null;
-
 // Si ningún motor quedó marcado "para el docente" (todavía sin configurar, o
 // todos apagados salvo el vigente), igual se muestra el que está en uso: un
 // selector vacío es peor que uno con una sola opción.
@@ -123,6 +113,30 @@ const motoresParaElSelector =
           },
         ]
       : [];
+
+// El aviso se muestra UNA vez porque el `update` de arriba ya persistió el
+// nuevo `aiModelId`: la próxima carga de esta misma página, `motorOriginal`
+// va a ser igual a `motorVigente.id`, `motorCambio` va a dar `false` solo, y
+// esta cuenta también. No hace falta ninguna columna nueva ni timestamp de
+// "ya lo vio" (M2 lo había diferido a M3; M3 nunca lo retomó, se cierra acá).
+//
+// T6 (follow-up 2026-09-26): con un solo motor elegible el selector no se
+// muestra (`debeMostrarSelectorDeMotor`, workspace-types.ts) — el aviso se
+// refiere a un control que el docente no puede ver, así que tampoco se
+// muestra en ese caso. La persistencia de arriba no cambia: sigue siendo
+// silenciosa siempre.
+const avisoDeMotorRepunteado =
+  motorCambio && motorOriginal !== null && debeMostrarSelectorDeMotor(motoresParaElSelector)
+    ? 'Cambiamos el motor de este proyecto porque el anterior ya no está disponible.'
+    : null;
+
+// T7 (follow-up 2026-09-26): el verificador es estrictamente opcional — si
+// no hay ningún motor marcado `isVerifier` (o no está usable), el cliente
+// nunca tiene que llamar a `/api/chat/verificar`. Se resuelve UNA vez acá,
+// server-side, con la MISMA función que ya usa el endpoint
+// (`motorVerificador`, catalogo.ts) — nunca dos criterios distintos de "hay
+// verificador o no".
+const verificadorActivo = (await motorVerificador()) !== null;
 
 // El consumo del recurso (design.md — "The workspace cost indicator"): se
 // calcula acá, en el frontmatter, no en el cliente — así se refresca cuando
@@ -237,5 +251,6 @@ const capacidadesEditor: CapacidadesEditor = {
     initialNotice={avisoDeMotorRepunteado}
     capacidades={capacidadesEditor}
     initialChecklist={checklistDelRecurso}
+    verificadorActivo={verificadorActivo}
   />
 </BaseLayout>

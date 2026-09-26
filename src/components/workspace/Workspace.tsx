@@ -5,6 +5,12 @@ import FichaDialog from './FichaDialog.tsx';
 import { apiRequest, streamAutocorreccion, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../../lib/client/autoprueba.ts';
+import {
+  decidirTipoVerificacion,
+  separarProblemasParaPanel,
+  verificarRecurso,
+  type EstadoPanelVerificador,
+} from '../../lib/client/verificador.ts';
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
 import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
@@ -59,6 +65,17 @@ interface WorkspaceProps {
    * — PreviewPanel oculta "Esto es lo que probé" entero en ese caso.
    */
   initialChecklist: ItemChecklist[];
+  /**
+   * T7 (`odd/tasks/verificador.md`, follow-up 2026-09-26): si hay un motor
+   * verificador usable AHORA MISMO (`motorVerificador()`, resuelto una vez
+   * en `project/[id].astro`, mismo criterio que ya usa el endpoint). `false`
+   * hace que el editor nunca llame a `/api/chat/verificar` — ver
+   * `verificadorDesactivadoRef` más abajo. El endpoint sigue devolviendo
+   * `{estado:'desactivado'}` como red de seguridad (p. ej. si se apaga a
+   * mitad de una sesión ya abierta), pero con esto en `false` esa respuesta
+   * nunca llega a pedirse.
+   */
+  verificadorActivo: boolean;
 }
 
 /**
@@ -209,6 +226,48 @@ export default function Workspace(props: WorkspaceProps) {
    * volvió a probar ESTE html, no "se probó y no tiene pruebas".
    */
   const [ultimasPruebas, setUltimasPruebas] = useState<ResultadoPrueba[] | null | undefined>(undefined);
+
+  /**
+   * T4 (`odd/tasks/verificador.md`): estado del panel del verificador —
+   * `PreviewPanel` sólo lo renderiza, nunca decide una transición por su
+   * cuenta. Se resetea a `{fase:'inactivo'}` en los MISMOS puntos que
+   * `autopruebaAdvertencia`/`ultimasPruebas` de arriba (nuevo turno,
+   * deshacer, cambio de versión, edición a mano — ver `cancelarVerificacion`
+   * más abajo): un resultado de un HTML que ya no es el vigente no le sirve
+   * a nadie.
+   */
+  const [verificador, setVerificador] = useState<EstadoPanelVerificador>({ fase: 'inactivo' });
+
+  /** La verificación EN CURSO (si hay una): su huella y el `AbortController`
+   *  para poder cortarla si el HTML cambia mientras tanto (T4: "abort the
+   *  fetch on any of those"). `null` cuando no hay ninguna corriendo. */
+  const verificacionRef = useRef<{ fingerprint: string; controller: AbortController } | null>(null);
+
+  /** T4 (item 4, "con no verifier engine ... nada se renderiza"): una vez
+   *  que el motor contestó "desactivado" en ESTA sesión, no tiene sentido
+   *  volver a llamarlo en cada turno — se cachea hasta que se recargue la
+   *  página (si el admin lo prende mientras tanto, un refresh alcanza para
+   *  que se note).
+   *
+   *  T7 (follow-up 2026-09-26, "el verificador es estrictamente opcional"):
+   *  arranca en `true` directamente cuando `verificadorActivo` (el servidor)
+   *  ya dijo que no hay motor — así `iniciarVerificacion` corta en su PRIMERA
+   *  línea, antes de tocar `setVerificador`/`fetch`, y nunca hay un pedido a
+   *  `/api/chat/verificar`, nunca se pinta el panel, nunca hay nada que
+   *  loguear. Mismo mecanismo que ya existía para "el motor contestó
+   *  desactivado", sólo que ahora también arranca prendido cuando el
+   *  servidor ya lo sabía de antemano. */
+  const verificadorDesactivadoRef = useRef(!props.verificadorActivo);
+
+  /** Corta cualquier verificación en curso y deja el panel como si nunca
+   *  hubiera arrancado — mismo punto en el que ya se limpiaban
+   *  `autopruebaAdvertencia`/`ultimasPruebas` (T4: "drop the result if the
+   *  current HTML changed meanwhile"). */
+  function cancelarVerificacion() {
+    verificacionRef.current?.controller.abort();
+    verificacionRef.current = null;
+    setVerificador({ fase: 'inactivo' });
+  }
 
   /**
    * T16/T18: el checklist VIGENTE del recurso — arranca con el que ya leyó
@@ -442,6 +501,7 @@ export default function Workspace(props: WorkspaceProps) {
         setHtml(result.data.currentHtml);
         setAutopruebaAdvertencia(false);
         setUltimasPruebas(undefined); // T17/T18: mismo criterio, el HTML acá es otro.
+        cancelarVerificacion(); // T4: mismo criterio.
         // T18: si el turno que quedó corriendo era de creación, pudo haber
         // guardado un checklist nuevo que esta pestaña nunca vio (llegó por
         // el SSE de la pestaña que se recargó) — se lee del mismo pedido.
@@ -472,6 +532,7 @@ export default function Workspace(props: WorkspaceProps) {
     // está por escribirse.
     setAutopruebaAdvertencia(false);
     setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+    cancelarVerificacion(); // T4: mismo criterio.
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -685,7 +746,13 @@ export default function Workspace(props: WorkspaceProps) {
       // probarlas las 3 triplicaría costo y tiempo, mismo criterio que ya
       // usa T8 para excluir versiones de la revisión visual.
       if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba) {
-        await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
+        const htmlTrasAutoprueba = await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
+        // T4 (`odd/tasks/verificador.md`): en SEGUNDO PLANO — a propósito
+        // NUNCA esperada (`void`): el chat se reactiva en el `finally` de
+        // abajo sin importar cuánto tarde el verificador (hasta 150s por
+        // pasada). `esRecursoInicial(htmlAlInicioDelTurno)` es la MISMA
+        // noción que ya usa el servidor para el checklist (T16/T18).
+        void iniciarVerificacion(htmlAlInicioDelTurno, htmlTrasAutoprueba, esRecursoInicial(htmlAlInicioDelTurno));
       }
     } catch (error) {
       // Un abort es el docente tocando "Detener": no es una falla que reportar.
@@ -787,8 +854,13 @@ export default function Workspace(props: WorkspaceProps) {
    * que el recurso esté mal, es que no se llegó a saber. El aviso discreto
    * en el panel de vista previa (`autopruebaAdvertencia`) es SÓLO para
    * "se probó y sigue fallando después de corregir dos veces".
+   *
+   * T4 (`odd/tasks/verificador.md`): devuelve el HTML con el que termina
+   * (`htmlActual` en cada salida, incluidas las tempranas) — `handleSend` lo
+   * necesita para arrancar el verificador sobre el HTML VIGENTE después del
+   * self-test/corrección, nunca sobre el que había antes.
    */
-  async function ejecutarAutopruebaYCorreccion(htmlInicial: string): Promise<void> {
+  async function ejecutarAutopruebaYCorreccion(htmlInicial: string): Promise<string> {
     const MAX_RONDAS_CORRECCION = 2;
     let htmlActual = htmlInicial;
     let rondasUsadas = 0;
@@ -801,7 +873,7 @@ export default function Workspace(props: WorkspaceProps) {
       });
       abortador.current = null;
 
-      if (!resultado) return; // timeout o "Detener": no se pudo probar, nada que avisar.
+      if (!resultado) return htmlActual; // timeout o "Detener": no se pudo probar, nada que avisar.
 
       // T17: se guarda ANTES de decidir si hace falta corregir — así, si
       // esta era la última ronda (sana o no), T18 tiene el resultado real
@@ -810,12 +882,12 @@ export default function Workspace(props: WorkspaceProps) {
 
       if (!necesitaCorreccion(resultado)) {
         setAutopruebaAdvertencia(false); // sano: por si quedaba un aviso de una ronda anterior de ESTE turno.
-        return;
+        return htmlActual;
       }
 
       if (rondasUsadas >= MAX_RONDAS_CORRECCION) {
         setAutopruebaAdvertencia(true);
-        return;
+        return htmlActual;
       }
 
       rondasUsadas++;
@@ -855,10 +927,10 @@ export default function Workspace(props: WorkspaceProps) {
         abortador.current = null;
         // "Detener": se deja el recurso como estaba, sin aviso — el docente
         // cortó a propósito, no es una falla del recurso.
-        if ((error as Error)?.name === 'AbortError') return;
+        if ((error as Error)?.name === 'AbortError') return htmlActual;
         console.warn('[autoprueba] se cortó la conexión de la corrección:', error);
         setAutopruebaAdvertencia(true); // el endpoint falló: mismo tratamiento que "sigue fallando".
-        return;
+        return htmlActual;
       }
       abortador.current = null;
 
@@ -866,12 +938,141 @@ export default function Workspace(props: WorkspaceProps) {
         // El endpoint no aplicó nada (huella vencida, el modelo no devolvió
         // código, etc.): no hay un HTML nuevo para volver a probar.
         setAutopruebaAdvertencia(true);
-        return;
+        return htmlActual;
       }
 
       htmlActual = htmlCorregido;
       // Vuelve al principio del for(;;): se re-prueba lo que acaba de corregir.
     }
+  }
+
+  /**
+   * T4 (`odd/tasks/verificador.md`): arranca DESPUÉS de que
+   * `ejecutarAutopruebaYCorreccion` termina (pase lo que pase) — `handleSend`
+   * NUNCA la espera (`void`), así el chat se reactiva en su `finally` sin
+   * importar cuánto tarde el verificador (hasta 150s por pasada, dos pasadas
+   * en paralelo para un recurso nuevo).
+   *
+   * `htmlDespues` es el HTML vigente en ESE momento (con el self-test/
+   * corrección ya aplicados si hizo falta) — la huella que se manda es la
+   * de ÉSE, nunca la de `htmlAntes`. Si mientras se espera la respuesta el
+   * HTML cambia por cualquier vía (nuevo turno, deshacer, versión, edición a
+   * mano, un "¿Las arreglo?"), `cancelarVerificacion` ya abortó el
+   * `AbortController` de ESTA llamada y vació `verificacionRef` — la
+   * respuesta que llegue después de eso se descarta sola (comentario más
+   * abajo).
+   */
+  async function iniciarVerificacion(
+    htmlAntes: string,
+    htmlDespues: string,
+    esRecursoInicialAlEmpezar: boolean,
+  ): Promise<void> {
+    if (verificadorDesactivadoRef.current) return; // ya se sabe que no hay motor: ni un pedido más esta sesión.
+    if (verificacionRef.current) return; // defensivo (T4: "nunca dos a la vez"): no debería poder pasar.
+
+    const tipo = decidirTipoVerificacion({ esRecursoInicialAlEmpezar, htmlAntes, htmlDespues });
+    if (!tipo) return; // ni "nuevo" ni un ajuste que haya tocado el <script> propio: no corresponde llamar.
+
+    const controller = new AbortController();
+    const fingerprint = fingerprintHtml(htmlDespues);
+    verificacionRef.current = { fingerprint, controller };
+    setVerificador({ fase: 'corriendo' });
+
+    const resultado = await verificarRecurso({ projectId, fingerprint, tipo }, controller.signal);
+
+    // Si mientras tanto el HTML cambió, `cancelarVerificacion` ya abortó
+    // ESTE `controller` y vació `verificacionRef` (o lo reemplazó por el de
+    // una verificación más nueva) — una respuesta que llega después de eso
+    // no le sirve a nadie.
+    if (verificacionRef.current?.controller !== controller) return;
+    verificacionRef.current = null;
+
+    if (!resultado || resultado.estado === 'sin-cupo' || resultado.estado === 'error') {
+      setVerificador({ fase: 'inactivo' }); // T4: nunca una alarma por esto — ver el comentario del endpoint.
+      return;
+    }
+    if (resultado.estado === 'desactivado') {
+      verificadorDesactivadoRef.current = true; // T4 (item 4): cachear "sin motor" para el resto de la sesión.
+      setVerificador({ fase: 'inactivo' });
+      return;
+    }
+
+    const { accionables, contenido } = separarProblemasParaPanel(resultado.problemas);
+    setVerificador({ fase: 'resultado', accionables, contenido });
+  }
+
+  /**
+   * T4 ("¿Las arreglo?"): aplica los problemas ACCIONABLES que ya mostró el
+   * panel del verificador, por el MISMO camino que la corrección de la
+   * autoprueba (`streamAutocorreccion`, ahora con `problemasVerificador` en
+   * vez del informe de la autoprueba — ver `POST /api/chat/autocorreccion`).
+   * Corre el self-test una vez más sobre lo que quedó (con su propio bucle
+   * de hasta 2 rondas, como siempre) pero NUNCA vuelve a llamar al
+   * verificador — T4 pide explícitamente "no loop".
+   *
+   * Usa un `AbortController` PROPIO (no el `abortador` compartido del
+   * turno): esto corre con `isStreaming` ya en `false` — el chat está
+   * habilitado — así que no tiene sentido que un "Detener" de un turno
+   * nuevo (que sí usa `abortador.current`) se lleve puesta esta corrección
+   * por compartir la misma referencia.
+   */
+  async function handleArreglarVerificador() {
+    if (verificador.fase !== 'resultado' || verificador.accionables.length === 0) return;
+    const accionables = verificador.accionables;
+
+    setVerificador({ fase: 'arreglando' });
+    const controller = new AbortController();
+
+    let htmlCorregido: string | null = null;
+    try {
+      for await (const event of streamAutocorreccion(
+        {
+          projectId,
+          fingerprint: fingerprintHtml(html),
+          ronda: 1,
+          errores: [],
+          reinicioOk: null,
+          exitoVisibleAlInicio: true,
+          diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+          pruebas: null,
+          problemasVerificador: accionables,
+        },
+        controller.signal,
+      )) {
+        if (event.type === 'code') {
+          // Mismo tratamiento que un "code" de la autoprueba: la vista
+          // previa cambia, sin pasar por el chat.
+          setHtml(event.html);
+          htmlCorregido = event.html;
+          codeEditedByTeacher.current = false;
+          if (screenshotUrl) setPortadaVieja(true);
+        } else if (event.type === 'error') {
+          console.warn('[verificador] la corrección respondió con un error:', event.message);
+        }
+      }
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') {
+        setVerificador({ fase: 'inactivo' });
+        return;
+      }
+      console.warn('[verificador] se cortó la conexión de la corrección:', error);
+      setVerificador({ fase: 'fallo-arreglo' });
+      return;
+    }
+
+    if (!htmlCorregido) {
+      // El endpoint no aplicó nada (huella vencida, el modelo no devolvió
+      // código, etc.): no hay nada nuevo que ofrecer.
+      setVerificador({ fase: 'fallo-arreglo' });
+      return;
+    }
+
+    setVerificador({ fase: 'arreglado' });
+    // El self-test corre una vez más sobre lo corregido (con su propio
+    // bucle de hasta 2 rondas, como siempre) — pero esto NUNCA dispara una
+    // nueva verificación (T4: sin loop): a propósito no se llama a
+    // `iniciarVerificacion` acá.
+    void ejecutarAutopruebaYCorreccion(htmlCorregido);
   }
 
   /**
@@ -943,6 +1144,7 @@ export default function Workspace(props: WorkspaceProps) {
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: deshacer cambió el recurso, cualquier aviso viejo ya no aplica.
     setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+    cancelarVerificacion(); // T4: mismo criterio.
     // T18: el turno deshecho puede haber sido el que creó el checklist
     // vigente — el servidor ya recalculó cuál es el actual (o `[]` si no
     // queda ninguno), nunca se infiere del lado del cliente.
@@ -985,6 +1187,7 @@ export default function Workspace(props: WorkspaceProps) {
     if (screenshotUrl) setPortadaVieja(true);
     setAutopruebaAdvertencia(false); // T12: cambio de versión, cualquier aviso viejo ya no aplica.
     setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+    cancelarVerificacion(); // T4: mismo criterio.
 
     setMessages((current) =>
       current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
@@ -1216,6 +1419,7 @@ export default function Workspace(props: WorkspaceProps) {
           if (screenshotUrl) setPortadaVieja(true);
           setAutopruebaAdvertencia(false); // T12: edición manual, cualquier aviso viejo ya no aplica.
           setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+          cancelarVerificacion(); // T4: mismo criterio.
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
@@ -1244,6 +1448,8 @@ export default function Workspace(props: WorkspaceProps) {
         notice={notice}
         autopruebaAdvertencia={autopruebaAdvertencia}
         checklist={checklistConEstado}
+        verificador={verificador}
+        onArreglarVerificador={() => void handleArreglarVerificador()}
       />
       </div>
       </div>

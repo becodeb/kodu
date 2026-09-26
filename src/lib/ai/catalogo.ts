@@ -104,6 +104,10 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     // lo rechaza con 503 antes de pegarle a la red).
     apiKey: clavePlano(fila) ?? '',
     baseUrl: fila.provider.baseUrl,
+    // T2 (verificador): cualquier valor que no sea "responses" se trata como
+    // "chat" — mismo criterio defensivo que el resto de este archivo (nunca
+    // un throw por un dato de fila inesperado, ver `clavePlano` más arriba).
+    apiFormat: fila.provider.apiFormat === 'responses' ? 'responses' : 'chat',
     model: fila.providerModel,
     maxTokens: fila.maxOutputTokens,
     userTokenLimit: fila.userTokenLimit,
@@ -181,6 +185,27 @@ export async function normalizarMotor(modelId: string | null, prime: boolean): P
   if (fila && utilizable(fila, prime)) return construirConfig(fila);
 
   return motorPorDefecto(prime);
+}
+
+/**
+ * T3 (verificador, odd/tasks/verificador.md): el motor marcado
+ * `isVerifier: true`, si está USABLE (motor y cuenta prendidos, con clave
+ * cargada) — `null` en cualquier otro caso: sin ningún motor marcado, motor
+ * o cuenta apagados, o sin clave utilizable. Ese `null` es exactamente "el
+ * verificador está apagado" para `POST /api/chat/verificar`.
+ *
+ * A diferencia de `motorPorDefecto`/`normalizarMotor`, no recibe `prime`: el
+ * verificador no es una feature que un docente elija, corre solo del lado
+ * del servidor después de la autoprueba — no hay ningún actor cuya
+ * capacidad haya que filtrar acá.
+ */
+export async function motorVerificador(): Promise<ProviderConfig | null> {
+  const filas = await filasDelCatalogo();
+  const fila = filas.find((candidata) => candidata.isVerifier);
+  if (!fila || !fila.enabled || !fila.provider.enabled) return null;
+
+  const config = construirConfig(fila);
+  return tieneClaveUtilizable(config) ? config : null;
 }
 
 /**

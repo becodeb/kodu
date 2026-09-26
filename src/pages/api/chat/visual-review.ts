@@ -252,7 +252,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         let htmlFinal: string | null = null;
         const totales: { usage: MotorTokenUsage | null } = { usage: null };
 
-        for await (const event of readCompletionStream(respuesta)) {
+        for await (const event of readCompletionStream(respuesta, provider.apiFormat)) {
           if (event.type === 'usage') {
             totales.usage = event.usage;
             continue;
