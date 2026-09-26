@@ -76,7 +76,7 @@ teacher decides with a button.
 
 - [x] T1: isolate `window.__koduPruebas` (prompt + normalizer + sentinel + unit tests). Route: delegated writer (4+ files).
 - [x] T2: Responses API in provider.ts + API-format field + admin + unit tests. Route: delegated writer.
-- [ ] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
+- [x] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
 - [ ] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
 - [ ] T5: real gpt-6-luna check (cents). Route: inline, bounded.
 
@@ -284,3 +284,154 @@ teacher decides with a button.
 - Commits: `2bae170` (`feat(ai): add Responses API support for OpenAI
   reasoning models`), `65659e2` (`test(ai): cover Responses API request
   mapping and stream parsing`).
+
+### T3 — verifier backend (2026-09-26)
+
+- `prisma/schema.prisma` + `prisma/migrations/20261005000000_verificador_motor`:
+  additive `AiModel.isVerifier Boolean @default(false)`, enforced with a
+  partial unique index (`AiModel_un_solo_verificador`, `WHERE "isVerifier" =
+  true`) — same pattern as `AiModel_un_solo_default`, applied by hand (`psql`
+  + `prisma migrate resolve --applied`, never `prisma migrate dev`, which
+  would try to drop both partial indexes since neither is expressible in
+  `schema.prisma`). `motorVerificador()` (`src/lib/ai/catalogo.ts`) resolves
+  the flagged row and returns `null` unless the motor AND its provider are
+  both `enabled` and it has a usable key — exactly "the verifier is off" for
+  the endpoint. `/admin/motores` (`ModeloForm.tsx`) got a "Usar como
+  verificador" checkbox with the requested hint line, `PATCH
+  /api/admin/models/:id` clears any previous `isVerifier: true` in the same
+  transaction as the new one (mirrors the existing `isDefault` transaction),
+  and — unlike `isDefault` — a direct `isVerifier: false` PATCH is honored
+  (the verifier has a legitimate "off entirely" state; `isDefault` never
+  did). `e2e/m3-motores.ts` (38 scenarios) still passes untouched.
+- `src/lib/ai/prompt.ts`: new `reglasDelArnes()`, exported — slices
+  `BASE_PROMPT` between `## Que funcione de verdad` and `## Calidad
+  pedagógica` and drops the tests example. Simpler than the experiment's
+  version (`experimentos/razonamiento/verificar.ts`): that one read
+  `prompt.ts` off disk and had to un-escape backticks from the raw `.ts`
+  source; this one slices the already-evaluated `BASE_PROMPT` string, so
+  there's nothing to un-escape. The drop-the-example regex also had to
+  change from T1: the example is now wrapped in its own `<script
+  data-kodu-pruebas>…</script>` line, so the old
+  `/window\.__koduPruebas=\[.*\];\n/` no longer matches (`];` isn't followed
+  by `\n` anymore, `</script>` is) — replaced with a regex that drops the
+  whole `<script data-kodu-pruebas>` line.
+- `src/lib/ai/verificador.ts` (new, isomorphic): `construirSistemaVerificador`/
+  `construirUsuarioVerificador` port the experiment's `sistema`/`usuario`
+  verbatim in wording; `htmlParaVerificador` plegs the canonical kit block
+  (`plegarKit`, same as the prompt already did) AND replaces every `<script
+  data-kodu-pruebas>…</script>` with `<!-- pruebas automáticas plegadas -->`
+  so the verifier never reads the `eval("...")`-wrapped JSON string T1 left
+  there. `parsearVerificacion` ports `parsear` (plain JSON / fenced ```json```
+  / text-around-JSON, `null` on no parseable `{"problemas":[...]}`) and adds
+  per-item `normalizarProblema`: `gravedad`/`tipo` checked against the closed
+  vocabulary, the three text fields trimmed and capped at 400 chars
+  (truncated, never rejected for length), invalid entries dropped without
+  invalidating the rest of the pass. `unirPasadas` merges passes by union,
+  treats two problems of the **same `tipo`** whose `que` word-overlap (of
+  words >2 chars, Jaccard against the smaller set) is ≥0.6 as the same
+  finding (keeps the more severe), sorts by severity, caps at 6.
+  `pedidoDocente(original, ajuste)` builds the teacher-request text.
+  `problemasAccionables`/`construirMensajeCorreccionVerificador` filter out
+  `tipo: 'contenido'` (content issues are informational only, never
+  auto-fixed) and build the short Spanish correction message.
+  `razonamientoVerificador` (`provider.ts`): fixed `reasoning_effort:
+  'medium'` (or `{thinking:{type:'enabled'}}` for a `thinking` dialect motor),
+  never the model's own configured level — same "unknown dialect sends
+  nothing" gate as `razonamiento`/`razonamientoCorreccion`.
+- `POST /api/chat/verificar` (`src/pages/api/chat/verificar.ts`): same gate
+  order as `autocorreccion.ts` (access → demo-closed → body → project
+  ownership → fingerprint) up through project resolution; from there it
+  deliberately diverges — `motorVerificador() === null`, the demo quota, and
+  the per-user token cap all answer `200 {estado:'desactivado'|'sin-cupo'}`
+  instead of a `fail()`, since this runs silently and a hard error would be
+  an alarm about something the teacher never asked for. The teacher-request
+  text is the first non-undone `role:'user'` message of the project's chat
+  (any thread, same scope as `checklistActual`) plus, for `tipo:'ajuste'`,
+  the latest non-undone user message when it differs from the first. `nuevo`
+  runs 2 passes in parallel (`Promise.all`), `ajuste` runs 1; each pass is
+  `sinHerramientas`, `razonamientoOverride: razonamientoVerificador(...)`,
+  `maxTokensOverride: min(16000, provider.maxOutputTokens)`, its own
+  `AbortController` (150 s timeout, bridged to `request.signal` so a client
+  disconnect aborts it too), and records its own `TokenUsage` row when it
+  returns usage — regardless of whether the text parsed. All passes failing
+  or unparseable → `200 {estado:'error'}` (each pass already logged its own
+  reason, with the pass detail but never the key). No `ChatMessage`, no
+  `ProjectSnapshot`, no `Project.currentHtml` write anywhere in this
+  endpoint.
+- `POST /api/chat/autocorreccion` (`src/pages/api/chat/autocorreccion.ts`):
+  new optional `problemasVerificador` (1..6, loose zod shape at the
+  boundary, then run through the SAME `normalizarProblema` the verifier uses
+  on the model's own output — "validated like above" is exactly not
+  duplicating that criterion). With at least one ACTIONABLE problem (never
+  `contenido`, filtered by `construirMensajeCorreccionVerificador` itself),
+  that's the correction input instead of the self-test informe; everything
+  else (engine = the project's own generator, `razonamientoCorreccion`
+  "low", `TokenUsage`, no `ChatMessage`) is unchanged. The existing request
+  shape (the self-test fields, no `problemasVerificador`) still produces
+  exactly the same behavior as before.
+- Tests: `e2e/unidad-verificador.ts` (new, 27 cases) — `reglasDelArnes`
+  non-empty/without the example, `htmlParaVerificador` folding, the two
+  prompt builders, `pedidoDocente`, `parsearVerificacion` (all 3 JSON shapes,
+  invalid-JSON → null, invalid entries dropped without sinking the pass, the
+  6-item cap), `normalizarProblema` (trim+cap, reject on missing/invalid
+  fields), `unirPasadas` (dedupe by tipo+overlap keeping the more severe,
+  distinct tipo/text NOT fused, severity order, 6-item cap after merging,
+  empty input), `problemasAccionables`/`construirMensajeCorreccionVerificador`
+  filtering `contenido`. `e2e/verificador-endpoint.ts` (new, browser-driven
+  via `page.request`, real Chromium + `npm run dev` + the mock): a
+  Responses-format provider/model pair (`kodu-mock-verificador-t3`, reusing
+  the shared `kodu-mock-t3` Chat-Completions pair for the project's own
+  generator) exercises, in order: `desactivado` before `isVerifier` is set;
+  `ok` for `tipo:'nuevo'` with 2 real parallel `/v1/responses` requests,
+  asserting each has no `tools`/`tool_choice`, `reasoning.effort:'medium'`,
+  and a folded HTML with no `__koduPruebas` in the clear; 2 `TokenUsage`
+  rows; `ok` for `tipo:'ajuste'` with exactly 1 request whose user message
+  carries both the original request and the labelled last one; a stale
+  fingerprint → 409 with zero calls; a garbage mock response → `{estado:
+  'error'}`, still 200; and `autocorreccion` with `problemasVerificador`
+  producing a correction that cites the actionable problem and never the
+  `contenido` one. Also ran, unchanged, to prove the old shapes: `npx tsx
+  e2e/m3-motores.ts` (38/38), `npx tsx e2e/t11-autoprueba.ts` (self-test →
+  autocorrection through the real editor UI, 4 scenes), `npx tsx
+  e2e/t12-checklist-pruebas.ts` (checklist → autocorrection, 5 scenes) — the
+  closest things this repo has to "an existing autocorreccion e2e", since no
+  file calls that endpoint directly by URL string.
+- Checks: `npx tsc --noEmit` clean. `npx tsx e2e/unidad-verificador.ts`
+  27/27, `npx tsx e2e/unidad.ts`, `npx tsx e2e/unidad-responses.ts` (already
+  had a T2-authored case asserting the "medium" reasoning override maps to
+  `reasoning.effort:"medium"` in the Responses dialect — still passes),
+  `npx tsx e2e/unidad-kit.ts`, `npx tsx e2e/unidad-pruebas-aisladas.ts` all
+  pass unchanged. `npx prisma migrate status`: applied, database in sync (25
+  migrations). With `npm run dev` on :3000 + the mock on :4790: `npx tsx
+  e2e/verificador-endpoint.ts` all scenes pass, `npx tsx e2e/m3-motores.ts`
+  38/38, `npx tsx e2e/t11-autoprueba.ts` and `npx tsx
+  e2e/t12-checklist-pruebas.ts` all scenes pass. Dev server stopped with
+  `npx astro dev stop` afterward (confirmed no leftover `astro` process,
+  only `kodu_db_dev` still running).
+- Left open (T4/T5, out of scope for T3): no real gpt-6-luna call was made
+  (T5's job); the editor never calls `/api/chat/verificar` yet — nothing in
+  the app triggers it until T4 wires the post-autoprueba panel and the
+  "¿Las arreglo?" button. `problemasVerificador` is a working, tested INPUT
+  shape for `/api/chat/autocorreccion`, but nothing produces it yet outside
+  this task's own e2e.
+- Design decisions the task text didn't fully settle:
+  - The task only said "per-user token cap reached → 200
+    `{estado:'sin-cupo'}`". I made the DEMO-wide quota check answer the same
+    `sin-cupo` (instead of `autocorreccion`'s `fail(...,429)`), since both
+    are "out of quota" for a feature that's supposed to run silently in the
+    background — a hard 429 here would be an error about a request the
+    teacher never made.
+  - `isVerifier` can be PATCHed directly to `false` (added to the normal
+    `cambios` builder, not routed through the `isDefault`-style
+    "only-ever-set-to-true" transaction branch): unlike the default engine,
+    "no verifier at all" is a legitimate, intended state that the admin
+    checkbox needs to be able to reach by unchecking it.
+  - The three verifier problem text fields (`que`/`como_reproducir`/
+    `arreglo`) are capped at 400 characters each (truncated, not rejected) —
+    a value picked by analogy to this file's existing per-field caps
+    (`ErrorAutoprueba.mensaje` 300, `ResultadoPrueba.detalle` 200), sized up
+    because a verifier finding is a fuller description than a one-line
+    checklist item, not a number stated anywhere in the task.
+  - `unirPasadas`'s duplicate threshold (same `tipo`, ≥60% word-overlap of
+    `que` against the smaller word set) is a calibrated-by-hand constant —
+    the task said "high normalized-word overlap" without a number.
