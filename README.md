@@ -4,7 +4,8 @@
 
 ### 1. Arquitectura General y Acceso
 
-* **Autenticación restringida:** Registro e inicio de sesión condicionado por lista blanca de dominios de correo electrónico institucionales autorizados (ej. `@rededucativa.edu.ar`).
+* **Organizaciones:** Kodu se vende por colegio (sede) o por red de colegios. Cualquiera puede registrarse, pero solo los docentes de una organización usan la IA. Se entra a una organización por uno de sus dominios de email (ej. `@rededucativa.edu.ar`), por su lista blanca o por un enlace de invitación. Quien no pertenece a ninguna tiene una cuenta personal. Cada organización tiene su panel en `/org`, y el superadmin ve el consumo y el costo por organización en `/admin/metricas` (ver `odd/tasks/organizaciones.md`).
+* **Verificación de email:** Google ya viene verificado; el registro con contraseña manda un enlace por Resend (`RESEND_API_KEY`). Sin la key, toda cuenta nueva se toma como verificada y `/admin` lo avisa.
 * **Seguridad de API Keys:** Las claves de cada proveedor viven exclusivamente en variables de entorno del backend; el navegador nunca las recibe.
 * **Selector de Modelo:** Alpha, DeepSeek o MiniMax M3 (servido por GMI Cloud).
 
