@@ -120,7 +120,7 @@ une a una organización.
 - [x] **T6 — Superadmin: organizaciones.** _(a98a60a + 8de7c7e + a98e739 + corrección, escritor delegado)_ Pestaña Organizaciones (reemplaza a Dominios): alta de colegio, red y sede;
   dominios; lista blanca; nombrar al primer admin; mover docentes. Actualizar el conteo de pestañas de
   `e2e/m1-admin-shell.ts`. Check: e2e.
-- [ ] **T7 — Superadmin: métricas de precio.** Por organización y mes: docentes registrados, activos, recursos
+- [x] **T7 — Superadmin: métricas de precio.** _(7c73181 + 7c7eb60 + corrección, escritor delegado)_ Por organización y mes: docentes registrados, activos, recursos
   creados, turnos, tokens y USD; costo promedio por recurso nuevo y por ajuste; costo por docente activo; filas sin
   precio marcadas como incompletas (nunca sumar NULL como 0). Check: e2e con filas sembradas y cifras calculadas a mano.
 - [ ] **T8 — Panel de la organización.** `/org`: docentes (lista, baja → cuenta personal, lista blanca, enlaces,
@@ -189,6 +189,18 @@ une a una organización.
   **Deuda para T8:** en 360 px la tabla de docentes del detalle queda apretada (nombres cortados, "Dar de baja" en 3
   renglones). T8 hace una lista de docentes compartida, con tarjetas en celular, y la reusa acá.
 
+- 2026-09-26: **T7 hecha.** `src/lib/metricas/consumo.ts` (agregación pura con Decimal, cargador por mes y sedes,
+  desglose por docente para T8; meses en hora de Buenos Aires), `src/lib/admin/metricas.ts`, pestaña **Métricas**
+  (`/admin/metricas`, renderizada en el servidor, tarjetas bajo `sm:`), CSV en `/api/admin/metricas.csv`, supuestos del
+  plan (0,020 / 0,010 / 0,43) al lado de los promedios.
+  Evidencia: `tsc` limpio; `admin-metricas` 7/7 (cifras calculadas a mano, frontera de mes, "≥", CSV, 403);
+  `m1-admin-shell` (8 pestañas); `m4-costos` 17/17.
+  Corrección del orquestador: con una sola fila sin precio, el mes valía `null` y su barra quedaba en altura 0 (en la
+  captura, enero "≥ US$ 0,15" sin barra). Ahora se dibuja el piso, translúcido y punteado, con prueba en el e2e.
+  Abiertos (sin decidir, para el dueño): las organizaciones archivadas siguen contando su costo histórico, con la
+  marca "(archivada)". Las tablas `sr-only` de `GraficoColumnas`/`GraficoBarras` tienen el mismo riesgo de desborde
+  a 360 px que se arregló acá con `table-layout: fixed`.
+
 ## Siguiente paso
 
-T7.
+T8.
