@@ -2,9 +2,10 @@ import { formatearCostoUsd } from '../../lib/format/costo.ts';
 
 export interface PuntoTendenciaProps {
   etiquetaMes: string;
-  /** `null` = alguna fila de ese mes no tiene precio conocido (nunca se
-   *  dibuja un costo inventado; se marca aparte en el tooltip). */
-  costoUsd: number | null;
+  /** Suma de los costos conocidos; un piso cuando `esPiso`. */
+  costoUsd: number;
+  /** Alguna fila del mes no tiene precio: se dibuja el piso con otro estilo y "≥". */
+  esPiso: boolean;
   docentesActivos: number;
 }
 
@@ -38,7 +39,10 @@ const AREA_BOTTOM = AREA_TOP + AREA_ALTO;
  * SVG servido por el propio `.astro`, tooltip nativo por `<title>`.
  */
 export default function TendenciaMetricas({ puntos }: Props) {
-  const maxCosto = Math.max(...puntos.map((p) => p.costoUsd ?? 0), 0);
+  const maxCosto = Math.max(...puntos.map((p) => p.costoUsd), 0);
+  const hayPisos = puntos.some((p) => p.esPiso);
+  const textoCosto = (p: PuntoTendenciaProps) =>
+    p.esPiso ? `≥ ${formatearCostoUsd(p.costoUsd)} (hay filas sin precio)` : formatearCostoUsd(p.costoUsd);
   const maxDocentes = Math.max(...puntos.map((p) => p.docentesActivos), 0);
 
   const n = puntos.length;
@@ -58,7 +62,7 @@ export default function TendenciaMetricas({ puntos }: Props) {
           {`Costo total y docentes activos, últimos ${n} meses: ${puntos
             .map(
               (p) =>
-                `${p.etiquetaMes}, ${p.costoUsd === null ? 'costo con filas sin precio' : formatearCostoUsd(p.costoUsd)}, ${p.docentesActivos} docentes activos`,
+                `${p.etiquetaMes}, ${textoCosto(p)}, ${p.docentesActivos} docentes activos`,
             )
             .join('; ')}.`}
         </title>
@@ -66,18 +70,27 @@ export default function TendenciaMetricas({ puntos }: Props) {
         <line x1={0} y1={AREA_TOP} x2={ANCHO} y2={AREA_TOP} className="stroke-linea" strokeWidth={1} />
         <line x1={0} y1={AREA_BOTTOM} x2={ANCHO} y2={AREA_BOTTOM} className="stroke-linea" strokeWidth={1} />
 
-        {/* Barras: costo total del mes (piso "≥" cuando falta precio — se
-            dibuja igual, la incertidumbre queda en el tooltip, no en la
-            altura). */}
+        {/* Barras: costo total del mes. Un piso ("≥", falta algún precio) se
+            dibuja con su altura conocida pero translúcido y con borde
+            punteado, para que no se lea como exacto. */}
         {puntos.map((punto, indice) => {
           const x = indice * paso + (paso - anchoBarra) / 2;
-          const altura = maxCosto > 0 ? ((punto.costoUsd ?? 0) / maxCosto) * AREA_ALTO : 0;
+          const altura = maxCosto > 0 ? (punto.costoUsd / maxCosto) * AREA_ALTO : 0;
           const y = AREA_BOTTOM - altura;
           return (
-            <rect key={`barra-${punto.etiquetaMes}`} x={x} y={y} width={anchoBarra} height={altura} rx={2} className="fill-brand-600">
-              <title>
-                {`${punto.etiquetaMes}: ${punto.costoUsd === null ? 'costo con filas sin precio (piso desconocido)' : formatearCostoUsd(punto.costoUsd)}`}
-              </title>
+            <rect
+              key={`barra-${punto.etiquetaMes}`}
+              x={x}
+              y={y}
+              width={anchoBarra}
+              height={altura}
+              rx={2}
+              className={punto.esPiso ? 'fill-brand-600 stroke-brand-600' : 'fill-brand-600'}
+              fillOpacity={punto.esPiso ? 0.35 : 1}
+              strokeDasharray={punto.esPiso ? '4 3' : undefined}
+              strokeWidth={punto.esPiso ? 1.5 : 0}
+            >
+              <title>{`${punto.etiquetaMes}: ${textoCosto(punto)}`}</title>
             </rect>
           );
         })}
@@ -112,6 +125,12 @@ export default function TendenciaMetricas({ puntos }: Props) {
         <span className="flex items-center gap-1.5">
           <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm bg-brand-600" /> Costo total
         </span>
+        {hayPisos && (
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden="true" className="h-2.5 w-2.5 rounded-sm border border-dashed border-brand-600 bg-brand-600/35" />{' '}
+            Piso: hay filas sin precio
+          </span>
+        )}
         <span className="flex items-center gap-1.5">
           <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-carbon" /> Docentes activos
         </span>
@@ -142,7 +161,7 @@ export default function TendenciaMetricas({ puntos }: Props) {
           {puntos.map((punto) => (
             <tr key={punto.etiquetaMes}>
               <td>{punto.etiquetaMes}</td>
-              <td>{punto.costoUsd === null ? 'con filas sin precio' : formatearCostoUsd(punto.costoUsd)}</td>
+              <td>{textoCosto(punto)}</td>
               <td>{punto.docentesActivos}</td>
             </tr>
           ))}

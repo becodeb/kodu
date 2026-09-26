@@ -518,6 +518,12 @@ async function capturarResponsive(page: Page, ruta: string, etiqueta: string): P
     await page.screenshot({ path: `${dir}/${etiqueta}-desktop-${tema}.png`, fullPage: true });
     await sinOverflowHorizontal(page, `${etiqueta} (desktop, ${tema}): no debería scrollear horizontal`);
 
+    // El mes elegido tiene una fila sin precio: su barra es un piso, pero se
+    // dibuja (antes quedaba en altura 0 y el gráfico parecía vacío).
+    const ultimaBarra = page.locator('figure svg rect').last();
+    assert.ok(Number(await ultimaBarra.getAttribute('height')) > 0, 'la barra de un mes con filas sin precio se dibuja');
+    assert.ok(await ultimaBarra.getAttribute('stroke-dasharray'), 'y se marca como piso (borde punteado)');
+
     const { frame, handle } = await entrarAIframe360(page, url);
     await handle.screenshot({ path: `${dir}/${etiqueta}-360-${tema}.png` });
     await sinOverflowHorizontal(frame, `${etiqueta} (360px, ${tema}): no debería scrollear horizontal`);

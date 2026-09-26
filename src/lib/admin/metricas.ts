@@ -153,8 +153,12 @@ export async function metricasDelMes(mes: string): Promise<MetricasDelMes> {
 export interface PuntoTendencia {
   mes: string;
   etiquetaMes: string;
-  /** `null` si alguna fila del mes no tiene precio conocido — mismo criterio todo-o-nada. */
-  costoUsd: number | null;
+  /** Suma de los costos conocidos del mes. Es un PISO cuando `esPiso`. */
+  costoUsd: number;
+  /** Alguna fila del mes no tiene precio: `costoUsd` es "≥", no exacto. Se
+   *  dibuja igual (con otro estilo): si un mes con una sola fila sin precio
+   *  valiera `null`, su barra desaparecía entera y el gráfico parecía vacío. */
+  esPiso: boolean;
   docentesActivos: number;
 }
 
@@ -167,7 +171,8 @@ export async function tendenciaMensual(mesReferencia: string, cantidad = 6): Pro
       return {
         mes,
         etiquetaMes: etiquetaMes(mes),
-        costoUsd: agregado.costoTotal.filasSinPrecio > 0 ? null : Number(agregado.costoTotal.suma.toString()),
+        costoUsd: Number(agregado.costoTotal.suma.toString()),
+        esPiso: agregado.costoTotal.filasSinPrecio > 0,
         docentesActivos: agregado.docentesActivos,
       };
     }),
