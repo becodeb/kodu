@@ -189,6 +189,39 @@ Si el pedido trae un checklist, agregá \`window.__koduPruebas\` en un \`<script
 - Pensado para proyector y pizarra digital: tipografía grande, contraste alto (mínimo WCAG AA), áreas táctiles amplias, layout responsive.
 - Todo control interactivo debe ser operable por teclado y tener etiquetas accesibles.`;
 
+/**
+ * T3 (verificador, odd/tasks/verificador.md): la sección "Que funcione de
+ * verdad" de `BASE_PROMPT` — el contrato del generador — sin el ejemplo de
+ * `window.__koduPruebas`, para que el verificador (`src/lib/ai/verificador.ts`)
+ * juzgue un recurso contra el MISMO contrato que le dieron al generador.
+ *
+ * Puerto de `reglasDelArnes` (`experimentos/razonamiento/verificar.ts`), con
+ * una diferencia: el experimento leía el ARCHIVO `prompt.ts` de disco en
+ * runtime (`readFile` + `.replace(/\\\`/g, '\`')` para desescapar los
+ * backticks que aparecen escapados en el TEXTO FUENTE del `.ts`). Acá no hay
+ * archivo que leer — se corta directo sobre `BASE_PROMPT` ya evaluado en
+ * memoria, así que los backticks ya son backticks de verdad y ese
+ * `.replace` de desescape no aplica.
+ *
+ * Desde T1, el ejemplo de pruebas quedó envuelto en su propio
+ * `<script data-kodu-pruebas>…</script>` (una sola línea): se lo saca
+ * entero, no sólo la asignación — el regex viejo del experimento
+ * (`/window\.__koduPruebas=\[.*\];\n/`) dejaba de matchear porque ya no hay
+ * un `\n` pegado a `];` (ahora sigue `</script>`).
+ */
+const INICIO_REGLAS_ARNES = '## Que funcione de verdad';
+const FIN_REGLAS_ARNES = '## Calidad pedagógica';
+const EJEMPLO_PRUEBAS_EN_REGLAS_RE = /^<script data-kodu-pruebas>.*<\/script>\n/m;
+
+export function reglasDelArnes(): string {
+  const desde = BASE_PROMPT.indexOf(INICIO_REGLAS_ARNES);
+  const hasta = BASE_PROMPT.indexOf(FIN_REGLAS_ARNES);
+  if (desde < 0 || hasta < 0) {
+    throw new Error('reglasDelArnes: no se encontraron las secciones esperadas en BASE_PROMPT');
+  }
+  return BASE_PROMPT.slice(desde, hasta).replace(EJEMPLO_PRUEBAS_EN_REGLAS_RE, '');
+}
+
 // Early = turnosPrevios <= 1: turno 1 y turno 2 del hilo. Turno 1 es el que
 // más se presta a inventar (menos información, y a menudo uno de los
 // prompts prearmados de starters.ts); turno 2 es frecuentemente la primera

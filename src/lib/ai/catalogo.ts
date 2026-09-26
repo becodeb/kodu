@@ -188,6 +188,27 @@ export async function normalizarMotor(modelId: string | null, prime: boolean): P
 }
 
 /**
+ * T3 (verificador, odd/tasks/verificador.md): el motor marcado
+ * `isVerifier: true`, si está USABLE (motor y cuenta prendidos, con clave
+ * cargada) — `null` en cualquier otro caso: sin ningún motor marcado, motor
+ * o cuenta apagados, o sin clave utilizable. Ese `null` es exactamente "el
+ * verificador está apagado" para `POST /api/chat/verificar`.
+ *
+ * A diferencia de `motorPorDefecto`/`normalizarMotor`, no recibe `prime`: el
+ * verificador no es una feature que un docente elija, corre solo del lado
+ * del servidor después de la autoprueba — no hay ningún actor cuya
+ * capacidad haya que filtrar acá.
+ */
+export async function motorVerificador(): Promise<ProviderConfig | null> {
+  const filas = await filasDelCatalogo();
+  const fila = filas.find((candidata) => candidata.isVerifier);
+  if (!fila || !fila.enabled || !fila.provider.enabled) return null;
+
+  const config = construirConfig(fila);
+  return tieneClaveUtilizable(config) ? config : null;
+}
+
+/**
  * La cadena de respaldo a partir de un motor, en el orden que marca
  * `fallbackModelId`, hasta que uno conteste. Se detiene en:
  *  - un ciclo (A→B→A): `visitados` corta ahí, no cuelga el pedido;

@@ -369,6 +369,29 @@ export function razonamientoCorreccion(provider: ProviderConfig): Record<string,
 }
 
 /**
+ * El razonamiento del verificador (T3, `odd/tasks/verificador.md`): "medium"
+ * fijo, sin importar el nivel configurado en el motor — ni el "flojo" que
+ * puede dar `razonamientoEfectivo` ni el "low" de `razonamientoCorreccion`.
+ * A diferencia de la corrección mecánica de la autoprueba (el error exacto
+ * ya viaja en el prompt), un revisor tiene que releer el HTML entero y
+ * razonar sobre lógica/contenido/pedido desde cero.
+ *
+ * Mismo dialecto que el resto de este archivo: sin `reasoningEffort`
+ * cargado (proveedor de dialecto desconocido) no se manda nada. MiniMax no
+ * tiene niveles — mismo criterio que `razonamientoCorreccion`: cualquier
+ * nivel prendido alcanza para "medium" (`thinking: {type: 'enabled'}`).
+ */
+export function razonamientoVerificador(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    return { thinking: { type: 'enabled' } };
+  }
+
+  return { reasoning_effort: 'medium' };
+}
+
+/**
  * De los niveles que puede tener `AiModel.reasoningEffort` (y el nivel
  * "medium" interno que sólo usa `razonamientoOverride`, T3 del verificador)
  * al vocabulario de `reasoning.effort` en la Responses API. "max" no es un
