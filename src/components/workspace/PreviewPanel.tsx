@@ -12,6 +12,7 @@ import {
 import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
 import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
 import { contarChecklistOk, type ItemChecklistConEstado } from '../../lib/client/checklist.ts';
+import { textoCantidadProblemas, type EstadoPanelVerificador } from '../../lib/client/verificador.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
@@ -91,6 +92,17 @@ interface PreviewPanelProps {
    * queda oculto entero en ese caso, nunca en "0 de 0".
    */
   checklist: ItemChecklistConEstado[];
+  /**
+   * T4 (`odd/tasks/verificador.md`): estado del panel del verificador — este
+   * componente sólo lo RENDERIZA (Workspace.tsx decide cada transición).
+   * `'inactivo'` no dibuja nada (sin motor configurado, o el HTML vigente ya
+   * no es el que se verificó): el editor se ve exactamente como si T4 no
+   * existiera.
+   */
+  verificador: EstadoPanelVerificador;
+  /** "¿Las arreglo?" — sólo se ofrece cuando `verificador.fase === 'resultado'`
+   *  y hay al menos un problema accionable. */
+  onArreglarVerificador: () => void;
 }
 
 type Tab = 'preview' | 'code';
@@ -685,6 +697,90 @@ const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function 
               ))}
             </ul>
           </details>
+        )}
+
+        {/* T4 (`odd/tasks/verificador.md`): el panel del verificador — misma
+            familia visual que "Esto es lo que probé" de arriba (discreto,
+            `<details>` plegado por default cuando hay lista para no tapar la
+            vista previa). `aria-live="polite"` en el contenedor entero: pasa
+            de "corriendo" a "resultado" (y, tras el botón, a "arreglando"/
+            "arreglado"/"fallo-arreglo") sin que el docente tenga que estar
+            mirando fijo este renglón para enterarse. `'inactivo'` no dibuja
+            nada — sin motor configurado, el editor queda idéntico a como
+            era antes de T4. */}
+        {props.verificador.fase !== 'inactivo' && (
+          <div aria-live="polite">
+            {props.verificador.fase === 'corriendo' && (
+              <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                <span className="t-shimmer">Revisando el recurso…</span>
+              </p>
+            )}
+
+            {props.verificador.fase === 'resultado' && (
+              <>
+                {props.verificador.accionables.length === 0 && props.verificador.contenido.length === 0 && (
+                  <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                    Revisé el recurso y no encontré problemas.
+                  </p>
+                )}
+
+                {props.verificador.accionables.length > 0 && (
+                  <details className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                    <summary className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1">
+                      Revisé el recurso y encontré {textoCantidadProblemas(props.verificador.accionables.length)}:
+                    </summary>
+
+                    <ul className="mt-1.5 space-y-1.5">
+                      {props.verificador.accionables.map((problema, indice) => (
+                        <li key={indice}>
+                          <span>{problema.que}</span>
+                          <span className="block text-[0.7rem] text-ink-500">{problema.como_reproducir}</span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <button
+                      type="button"
+                      onClick={props.onArreglarVerificador}
+                      title="Aplica los arreglos que encontró el revisor"
+                      className="kodu-btn-primary mt-2"
+                    >
+                      ¿Las arreglo?
+                    </button>
+                  </details>
+                )}
+
+                {props.verificador.contenido.length > 0 && (
+                  <div className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                    <p className="font-medium text-ink-700">Revisá este dato:</p>
+                    <ul className="mt-1 space-y-1">
+                      {props.verificador.contenido.map((problema, indice) => (
+                        <li key={indice}>{problema.que}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+
+            {props.verificador.fase === 'arreglando' && (
+              <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                <span className="t-shimmer">Aplicando los arreglos…</span>
+              </p>
+            )}
+
+            {props.verificador.fase === 'arreglado' && (
+              <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                Aplicamos los arreglos que encontramos.
+              </p>
+            )}
+
+            {props.verificador.fase === 'fallo-arreglo' && (
+              <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                No pudimos aplicar los arreglos. Probalo de nuevo desde el chat.
+              </p>
+            )}
+          </div>
         )}
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

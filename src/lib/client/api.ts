@@ -1,5 +1,6 @@
 import type { Speed } from '../workspace-types.ts';
 import type { ItemChecklist } from '../ai/checklist.ts';
+import type { Problema } from '../ai/verificador.ts';
 
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
@@ -306,6 +307,16 @@ export async function* streamAutocorreccion(
      * resto de este body.
      */
     pruebas?: Array<{ id: string; ok: boolean; detalle: string }> | null;
+    /**
+     * T4 (verificador): con al menos un problema ACCIONABLE (nunca
+     * `contenido` — el propio endpoint lo filtra igual, ver
+     * `problemasAccionables`/`construirMensajeCorreccionVerificador` en
+     * `ai/verificador.ts`), la corrección se arma a partir de estos
+     * problemas en vez del informe de la autoprueba de arriba. El botón
+     * "¿Las arreglo?" del panel del verificador (Workspace.tsx) es el único
+     * llamador que lo manda; el resto del body sigue funcionando igual.
+     */
+    problemasVerificador?: Problema[];
   },
   signal?: AbortSignal,
 ): AsyncGenerator<AutocorreccionEvent> {
