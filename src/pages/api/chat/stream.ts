@@ -370,6 +370,7 @@ async function generarVersionSecundaria(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        purpose: 'EXTRA_VERSION',
       }).catch((error) =>
         console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
       );
@@ -477,6 +478,7 @@ async function generarChecklist(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        purpose: 'CHECKLIST',
       }).catch((error) => console.error('[chat/stream] checklist: no se pudo registrar el consumo:', error));
     }
 
@@ -1324,6 +1326,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             cachedInputTokens: totales.usage.cachedTokens,
             completionTokens: totales.usage.completionTokens,
             precios: proveedorUsado.precios,
+            purpose: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 

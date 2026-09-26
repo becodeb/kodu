@@ -1,5 +1,5 @@
 import { prisma } from '../db.ts';
-import { Prisma } from '../../generated/prisma/client.ts';
+import { Prisma, type UsagePurpose } from '../../generated/prisma/client.ts';
 
 /**
  * Registro de tokens por usuario y proveedor.
@@ -99,6 +99,53 @@ export interface UsageRecord {
   completionTokens: number;
   /** Los precios vigentes del motor usado, ya resueltos (`ProviderConfig.precios`). */
   precios: Precios | null;
+  /**
+   * odd/tasks/organizaciones.md (T5): para qué fue esta llamada. REQUERIDO
+   * (no opcional) a propósito — así ningún llamador nuevo se olvida de
+   * clasificarla; las filas históricas (de antes de esta columna) son las
+   * únicas con `purpose: null`, y esas nunca se escriben por acá.
+   */
+  purpose: UsagePurpose;
+}
+
+/** GENERATION/CHECKLIST/EXTRA_VERSION nacen de un recurso nuevo;
+ *  ADJUSTMENT nunca. CORRECTION/VERIFICATION no tienen opinión propia: la
+ *  heredan (ver `forNewResourceHeredado`). */
+function forNewResourceDirecto(purpose: UsagePurpose): boolean | null {
+  switch (purpose) {
+    case 'GENERATION':
+    case 'CHECKLIST':
+    case 'EXTRA_VERSION':
+      return true;
+    case 'ADJUSTMENT':
+      return false;
+    default:
+      return null;
+  }
+}
+
+/**
+ * CORRECTION y VERIFICATION son llamadas AUXILIARES: no las dispara un
+ * turno de docente nuevo, las dispara el CLIENTE después de que un turno ya
+ * terminó (la autoprueba que falló, o un pedido explícito de verificación).
+ * Tocar ese cliente para que mande "esto fue sobre un recurso nuevo o un
+ * ajuste" está fuera de alcance de T5 (y sería frágil: el cliente ni
+ * siempre sabe distinguirlo). En cambio, el SERVIDOR puede inferir a qué
+ * turno pertenecen: son del mismo proyecto y del mismo docente que el turno
+ * más reciente que sí lo sabía, así que se hereda de la última fila
+ * GENERATION/ADJUSTMENT de ese proyecto y ese usuario. Sin `projectId`, o
+ * sin ninguna fila así, el resultado es `null` (nunca se inventa un valor).
+ */
+async function forNewResourceHeredado(projectId: string | null, userId: string): Promise<boolean | null> {
+  if (!projectId) return null;
+
+  const ultima = await prisma.tokenUsage.findFirst({
+    where: { projectId, userId, purpose: { in: ['GENERATION', 'ADJUSTMENT'] } },
+    orderBy: { createdAt: 'desc' },
+    select: { forNewResource: true },
+  });
+
+  return ultima?.forNewResource ?? null;
 }
 
 export async function recordUsage(record: UsageRecord): Promise<void> {
@@ -111,6 +158,15 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
     record.completionTokens,
     record.precios,
   );
+
+  // La sede que paga: la del docente EN ESTE MOMENTO, no la que tenía cuando
+  // se creó el proyecto (design.md — "costo congelado por organización"). La
+  // demo (y cualquier cuenta sin organización) queda en NULL.
+  const actor = await prisma.user.findUnique({ where: { id: record.userId }, select: { organizationId: true } });
+  const organizationId = actor?.organizationId ?? null;
+
+  const forNewResource =
+    forNewResourceDirecto(record.purpose) ?? (await forNewResourceHeredado(record.projectId, record.userId));
 
   await prisma.tokenUsage.create({
     data: {
@@ -125,6 +181,9 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       priceInputSnapshot: costo.priceInputSnapshot,
       priceOutputSnapshot: costo.priceOutputSnapshot,
       priceCachedInputSnapshot: costo.priceCachedInputSnapshot,
+      organizationId,
+      purpose: record.purpose,
+      forNewResource,
     },
   });
 }
