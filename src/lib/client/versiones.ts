@@ -1,33 +1,6 @@
 import type { WorkspaceMessage } from '../workspace-types.ts';
 
 /**
- * T9 ("Varias versiones al crear un recurso"): la última elección de ESTE
- * navegador sobre si pedir varias versiones persiste en `localStorage`
- * (mismo patrón que T6, `client/velocidad.ts`) — pero acá "off por default"
- * es la decisión del dueño sin matices: a diferencia de la velocidad, no hay
- * un default que dependa de la cuenta, así que ausente en `localStorage` es
- * sencillamente `false`.
- */
-const STORAGE_KEY = 'kodu-versiones';
-
-export function leerVersionesGuardado(): boolean {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) === '1';
-  } catch {
-    // Modo privado, cookies bloqueadas, etc.: seguimos apagado, no rompemos el turno.
-    return false;
-  }
-}
-
-export function guardarVersiones(activo: boolean): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, activo ? '1' : '0');
-  } catch {
-    // Si no se puede guardar, sólo se pierde la persistencia entre sesiones.
-  }
-}
-
-/**
  * Qué mensaje "assistant" muestra ahora mismo la fila de chips de versiones.
  *
  * A propósito NO es "el más nuevo con versiones" recorriendo desde el final

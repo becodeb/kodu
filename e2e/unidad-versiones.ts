@@ -10,15 +10,14 @@ import {
 
 /**
  * Pruebas unitarias de las partes puras de T9 ("Varias versiones al crear
- * un recurso", odd/tasks/modo-prime.md): elegibilidad (`variantesEfectivas`),
- * si el recurso todavía es el de arranque (`esRecursoInicial`), las
- * directivas por versión (`directivaDeVersion`) y la elección del contenido
- * del mensaje fijo (`contenidoMensajeDeVersiones`).
+ * un recurso"): elegibilidad (`variantesEfectivas`), si el recurso todavía
+ * es el de arranque (`esRecursoInicial`), las directivas por versión
+ * (`directivaDeVersion`) y la elección del contenido del mensaje fijo
+ * (`contenidoMensajeDeVersiones`).
  *
- * Archivo separado, DB-free, mismo patrón que e2e/unidad-kit.ts,
- * e2e/unidad-revision.ts y e2e/unidad-revision-visual.ts: `lib/ai/versiones.ts`
- * es puro (nada de Prisma, nada de red, nada de `env.ts`) y no hace falta
- * levantar nada para probarlo.
+ * Archivo separado, DB-free, mismo patrón que e2e/unidad-kit.ts:
+ * `lib/ai/versiones.ts` es puro (nada de Prisma, nada de red, nada de
+ * `env.ts`) y no hace falta levantar nada para probarlo.
  *
  * `node:assert/strict` + `tsx`. Ejecutar con:
  *   npx tsx e2e/unidad-versiones.ts

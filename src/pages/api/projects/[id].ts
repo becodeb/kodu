@@ -12,6 +12,11 @@ const updateSchema = z.object({
   /** El `id` de un `AiModel` que esta persona podría elegir en el selector. */
   aiModelId: z.string().min(1).optional(),
   isInGallery: z.boolean().optional(),
+  /** odd/tasks/generacion-simple-y-reanudable.md (T2): opt-in por proyecto
+   *  para "3 versiones por pedido". El dueño del proyecto lo prende o apaga
+   *  desde el editor; sólo importa cuando además `AppSettings.versionsForAll`
+   *  está prendido (ver `resolverCapacidades`/`variantesEfectivas`). */
+  versionsEnabled: z.boolean().optional(),
 });
 
 /**

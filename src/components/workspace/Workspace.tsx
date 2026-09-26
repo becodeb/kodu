@@ -116,16 +116,20 @@ export default function Workspace(props: WorkspaceProps) {
   const [model, setModel] = useState<string>(props.project.aiModelId);
 
   /**
-   * T9 ("Varias versiones al crear un recurso"): apagado por default. El
-   * interruptor sólo se OFRECE cuando además el recurso sigue siendo el de
-   * arranque (`esRecursoInicial(html)`, recalculado en cada render):
-   * server-side, `stream.ts` vuelve a cruzar las condiciones igual, así que
-   * este estado nunca alcanza por sí solo para forzar nada.
+   * T2 ("versiones como opt-in por proyecto"): apagado por default, y ahora
+   * persistido en el PROYECTO (`Project.versionsEnabled`, vía el mismo PATCH
+   * que el resto del editor), no por navegador — así el interruptor es del
+   * proyecto y no de quién lo abrió. El interruptor sólo se OFRECE cuando
+   * además el recurso sigue siendo el de arranque (`esRecursoInicial(html)`,
+   * recalculado en cada render): server-side, `stream.ts` vuelve a cruzar
+   * las condiciones igual, así que este estado nunca alcanza por sí solo
+   * para forzar nada.
    */
-  const [versiones, setVersiones] = useState(false);
+  const [versiones, setVersiones] = useState(props.project.versionsEnabled);
 
   function handleVersionesChange(activo: boolean) {
     setVersiones(activo);
+    void patchProject({ versionsEnabled: activo }, true);
   }
 
   /**

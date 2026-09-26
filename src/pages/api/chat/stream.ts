@@ -592,15 +592,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const recursoInicial = esRecursoInicial(htmlAlInicioDelTurno);
 
   /**
-   * T9 ("Varias versiones al crear un recurso"): capacidad × recurso
-   * todavía en blanco × lo pedido, en ese orden. Nunca se confía en
-   * `variants` a solas: sin la capacidad, o con un recurso que ya no es el
-   * de arranque, esto da `false` sin importar lo que haya mandado el
-   * cliente.
+   * T9/T2 ("Varias versiones al crear un recurso", opt-in por proyecto):
+   * el interruptor del admin (`versionsForAll`) × el del proyecto
+   * (`Project.versionsEnabled`) × recurso todavía en blanco × lo pedido, en
+   * ese orden. Nunca se confía en `variants` a solas: sin las dos
+   * capacidades, o con un recurso que ya no es el de arranque, esto da
+   * `false` sin importar lo que haya mandado el cliente.
    */
   const solicitaVersiones =
     variantesEfectivas({
-      puedePedirVersiones: capacidades.puedePedirVersiones,
+      puedePedirVersiones: capacidades.puedePedirVersiones && project.versionsEnabled,
       esRecursoInicial: recursoInicial,
       variantsPedidas: variants,
     }) === 3;

@@ -47,12 +47,12 @@ const messages = await prisma.chatMessage.findMany({
     // Quién escribió el turno cuando no fue el dueño (M8, design.md §7).
     // `null` en el caso normal — no viaja ningún nombre de más.
     authorUser: { select: { name: true } },
-    // T4 (odd/tasks/modo-prime.md): sólo si tiene instantánea y si ya se
+    // T4: sólo si tiene instantánea y si ya se
     // deshizo. Igual que en threads.ts, el `select` anidado trae nada más
     // que el `id` de la instantánea — nunca su `html`.
     undoneAt: true,
     snapshot: { select: { id: true } },
-    // T9 (odd/tasks/modo-prime.md): igual que threads.ts — nunca el `html`
+    // T9: igual que threads.ts — nunca el `html`
     // de cada versión acá, sólo al elegir.
     chosenVariantIndex: true,
     variants: { select: { index: true }, orderBy: { index: 'asc' } },
@@ -61,24 +61,20 @@ const messages = await prisma.chatMessage.findMany({
 
 const siteUrl = getEnv().PUBLIC_SITE_URL;
 
-// T5 (odd/tasks/modo-prime.md): qué puede este docente en este turno. Se
-// resuelve UNA vez acá, server-side, y se usa para filtrar el catálogo
-// abajo Y para armar `capacidadesEditor` (sólo los dos campos genéricos que
-// cruzan al cliente — nunca "prime" ni AppSettings, ver workspace-types.ts).
+// Qué puede este docente en este turno (odd/tasks/generacion-simple-y-reanudable.md,
+// T2): hoy sólo si el admin permite versiones en `/admin/generacion`. Se
+// resuelve UNA vez acá, server-side, y se usa para armar `capacidadesEditor`
+// (sólo lo genérico que cruza al cliente, ver workspace-types.ts).
 const settings = await leerAppSettings();
-const capacidades = resolverCapacidades(user, settings);
+const capacidades = resolverCapacidades(settings);
 
 // Los motores que puede elegir un docente, ya en el orden que configuró un
-// admin (M3 los administra; acá sólo se leen). Filtrado server-side por
-// prime (T5): un motor `primeOnly` no aparece acá para quien no tiene prime.
-const motoresDisponibles = await motoresParaDocente(capacidades.prime);
+// admin (M3 los administra; acá sólo se leen).
+const motoresDisponibles = await motoresParaDocente();
 
 // El motor vigente del proyecto puede no existir más, estar apagado, o el
 // proyecto puede ser nuevo y no tener ninguno todavía: `normalizarMotor` cae
-// al default vigente en cualquiera de esos casos (design.md §5). T5: un
-// motor `primeOnly` guardado en el proyecto de alguien que se quedó sin
-// prime (el interruptor general se apagó, o le sacaron la marca) cae por
-// este MISMO camino, como cualquier motor apagado o inexistente.
+// al default vigente en cualquiera de esos casos (design.md §5).
 //
 // `motorOriginal` se guarda ANTES de pisar `aiModelId`: separa dos casos que
 // persisten igual (M2, ya probado por e2e/m2-catalogo.ts) pero que NO avisan
@@ -89,7 +85,7 @@ const motoresDisponibles = await motoresParaDocente(capacidades.prime);
 //    (`motorOriginal` no null) → repunteo real, spec `ai-model-catalog`
 //    ("Fallback when a project's model is disabled") pide avisar.
 const motorOriginal = project.aiModelId;
-const motorVigente = await normalizarMotor(project.aiModelId, capacidades.prime);
+const motorVigente = await normalizarMotor(project.aiModelId);
 const aiModelId = motorVigente?.id ?? project.aiModelId ?? '';
 const motorCambio = !!motorVigente && motorVigente.id !== motorOriginal;
 
@@ -152,13 +148,9 @@ const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
 // checklist nunca corrió) — PreviewPanel lo oculta entero en ese caso.
 const checklistDelRecurso = await checklistActual(project.id);
 
-// T5/T6: SÓLO estos campos cruzan al cliente — nunca `capacidades` entero
-// (que tiene `prime`, `autoReviewForAll` y `puedeUsarModelosPrime`). Armado
-// a mano, campo por campo, para que agregar una clave a `Capacidades` el día
-// de mañana no la filtre acá sin querer.
+// Armado a mano, campo por campo, para que agregar una clave a `Capacidades`
+// el día de mañana no la filtre acá sin querer.
 const capacidadesEditor: CapacidadesEditor = {
-  puedeElegirVelocidad: capacidades.puedeElegirVelocidad,
-  velocidadPorDefecto: capacidades.velocidadPorDefecto,
   puedePedirVersiones: capacidades.puedePedirVersiones,
 };
 ---
@@ -225,6 +217,7 @@ const capacidadesEditor: CapacidadesEditor = {
       isInGallery: project.isInGallery,
       screenshotUrl: project.screenshotUrl,
       portadaVieja: portadaDesactualizada(project.screenshotAt, project.updatedAt),
+      versionsEnabled: project.versionsEnabled,
     }}
     threads={project.threads.length > 0 ? project.threads : [activeThread]}
     activeThreadId={activeThread.id}

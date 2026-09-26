@@ -150,6 +150,11 @@ model Project {
   /// #8): habilita el purgado masivo desde /admin/demo sin rozar nada de
   /// docentes reales.
   createdByDemo Boolean        @default(false)
+  /// odd/tasks/generacion-simple-y-reanudable.md (T2): opt-in per project for
+  /// "3 versions per request", off by default. Only takes effect when
+  /// `AppSettings.versionsForAll` is also on — see
+  /// `src/lib/ai/versiones.ts`/`capacidades.ts`.
+  versionsEnabled Boolean      @default(false)
   threads       ChatThread[]
   assets        ProjectAsset[]
   tokenUsage    TokenUsage[]

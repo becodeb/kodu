@@ -34,7 +34,12 @@ export function debeMostrarSelectorDeMotor(motores: MotorPublico[]): boolean {
  * quedándose SÓLO con este campo — nunca ese objeto entero.
  */
 export interface CapacidadesEditor {
-  /** El admin permite pedir "3 versiones" al crear un recurso. */
+  /**
+   * T2 ("versiones como opt-in por proyecto"): el admin permite activar "3
+   * versiones" en los proyectos. El interruptor propio del proyecto vive en
+   * `WorkspaceProject.versionsEnabled` — el control sólo se ofrece cuando
+   * las dos cosas están presentes.
+   */
   puedePedirVersiones: boolean;
 }
 
@@ -50,6 +55,10 @@ export interface WorkspaceProject {
   screenshotUrl: string | null;
   /** El recurso cambió después de la última portada (design §6). */
   portadaVieja: boolean;
+  /** T2 ("versiones como opt-in por proyecto"): el interruptor propio de
+   *  este proyecto, apagado por default. Sólo importa cuando además el
+   *  admin prendió `versionsForAll` (`CapacidadesEditor.puedePedirVersiones`). */
+  versionsEnabled: boolean;
 }
 
 export interface WorkspaceThread {
