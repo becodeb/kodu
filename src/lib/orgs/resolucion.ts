@@ -25,6 +25,17 @@ interface Snapshot {
   organizaciones: Map<string, OrganizacionSnapshot>;
   /** Sedes NO archivadas de cada red, para ofrecerlas en el selector (T4). */
   sedesPorRed: Map<string, Array<{ id: string; name: string }>>;
+  /**
+   * odd/tasks/organizaciones.md (T6): `"<organizationId>:<email>"` — a quien
+   * se dio de baja de esa CAMPUS y no puede volver a unirse por DOMINIO a
+   * ella (la lista blanca y una invitación son explícitas y ganan: las dos
+   * borran la fila de exclusión al usarse, ver gestion.ts/invitaciones.ts).
+   */
+  exclusiones: Set<string>;
+}
+
+function claveExclusion(organizationId: string, email: string): string {
+  return `${organizationId}:${email}`;
 }
 
 let cache: { datos: Snapshot; expira: number } | null = null;
@@ -32,12 +43,13 @@ let cache: { datos: Snapshot; expira: number } | null = null;
 async function leerSnapshot(): Promise<Snapshot> {
   if (cache && cache.expira > Date.now()) return cache.datos;
 
-  const [emails, dominios, organizaciones] = await Promise.all([
+  const [emails, dominios, organizaciones, exclusiones] = await Promise.all([
     prisma.organizationAllowedEmail.findMany({ select: { email: true, organizationId: true } }),
     prisma.organizationDomain.findMany({ select: { pattern: true, organizationId: true } }),
     prisma.organization.findMany({
       select: { id: true, name: true, kind: true, parentId: true, archivedAt: true },
     }),
+    prisma.organizationExclusion.findMany({ select: { organizationId: true, email: true } }),
   ]);
 
   const organizacionesMap = new Map<string, OrganizacionSnapshot>(
@@ -61,6 +73,7 @@ async function leerSnapshot(): Promise<Snapshot> {
     dominios: dominios.map((fila) => ({ pattern: fila.pattern, organizationId: fila.organizationId })),
     organizaciones: organizacionesMap,
     sedesPorRed,
+    exclusiones: new Set(exclusiones.map((fila) => claveExclusion(fila.organizationId, fila.email))),
   };
 
   cache = { datos, expira: Date.now() + CACHE_TTL_MS };
@@ -146,13 +159,21 @@ export async function organizacionParaEmail(email: string): Promise<ResolucionOr
       const org = snapshot.organizaciones.get(idPorDominio);
       if (org && !org.archivada) {
         if (org.kind === 'CAMPUS') {
+          // T6: a quien se dio de baja de ESTA sede no lo vuelve a unir su
+          // propio dominio — tiene que entrar por invitación o lista blanca.
+          if (snapshot.exclusiones.has(claveExclusion(org.id, normalizado))) return null;
           return { campus: { id: org.id, name: org.name } };
         }
-        return {
-          red: { id: org.id, name: org.name },
-          requiereElegirSede: true,
-          sedes: snapshot.sedesPorRed.get(org.id) ?? [],
-        };
+
+        // T6: para el picker de una red, se sacan las sedes en las que esta
+        // persona está excluida — si eso deja la lista vacía, la red entera
+        // deja de resolver (nunca se ofrece un picker sin opciones).
+        const sedes = (snapshot.sedesPorRed.get(org.id) ?? []).filter(
+          (sede) => !snapshot.exclusiones.has(claveExclusion(sede.id, normalizado)),
+        );
+        if (sedes.length === 0) return null;
+
+        return { red: { id: org.id, name: org.name }, requiereElegirSede: true, sedes };
       }
     }
   }

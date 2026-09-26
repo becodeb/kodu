@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { prisma } from '../db.ts';
 import { getEnv } from '../env.ts';
+import { normalizeEmail } from '../auth/domains.ts';
+import { invalidarCacheOrganizaciones } from './resolucion.ts';
 
 /**
  * odd/tasks/organizaciones.md (T4): enlace de invitación a una CAMPUS —
@@ -215,7 +217,7 @@ export async function aceptarInvitacion(tokenPlano: string, userId: string): Pro
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { organizationId: true, isDemo: true, organization: { select: { name: true } } },
+    select: { email: true, organizationId: true, isDemo: true, organization: { select: { name: true } } },
   });
   if (!user) return { ok: false, motivo: 'invalida' };
   // "La demo queda fuera de toda organización" (decisión del dueño).
@@ -259,11 +261,24 @@ export async function aceptarInvitacion(tokenPlano: string, userId: string): Pro
         data: { organizationId: invitacion.organizationId },
       });
       if (usuarioActualizado.count === 0) throw new CarreraDeAceptacion();
+
+      // T6 (decisión técnica de T5): "aceptar una invitación borra la
+      // exclusión para esa CAMPUS" — explícito y GANA a una baja anterior,
+      // así que quien fue dado de baja puede volver a entrar con un enlace
+      // nuevo aunque su dominio siga bloqueado para él.
+      await tx.organizationExclusion.deleteMany({
+        where: { organizationId: invitacion.organizationId, email: normalizeEmail(user.email) },
+      });
     });
   } catch (error) {
     if (error instanceof CarreraDeAceptacion) return { ok: false, motivo: 'invalida' };
     throw error;
   }
+
+  // Fuera de la transacción a propósito (misma razón que unirSiCorresponde):
+  // invalidar la caché no necesita el commit confirmado en el mismo tick, y
+  // encadenarla adentro sólo agregaría una espera a la respuesta HTTP.
+  invalidarCacheOrganizaciones();
 
   return { ok: true };
 }

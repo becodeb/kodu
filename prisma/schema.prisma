@@ -53,6 +53,9 @@ model Organization {
   allowedEmails OrganizationAllowedEmail[]
   invites       OrganizationInvite[]
   admins        OrganizationAdmin[]
+  /// odd/tasks/organizaciones.md (T6): emails que ya no pueden volver a
+  /// unirse por dominio a ESTA sede (ver el comentario de OrganizationExclusion).
+  exclusions    OrganizationExclusion[]
   /// Docentes que pertenecen a esta organización (siempre una `CAMPUS`, regla
   /// de aplicación — no hay forma de expresar "sólo CAMPUS" en un FK plano).
   members       User[]
@@ -142,6 +145,29 @@ model OrganizationAdmin {
 /// Resend; `NO_PROVIDER` = se tomó como verificado porque no hay
 /// `RESEND_API_KEY` en el entorno (decisión del dueño — fallback sin Resend).
 /// Se puede auditar sin quitarle nada a nadie cuando se carga la key.
+/// odd/tasks/organizaciones.md (T5-T6, "decision tecnica para T6/T8"): la
+/// baja de un docente de una CAMPUS deja una exclusion que bloquea volver a
+/// unirse por DOMINIO a esa misma sede -- sin ella, alguien que habia entrado
+/// por dominio se reunia solo en el proximo login (T5 lo encontro probando
+/// recordUsage). organizationId es SIEMPRE la CAMPUS de la que se lo dio de
+/// baja (nunca una NETWORK): resolver por dominio de una red la usa para
+/// sacar esa sede puntual del picker (si era la unica sede pickeable, la red
+/// entera deja de resolver). La lista blanca y una invitacion son explicitas
+/// y GANAN a esto -- agregar el email a OrganizationAllowedEmail o aceptar
+/// una OrganizationInvite de esta CAMPUS borra la exclusion (gestion.ts /
+/// invitaciones.ts).
+model OrganizationExclusion {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Normalizado en minusculas, mismo criterio que OrganizationAllowedEmail.email.
+  email          String
+  createdAt      DateTime     @default(now())
+  createdById    String?
+  createdBy      User?        @relation("OrganizationExclusionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@id([organizationId, email])
+}
+
 enum EmailVerificationSource {
   GOOGLE
   EMAIL
@@ -227,6 +253,7 @@ model User {
   organizationAdminsCreated        OrganizationAdmin[]        @relation("OrganizationAdminCreatedBy")
   organizationAllowedEmailsCreated OrganizationAllowedEmail[] @relation("OrganizationAllowedEmailCreatedBy")
   organizationInvitesCreated       OrganizationInvite[]       @relation("OrganizationInviteCreatedBy")
+  organizationExclusionsCreated    OrganizationExclusion[]    @relation("OrganizationExclusionCreatedBy")
   emailVerificationTokens          EmailVerificationToken[]
 
   @@index([organizationId])
