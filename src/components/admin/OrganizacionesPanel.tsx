@@ -61,7 +61,7 @@ export default function OrganizacionesPanel(props: Props) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-ink-500">
           {redes.length} red{redes.length === 1 ? '' : 'es'} · {standalone.length} colegio
-          {standalone.length === 1 ? '' : 's'} standalone.
+          {standalone.length === 1 ? ' independiente' : 's independientes'}.
         </p>
         <div className="flex gap-2">
           <button type="button" onClick={() => setFormAbierto('red')} className="kodu-btn-ghost text-sm">
@@ -131,9 +131,9 @@ export default function OrganizacionesPanel(props: Props) {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-ink-900">Colegios standalone</h2>
+        <h2 className="text-sm font-semibold text-ink-900">Colegios independientes</h2>
         {standalone.length === 0 ? (
-          <div className="kodu-card p-6 text-sm text-ink-500">Todavía no hay ningún colegio standalone.</div>
+          <div className="kodu-card p-6 text-sm text-ink-500">Todavía no hay ningún colegio independiente.</div>
         ) : (
           <ol className="kodu-card divide-y divide-linea">
             {standalone.map((org) => (

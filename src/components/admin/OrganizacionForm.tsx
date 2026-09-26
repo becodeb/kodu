@@ -112,7 +112,7 @@ export default function OrganizacionForm(props: OrganizacionFormProps) {
                 onChange={(event) => setParentId(event.target.value)}
                 className="kodu-input"
               >
-                <option value="">Standalone (no pertenece a ninguna red)</option>
+                <option value="">Independiente (no pertenece a ninguna red)</option>
                 {props.redesDisponibles.map((red) => (
                   <option key={red.id} value={red.id} disabled={red.archivada}>
                     {red.name}

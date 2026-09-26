@@ -27,7 +27,7 @@ interface Props {
 function verificacionLabel(fuente: MiembroOrganizacion['emailVerificationSource']): string {
   if (fuente === 'GOOGLE') return 'Google';
   if (fuente === 'EMAIL') return 'Email verificado';
-  if (fuente === 'NO_PROVIDER') return 'Sin verificar (fallback)';
+  if (fuente === 'NO_PROVIDER') return 'Sin verificar (sin Resend)';
   return 'Sin verificar';
 }
 
