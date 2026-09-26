@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
 import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
+import { contarChecklistOk, type ItemChecklistConEstado } from '../../lib/client/checklist.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
@@ -72,9 +73,88 @@ interface PreviewPanelProps {
   portadaVieja: boolean;
   saving: boolean;
   notice: string | null;
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): la autoprueba automática
+   * de este recurso siguió encontrando problemas después de las 2 rondas de
+   * corrección permitidas. Discreto y NO bloqueante — el recurso se sigue
+   * mostrando igual, esto es sólo una señal para que el docente sepa que
+   * conviene revisarlo con más atención. Workspace.tsx lo limpia solo apenas
+   * el HTML vuelve a cambiar (nuevo turno, deshacer, edición manual, cambio
+   * de versión).
+   */
+  autopruebaAdvertencia?: boolean;
+  /**
+   * T18 (round 4, "checklist del docente"): el checklist vigente del
+   * recurso, ya cruzado con el resultado de la última autoprueba (T17,
+   * Workspace.tsx: `estadoDeChecklist`). `[]` cuando el recurso no tiene
+   * checklist (viejo, o el paso T16 nunca corrió) — "Esto es lo que probé"
+   * queda oculto entero en ese caso, nunca en "0 de 0".
+   */
+  checklist: ItemChecklistConEstado[];
 }
 
 type Tab = 'preview' | 'code';
+
+/**
+ * T18: un ícono chico por estado de ítem del checklist, mismo trazo que el
+ * resto del editor (SVG a mano, `currentColor`, sin depender de Lucide en
+ * React — ver `ChatPanel.tsx`). El color lo pone quien lo usa (vía
+ * `className` del contenedor), acá sólo el dibujo.
+ */
+function IconoEstadoChecklist({ estado }: { estado: ItemChecklistConEstado['estado'] }) {
+  if (estado === 'ok') {
+    return (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 13l4.5 4.5L19 8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (estado === 'falla') {
+    return (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 3.5 22 20H2L12 3.5Z"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <path d="M12 10v4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <circle cx="12" cy="17.3" r="1" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (estado === 'sinProbar') {
+    return (
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="2" />
+        <path d="M12 7.5V12l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  // sinPrueba: un guion — "no hay nada que decir acá", ni bien ni mal.
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M6 12h12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+const TEXTO_ESTADO_CHECKLIST: Record<ItemChecklistConEstado['estado'], string> = {
+  ok: 'Funciona',
+  falla: 'Puede fallar',
+  sinPrueba: 'Sin prueba automática',
+  sinProbar: 'Se prueba después de cada cambio',
+};
+
+/** Color del ícono/texto de cada fila — discreto: sólo `falla` se despega
+ *  del gris neutro de siempre (mismo rojo que ya usa el resto del editor
+ *  para avisos, p. ej. el botón "Quitar" portada). */
+const COLOR_ESTADO_CHECKLIST: Record<ItemChecklistConEstado['estado'], string> = {
+  ok: 'text-ink-700',
+  falla: 'text-red-600',
+  sinPrueba: 'text-ink-500',
+  sinProbar: 'text-ink-500',
+};
 
 const TABS: Array<[Tab, string]> = [
   ['preview', 'Vista previa'],
@@ -560,6 +640,51 @@ const PreviewPanel = forwardRef<PreviewPanelHandle, PreviewPanelProps>(function 
               Entendido
             </button>
           </p>
+        )}
+
+        {/* T12 ("Autoprueba + autocorrección"): discreto a propósito — no es
+            un error del docente ni bloquea nada, sólo una señal de que
+            conviene mirar el recurso con más atención. Sin botón de cerrar:
+            se limpia sola cuando el HTML vuelve a cambiar (ver Workspace.tsx). */}
+        {props.autopruebaAdvertencia && (
+          <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+            Probamos el recurso y algo puede no funcionar bien. Si lo notás, contalo en el chat.
+          </p>
+        )}
+
+        {/* T18 (round 4, "checklist del docente"): "Esto es lo que probé" —
+            discreto y PLEGADO por default (design decisions de la tarea: no
+            tapa la vista previa), pero visible por default, sin bandera —
+            sólo dice lo que se probó. Ausente entero sin checklist (nunca
+            "0 de 0"). `<details>` da abrir/cerrar accesible por teclado sin
+            armar el manejo de foco a mano — mismo patrón que la lista de
+            adjuntos de ChatPanel. */}
+        {props.checklist.length > 0 && (
+          <details className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+            {/* Sin marcador propio: el triángulo nativo de `<summary>` ya es
+                accesible y con foco visible en los tres navegadores, mismo
+                criterio que la lista de adjuntos de ChatPanel. */}
+            <summary className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1">
+              Esto es lo que probé · {contarChecklistOk(props.checklist)} de {props.checklist.length}
+            </summary>
+
+            <ul className="mt-1.5 space-y-1.5">
+              {props.checklist.map((item) => (
+                <li key={item.id} className={`flex items-start gap-1.5 ${COLOR_ESTADO_CHECKLIST[item.estado]}`}>
+                  <span className="mt-0.5 shrink-0">
+                    <IconoEstadoChecklist estado={item.estado} />
+                  </span>
+                  <span>
+                    <span className="sr-only">{TEXTO_ESTADO_CHECKLIST[item.estado]}: </span>
+                    {item.texto}
+                    {item.estado === 'falla' && item.detalle && (
+                      <span className="block text-[0.7rem] text-ink-500">{item.detalle}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

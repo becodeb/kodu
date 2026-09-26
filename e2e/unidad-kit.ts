@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   TEMAS,
   FAMILIAS_NEUTRAS,
@@ -12,6 +13,7 @@ import {
   plegarKit,
   temaDe,
   bloqueKit,
+  bloqueKitLegado,
   paletaDeTema,
   temaPorId,
   esTemaId,
@@ -279,6 +281,292 @@ await prueba('ida y vuelta: aplicarKit(plegarKit(aplicarKit(x))) === aplicarKit(
     const aplicadoUnaVez = aplicarKit(x);
     const idaYVuelta = aplicarKit(plegarKit(aplicadoUnaVez));
     assert.equal(idaYVuelta, aplicadoUnaVez, `round trip falló para ${tema.id}`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// T1 (arnes-robustez): [hidden], window.kodu y el bloque legado
+// (odd/tasks/arnes-robustez.md)
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: lleva la regla [hidden]{display:none!important}', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('[hidden]{display:none!important}'),
+      `${tema.id}: falta la regla que arregla el defecto 2 (hidden pierde contra flex)`,
+    );
+  }
+});
+
+await prueba('bloqueKit: define window.kodu con los seis helpers públicos (round 2: festejar, mezclar)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('window.kodu = {'), `${tema.id}: falta la asignación de window.kodu`);
+    for (const helper of [
+      'icono:', 'arrastrar:', 'despues:', 'cada:', 'cancelarTemporizadores:', 'festejar:', 'mezclar:',
+    ]) {
+      assert.ok(bloque.includes(helper), `${tema.id}: falta el helper "${helper}"`);
+    }
+  }
+});
+
+await prueba('bloqueKitLegado: pinned contra el bloque canónico previo a T1', () => {
+  // Hash calculado ANTES de este cambio, contra bloqueKit('pizarron') del
+  // código en main (commit 98fa485, previo a la rama arnes-robustez) — ver
+  // el comentario de BLOQUES_LEGADO_POR_ID en kit.ts. Si este assert falla,
+  // construirBloque(tema, { legado: true }) dejó de reproducir byte a byte
+  // el bloque viejo, y los recursos guardados con el kit anterior a T1
+  // dejarían de reconocerse como canónicos.
+  const hash = createHash('sha256').update(bloqueKitLegado('pizarron'), 'utf8').digest('hex');
+  assert.equal(hash, 'ac6fd001d31b49cf449f54a288782ec824ae1da1014cda7cecc105e805b64a30');
+});
+
+await prueba('bloqueKitLegado: no lleva [hidden] ni window.kodu (es el bloque de antes de T1)', () => {
+  const legado = bloqueKitLegado('cuaderno');
+  assert.ok(!legado.includes('[hidden]{display:none!important}'));
+  assert.ok(!legado.includes('window.kodu'));
+  assert.ok(legado.startsWith('<!-- kodu-kit:v1:inicio tema=cuaderno -->'));
+  assert.ok(legado.endsWith('<!-- kodu-kit:v1:fin -->'));
+});
+
+await prueba('aplicarKit: un recurso guardado con el bloque legado se actualiza al bloque actual', () => {
+  // Simula un recurso guardado ANTES de T1: meta + bloque legado (no el que
+  // arma aplicarKit, que ya usaría el bloque nuevo).
+  const doc = documentoConMeta('noche', `${bloqueKitLegado('noche')}\n`);
+  assert.ok(doc.includes(bloqueKitLegado('noche')), 'setup: el doc de prueba tiene que llevar el bloque legado');
+
+  const resultado = aplicarKit(doc);
+  assert.ok(resultado.includes(bloqueKit('noche')), 'aplicarKit tiene que subir al bloque canónico actual');
+  assert.ok(resultado.includes('window.kodu'), 'el bloque insertado tiene que ser el nuevo, con window.kodu');
+  assert.ok(!resultado.includes(bloqueKitLegado('noche')), 'el bloque legado viejo no puede quedar');
+  assert.equal(aplicarKit(resultado), resultado, 'y ya queda estable (idempotente) en el bloque actual');
+});
+
+await prueba('plegarKit: un bloque legado también se pliega (sigue siendo canónico)', () => {
+  const doc = documentoConMeta('recreo', `${bloqueKitLegado('recreo')}\n`);
+  const plegado = plegarKit(doc);
+  assert.ok(!plegado.includes('tailwind.config'), 'el bloque legado completo ya no puede estar');
+  assert.ok(plegado.includes('kodu-kit:v1 tema=recreo:'), 'tiene que quedar el marcador corto');
+});
+
+await prueba('aplicarKit: un bloque legado editado a mano sigue sin tocarse', () => {
+  const doc = documentoConMeta('huerta', `${bloqueKitLegado('huerta')}\n`);
+  const editado = doc.replace(
+    '<!-- kodu-kit:v1:fin -->',
+    '<!-- un comentario de más, a mano --><!-- kodu-kit:v1:fin -->',
+  );
+  const resultado = aplicarKit(editado);
+  assert.equal(resultado, editado, 'un bloque legado que ya no es byte a byte el legado de su id se respeta tal cual');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 2, T5 (arnes-robustez): íconos que nunca quedan viejos
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: el observer de íconos ya no usa requestAnimationFrame (dibuja sync)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      !bloqueKit(tema.id).includes('requestAnimationFrame'),
+      `${tema.id}: no puede quedar rAF en el dibujo de íconos (round 2, T5)`,
+    );
+  }
+});
+
+await prueba('bloqueKit: dibujarIconos se expone como global privada para que SCRIPT_KODU la reuse', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('window.__koduDibujarIconos'),
+      `${tema.id}: falta la global compartida entre SCRIPT_ICONOS y SCRIPT_KODU`,
+    );
+  }
+});
+
+await prueba('bloqueKitLegado: sigue con el observer viejo por rAF (SCRIPT_ICONOS_LEGADO intacto)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKitLegado(tema.id).includes('requestAnimationFrame'),
+      `${tema.id}: el bloque legado tiene que conservar el observer viejo tal cual`,
+    );
+    assert.ok(!bloqueKitLegado(tema.id).includes('__koduDibujarIconos'));
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 2, T6 (arnes-robustez): kodu.arrastrar a prueba de mal uso
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: arrastrar() soporta el modo unidad (alCambiar, eje, min/max/paso, valor, ARIA)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const fragmento of [
+      'modoUnidad',
+      'opciones.alCambiar',
+      "opciones.eje === 'y'",
+      'role',
+      'aria-valuemin',
+      'aria-valuemax',
+      'aria-valuenow',
+    ]) {
+      assert.ok(bloque.includes(fragmento), `${tema.id}: falta "${fragmento}" del modo unidad`);
+    }
+  }
+});
+
+await prueba('bloqueKit: arrastrar() escucha el teclado en captura y corta la propagación', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("addEventListener('keydown', alTecla, true)"), `${tema.id}: falta el registro en captura`);
+    assert.ok(bloque.includes('stopImmediatePropagation'), `${tema.id}: falta stopImmediatePropagation`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() elige el arrastrable más cercano entre superpuestos (registro compartido)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('registroArrastre'), `${tema.id}: falta el registro compartido`);
+    assert.ok(bloque.includes('elegirArrastrable'), `${tema.id}: falta la selección por cercanía`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() escucha move/up/cancel en window (sobrevive a un re-render)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("window.addEventListener('pointermove'"), `${tema.id}: el arrastre tiene que escuchar en window`);
+    assert.ok(
+      !bloque.includes("addEventListener('lostpointercapture'"),
+      `${tema.id}: no puede depender de lostpointercapture para terminar el arrastre`,
+    );
+  }
+});
+
+await prueba('bloqueKit: el punto del modo bajo nivel tiene valueOf (red de seguridad de mal uso numérico)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('crearPuntoDrag'), `${tema.id}: falta la fábrica de puntos con valueOf`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 2, T7 (arnes-robustez): kodu.festejar y kodu.mezclar
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: festejar() carga canvas-confetti por CDN con versión fijada', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.4/dist/confetti.browser.min.js'),
+      `${tema.id}: falta la URL fijada de canvas-confetti`,
+    );
+  }
+});
+
+await prueba('bloqueKit: cancelarTemporizadores() también corta festejar() (generación + reset)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('confettiGeneracion++'), `${tema.id}: falta el contador de generación`);
+    assert.ok(bloque.includes('window.confetti.reset()'), `${tema.id}: falta cortar el confetti ya animando`);
+  }
+});
+
+await prueba('bloqueKit: mezclar() nunca deja el mismo orden de entrada (longitud >= 2)', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('mismoOrden'), `${tema.id}: falta la verificación de orden idéntico`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 3, T9 (arnes-robustez): modo unidad posiciona el propio elemento,
+// zona mínima de 44px
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: arrastrar() en modo unidad posiciona el propio elemento (cx/cy, transform o left/top)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const fragmento of ['posicionarElemento', 'moverActivo', 'medidasAreaLocal', 'fraccionPosicion']) {
+      assert.ok(bloque.includes(fragmento), `${tema.id}: falta "${fragmento}" del posicionamiento del modo unidad`);
+    }
+    // SVG circle/ellipse: cx/cy directo. Forma genérica: transform. HTML: left/top + transform.
+    assert.ok(bloque.includes("el.setAttribute(eje === 'x' ? 'cx' : 'cy'"), `${tema.id}: falta setear cx/cy`);
+    assert.ok(bloque.includes("el.style.left = pct"), `${tema.id}: falta posicionar left en HTML`);
+    assert.ok(bloque.includes("el.style.top = pct"), `${tema.id}: falta posicionar top en HTML`);
+  }
+});
+
+await prueba('bloqueKit: arrastrar() opt-out mover:false no reposiciona el elemento', () => {
+  for (const tema of TEMAS) {
+    assert.ok(bloqueKit(tema.id).includes('opciones.mover !== false'), `${tema.id}: falta el opt-out mover:false`);
+  }
+});
+
+await prueba('bloqueKit: elegirArrastrable respeta una zona mínima de 44px además del hit-test real', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes('TAMANO_MINIMO_TOQUE = 44'), `${tema.id}: falta el mínimo de 44px`);
+    assert.ok(bloque.includes('golpeaZonaMinima'), `${tema.id}: falta la función de zona mínima`);
+    assert.ok(
+      bloque.includes('elementoFueGolpeado(entrada.el, golpeados) || golpeaZonaMinima('),
+      `${tema.id}: la zona mínima tiene que ser un OR con el hit-test real, no reemplazarlo`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Round 3, T11 (arnes-robustez): centinela + autoprueba
+// ─────────────────────────────────────────────────────────────
+
+await prueba('bloqueKit: el centinela va PRIMERO del bloque, antes de Tailwind/Lucide por CDN', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    const posCentinela = bloque.indexOf("kodu: 'error'");
+    const posTailwindCdn = bloque.indexOf('cdn.tailwindcss.com');
+    const posLucideCdn = bloque.indexOf('cdn.jsdelivr.net/npm/lucide');
+    assert.ok(posCentinela !== -1, `${tema.id}: falta el centinela`);
+    assert.ok(posCentinela < posTailwindCdn, `${tema.id}: el centinela tiene que ir antes que el <script src> de Tailwind`);
+    assert.ok(posCentinela < posLucideCdn, `${tema.id}: el centinela tiene que ir antes que el <script src> de Lucide`);
+  }
+});
+
+await prueba('bloqueKitLegado: no lleva centinela ni autoprueba (es el bloque de antes de T11)', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKitLegado(tema.id);
+    assert.ok(!bloque.includes("kodu: 'error'"), `${tema.id}: el legado no puede llevar el centinela`);
+    assert.ok(!bloque.includes('autoprueba'), `${tema.id}: el legado no puede llevar la autoprueba`);
+  }
+});
+
+await prueba('bloqueKit: el centinela captura onerror, unhandledrejection y console.error', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("window.addEventListener('error'"), `${tema.id}: falta el listener de error`);
+    assert.ok(bloque.includes("window.addEventListener('unhandledrejection'"), `${tema.id}: falta unhandledrejection`);
+    assert.ok(bloque.includes('console.error = function'), `${tema.id}: falta envolver console.error`);
+    assert.ok(bloque.includes("kodu: 'error'"), `${tema.id}: falta el postMessage de error hacia el padre`);
+  }
+});
+
+await prueba('bloqueKit: la autoprueba escucha kodu:autoprueba del padre y responde kodu:autoprueba:resultado', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    assert.ok(bloque.includes("datos.kodu !== 'autoprueba'"), `${tema.id}: falta escuchar el mensaje de autoprueba`);
+    assert.ok(bloque.includes("evento.source !== window.parent"), `${tema.id}: falta validar que el mensaje venga del padre`);
+    assert.ok(bloque.includes("kodu: 'autoprueba:resultado'"), `${tema.id}: falta responder con el resultado`);
+    assert.ok(bloque.includes('ejecutadas[id]'), `${tema.id}: falta correr una sola vez por id`);
+  }
+});
+
+await prueba('bloqueKit: la autoprueba usa temporizadores nativos capturados al inicio del script', () => {
+  for (const tema of TEMAS) {
+    assert.ok(
+      bloqueKit(tema.id).includes('var setTimeoutNativo = window.setTimeout;'),
+      `${tema.id}: falta capturar setTimeout nativo antes que nada`,
+    );
+  }
+});
+
+await prueba('bloqueKit: la autoprueba reporta duracionMs, incompleta y el detalle de reinicio/diferencias', () => {
+  for (const tema of TEMAS) {
+    const bloque = bloqueKit(tema.id);
+    for (const campo of ['reinicioOk', 'exitoVisibleAlInicio', 'botonesTocados', 'rangosMovidos', 'diferencias', 'volatiles', 'duracionMs', 'incompleta']) {
+      assert.ok(bloque.includes(campo), `${tema.id}: falta el campo "${campo}" en el resultado`);
+    }
   }
 });
 

@@ -105,7 +105,12 @@ async function asegurarDocente(email: string, password: string, nombre: string):
 }
 
 async function asegurarMotorMock(adminPage: Page, mockUrl: string): Promise<string> {
-  const proveedorExistente = await prisma.aiProvider.findFirst({ where: { kind: PROVIDER_KIND } });
+  // Only a live, keyed account: the dev DB accumulates disabled leftovers under
+  // the shared kind, and picking one silently falls back to the default model.
+  const proveedorExistente = await prisma.aiProvider.findFirst({
+    where: { kind: PROVIDER_KIND, enabled: true, apiKeyCipher: { not: null } },
+    orderBy: { id: 'asc' },
+  });
   let providerId = proveedorExistente?.id ?? null;
 
   if (!providerId) {
@@ -318,11 +323,22 @@ async function main(): Promise<void> {
       eventos.push(evento);
     }
 
-    const secuencia = eventos.filter((e) => e.type === 'code' || e.type === 'phase' || e.type === 'done').map((e) => e.type);
+    // T16 (round 4, "checklist del docente") agrega un `phase: 'planificando'`
+    // AL PRINCIPIO de todo turno que crea un recurso nuevo (proyectoA lo es):
+    // la secuencia ahora arranca con ese "phase" extra, antes de que exista
+    // ningún "code". Se filtra "planificando" acá y se sigue comprobando la
+    // secuencia de siempre para el resto — este chequeo es de T7, no de T16.
+    const secuencia = eventos
+      .filter((e) => (e.type === 'code' || e.type === 'phase' || e.type === 'done') && e.phase !== 'planificando')
+      .map((e) => e.type);
     assert.deepEqual(secuencia, ['code', 'phase', 'code', 'done'], `secuencia observada: ${secuencia.join(' → ')}`);
     console.log('✔ escena A (1/6): secuencia SSE exacta code(primero) → phase(revisando) → code(corregido) → done');
 
-    const eventosFase = eventos.filter((e) => e.type === 'phase');
+    // Mismo criterio: se filtra por el VALOR de la fase ("revisando"), no por
+    // la cantidad total de eventos "phase" — así este chequeo de T7 no se
+    // rompe cada vez que otra tarea agrega una fase nueva en otro punto del
+    // turno (T16: "planificando", antes de esto).
+    const eventosFase = eventos.filter((e) => e.type === 'phase' && e.phase === 'revisando');
     assert.equal(eventosFase.length, 1);
     assert.equal(eventosFase[0]!.phase, 'revisando');
 
@@ -332,8 +348,11 @@ async function main(): Promise<void> {
     assert.ok((codesA[1]!.html as string).includes('data-marca="a-corregido"'), 'el segundo "code" tiene que ser la corrección');
     console.log('✔ escena A (2/6): el primer "code" es el primer pase y el segundo ya es la corrección');
 
-    assert.equal(mock.llamadas.length, 2, 'dos pedidos al mock: primer pase + corrección');
-    const segundoPedido = mock.llamadas[1]!.body as {
+    // 3, no 2: T16 agrega su propio pedido de checklist ANTES del primer
+    // pase (proyectoA es un recurso nuevo) — checklist(0) + primer pase(1) +
+    // corrección(2).
+    assert.equal(mock.llamadas.length, 3, 'tres pedidos al mock: checklist + primer pase + corrección');
+    const segundoPedido = mock.llamadas[2]!.body as {
       messages: Array<{ role: string; content: string }>;
       tool_choice: unknown;
       reasoning_effort?: string;
@@ -369,7 +388,9 @@ async function main(): Promise<void> {
     assert.deepEqual(segundoPedido.tool_choice, { type: 'function', function: { name: 'update_resource_code' } });
     console.log('✔ escena A (3/6): el segundo pedido lleva el bloque del recurso + el mensaje sintético con los hallazgos, sin historial');
 
-    const primerPedido = mock.llamadas[0]!.body as { reasoning_effort?: string };
+    // mock.llamadas[0] es el pedido de checklist (T16, siempre "fast"/"none"),
+    // no el primer pase — ver la nota de arriba.
+    const primerPedido = mock.llamadas[1]!.body as { reasoning_effort?: string };
     assert.equal(primerPedido.reasoning_effort, 'high', 'A fondo tiene que subir el razonamiento del primer pase');
     assert.equal(segundoPedido.reasoning_effort, 'none', 'la corrección tiene que ir SIEMPRE con razonamiento apagado');
     console.log('✔ escena A (4/6): razonamiento "high" en el primer pase, "none" en la corrección (mecánica, no creativa)');
@@ -402,8 +423,10 @@ async function main(): Promise<void> {
       speed: 'fast',
     });
     assert.equal(resultadoB.status, 200);
-    assert.equal(mock.llamadas.length, 1, 'Rápido sin autoReviewForAll no puede sumar una segunda llamada');
-    console.log('✔ escena B: prime + Rápido, autoReviewForAll apagado → un solo pedido al mock');
+    // 2, no 1: checklist (T16, corre sin importar la velocidad del turno) +
+    // el primer pase — sigue sin haber una TERCERA llamada (ninguna corrección).
+    assert.equal(mock.llamadas.length, 2, 'Rápido sin autoReviewForAll no puede sumar una llamada de corrección');
+    console.log('✔ escena B: prime + Rápido, autoReviewForAll apagado → checklist + primer pase, sin corrección');
 
     // ───────────────────────────────────────────────────────────
     // Escena C — docente normal (sin prime) con autoReviewForAll prendido:
@@ -429,7 +452,8 @@ async function main(): Promise<void> {
       speed: 'deep',
     });
     assert.equal(resultadoC.status, 200);
-    assert.equal(mock.llamadas.length, 2, 'un docente común con autoReviewForAll prendido SÍ recibe la corrección');
+    // 3, no 2: checklist(0) + primer pase(1) + corrección(2).
+    assert.equal(mock.llamadas.length, 3, 'un docente común con autoReviewForAll prendido SÍ recibe la corrección');
     const proyectoTrasC = await prisma.project.findUniqueOrThrow({ where: { id: proyectoC.id } });
     assert.ok(proyectoTrasC.currentHtml.includes('data-marca="c-corregido"'));
     console.log('✔ escena C: docente sin prime + autoReviewForAll → la corrección corre igual');
@@ -457,9 +481,12 @@ async function main(): Promise<void> {
       modelId,
       speed: 'fast',
     });
-    assert.equal(mock.llamadas.length, 1);
+    // 2, no 1: checklist(0, T16 — turno 1 SÍ es un recurso nuevo) + primer
+    // pase(1).
+    assert.equal(mock.llamadas.length, 2);
 
-    // Turno 2, A fondo: mismo emoji, otro texto alrededor.
+    // Turno 2, A fondo: mismo emoji, otro texto alrededor. Ya NO es un
+    // recurso inicial (turno 1 ya lo cambió) — T16 no agrega checklist acá.
     mock.programarRespuesta({ texto: '', html: htmlConEmoji('d', 'Versión con un ajuste chico'), chunkDelayMs: 10, chunkBytes: 20_000 });
     const resultadoD = await enviarTurnoPorApi(primePage, {
       projectId: proyectoD.id,
@@ -469,7 +496,10 @@ async function main(): Promise<void> {
       speed: 'deep',
     });
     assert.equal(resultadoD.status, 200);
-    assert.equal(mock.llamadas.length, 2, 'turno 2 no puede sumar una tercera llamada: no introdujo nada nuevo');
+    // 3, no 2: checklist(0) + primer pase(1) del turno 1, + el primer pase
+    // del turno 2(2) — turno 2 sigue sin sumar una corrección propia (sin
+    // checklist, sin hallazgos nuevos).
+    assert.equal(mock.llamadas.length, 3, 'turno 2 no puede sumar una llamada de corrección: no introdujo nada nuevo');
     console.log('✔ escena D: editar un recurso que ya tenía un emoji sin agregar otro nuevo → sin corrección');
 
     // ───────────────────────────────────────────────────────────
@@ -492,7 +522,8 @@ async function main(): Promise<void> {
       eventosE.push(evento);
     }
 
-    assert.equal(mock.llamadas.length, 2, 'la corrección se intenta igual, aunque falle');
+    // 3, no 2: checklist(0) + primer pase(1) + el intento de corrección(2).
+    assert.equal(mock.llamadas.length, 3, 'la corrección se intenta igual, aunque falle');
     assert.equal(eventosE.filter((e) => e.type === 'error').length, 0, 'una corrección fallida no puede generar un error visible');
     const doneE = eventosE.find((e) => e.type === 'done');
     assert.ok(doneE, 'el turno tiene que terminar con "done" igual');

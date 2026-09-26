@@ -30,6 +30,15 @@ import {
   esRecursoInicial,
   variantesEfectivas,
 } from '../../../lib/ai/versiones.ts';
+import {
+  bloqueChecklistParaAjuste,
+  bloqueChecklistParaGenerar,
+  construirMensajesChecklist,
+  parsearChecklist,
+  serializarChecklist,
+  type ItemChecklist,
+} from '../../../lib/ai/checklist.ts';
+import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
@@ -487,6 +496,141 @@ async function generarVersionSecundaria(args: {
   }
 }
 
+/** Tope de tiempo del paso de checklist (T16, round 4): nunca puede demorar
+ *  la generación principal más que esto — pasado el plazo, el turno sigue
+ *  sin checklist, nunca se hace esperar al docente por un paso que es sólo
+ *  un extra. */
+const CHECKLIST_TIMEOUT_MS = 15_000;
+
+/** Un checklist son 3 a 6 líneas cortas: mucho menos que el tope pensado
+ *  para escribir un recurso entero (`provider.maxTokens`). */
+const CHECKLIST_MAX_TOKENS = 400;
+
+/** Cuánto del texto crudo se loguea cuando el checklist termina vacío por
+ *  truncamiento o por fallar el parseo (T21) — sólo un adelanto, no el texto
+ *  entero, para no ensuciar el log con un HTML completo si el modelo
+ *  arrancó a escribir código en vez de la lista. */
+const CHECKLIST_LOG_EXCERPT = 120;
+
+/**
+ * T16 (round 4, "checklist del docente"): un paso barato e INDEPENDIENTE
+ * del generador — nunca fuerza la herramienta, nunca manda imágenes, sin
+ * historial — que convierte el pedido del docente en 3 a 6 comportamientos
+ * observables ANTES de generar un recurso NUEVO. A propósito aparte del
+ * generador y no "en el mismo pase": una prueba escrita en la misma pasada
+ * que el código comparte la misma lectura equivocada del pedido, así que no
+ * sirve de nada como red de seguridad (ver "Design decisions" de la tarea).
+ *
+ * T20 (round 5): el pedido va SIN `tools` ni `tool_choice` (`sinHerramientas`
+ * en `requestCompletionStream`) — medido contra DeepSeek real, con las
+ * herramientas puestas el modelo las llamaba y se ponía a escribir HTML en
+ * vez de la lista, 8 de 8 pedidos reales.
+ *
+ * Nunca tira ni bloquea el turno: cualquier falla, timeout
+ * (`CHECKLIST_TIMEOUT_MS`) o muy pocos ítems válidos (`parsearChecklist`) se
+ * loguea con el motivo concreto (T21) y devuelve `[]` — el llamador lo trata
+ * igual que "este turno no tiene checklist", nunca como un error del turno.
+ */
+async function generarChecklist(args: {
+  pedido: string;
+  provider: ProviderConfig;
+  userId: string;
+  projectId: string;
+  signal?: AbortSignal;
+}): Promise<ItemChecklist[]> {
+  const controlador = new AbortController();
+  // T21: de dónde vino el abort, para poder distinguir "se pasó del tope
+  // propio de este paso" de "el turno entero se canceló desde afuera" en el
+  // catch de abajo. Sólo importa el PRIMERO que dispare (uno solo puede
+  // abortar el mismo AbortController).
+  let motivoAbort: 'timeout' | 'externo' | null = null;
+  const timeout = setTimeout(() => {
+    motivoAbort = 'timeout';
+    controlador.abort();
+  }, CHECKLIST_TIMEOUT_MS);
+  const onAbortExterno = () => {
+    motivoAbort ??= 'externo';
+    controlador.abort();
+  };
+  args.signal?.addEventListener('abort', onAbortExterno, { once: true });
+
+  try {
+    const respuesta = await requestCompletionStream({
+      messages: construirMensajesChecklist(args.pedido),
+      provider: args.provider,
+      signal: controlador.signal,
+      velocidad: 'fast',
+      maxTokensOverride: CHECKLIST_MAX_TOKENS,
+      sinHerramientas: true,
+    });
+
+    let texto = '';
+    let usage: MotorTokenUsage | null = null;
+    let llamoHerramienta = false;
+    let finishReason = '';
+    for await (const event of readCompletionStream(respuesta)) {
+      if (event.type === 'text') texto += event.delta;
+      else if (event.type === 'usage') usage = event.usage;
+      else if (event.type === 'tool' || event.type === 'tool_start') llamoHerramienta = true;
+      else if (event.type === 'finish') finishReason = event.reason;
+    }
+
+    // Se registra el consumo AUNQUE `parsearChecklist` termine en `[]`: los
+    // tokens ya se gastaron igual, mismo criterio que el resto del archivo
+    // ("El consumo se registra aunque el turno se haya cortado").
+    if (usage) {
+      await recordUsage({
+        userId: args.userId,
+        projectId: args.projectId,
+        aiModelId: args.provider.id,
+        model: args.provider.model,
+        promptTokens: usage.promptTokens,
+        cachedInputTokens: usage.cachedTokens,
+        completionTokens: usage.completionTokens,
+        precios: args.provider.precios,
+      }).catch((error) => console.error('[chat/stream] checklist: no se pudo registrar el consumo:', error));
+    }
+
+    const items = parsearChecklist(texto);
+    if (items.length === 0) {
+      const excerpt = texto.slice(0, CHECKLIST_LOG_EXCERPT);
+      if (llamoHerramienta) {
+        // T20 debería haber evitado esto (sin `tools` no hay nada que
+        // llamar), pero si un proveedor igual lo hace, mejor loguearlo
+        // distinto de un simple parseo fallido.
+        console.warn(
+          '[chat/stream] checklist: vacío — el modelo contestó con una llamada a herramienta en vez de texto.',
+        );
+      } else if (finishReason === 'length') {
+        console.warn(
+          `[chat/stream] checklist: vacío — se cortó por el tope de ${CHECKLIST_MAX_TOKENS} tokens; ` +
+            `texto recibido: ${texto.length} caracteres, empieza así: "${excerpt}"`,
+        );
+      } else {
+        console.warn(
+          '[chat/stream] checklist: vacío — no se pudieron sacar suficientes ítems válidos; ' +
+            `texto recibido: ${texto.length} caracteres, empieza así: "${excerpt}"`,
+        );
+      }
+    }
+    return items;
+  } catch (error) {
+    if (controlador.signal.aborted && motivoAbort) {
+      const razon =
+        motivoAbort === 'timeout'
+          ? `timeout, se pasó del tope de ${CHECKLIST_TIMEOUT_MS}ms de este paso`
+          : 'el turno se canceló desde afuera';
+      console.warn(`[chat/stream] checklist: vacío — ${razon}.`);
+    } else {
+      console.warn('[chat/stream] checklist: vacío — el proveedor falló:', (error as Error).message);
+    }
+    return [];
+  } finally {
+    clearTimeout(timeout);
+    args.signal?.removeEventListener('abort', onAbortExterno);
+  }
+}
+
 export const POST: APIRoute = async ({ request, locals }) => {
   const user = locals.user!;
 
@@ -572,6 +716,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // lectura sigue siendo válida durante todo el turno.
   const htmlAlInicioDelTurno = project.currentHtml;
 
+  // T16 (round 4, "checklist del docente"): la misma pregunta que ya
+  // resolvía `esRecursoInicial(htmlAlInicioDelTurno)` de más abajo, sólo que
+  // ahora hacen falta DOS respuestas que la comparten (versiones Y
+  // checklist) — se calcula una sola vez para no repetir la llamada ni,
+  // peor, arriesgar que un cambio futuro la calcule distinto en cada lado.
+  const recursoInicial = esRecursoInicial(htmlAlInicioDelTurno);
+
   /**
    * T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un recurso"):
    * capacidad × recurso todavía en blanco × lo pedido, en ese orden — mismo
@@ -583,7 +734,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const solicitaVersiones =
     variantesEfectivas({
       puedePedirVersiones: capacidades.puedePedirVersiones,
-      esRecursoInicial: esRecursoInicial(htmlAlInicioDelTurno),
+      esRecursoInicial: recursoInicial,
       variantsPedidas: variants,
     }) === 3;
 
@@ -619,7 +770,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
   }
 
-  const [globalRules, userRules, assets, history] = await Promise.all([
+  const [globalRules, userRules, assets, history, checklistVigente] = await Promise.all([
     prisma.customRule.findMany({
       where: { isGlobal: true, isActive: true },
       select: { title: true, content: true },
@@ -649,6 +800,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
       take: HISTORY_LIMIT,
       select: { role: true, content: true },
     }),
+    // T16 (round 4, "checklist del docente"): sólo hace falta en un turno de
+    // AJUSTE (nunca en uno de creación, que arma el suyo desde cero más
+    // abajo) — se salta la consulta entera en ese caso en vez de pedirla y
+    // descartarla.
+    recursoInicial ? Promise.resolve<ItemChecklist[]>([]) : checklistActual(project.id),
   ]);
 
   const assetContexts = assets.map((asset) => ({
@@ -747,11 +903,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // `systemPrompt` — viaja acá, pegado ANTES del texto del docente en el
   // ÚLTIMO mensaje de usuario, para que el system prompt y el historial de
   // arriba queden estables turno a turno.
-  const currentResourceBlock = buildCurrentResourceBlock(
-    project.currentHtml,
-    project.title,
-    codeEditedByTeacher ?? false,
-  );
+  // T16 (round 4): en un turno de AJUSTE con checklist vigente, se suma acá
+  // — el checklist es del "estado actual del recurso", no del pedido de
+  // este turno puntual, así que va en el mismo bloque, nunca mezclado con
+  // el `message` del docente que se persiste tal cual (ver `buildUserContent`).
+  const currentResourceBlock =
+    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false) +
+    (checklistVigente.length > 0 ? `\n\n${bloqueChecklistParaAjuste(checklistVigente)}` : '');
 
   const userContent = await buildUserContent(
     message,
@@ -936,6 +1094,45 @@ export const POST: APIRoute = async ({ request, locals }) => {
       console.log(
         `[chat/stream] inicio proyecto=${project.id} motor=${provider.id} (${provider.label}) mensaje=${message.length}c imagenes=${Array.isArray(userContent) ? userContent.length - 1 : 0}`,
       );
+
+      /**
+       * T16 (round 4, "checklist del docente"): sólo al crear un recurso
+       * NUEVO y de verdad ir a generar código (`forzar`, calculado más
+       * arriba junto con el system prompt) — nunca en un ajuste, nunca en
+       * una consulta que el modelo puede contestar sin tocar el recurso. Va
+       * ANTES de cualquier motor de la generación principal: el checklist
+       * tiene que estar en el ÚLTIMO mensaje de usuario antes de que ese
+       * mensaje viaje, versiones incluidas.
+       */
+      let checklistItems: ItemChecklist[] = [];
+      if (recursoInicial && forzar) {
+        send({ type: 'phase', phase: 'planificando' });
+        checklistItems = await generarChecklist({
+          pedido: message,
+          provider,
+          userId: user.id,
+          projectId: project.id,
+          signal: request.signal,
+        });
+
+        if (checklistItems.length > 0) {
+          send({ type: 'checklist', items: checklistItems });
+
+          // Mutación EN EL LUGAR del último mensaje: `messages`, `messagesV2`
+          // y `messagesV3` (si este turno también pidió versiones, T9) lo
+          // comparten por REFERENCIA — se armaron con `messages.slice(1)`,
+          // que copia el array pero no los objetos de adentro — así que
+          // pisar `.content` acá alcanza para que las tres versiones reciban
+          // el mismo bloque de checklist, sin tocar cómo se armó
+          // `solicitaVersiones` más arriba.
+          const ultimoMensaje = messages[messages.length - 1]!;
+          const bloque = bloqueChecklistParaGenerar(checklistItems);
+          ultimoMensaje.content =
+            typeof ultimoMensaje.content === 'string'
+              ? `${ultimoMensaje.content}\n\n${bloque}`
+              : [...ultimoMensaje.content, { type: 'text' as const, text: bloque }];
+        }
+      }
 
       /**
        * Pide el turno, y si el principal no da más cae solo al respaldo.
@@ -1545,6 +1742,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
               threadId: thread.id,
               role: 'assistant',
               content: finalText,
+              // T16 (round 4): sólo en el turno que de verdad generó el
+              // checklist (creación, con ítems válidos) — nunca en un
+              // ajuste, y nunca cuando el paso falló o dio muy pocos ítems
+              // (`checklistItems` queda `[]` en los dos casos).
+              ...(checklistItems.length > 0 ? { checklist: serializarChecklist(checklistItems) } : {}),
               ...(versionesParaGuardar.length > 0
                 ? { chosenVariantIndex: 1, variants: { create: versionesParaGuardar } }
                 : {}),

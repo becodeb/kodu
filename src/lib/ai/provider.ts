@@ -158,6 +158,40 @@ export async function requestCompletionStream(options: {
    * y en cada saturación: es la misma velocidad durante todo el turno.
    */
   velocidad?: Speed | null;
+  /**
+   * T12 (round 3, `arnes-robustez`): anula `razonamientoEfectivo(provider,
+   * velocidad)` con un objeto YA ARMADO. La autocorrección de la autoprueba
+   * usa un nivel "low" que NO es parte del vocabulario `Speed` que ve el
+   * docente (la tarea pide explícitamente no ensanchar `Speed` sólo para un
+   * nivel interno) — ver `razonamientoCorreccion` más abajo. `undefined`/
+   * `null` = comportamiento de siempre (`razonamientoEfectivo`).
+   */
+  razonamientoOverride?: Record<string, unknown> | null;
+  /**
+   * T16 (round 4, `arnes-robustez`): pisa `provider.maxTokens` para UNA
+   * llamada puntual. El paso de checklist es texto corto (3 a 6 líneas), no
+   * un documento HTML — dejarle el tope pensado para "recurso entero" sólo
+   * arriesga que un modelo verborrágico se vaya de tema sin que nada lo
+   * corte antes. `undefined`/`null` = `provider.maxTokens` de siempre.
+   */
+  maxTokensOverride?: number | null;
+  /**
+   * T20 (round 5, `arnes-robustez`): para una llamada AUXILIAR que nunca
+   * escribe el recurso (hoy sólo el checklist, `generarChecklist` en
+   * `stream.ts`), el pedido no manda NI `tools` NI `tool_choice` — se
+   * OMITEN las dos claves entero, no `tool_choice: 'none'`. Medido contra
+   * DeepSeek real: con `tools: RESOURCE_TOOLS` + `tool_choice: 'auto'` y
+   * razonamiento `none`, el modelo llamó `update_resource_code` y se puso a
+   * escribir HTML en vez de texto — 8 de 8 pedidos reales de checklist. Sin
+   * `tools` el mismo pedido devolvió 6 ítems en 188 tokens. Incompatible con
+   * `forzarHerramienta`: si viene `true` junto con `sinHerramientas: true`,
+   * `sinHerramientas` GANA y `forzarHerramienta` se ignora — no tiene
+   * sentido "forzar" una herramienta que ni se ofrece, y una llamada que ya
+   * pide "sin herramientas" es por definición una llamada que no escribe el
+   * recurso. `undefined`/`false` = comportamiento de siempre (`tools` +
+   * `tool_choice` según `forzarHerramienta`).
+   */
+  sinHerramientas?: boolean;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -173,7 +207,12 @@ export async function requestCompletionStream(options: {
   // La obligación de llamar la herramienta se puede aflojar sobre la marcha:
   // ver ToolChoiceNoSoportado. Es una sola vez, y no gasta ninguno de los
   // intentos reservados para la saturación.
-  let forzar = options.forzarHerramienta ?? false;
+  //
+  // T20: `sinHerramientas` gana por encima de `forzarHerramienta` — ver el
+  // comentario de `sinHerramientas` más arriba. No tiene sentido "aflojar"
+  // una obligación que nunca se mandó.
+  const sinHerramientas = options.sinHerramientas ?? false;
+  let forzar = !sinHerramientas && (options.forzarHerramienta ?? false);
   let yaAflojo = false;
   let saturaciones = 0;
 
@@ -185,6 +224,9 @@ export async function requestCompletionStream(options: {
         signal: options.signal,
         forzarHerramienta: forzar,
         velocidad: options.velocidad,
+        razonamientoOverride: options.razonamientoOverride,
+        maxTokensOverride: options.maxTokensOverride,
+        sinHerramientas,
       });
     } catch (error) {
       if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
@@ -273,6 +315,32 @@ export function razonamientoEfectivo(
   return { reasoning_effort: yaAlcanzaAlto ? provider.reasoningEffort : 'high' };
 }
 
+/**
+ * El razonamiento de la autocorrección de la autoprueba (T12, round 3 de
+ * `arnes-robustez`): un nivel "low" interno, nunca expuesto al docente (no es
+ * parte de `Speed`, ver el comentario de `razonamientoOverride` en
+ * `requestCompletionStream`). Es una corrección mecánica y acotada —el
+ * detalle exacto del error ya viaja en el prompt (`autoprueba.ts`,
+ * `construirMensajeCorreccion`)—, así que no necesita el razonamiento "high"
+ * de A fondo, pero sí un poco más que "none": a diferencia de la corrección
+ * de T7/T8 (`velocidad: 'fast'`, razonamiento apagado del todo), acá el
+ * modelo tiene que releer un mensaje de error real y ubicarlo en el código,
+ * no sólo reescribir con una lista de reglas ya resueltas.
+ *
+ * Mismo dialecto que `razonamiento()`/`razonamientoEfectivo()`: sin
+ * `reasoningEffort` cargado (dialecto desconocido) no se manda nada.
+ */
+export function razonamientoCorreccion(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    // MiniMax no tiene niveles: cualquier nivel prendido alcanza para "low".
+    return { thinking: { type: 'enabled' } };
+  }
+
+  return { reasoning_effort: 'low' };
+}
+
 async function intentarUna(
   endpoint: string,
   options: {
@@ -281,6 +349,9 @@ async function intentarUna(
     signal?: AbortSignal;
     forzarHerramienta?: boolean;
     velocidad?: Speed | null;
+    razonamientoOverride?: Record<string, unknown> | null;
+    maxTokensOverride?: number | null;
+    sinHerramientas?: boolean;
   },
 ): Promise<Response> {
   const { provider } = options;
@@ -296,10 +367,17 @@ async function intentarUna(
       body: JSON.stringify({
         model: provider.model,
         messages: options.messages,
-        tools: RESOURCE_TOOLS,
-        tool_choice: options.forzarHerramienta
-          ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
-          : 'auto',
+        // T20: una llamada auxiliar que nunca escribe el recurso (hoy sólo
+        // el checklist) no manda NI `tools` NI `tool_choice` — `undefined`
+        // hace que `JSON.stringify` OMITA la clave entera, que es lo que
+        // hizo falta contra DeepSeek (`tool_choice: 'none'` no alcanza: el
+        // proveedor sigue viendo `tools` y puede llamarla igual).
+        tools: options.sinHerramientas ? undefined : RESOURCE_TOOLS,
+        tool_choice: options.sinHerramientas
+          ? undefined
+          : options.forzarHerramienta
+            ? { type: 'function', function: { name: UPDATE_RESOURCE_CODE } }
+            : 'auto',
         // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
         // conocen el parámetro contestan 400 si se les manda, así que el
         // default (NULL en el catálogo) es no mandarlo.
@@ -309,13 +387,16 @@ async function intentarUna(
         // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
         // el temperature de acá abajo. T6: pisado por la velocidad efectiva
         // del turno cuando corresponde (`razonamientoEfectivo`); sin ella, es
-        // exactamente `razonamiento(provider)` de siempre.
-        ...razonamientoEfectivo(provider, options.velocidad ?? null),
+        // exactamente `razonamiento(provider)` de siempre. T12:
+        // `razonamientoOverride` (si vino) manda por encima de las dos — ver
+        // el comentario en `requestCompletionStream`.
+        ...(options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null)),
         stream: true,
         temperature: 0.6,
         // Sin esto la API aplica su default (4.096) y todo recurso que pase de
-        // ~200 líneas vuelve cortado por la mitad.
-        max_tokens: provider.maxTokens,
+        // ~200 líneas vuelve cortado por la mitad. `maxTokensOverride` (T16)
+        // pisa esto para una llamada puntual que no escribe un recurso.
+        max_tokens: options.maxTokensOverride ?? provider.maxTokens,
         // Pide el conteo de tokens en el último chunk: es de dónde sale el
         // consumo que se registra por usuario.
         stream_options: { include_usage: true },

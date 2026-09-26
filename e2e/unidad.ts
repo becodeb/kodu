@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { Prisma } from '../src/generated/prisma/client.ts';
 import { prisma } from '../src/lib/db.ts';
 import { cadenaDeMotores, invalidarCatalogo, motoresParaDocente, normalizarMotor } from '../src/lib/ai/catalogo.ts';
@@ -11,10 +12,25 @@ import { CONSUMO_ALTO, CONSUMO_MEDIO, calcularCostoTurno, consumedTokens, nivelD
 import { formatearCostoUsd } from '../src/lib/format/costo.ts';
 import { buildCurrentResourceBlock, buildSystemPrompt } from '../src/lib/ai/prompt.ts';
 import { TEMAS, aplicarKit } from '../src/lib/ai/kit.ts';
-import { razonamiento, razonamientoEfectivo, type ProviderConfig } from '../src/lib/ai/provider.ts';
+import {
+  razonamiento,
+  razonamientoCorreccion,
+  razonamientoEfectivo,
+  requestCompletionStream,
+  type ProviderConfig,
+} from '../src/lib/ai/provider.ts';
+import {
+  construirMensajeCorreccion,
+  lineaFuente,
+  necesitaCorreccion,
+  type ErrorAutoprueba,
+  type ResultadoPrueba,
+} from '../src/lib/ai/autoprueba.ts';
+import type { ItemChecklist } from '../src/lib/ai/checklist.ts';
 import { pideCambio, aplicarKitAlTurno } from '../src/pages/api/chat/stream.ts';
 import { mensajeParaDeshacer } from '../src/lib/client/undo.ts';
 import { esVelocidadValida } from '../src/lib/client/velocidad.ts';
+import { contarChecklistOk, estadoDeChecklist } from '../src/lib/client/checklist.ts';
 import type { WorkspaceMessage } from '../src/lib/workspace-types.ts';
 
 /**
@@ -525,6 +541,77 @@ function config(extra: Partial<ProviderConfig>): ProviderConfig {
   };
 }
 
+// ── sinHerramientas (T20, round 5) ─────────────────────────────────────────
+//
+// `intentarUna` (dentro de `provider.ts`, no exportada) arma el body real
+// que se manda por HTTP: no hay forma de probarlo sin de verdad mandar un
+// pedido. Un servidor HTTP efímero (mismo patrón que `e2e/mock-proveedor.ts`,
+// pero mínimo — sólo lee el body y contesta un SSE vacío) alcanza para esto
+// sin tocar ningún proveedor real ni la base de datos.
+
+/** Manda UN pedido con `requestCompletionStream` contra un servidor propio
+ *  que sólo devuelve el body que recibió (parseado). */
+async function bodyDelPedido(extra: { sinHerramientas?: boolean; forzarHerramienta?: boolean }): Promise<Record<string, unknown>> {
+  let capturado: Record<string, unknown> | null = null;
+
+  const server = createServer((req, res) => {
+    const trozos: Buffer[] = [];
+    req.on('data', (trozo: Buffer) => trozos.push(trozo));
+    req.on('end', () => {
+      try {
+        capturado = JSON.parse(Buffer.concat(trozos).toString('utf8')) as Record<string, unknown>;
+      } catch {
+        capturado = {};
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.write('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+
+  try {
+    const address = server.address();
+    const puerto = address && typeof address === 'object' ? address.port : 0;
+    const respuesta = await requestCompletionStream({
+      messages: [{ role: 'user', content: 'hola' }],
+      provider: config({ baseUrl: `http://127.0.0.1:${puerto}` }),
+      ...extra,
+    });
+    // Se agota el body: si no, `server.close()` puede quedar esperando la
+    // conexión keep-alive.
+    for await (const _chunk of respuesta.body as any) void _chunk;
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+
+  assert.ok(capturado, 'el servidor de prueba tiene que haber recibido el pedido');
+  return capturado!;
+}
+
+await prueba('requestCompletionStream: sinHerramientas OMITE "tools" y "tool_choice" enteras, no las vacía', async () => {
+  const body = await bodyDelPedido({ sinHerramientas: true });
+  assert.ok(!('tools' in body), 'la clave "tools" no tiene que existir en absoluto');
+  assert.ok(!('tool_choice' in body), 'la clave "tool_choice" no tiene que existir en absoluto (no "none")');
+});
+
+await prueba('requestCompletionStream: sin sinHerramientas, el comportamiento de siempre (tools + tool_choice)', async () => {
+  const body = await bodyDelPedido({});
+  assert.ok(Array.isArray(body.tools) && (body.tools as unknown[]).length > 0);
+  assert.equal(body.tool_choice, 'auto');
+});
+
+await prueba('requestCompletionStream: sinHerramientas gana por encima de forzarHerramienta', async () => {
+  const body = await bodyDelPedido({ sinHerramientas: true, forzarHerramienta: true });
+  assert.ok(!('tools' in body), 'sinHerramientas tiene que ignorar forzarHerramienta, no combinarlos');
+  assert.ok(!('tool_choice' in body));
+});
+
 await prueba('razonamiento: sin nivel cargado no se manda NADA', () => {
   assert.deepEqual(razonamiento(config({})), {});
   // Ni siquiera con el dialecto elegido: sin nivel no hay nada que decir.
@@ -599,6 +686,122 @@ await prueba('buildSystemPrompt: no lleva el HTML actual (T1, vive en el último
     !prompt.includes('## Estado actual del recurso'),
     'el bloque del recurso actual ya no puede viajar en el system prompt',
   );
+});
+
+// ── T3 (arnes-robustez): "Que funcione de verdad" y los helpers de window.kodu ──
+// (odd/tasks/arnes-robustez.md)
+
+await prueba('buildSystemPrompt: lleva la sección "Que funcione de verdad" con las reglas de la vuelta 1', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(prompt.includes('## Que funcione de verdad'), 'tiene que llevar la sección nueva de T3');
+
+  const marcasDeLasSeisReglas = [
+    'reiniciar()', // 1: un solo reiniciar() que vuelve todo al estado inicial
+    'al soltar', // 2: se evalúa cuando la acción termina, no a mitad de arrastre
+    'kodu.cancelarTemporizadores()', // 3: cancelar lo pendiente al empezar una acción nueva
+    'pointer-events:none', // 4: toda capa decorativa/superpuesta
+    'nunca arranca resuelto', // 5: el estado inicial
+    'se declaran una sola vez', // 6: los datos del tema
+  ];
+  for (const marca of marcasDeLasSeisReglas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una de las 6 reglas: "${marca}"`);
+  }
+});
+
+await prueba('buildSystemPrompt: documenta los cuatro helpers de window.kodu por nombre', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const helper of ['kodu.icono(', 'kodu.arrastrar(', 'kodu.despues(', 'kodu.cancelarTemporizadores(']) {
+    assert.ok(prompt.includes(helper), `falta documentar el helper "${helper}"`);
+  }
+});
+
+// ── Round 2 (arnes-robustez): reglas nuevas y helpers a prueba de mal uso ──
+
+await prueba('buildSystemPrompt: lleva las reglas de la vuelta 2 del arnés', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'ESTADO_INICIAL', // reiniciar vuelve a un estado declarado una sola vez
+    'Un LOGRO, una vez obtenido, queda hasta reiniciar', // logro contra condición
+    'borrá el mensaje del intento anterior',
+    'desde el primer cuadro', // estado inicial sincronizado
+    'kodu.mezclar(', // orden de las opciones
+    'nunca con 0 aciertos', // festejo sólo ante un logro real
+    '820×1180', // controles visibles en escritorio y tablet
+    'recién al resolver el anterior', // desafíos en orden
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla de la vuelta 2: "${marca}"`);
+  }
+  assert.ok(!prompt.includes('puede volver a "pendiente"'), 'la regla vieja de consignas en vivo tiene que haberse ido');
+});
+
+await prueba('buildSystemPrompt: documenta el arrastre en unidades y que el helper ya maneja el teclado', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const marca of ['alCambiar: (v) =>', 'valor: () =>', 'no agregues `pointerdown`', '`p` es un objeto', 'kodu.festejar()']) {
+    assert.ok(prompt.includes(marca), `falta en la documentación de los helpers: "${marca}"`);
+  }
+  assert.ok(!prompt.includes('canvas-confetti'), 'el festejo pasa por kodu.festejar, no por cargar canvas-confetti a mano');
+});
+
+// ── Round 3, T10 (arnes-robustez): kodu.arrastrar ya mueve el punto, colores
+// de interfaz vs. objetos del contenido, y tres reglas de una línea nuevas ──
+
+await prueba('buildSystemPrompt: kodu.arrastrar documenta que YA mueve el punto en modo unidad y el opt-out mover:false', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  for (const marca of ['YA MUEVE el punto', 'ni lo reposiciones en `alCambiar`', '`mover:false`']) {
+    assert.ok(prompt.includes(marca), `falta la marca del posicionamiento de T9 en el prompt: "${marca}"`);
+  }
+});
+
+await prueba('buildSystemPrompt: distingue colores de interfaz de los objetos del contenido', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(
+    prompt.includes('Son para la INTERFAZ; los OBJETOS del contenido'),
+    'falta la aclaración de que los tokens del tema son para la interfaz, no para los objetos dibujados',
+  );
+});
+
+await prueba('buildSystemPrompt: lleva las tres reglas nuevas de "Que funcione de verdad" (T10)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'sólo para texto', // 11: textContent vs innerHTML
+    'ganan a `:hover`', // 12: estilos de estado sobre hover
+    'ramifican lo que sigue', // 13: "tomar decisiones" implica ramas
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla nueva de T10: "${marca}"`);
+  }
+});
+
+// ── Round 4, T15 (arnes-robustez): window.__koduPruebas (Part A) y las
+// cinco reglas/helpers de Part B (kodu.pantalla, progreso en ramas, festejar
+// en finales negativos, atajos de teclado, evaluar al entrar) ──
+
+await prueba('buildSystemPrompt: documenta window.__koduPruebas con un ejemplo corto (Part A, T15)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  assert.ok(prompt.includes('window.__koduPruebas'), 'falta mencionar window.__koduPruebas');
+  assert.ok(prompt.includes('t.clic'), 'falta documentar el ayudante t.clic');
+  assert.ok(prompt.includes('t.texto'), 'falta documentar el ayudante t.texto');
+  assert.ok(prompt.includes('t.esperar'), 'falta documentar el ayudante t.esperar');
+  assert.ok(prompt.includes('nunca debilites una prueba'), 'falta la advertencia de no debilitar una prueba para que pase');
+  assert.ok(
+    prompt.includes("window.__koduPruebas=[{id:'c1',prueba:async t=>"),
+    'falta el ejemplo corto de window.__koduPruebas',
+  );
+});
+
+await prueba('buildSystemPrompt: lleva las cinco reglas/helpers de Part B (T15)', () => {
+  const prompt = buildSystemPrompt(contextoDePrueba(2, false));
+  const marcas = [
+    'kodu.pantalla(nombre)', // helper: pantallas + candado del doble toque
+    'contador fijo tipo "3 de 10"', // 14: progreso en caminos ramificados
+    'ni en un final negativo', // 8 (actualizada): festejar sólo en positivo
+    'nada dispara con `kodu.ocupado()`', // 15: atajos de teclado respetan el mismo estado
+    'evaluá al toque si ya está resuelto', // 16: evaluar al entrar a un paso/desafío
+  ];
+  for (const marca of marcas) {
+    assert.ok(prompt.includes(marca), `falta la marca de una regla/helper de Part B (T15): "${marca}"`);
+  }
 });
 
 await prueba('buildCurrentResourceBlock: el HTML actual viaja con el bloque del kit plegado', () => {
@@ -1000,6 +1203,251 @@ await prueba('razonamientoEfectivo: thinking, Rápido apaga y A fondo prende sin
   }
 });
 
+await prueba('razonamientoCorreccion: dialecto desconocido no manda nada', () => {
+  assert.deepEqual(razonamientoCorreccion(config({})), {});
+});
+
+await prueba('razonamientoCorreccion: reasoning_effort siempre "low", sin importar lo configurado', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoCorreccion(config({ reasoningEffort: nivel, reasoningParam: 'reasoning_effort' })),
+      { reasoning_effort: 'low' },
+      `configurado en "${nivel}", la corrección tiene que pedir "low"`,
+    );
+  }
+});
+
+await prueba('razonamientoCorreccion: thinking siempre prendido, sin importar el nivel', () => {
+  for (const nivel of ['none', 'low', 'high', 'max']) {
+    assert.deepEqual(
+      razonamientoCorreccion(config({ reasoningEffort: nivel, reasoningParam: 'thinking' })),
+      { thinking: { type: 'enabled' } },
+      `configurado en "${nivel}", la corrección tiene que prender el thinking`,
+    );
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// Autoprueba + autocorrección (T12, round 3 de arnes-robustez)
+// ─────────────────────────────────────────────────────────────
+
+function errorDePrueba(extra: Partial<ErrorAutoprueba> = {}): ErrorAutoprueba {
+  return { tipo: 'error', mensaje: 'algo explotó', linea: 5, columna: 3, accion: 'al cargar', ...extra };
+}
+
+await prueba('necesitaCorreccion: con errores, aunque reinicioOk sea true', () => {
+  assert.equal(necesitaCorreccion({ errores: [errorDePrueba()], reinicioOk: true }), true);
+});
+
+await prueba('necesitaCorreccion: reinicioOk === false, aunque no haya errores', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: false }), true);
+});
+
+await prueba('necesitaCorreccion: reinicioOk === null (sin botón de reinicio) NO cuenta solo', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: null }), false);
+});
+
+await prueba('necesitaCorreccion: sin errores y reinicioOk true, todo sano', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true }), false);
+});
+
+await prueba('lineaFuente: línea válida con contexto 1 marca la línea pedida y trae sus vecinas', () => {
+  const html = 'a\nb\nc\nd\ne';
+  const resultado = lineaFuente(html, 3);
+  assert.ok(resultado, 'tiene que devolver algo');
+  assert.equal(resultado, '  2: b\n> 3: c\n  4: d');
+});
+
+await prueba('lineaFuente: la primera línea no se sale del rango hacia arriba', () => {
+  const html = 'a\nb\nc';
+  const resultado = lineaFuente(html, 1);
+  assert.equal(resultado, '> 1: a\n  2: b');
+});
+
+await prueba('lineaFuente: null si no hay número de línea', () => {
+  assert.equal(lineaFuente('a\nb\nc', null), null);
+});
+
+await prueba('lineaFuente: null si el número está fuera de rango del HTML actual', () => {
+  assert.equal(lineaFuente('a\nb\nc', 9999), null);
+});
+
+await prueba('construirMensajeCorreccion: cita el mensaje, la acción y la línea de origen EXACTA', () => {
+  const html = Array.from({ length: 10 }, (_, i) => (i === 4 ? 'boton.onclick = funcionQueNoExiste;' : `linea${i}`)).join(
+    '\n',
+  );
+  const mensaje = construirMensajeCorreccion({
+    html,
+    informe: {
+      errores: [errorDePrueba({ mensaje: 'funcionQueNoExiste is not defined', linea: 5, accion: "al tocar el botón 'Feo'" })],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+
+  assert.ok(mensaje.includes('Autoprueba automática antes de entregarle el recurso al docente.'), 'lleva el marcador estable (T13 lo usa para el mock)');
+  assert.ok(mensaje.includes('ronda 1 de 2'));
+  assert.ok(mensaje.includes('funcionQueNoExiste is not defined'), 'tiene que citar el mensaje EXACTO del error');
+  assert.ok(mensaje.includes("al tocar el botón 'Feo'"), 'tiene que citar la acción');
+  assert.ok(mensaje.includes('boton.onclick = funcionQueNoExiste;'), 'tiene que citar el TEXTO de la línea de origen');
+  assert.ok(mensaje.includes('línea 5'));
+});
+
+await prueba('construirMensajeCorreccion: reinicioOk false cita lo que falta, lo que sobra y los controles', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [],
+      reinicioOk: false,
+      exitoVisibleAlInicio: false,
+      diferencias: {
+        textoQueFalta: ['Puntaje: 0'],
+        textoQueSobra: ['Intentaste 3 veces'],
+        controles: [{ etiqueta: 'Nivel', antes: 1, despues: 3 }],
+      },
+    },
+    ronda: 2,
+  });
+
+  assert.ok(mensaje.includes('no vuelve el recurso al estado inicial'));
+  assert.ok(mensaje.includes('Puntaje: 0'));
+  assert.ok(mensaje.includes('Intentaste 3 veces'));
+  assert.ok(mensaje.includes('Nivel') && mensaje.includes('antes: 1') && mensaje.includes('ahora: 3'));
+  assert.ok(mensaje.includes('ronda 2 de 2'));
+});
+
+await prueba('construirMensajeCorreccion: exitoVisibleAlInicio agrega la nota, sólo cuando ya se está corrigiendo', () => {
+  const conExito = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: true,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+  assert.ok(/completado|logrado/i.test(conExito), 'tiene que mencionar el mensaje de éxito visible al inicio');
+
+  const sinExito = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+    },
+    ronda: 1,
+  });
+  assert.ok(!/completado|logrado/i.test(sinExito), 'sin exitoVisibleAlInicio no tiene que aparecer la nota');
+});
+
+// ─────────────────────────────────────────────────────────────
+// Checklist del docente + pruebas fallidas (T17, round 4 de arnes-robustez)
+// ─────────────────────────────────────────────────────────────
+
+function pruebaDePrueba(extra: Partial<ResultadoPrueba> = {}): ResultadoPrueba {
+  return { id: 'c1', ok: false, detalle: 'el veredicto no dice "equivalentes"', ...extra };
+}
+
+await prueba('necesitaCorreccion: una prueba de window.__koduPruebas con ok:false dispara igual que un error', () => {
+  assert.equal(
+    necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: [pruebaDePrueba()] }),
+    true,
+  );
+});
+
+await prueba('necesitaCorreccion: pruebas todas ok:true no dispara nada por sí solas', () => {
+  assert.equal(
+    necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: [pruebaDePrueba({ ok: true, detalle: 'ok' })] }),
+    false,
+  );
+});
+
+await prueba('necesitaCorreccion: pruebas ausentes o null se tratan igual que "sin checklist"', () => {
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true }), false);
+  assert.equal(necesitaCorreccion({ errores: [], reinicioOk: true, pruebas: null }), false);
+});
+
+await prueba(
+  'construirMensajeCorreccion: cita el id, el TEXTO del ítem (por checklist) y el detalle de cada prueba fallida',
+  () => {
+    const checklist: ItemChecklist[] = [
+      { id: 'c1', texto: 'Si pinto 1/2 y 3/6, dice que son equivalentes' },
+      { id: 'c2', texto: 'Mover dos datos no cumple el desafío 1' },
+    ];
+    const mensaje = construirMensajeCorreccion({
+      html: 'x',
+      informe: {
+        errores: [],
+        reinicioOk: null,
+        exitoVisibleAlInicio: false,
+        diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+        pruebas: [
+          pruebaDePrueba({ id: 'c1', ok: false, detalle: 'el veredicto no dice "equivalentes"' }),
+          pruebaDePrueba({ id: 'c2', ok: true, detalle: 'todo bien' }),
+        ],
+      },
+      ronda: 1,
+      checklist,
+    });
+
+    assert.ok(mensaje.includes('c1'), 'tiene que citar el id de la prueba fallida');
+    assert.ok(
+      mensaje.includes('Si pinto 1/2 y 3/6, dice que son equivalentes'),
+      'tiene que citar el TEXTO del ítem, no sólo el id',
+    );
+    assert.ok(
+      mensaje.includes('el veredicto no dice "equivalentes"'),
+      'tiene que citar el detalle exacto que devolvió la prueba',
+    );
+    assert.ok(!mensaje.includes('c2'), 'una prueba con ok:true no se cita');
+    assert.ok(
+      /nunca debilites|nunca.*borres/i.test(mensaje),
+      'tiene que instruir a no debilitar ni borrar una prueba para que pase',
+    );
+    assert.ok(
+      /RECURSO.*PRUEBA|recurso.*prueba/i.test(mensaje),
+      'tiene que pedir decidir primero cuál de los dos (recurso o prueba) está mal',
+    );
+  },
+);
+
+await prueba('construirMensajeCorreccion: sin checklist, cita igual el id y el detalle (sin el texto del ítem)', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+      pruebas: [pruebaDePrueba({ id: 'c9', detalle: 'no coincide' })],
+    },
+    ronda: 1,
+  });
+
+  assert.ok(mensaje.includes('c9'));
+  assert.ok(mensaje.includes('no coincide'));
+});
+
+await prueba('construirMensajeCorreccion: sin pruebas fallidas, no aparece ninguna sección de checklist', () => {
+  const mensaje = construirMensajeCorreccion({
+    html: 'x',
+    informe: {
+      errores: [errorDePrueba()],
+      reinicioOk: null,
+      exitoVisibleAlInicio: false,
+      diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+      pruebas: [pruebaDePrueba({ ok: true })],
+    },
+    ronda: 1,
+  });
+
+  assert.ok(!/checklist/i.test(mensaje));
+});
+
 await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) son válidas', () => {
   assert.equal(esVelocidadValida('fast'), true);
   assert.equal(esVelocidadValida('deep'), true);
@@ -1007,6 +1455,72 @@ await prueba('esVelocidadValida: sólo "fast"/"deep" (el vocabulario del wire) s
   assert.equal(esVelocidadValida('a_fondo'), false);
   assert.equal(esVelocidadValida(null), false);
   assert.equal(esVelocidadValida(''), false);
+});
+
+// ─────────────────────────────────────────────────────────────
+// estadoDeChecklist / contarChecklistOk (T18, "Esto es lo que probé")
+// ─────────────────────────────────────────────────────────────
+
+const ITEMS_CHECKLIST_UI: ItemChecklist[] = [
+  { id: 'c1', texto: 'Si arrastro el punto a 3/4, el texto muestra 3/4.' },
+  { id: 'c2', texto: 'Tocar "Reiniciar" borra el mensaje de la ronda anterior.' },
+  { id: 'c3', texto: 'Con 0 aciertos no aparece el festejo.' },
+];
+
+await prueba('estadoDeChecklist: sin ninguna corrida todavía (undefined), todos "sinProbar"', () => {
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, undefined);
+  assert.equal(resultado.length, 3);
+  assert.ok(resultado.every((item) => item.estado === 'sinProbar'));
+  assert.ok(resultado.every((item) => item.detalle === null));
+  assert.equal(contarChecklistOk(resultado), 0);
+});
+
+await prueba('estadoDeChecklist: corrida sin window.__koduPruebas (null), todos "sinPrueba"', () => {
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, null);
+  assert.ok(resultado.every((item) => item.estado === 'sinPrueba'));
+  assert.equal(contarChecklistOk(resultado), 0);
+});
+
+await prueba('estadoDeChecklist: cruza por id — ok/falla/sin prueba propia, nunca por posición', () => {
+  const pruebas: ResultadoPrueba[] = [
+    { id: 'c1', ok: true, detalle: '' },
+    { id: 'c3', ok: false, detalle: 'sigue apareciendo el festejo con 0 aciertos' },
+    // c2 sin entrada: el modelo no escribió una prueba para ese ítem.
+  ];
+  const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, pruebas);
+
+  const porId = Object.fromEntries(resultado.map((item) => [item.id, item]));
+  assert.equal(porId.c1!.estado, 'ok');
+  assert.equal(porId.c1!.detalle, null, 'una prueba que pasó no lleva detalle');
+  assert.equal(porId.c2!.estado, 'sinPrueba', 'sin entrada con ese id, aunque SÍ corrieron pruebas');
+  assert.equal(porId.c3!.estado, 'falla');
+  assert.equal(porId.c3!.detalle, 'sigue apareciendo el festejo con 0 aciertos');
+  assert.equal(contarChecklistOk(resultado), 1, 'sólo c1 cuenta para el resumen "N de TOTAL"');
+});
+
+await prueba(
+  'estadoDeChecklist (T23): un recurso que probó con ids propios (no c1..cN) deja TODO el checklist "sinPrueba"',
+  () => {
+    // Reproduce el defecto real: sin la instrucción explícita de ids, el
+    // modelo escribió `window.__koduPruebas` con sus propios ids en vez de
+    // los del checklist — el cruce por id no encuentra ninguno.
+    const pruebasConIdsPropios: ResultadoPrueba[] = [
+      { id: 'prueba-reinicio', ok: true, detalle: '' },
+      { id: 'prueba-festejo', ok: false, detalle: 'no debería aparecer' },
+      { id: 'prueba-arrastre', ok: true, detalle: '' },
+    ];
+    const resultado = estadoDeChecklist(ITEMS_CHECKLIST_UI, pruebasConIdsPropios);
+    assert.ok(
+      resultado.every((item) => item.estado === 'sinPrueba'),
+      'ningún id propio coincide con c1/c2/c3, así que ningún ítem se puede dar por probado',
+    );
+    assert.equal(contarChecklistOk(resultado), 0);
+  },
+);
+
+await prueba('estadoDeChecklist: [] de checklist da [] de resultado (nunca revienta con corrida vacía)', () => {
+  assert.deepEqual(estadoDeChecklist([], undefined), []);
+  assert.deepEqual(estadoDeChecklist([], []), []);
 });
 
 await prisma.$disconnect();

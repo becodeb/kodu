@@ -126,6 +126,12 @@ export type AiPhase =
   | 'idle'
   /** Se subieron archivos y todavía están viajando. */
   | 'uploading'
+  /**
+   * T16 (round 4, "checklist del docente"): sólo en un turno que crea un
+   * recurso NUEVO, ANTES de la generación principal — un paso corto arma un
+   * checklist de comportamientos a partir del pedido. Nunca en un ajuste.
+   */
+  | 'planificando'
   /** El pedido salió y todavía no volvió nada. */
   | 'thinking'
   /** Está redactando la explicación en el chat. */
@@ -144,4 +150,19 @@ export type AiPhase =
    * vista previa sigue mostrando el HTML final del turno hasta que, si
    * corresponde, llega una versión mejorada.
    */
-  | 'mirando';
+  | 'mirando'
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): corre la autoprueba de
+   * T11 en un iframe oculto, DESPUÉS de la revisión visual de T8 si
+   * corrió — es el último chequeo antes de soltarle el recurso al docente.
+   * La vista previa sigue mostrando el HTML con el que se armó el iframe
+   * oculto (nunca lo que pasa DENTRO de él).
+   */
+  | 'probando'
+  /**
+   * T12: la autoprueba encontró errores reales o un reinicio que no
+   * funciona, y se le está pidiendo al modelo una corrección puntual (hasta
+   * 2 rondas). La vista previa sigue mostrando el HTML de la ronda
+   * anterior hasta que, si corresponde, llega uno corregido.
+   */
+  | 'corrigiendo';

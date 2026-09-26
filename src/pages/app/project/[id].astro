@@ -10,6 +10,7 @@ import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
+import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import type { CapacidadesEditor } from '../../../lib/workspace-types.ts';
 
 const user = Astro.locals.user!;
@@ -130,6 +131,13 @@ const motoresParaElSelector =
 const consumoDelRecurso = await costoPorProyecto(project.id);
 const nivelDeConsumoDelRecurso = nivelDeConsumo(consumoDelRecurso.tokens);
 
+// T18 (round 4, "checklist del docente"): el checklist VIGENTE del proyecto
+// (T16, `checklistActual`), para que "Esto es lo que probé" tenga algo que
+// mostrar apenas se abre la página, sin esperar a un turno nuevo. `[]`
+// cuando el recurso todavía no tiene uno (proyecto viejo, o el paso de
+// checklist nunca corrió) — PreviewPanel lo oculta entero en ese caso.
+const checklistDelRecurso = await checklistActual(project.id);
+
 // T5/T6: SÓLO estos campos cruzan al cliente — nunca `capacidades` entero
 // (que tiene `prime`, `autoReviewForAll` y `puedeUsarModelosPrime`). Armado
 // a mano, campo por campo, para que agregar una clave a `Capacidades` el día
@@ -228,5 +236,6 @@ const capacidadesEditor: CapacidadesEditor = {
     motoresDisponibles={motoresParaElSelector}
     initialNotice={avisoDeMotorRepunteado}
     capacidades={capacidadesEditor}
+    initialChecklist={checklistDelRecurso}
   />
 </BaseLayout>

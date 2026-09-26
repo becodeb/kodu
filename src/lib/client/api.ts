@@ -1,4 +1,5 @@
 import type { Speed } from '../workspace-types.ts';
+import type { ItemChecklist } from '../ai/checklist.ts';
 
 /**
  * Cliente HTTP del navegador. Todas las llamadas son al mismo origen, así que
@@ -68,12 +69,23 @@ export type StreamEvent =
   | { type: 'code_reset' }
   /**
    * T7 ("Revisión automática"): cambio de fase que no es ninguno de los
-   * eventos de arriba. Por ahora sólo `'revisando'` (terminó el primer
-   * pase, está corrigiendo lo que encontró el lint antes de entregar el
-   * recurso) — la vista previa sigue mostrando el `code` anterior mientras
-   * dura, nunca se manda un `code_delta` de esta pasada.
+   * eventos de arriba. `'revisando'` (terminó el primer pase, está
+   * corrigiendo lo que encontró el lint antes de entregar el recurso) —
+   * la vista previa sigue mostrando el `code` anterior mientras dura,
+   * nunca se manda un `code_delta` de esta pasada. `'planificando'` (T16,
+   * round 4): sólo al crear un recurso nuevo, ANTES de la generación
+   * principal — está armando el checklist de comportamientos.
    */
-  | { type: 'phase'; phase: 'revisando' }
+  | { type: 'phase'; phase: 'revisando' | 'planificando' }
+  /**
+   * T16 (round 4, "checklist del docente"): sólo en un turno que crea un
+   * recurso NUEVO y de verdad va a generar código. Llega, si llega, ANTES
+   * de cualquier `code`/`code_delta` de este turno — nunca trae el HTML,
+   * sólo los ítems (T18 los va a mostrar; este evento sólo hace que
+   * lleguen). Ausente cuando el paso falló, dio timeout o muy pocos ítems
+   * válidos: el turno sigue igual, simplemente sin checklist.
+   */
+  | { type: 'checklist'; items: ItemChecklist[] }
   /**
    * T9 ("Varias versiones al crear un recurso"): sólo en un turno de
    * versiones. `ready: false` es el anuncio de que ESTE índice va a existir
@@ -248,5 +260,72 @@ export async function* streamVisualReview(
 
   for await (const evento of leerEventosSse(response)) {
     yield evento as VisualReviewEvent;
+  }
+}
+
+/**
+ * T12 (round 3, "Autoprueba + autocorrección"): mismo vocabulario reducido
+ * que T8 — ver el comentario grande en `src/pages/api/chat/autocorreccion.ts`.
+ */
+export type AutocorreccionEvent =
+  | { type: 'code'; html: string }
+  | { type: 'done'; codeUpdated: boolean }
+  /** Sólo por una respuesta HTTP que no llegó a abrir el SSE (permiso,
+   *  huella vieja, tope de tokens): una falla DEL MODELO adentro del SSE
+   *  nunca llega como esto, siempre termina en un "done" silencioso. */
+  | { type: 'error'; message: string };
+
+export async function* streamAutocorreccion(
+  payload: {
+    projectId: string;
+    fingerprint: string;
+    ronda: 1 | 2;
+    errores: Array<{
+      tipo: 'error' | 'promesa' | 'consola';
+      mensaje: string;
+      linea: number | null;
+      columna: number | null;
+      accion: string;
+    }>;
+    reinicioOk: boolean | null;
+    exitoVisibleAlInicio: boolean;
+    diferencias: {
+      textoQueFalta: string[];
+      textoQueSobra: string[];
+      controles: Array<{
+        etiqueta: string;
+        antes: string | number | boolean | null;
+        despues: string | number | boolean | null;
+      }>;
+    };
+    /**
+     * T17 (round 4, "checklist del docente"): los resultados de
+     * `window.__koduPruebas` de ESTA corrida de la autoprueba (T14).
+     * `null`/ausente = recurso sin checklist (viejo, o el paso T16 no
+     * generó uno) — mismo criterio de compatibilidad hacia atrás que el
+     * resto de este body.
+     */
+    pruebas?: Array<{ id: string; ok: boolean; detalle: string }> | null;
+  },
+  signal?: AbortSignal,
+): AsyncGenerator<AutocorreccionEvent> {
+  const response = await fetch('/api/chat/autocorreccion', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok || !response.body) {
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    yield {
+      type: 'error',
+      message: error?.error ?? `El servidor rechazó el pedido (error ${response.status}).`,
+    };
+    return;
+  }
+
+  for await (const evento of leerEventosSse(response)) {
+    yield evento as AutocorreccionEvent;
   }
 }

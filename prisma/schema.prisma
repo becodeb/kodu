@@ -365,6 +365,17 @@ model ChatMessage {
   /// del mismo proyecto — nunca se acumulan turno a turno. Back-relation de
   /// ResourceVariant.chatMessage.
   variants     ResourceVariant[]
+  /// T16 (round 4, odd/tasks/arnes-robustez.md): el checklist de
+  /// comportamientos armado ANTES de generar un recurso NUEVO
+  /// (`src/lib/ai/checklist.ts`, JSON de `ItemChecklist[]`, mismo criterio
+  /// que `attachments`). `NULL` en cualquier mensaje que no sea el cierre de
+  /// un turno de creación con checklist (un ajuste, un turno viejo de antes
+  /// de T16, o uno en el que el paso falló/dio muy pocos ítems). El
+  /// checklist VIGENTE de un proyecto es el de este campo en el mensaje
+  /// "assistant" con `checklist != null` y `undoneAt == null` más reciente
+  /// (`checklistActual`, `src/lib/ai/checklist-db.ts`) — deshacer ese turno
+  /// lo descarta solo, sin lógica aparte.
+  checklist    String?
 
   @@index([threadId, createdAt])
 }

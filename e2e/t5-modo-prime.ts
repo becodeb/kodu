@@ -387,9 +387,15 @@ async function main(): Promise<void> {
     await botonEnviar.click();
     await botonEnviar.waitFor({ state: 'visible', timeout: 30_000 }); // vuelve a decir "Enviar" cuando el turno termina
 
-    assert.equal(mock.llamadas.length, 1, 'un solo turno tiene que haber llegado al mock');
+    // T16 (round 4, "checklist del docente"): `proyectoMarcado` es nuevo y
+    // este es su primer turno real (`esRecursoInicial`), así que ahora hay
+    // un pedido de checklist PROPIO antes del turno principal — 2 pedidos,
+    // no 1 (checklist + turno principal), aunque los dos vayan al MISMO
+    // motor prime-only elegido (por eso se lee con `.at(-1)`, no `[0]`,
+    // igual que el resto de las escenas de este archivo).
+    assert.equal(mock.llamadas.length, 2, 'checklist + turno principal tienen que haber llegado al mock');
     assert.equal(
-      mock.llamadas[0]!.body.model,
+      mock.llamadas.at(-1)!.body.model,
       MODEL_PRIME_PROVIDER_MODEL,
       'la cuenta marcada SÍ puede usar el motor prime-only, por la UI real',
     );

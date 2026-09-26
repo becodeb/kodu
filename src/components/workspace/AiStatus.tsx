@@ -21,6 +21,10 @@ const PHASES: Record<
   { state: 'connecting' | 'solving' | 'composing' | 'weaving'; label: string }
 > = {
   uploading: { state: 'connecting', label: 'Subiendo tus archivos' },
+  // T16 (round 4, "checklist del docente"): corre ANTES de "thinking" de la
+  // generación principal, sólo al crear un recurso nuevo. "solving" — misma
+  // sensación de "todavía decidiendo qué hacer" que "thinking".
+  planificando: { state: 'solving', label: 'Armando qué probar…' },
   thinking: { state: 'solving', label: 'Pensando cómo resolverlo' },
   writing: { state: 'composing', label: 'Escribiéndote la respuesta' },
   coding: { state: 'weaving', label: 'Armando el recurso' },
@@ -35,6 +39,12 @@ const PHASES: Record<
   // etiqueta propia: acá no hay ningún lint corriendo, hay un modelo
   // mirando una imagen.
   mirando: { state: 'weaving', label: 'Mirando cómo quedó' },
+  // T12 (round 3, "Autoprueba + autocorrección"): el recurso ya está armado
+  // (y, si corrió, ya pasó por la revisión visual) — se lo está probando
+  // solo, en un iframe que el docente no ve, antes de soltarlo. Misma
+  // sensación de "weaving" que las dos de arriba.
+  probando: { state: 'weaving', label: 'Probando el recurso…' },
+  corrigiendo: { state: 'weaving', label: 'Corrigiendo un detalle…' },
 };
 
 function formatearTiempo(segundos: number): string {

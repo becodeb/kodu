@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel, { type PreviewPanelHandle } from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
-import { apiRequest, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
+import { apiRequest, streamAutocorreccion, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
+import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../../lib/client/autoprueba.ts';
 import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
 import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
 import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
+import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
+import { estadoDeChecklist } from '../../lib/client/checklist.ts';
+import type { ItemChecklist } from '../../lib/ai/checklist.ts';
 import type {
   AiPhase,
   CapacidadesEditor,
@@ -48,6 +52,13 @@ interface WorkspaceProps {
    * propio control.
    */
   capacidades: CapacidadesEditor;
+  /**
+   * T18 (round 4, "checklist del docente"): el checklist VIGENTE del
+   * recurso al abrir la página (`checklistActual`, `project/[id].astro`).
+   * `[]` cuando el recurso no tiene uno (viejo, o el paso T16 nunca corrió)
+   * — PreviewPanel oculta "Esto es lo que probé" entero en ese caso.
+   */
+  initialChecklist: ItemChecklist[];
 }
 
 /**
@@ -170,6 +181,51 @@ export default function Workspace(props: WorkspaceProps) {
 
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): la autoprueba siguió
+   * fallando después de las 2 rondas de corrección permitidas (o el
+   * endpoint de corrección falló). Aviso discreto y NO bloqueante en el
+   * panel de vista previa — se limpia solo apenas el HTML vuelve a cambiar
+   * por cualquier vía (nuevo turno, deshacer, edición manual, cambio de
+   * versión): ver los `setAutopruebaAdvertencia(false)` repartidos abajo.
+   */
+  const [autopruebaAdvertencia, setAutopruebaAdvertencia] = useState(false);
+
+  /**
+   * T17/T18 (round 4, "checklist del docente"): los resultados de
+   * `window.__koduPruebas` de la ÚLTIMA autoprueba corrida sobre el HTML
+   * VIGENTE (antes o después de corregir). Tres estados, no dos —
+   * `estadoDeChecklist` (`lib/client/checklist.ts`) los distingue:
+   *  - `undefined`: todavía no corrió NINGUNA autoprueba sobre este HTML en
+   *    esta sesión (recién abierta la página, o el HTML acaba de cambiar y
+   *    su autoprueba no terminó) — "sin probar todavía".
+   *  - `null`: corrió, pero el recurso no tiene `window.__koduPruebas`.
+   *  - un array: corrió y el recurso sí tiene pruebas — sus resultados.
+   * Se limpia a `undefined` junto con `autopruebaAdvertencia` en todos los
+   * mismos puntos (nuevo turno, deshacer, edición manual, cambio de
+   * versión): un resultado de un HTML que ya no es el vigente no le sirve a
+   * nadie, y `undefined` (no `null`) es lo correcto ahí — todavía no se
+   * volvió a probar ESTE html, no "se probó y no tiene pruebas".
+   */
+  const [ultimasPruebas, setUltimasPruebas] = useState<ResultadoPrueba[] | null | undefined>(undefined);
+
+  /**
+   * T16/T18: el checklist VIGENTE del recurso — arranca con el que ya leyó
+   * el servidor (`project/[id].astro`, `checklistActual`) y se actualiza con
+   * el evento SSE `checklist` (sólo en un turno que crea un recurso NUEVO) o
+   * con lo que devuelve `POST .../undo` (T4: deshacer puede dejar atrás el
+   * turno que lo creó). Nunca lo toca un ajuste: el checklist es del
+   * recurso, no de cada turno, y un ajuste no manda ninguno nuevo.
+   */
+  const [checklist, setChecklist] = useState<ItemChecklist[]>(props.initialChecklist);
+
+  /** T18: cruza `checklist` con `ultimasPruebas` para la UI — recalculado
+   *  sólo cuando cualquiera de los dos cambia. */
+  const checklistConEstado = useMemo(
+    () => estadoDeChecklist(checklist, ultimasPruebas),
+    [checklist, ultimasPruebas],
+  );
 
   const saveTimer = useRef<number | null>(null);
   const pendingSave = useRef<Record<string, unknown> | null>(null);
@@ -372,7 +428,7 @@ export default function Workspace(props: WorkspaceProps) {
         return;
       }
 
-      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string }>(
+      void apiRequest<{ messages: WorkspaceMessage[]; currentHtml: string; checklist: ItemChecklist[] }>(
         `/api/projects/${projectId}/threads?threadId=${encodeURIComponent(activeThreadId)}`,
       ).then((result) => {
         if (cancelado || !result.ok) return;
@@ -384,6 +440,12 @@ export default function Workspace(props: WorkspaceProps) {
         resumeTimer.current = null;
         setMessages(result.data.messages);
         setHtml(result.data.currentHtml);
+        setAutopruebaAdvertencia(false);
+        setUltimasPruebas(undefined); // T17/T18: mismo criterio, el HTML acá es otro.
+        // T18: si el turno que quedó corriendo era de creación, pudo haber
+        // guardado un checklist nuevo que esta pestaña nunca vio (llegó por
+        // el SSE de la pestaña que se recargó) — se lee del mismo pedido.
+        setChecklist(result.data.checklist);
         setIsStreaming(false);
         setAiPhase('idle');
         setTurnoDesde(null);
@@ -405,6 +467,11 @@ export default function Workspace(props: WorkspaceProps) {
     setFailedMessage(null);
     setFallback(null);
     setRegisterUrl(null);
+    // T12: un turno nuevo empieza de cero — el aviso de la autoprueba, si
+    // había quedado uno del turno anterior, ya no aplica al recurso que
+    // está por escribirse.
+    setAutopruebaAdvertencia(false);
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
     setTurnoDesde(Date.now());
     setIsStreaming(true);
     setAiPhase('thinking');
@@ -534,6 +601,12 @@ export default function Workspace(props: WorkspaceProps) {
           // de siempre (con el puente de captura incluido).
           rawArgsBuffer = '';
           setPartialHtml(null);
+        } else if (event.type === 'checklist') {
+          // T16/T18: sólo llega en un turno que crea un recurso NUEVO, antes
+          // de cualquier "code" de este turno — nunca trae el HTML, sólo los
+          // ítems. Reemplaza entero al checklist anterior (un recurso
+          // recién creado no tenía ninguno todavía).
+          setChecklist(event.items);
         } else if (event.type === 'variant') {
           // T9 ("Varias versiones"): `ready: false` es el anuncio de que
           // este índice va a existir (las tres llegan juntas, apenas el
@@ -598,8 +671,21 @@ export default function Workspace(props: WorkspaceProps) {
       // `isStreaming`/`turnoDesde` no se tocan acá (siguen como están hasta
       // el `finally` de abajo), así que el compositor sigue deshabilitado,
       // "Detener" sigue andando y el cronómetro no se reinicia.
+      let htmlParaAutoprueba = ultimoHtmlDelTurno;
       if (ofreceRevisionVisual && ultimoHtmlDelTurno) {
-        await ejecutarRevisionVisual(ultimoHtmlDelTurno);
+        htmlParaAutoprueba = await ejecutarRevisionVisual(ultimoHtmlDelTurno);
+      }
+
+      // T12 (round 3, "Autoprueba + autocorrección"): el ÚLTIMO chequeo
+      // antes de soltarle el recurso al docente, después de la revisión
+      // visual si corrió (es el gate final sobre lo que el docente ve de
+      // verdad). Se salta en un turno de versiones (T9): la autoprueba
+      // corre sobre UN HTML — con 3 versiones en paralelo no hay "el"
+      // recurso vigente todavía hasta que el docente elige una, y
+      // probarlas las 3 triplicaría costo y tiempo, mismo criterio que ya
+      // usa T8 para excluir versiones de la revisión visual.
+      if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba) {
+        await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
       }
     } catch (error) {
       // Un abort es el docente tocando "Detener": no es una falla que reportar.
@@ -637,14 +723,20 @@ export default function Workspace(props: WorkspaceProps) {
    * HTML que ya había dejado el turno. `isStreaming`/`turnoDesde` los
    * maneja `handleSend` (no se tocan acá): para el docente sigue siendo el
    * mismo turno, con el mismo cronómetro.
+   *
+   * Devuelve el HTML con el que terminó (el corregido, o `htmlCapturado` tal
+   * cual si no cambió nada): T12 la encadena para correr la autoprueba
+   * sobre lo que el docente TERMINÓ viendo, no sobre lo que había antes de
+   * la revisión visual.
    */
-  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<void> {
+  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<string> {
     setAiPhase('mirando');
+    let htmlFinal = htmlCapturado;
 
     const capturado = await previewRef.current?.capturar({ formato: 'jpeg', calidad: 0.85, altoMax: 1_600 });
     if (!capturado || 'error' in capturado) {
       if (capturado) console.warn('[revisión visual] no se pudo capturar la vista previa:', capturado.error);
-      return;
+      return htmlFinal;
     }
 
     abortador.current = new AbortController();
@@ -658,6 +750,7 @@ export default function Workspace(props: WorkspaceProps) {
           // previa cambia, la portada vieja queda marcada, y lo que el
           // docente hubiera escrito a mano ya quedó incorporado.
           setHtml(event.html);
+          htmlFinal = event.html;
           codeEditedByTeacher.current = false;
           if (screenshotUrl) setPortadaVieja(true);
           flashNotice('Recurso actualizado');
@@ -676,6 +769,108 @@ export default function Workspace(props: WorkspaceProps) {
       }
     } finally {
       abortador.current = null;
+    }
+
+    return htmlFinal;
+  }
+
+  /**
+   * T12 (round 3, "Autoprueba + autocorrección"): el último paso, opcional,
+   * de un turno que cambió el recurso — `handleSend` la llama después de la
+   * revisión visual de T8 (si corrió), sobre el HTML final de esa cadena.
+   * Corre la autoprueba de T11 en un iframe oculto; si encuentra errores
+   * reales o un reinicio roto, pide hasta 2 rondas de corrección puntual
+   * (razonamiento "low", server-side) y vuelve a probar cada una.
+   *
+   * Discreta, mismo criterio que T8: nunca toca el chat. Si la autoprueba
+   * no se pudo correr (timeout, "Detener") no hay NADA que avisar — no es
+   * que el recurso esté mal, es que no se llegó a saber. El aviso discreto
+   * en el panel de vista previa (`autopruebaAdvertencia`) es SÓLO para
+   * "se probó y sigue fallando después de corregir dos veces".
+   */
+  async function ejecutarAutopruebaYCorreccion(htmlInicial: string): Promise<void> {
+    const MAX_RONDAS_CORRECCION = 2;
+    let htmlActual = htmlInicial;
+    let rondasUsadas = 0;
+
+    for (;;) {
+      setAiPhase('probando');
+      abortador.current = new AbortController();
+      const resultado: ResultadoAutopruebaCliente | null = await ejecutarAutopruebaEnIframe(htmlActual, {
+        signal: abortador.current.signal,
+      });
+      abortador.current = null;
+
+      if (!resultado) return; // timeout o "Detener": no se pudo probar, nada que avisar.
+
+      // T17: se guarda ANTES de decidir si hace falta corregir — así, si
+      // esta era la última ronda (sana o no), T18 tiene el resultado real
+      // de ESTE recurso, no el de una ronda anterior.
+      setUltimasPruebas(resultado.pruebas);
+
+      if (!necesitaCorreccion(resultado)) {
+        setAutopruebaAdvertencia(false); // sano: por si quedaba un aviso de una ronda anterior de ESTE turno.
+        return;
+      }
+
+      if (rondasUsadas >= MAX_RONDAS_CORRECCION) {
+        setAutopruebaAdvertencia(true);
+        return;
+      }
+
+      rondasUsadas++;
+      setAiPhase('corrigiendo');
+      abortador.current = new AbortController();
+
+      let htmlCorregido: string | null = null;
+      try {
+        for await (const event of streamAutocorreccion(
+          {
+            projectId,
+            fingerprint: fingerprintHtml(htmlActual),
+            ronda: rondasUsadas as 1 | 2,
+            errores: resultado.errores,
+            reinicioOk: resultado.reinicioOk,
+            exitoVisibleAlInicio: resultado.exitoVisibleAlInicio,
+            diferencias: resultado.detalles.diferencias,
+            // T17 ("checklist del docente"): el servidor carga el checklist
+            // vigente por su cuenta (`checklistActual`) para citar el TEXTO
+            // de cada ítem — acá sólo van los resultados crudos.
+            pruebas: resultado.pruebas,
+          },
+          abortador.current.signal,
+        )) {
+          if (event.type === 'code') {
+            // Mismo tratamiento que un "code" de la revisión visual: la
+            // vista previa cambia, sin pasar por el chat.
+            setHtml(event.html);
+            htmlCorregido = event.html;
+            codeEditedByTeacher.current = false;
+            if (screenshotUrl) setPortadaVieja(true);
+          } else if (event.type === 'error') {
+            console.warn('[autoprueba] la corrección respondió con un error:', event.message);
+          }
+        }
+      } catch (error) {
+        abortador.current = null;
+        // "Detener": se deja el recurso como estaba, sin aviso — el docente
+        // cortó a propósito, no es una falla del recurso.
+        if ((error as Error)?.name === 'AbortError') return;
+        console.warn('[autoprueba] se cortó la conexión de la corrección:', error);
+        setAutopruebaAdvertencia(true); // el endpoint falló: mismo tratamiento que "sigue fallando".
+        return;
+      }
+      abortador.current = null;
+
+      if (!htmlCorregido) {
+        // El endpoint no aplicó nada (huella vencida, el modelo no devolvió
+        // código, etc.): no hay un HTML nuevo para volver a probar.
+        setAutopruebaAdvertencia(true);
+        return;
+      }
+
+      htmlActual = htmlCorregido;
+      // Vuelve al principio del for(;;): se re-prueba lo que acaba de corregir.
     }
   }
 
@@ -729,7 +924,7 @@ export default function Workspace(props: WorkspaceProps) {
       return;
     }
 
-    const result = await apiRequest<{ currentHtml: string; undoneMessageIds: string[] }>(
+    const result = await apiRequest<{ currentHtml: string; undoneMessageIds: string[]; checklist: ItemChecklist[] }>(
       `/api/projects/${projectId}/undo`,
       'POST',
       { messageId },
@@ -746,6 +941,12 @@ export default function Workspace(props: WorkspaceProps) {
     setHtml(result.data.currentHtml);
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
+    setAutopruebaAdvertencia(false); // T12: deshacer cambió el recurso, cualquier aviso viejo ya no aplica.
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
+    // T18: el turno deshecho puede haber sido el que creó el checklist
+    // vigente — el servidor ya recalculó cuál es el actual (o `[]` si no
+    // queda ninguno), nunca se infiere del lado del cliente.
+    setChecklist(result.data.checklist);
 
     const ahora = Date.now();
     setMessages((current) =>
@@ -782,6 +983,8 @@ export default function Workspace(props: WorkspaceProps) {
     setHtml(result.data.html);
     codeEditedByTeacher.current = false;
     if (screenshotUrl) setPortadaVieja(true);
+    setAutopruebaAdvertencia(false); // T12: cambio de versión, cualquier aviso viejo ya no aplica.
+    setUltimasPruebas(undefined); // T17/T18: mismo criterio.
 
     setMessages((current) =>
       current.map((existente) => (existente.id === messageId ? { ...existente, chosenVariant: index } : existente)),
@@ -1011,6 +1214,8 @@ export default function Workspace(props: WorkspaceProps) {
           // El docente cambió el recurso a mano: si ya había portada, quedó
           // vieja (design §6).
           if (screenshotUrl) setPortadaVieja(true);
+          setAutopruebaAdvertencia(false); // T12: edición manual, cualquier aviso viejo ya no aplica.
+          setUltimasPruebas(undefined); // T17/T18: mismo criterio.
           scheduleSave({ currentHtml: value });
         }}
         publicUrl={publicUrl}
@@ -1037,6 +1242,8 @@ export default function Workspace(props: WorkspaceProps) {
         portadaVieja={portadaVieja}
         saving={saving}
         notice={notice}
+        autopruebaAdvertencia={autopruebaAdvertencia}
+        checklist={checklistConEstado}
       />
       </div>
       </div>
