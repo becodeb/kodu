@@ -17,6 +17,14 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
   const guardado = cookies.get('kodu_oauth_state')?.value;
   cookies.delete('kodu_oauth_state', { path: '/' });
 
+  // odd/tasks/organizaciones.md (T4): "next" guardado por auth/google.ts —
+  // se revalida DE NUEVO acá (nunca se confía en la validación de un paso
+  // anterior) antes de usarlo como destino del redirect final.
+  const nextGuardado = cookies.get('kodu_oauth_next')?.value;
+  cookies.delete('kodu_oauth_next', { path: '/' });
+  const safeNext =
+    nextGuardado && nextGuardado.startsWith('/') && !nextGuardado.startsWith('//') ? nextGuardado : '/app';
+
   // Si el docente cancela en la pantalla de Google, vuelve con `error`.
   if (url.searchParams.get('error')) return redirect('/login?error=google-cancelado', 302);
 
@@ -79,7 +87,7 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
     // `isDemo` todavía no tiene columna propia (llega en M7).
     const session = { ...user, isDemo: false, organizationId };
     setSessionCookie(cookies, await createSessionToken(session));
-    return redirect('/app', 302);
+    return redirect(safeNext, 302);
   } catch (error) {
     console.error('[auth/callback]', error);
     return redirect('/login?error=google', 302);

@@ -1,7 +1,10 @@
 ---
 import { prisma } from '../lib/db.ts';
 import { hasResendApiKey } from '../lib/env.ts';
+import { emailConfiable } from '../lib/orgs/membresia.ts';
+import { organizacionParaEmail } from '../lib/orgs/resolucion.ts';
 import ReenviarVerificacion from './ReenviarVerificacion.tsx';
+import ElegirSede from './ElegirSede.tsx';
 
 /**
  * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
@@ -18,12 +21,24 @@ import ReenviarVerificacion from './ReenviarVerificacion.tsx';
  * nace verificada (NO_PROVIDER) y esta condición nunca se cumple — la cuenta
  * personal de siempre (dominio/lista blanca ajenos) sigue viendo el cartel
  * genérico de abajo.
+ *
+ * T4: tercera variante — el picker de sede. Sólo aparece cuando el email es
+ * CONFIABLE (si hiciera falta confirmar el email primero, gana la variante de
+ * arriba) y resuelve a una NETWORK (`requiereElegirSede`, misma fuente que
+ * `unirSiCorresponde` — nunca se decide acá con otro criterio).
  */
 const userId = Astro.locals.user?.id;
 const fila = userId
-  ? await prisma.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true } })
+  ? await prisma.user.findUnique({ where: { id: userId }, select: { email: true, emailVerifiedAt: true } })
   : null;
 const sinVerificar = hasResendApiKey() && fila !== null && fila.emailVerifiedAt === null;
+
+const resolucion =
+  fila && !sinVerificar && emailConfiable(fila) ? await organizacionParaEmail(fila.email) : null;
+// Sin sedes activas para ofrecer, el picker quedaría vacío: mejor el cartel
+// genérico de "cuenta personal" que una lista sin nada para tocar.
+const requiereElegirSede =
+  resolucion !== null && 'red' in resolucion && resolucion.sedes.length > 0 ? resolucion : null;
 ---
 
 <div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
@@ -42,6 +57,19 @@ const sinVerificar = hasResendApiKey() && fila !== null && fila.emailVerifiedAt 
         <div class="mt-5">
           <ReenviarVerificacion client:load />
         </div>
+      </>
+    ) : requiereElegirSede ? (
+      <>
+        <h1 class="font-display text-xl font-bold text-ink-900">Elegí tu sede</h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+          Tu email es de una red de colegios. Elegí a cuál de sus sedes pertenecés para empezar a usar
+          la IA.
+        </p>
+        <ElegirSede
+          client:load
+          redName={requiereElegirSede.red.name}
+          sedes={requiereElegirSede.sedes}
+        />
       </>
     ) : (
       <>
