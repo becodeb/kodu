@@ -45,6 +45,11 @@ const MARCA_MOTOR_PRUEBA = 'test-m8';
 const CORRIDA = randomUUID().slice(0, 8);
 const TITULO_RECURSO_DUENIO = `Recurso E2E M8 (dueño) ${CORRIDA}`;
 const TITULO_RECURSO_ADMIN = `Recurso E2E M8 (admin, propio) ${CORRIDA}`;
+// odd/tasks/organizaciones.md (T2): un DOCENTE sin organización activa es
+// "cuenta personal" y no entra al editor (puedeUsarLaIa). Este suite predata
+// esa regla y necesita que sus docentes de prueba pertenezcan a una
+// organización activa para poder abrir /app/project/[id] como dueño.
+const NOMBRE_ORG_PRUEBA = `Organización E2E M8 ${CORRIDA}`;
 
 const REFUSAL = 'El recurso no existe o no es tuyo.';
 const TEXTO_BANNER = 'Estás trabajando en un recurso de';
@@ -118,11 +123,17 @@ function iniciarMockProveedor(): Promise<MockProveedor> {
   });
 }
 
-async function asegurarDocente(email: string, name: string): Promise<string> {
+async function asegurarDocente(email: string, name: string, organizationId: string): Promise<string> {
   const docente = await prisma.user.upsert({
     where: { email },
-    update: { role: 'DOCENTE' },
-    create: { email, name, role: 'DOCENTE', passwordHash: await hashPassword(DOCENTE_PASSWORD) },
+    update: { role: 'DOCENTE', organizationId },
+    create: {
+      email,
+      name,
+      role: 'DOCENTE',
+      passwordHash: await hashPassword(DOCENTE_PASSWORD),
+      organizationId,
+    },
     select: { id: true },
   });
   return docente.id;
@@ -183,6 +194,10 @@ async function limpiarEstado(): Promise<void> {
   }
 
   await prisma.user.deleteMany({ where: { email: { in: [EMAIL_DUENIO, EMAIL_AJENO] } } });
+  // Huérfanos de una corrida anterior que se cortó antes de su propia
+  // limpieza: el nombre de la organización lleva un CORRIDA distinto cada
+  // vez, así que se busca por el prefijo fijo, no por el nombre exacto.
+  await prisma.organization.deleteMany({ where: { name: { startsWith: 'Organización E2E M8 ' } } });
   await prisma.aiModel.deleteMany({ where: { provider: { kind: MARCA_MOTOR_PRUEBA } } });
   await prisma.aiProvider.deleteMany({ where: { kind: MARCA_MOTOR_PRUEBA } });
 }
@@ -199,8 +214,15 @@ async function main(): Promise<void> {
       where: { email: ADMIN_EMAIL },
       select: { id: true, name: true },
     });
-    const duenioId = await asegurarDocente(EMAIL_DUENIO, 'Docente Dueño E2E M8');
-    await asegurarDocente(EMAIL_AJENO, 'Docente Ajeno E2E M8');
+    // odd/tasks/organizaciones.md (T2): sin organización activa, un DOCENTE
+    // es "cuenta personal" y puedeUsarLaIa lo rechaza — necesitan una para
+    // poder abrir el editor en este suite.
+    const orgPrueba = await prisma.organization.create({
+      data: { name: NOMBRE_ORG_PRUEBA, kind: 'CAMPUS' },
+      select: { id: true },
+    });
+    const duenioId = await asegurarDocente(EMAIL_DUENIO, 'Docente Dueño E2E M8', orgPrueba.id);
+    await asegurarDocente(EMAIL_AJENO, 'Docente Ajeno E2E M8', orgPrueba.id);
 
     const recursoAjeno = await crearProyecto(duenioId, TITULO_RECURSO_DUENIO);
     const recursoPropioDelAdmin = await crearProyecto(admin.id, TITULO_RECURSO_ADMIN);
