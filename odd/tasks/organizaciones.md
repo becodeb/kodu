@@ -126,7 +126,7 @@ une a una organización.
 - [x] **T8 — Panel de la organización.** _(5f672bd + 79bfc71 + 4233674, escritor delegado)_ `/org`: docentes (lista, baja → cuenta personal, lista blanca, enlaces,
   admins), recursos por docente, tokens y costo por docente y por mes, desglose por sede en una red. Móvil y modo
   oscuro. Check: e2e de navegador.
-- [ ] **T9 — Aislamiento.** e2e explícitos: el admin de A no ve ni muta nada de B (páginas y APIs, ids ajenos
+- [x] **T9 — Aislamiento.** _(fdae39e, escritor delegado con postura adversarial)_ e2e explícitos: el admin de A no ve ni muta nada de B (páginas y APIs, ids ajenos
   adivinados); el admin de una sede no ve la sede hermana; el de la red ve solo sus sedes; un docente no entra a `/org`.
 - [ ] **T10 — Cierre.** Docs, regresión de las suites existentes afectadas (m1, m5, m6, m7), aviso de merge de
   `stream.ts`.
@@ -212,6 +212,15 @@ une a una organización.
   Abiertos para el dueño: si el superadmin también ve el link "Mi organización"; si "última actividad" debería
   considerar el consumo además de `Project.updatedAt`.
 
+- 2026-09-26: **T9 hecha, sin agujeros.** `e2e/aislamiento-organizaciones.ts` descubre las rutas del sistema de
+  archivos (`api/org`, `api/admin`, `api/invitaciones`, `org`, `admin`) y falla si alguna no tiene expectativa: 55
+  rutas × 9 actores, 155 casos, con ids ajenos adivinados, verificación en la base de que nada mutó, fugas de
+  contenido (títulos, emails ajenos), escalada, bypass M8 de `/api/projects` (un admin de org nunca lo alcanza) y
+  CSRF de formulario cruzado.
+  Control del orquestador: todas las rutas administrativas pasan por `requireOrgAdmin`/`requireFreshOrgAdmin`;
+  `miembros/[userId]` autoriza con la sede REAL del docente; `lista-blanca/[emailId]` y `admins/[userId]` borran con
+  `where: { id, organizationId }`, así que un id ajeno no afecta nada. La suite volvió a pasar (155/155).
+
 ## Siguiente paso
 
-T9.
+T10.
