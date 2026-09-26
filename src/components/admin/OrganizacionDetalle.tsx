@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import Modal from '../workspace/Modal.tsx';
+import MiembrosLista from '../orgs/MiembrosLista.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
 import type {
   DetalleOrganizacion,
@@ -24,13 +25,6 @@ interface Props {
   initialMiembros: MiembroOrganizacion[];
 }
 
-function verificacionLabel(fuente: MiembroOrganizacion['emailVerificationSource']): string {
-  if (fuente === 'GOOGLE') return 'Google';
-  if (fuente === 'EMAIL') return 'Email verificado';
-  if (fuente === 'NO_PROVIDER') return 'Sin verificar (sin Resend)';
-  return 'Sin verificar';
-}
-
 export default function OrganizacionDetalle(props: Props) {
   const [org, setOrg] = useState(props.initialOrganizacion);
   const [miembros, setMiembros] = useState(props.initialMiembros);
@@ -44,10 +38,6 @@ export default function OrganizacionDetalle(props: Props) {
   // Altas de dominio/lista blanca.
   const [nuevoDominio, setNuevoDominio] = useState('');
   const [nuevoEmail, setNuevoEmail] = useState('');
-
-  // Modal de "mover docente".
-  const [moviendoId, setMoviendoId] = useState<string | null>(null);
-  const [destinos, setDestinos] = useState<OrganizacionResumen[] | null>(null);
 
   // Modal de "promover admin".
   const [promoviendo, setPromoviendo] = useState(false);
@@ -174,14 +164,11 @@ export default function OrganizacionDetalle(props: Props) {
     if (result.ok) setMiembros(result.data.miembros);
   }
 
-  async function quitarMiembro(miembro: MiembroOrganizacion) {
-    const confirmado = window.confirm(
-      `¿Dar de baja a ${miembro.name} de ${org.name}?\n\n` +
-        'Su cuenta pasa a ser personal y pierde acceso a la IA. Sus recursos y su historial de consumo NO se borran. ' +
-        'No va a poder volver a unirse por el dominio de esta sede (sí por una invitación o si se lo agrega de nuevo a la lista blanca).',
-    );
-    if (!confirmado) return;
-
+  // odd/tasks/organizaciones.md (T8): estos tres callbacks son EXACTAMENTE
+  // lo que le pasa `<MiembrosLista>` compartido — la confirmación de "Dar de
+  // baja" y el modal de "Mover" ya viven adentro del componente, acá sólo
+  // queda pegarle a la API correcta y actualizar el estado local.
+  async function quitarDocente(miembro: MiembroOrganizacion) {
     setPending(true);
     const result = await apiRequest(`/api/admin/organizaciones/${org.id}/miembros/${miembro.id}`, 'DELETE');
     setPending(false);
@@ -193,29 +180,23 @@ export default function OrganizacionDetalle(props: Props) {
     setOrg((actual) => ({ ...actual, miembros: Math.max(0, actual.miembros - 1) }));
   }
 
-  async function abrirMover(miembroId: string) {
-    setMoviendoId(miembroId);
-    setDestinos(null);
+  async function cargarDestinosDocentes(): Promise<OrganizacionResumen[]> {
     const result = await apiRequest<{
       redes: Array<OrganizacionResumen & { sedes: OrganizacionResumen[] }>;
       standalone: OrganizacionResumen[];
     }>('/api/admin/organizaciones');
     if (!result.ok) {
       reportarError(result.error);
-      setMoviendoId(null);
-      return;
+      return [];
     }
-    const todasLasSedes = [
-      ...result.data.redes.flatMap((red) => red.sedes),
-      ...result.data.standalone,
-    ].filter((sede) => sede.id !== org.id && !sede.archivada);
-    setDestinos(todasLasSedes);
+    return [...result.data.redes.flatMap((red) => red.sedes), ...result.data.standalone].filter(
+      (sede) => sede.id !== org.id && !sede.archivada,
+    );
   }
 
-  async function confirmarMover(destinoCampusId: string) {
-    if (!moviendoId) return;
+  async function moverDocente(miembro: MiembroOrganizacion, destinoCampusId: string) {
     setPending(true);
-    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/miembros/${moviendoId}`, 'PATCH', {
+    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/miembros/${miembro.id}`, 'PATCH', {
       destinoCampusId,
     });
     setPending(false);
@@ -223,9 +204,46 @@ export default function OrganizacionDetalle(props: Props) {
       reportarError(result.error);
       return;
     }
-    setMiembros((actuales) => actuales.filter((item) => item.id !== moviendoId));
+    setMiembros((actuales) => actuales.filter((item) => item.id !== miembro.id));
     setOrg((actual) => ({ ...actual, miembros: Math.max(0, actual.miembros - 1) }));
-    setMoviendoId(null);
+  }
+
+  /** Toggle inline (Hacer admin/Sacar admin) de la fila del docente — DISTINTO
+   *  del modal de "+ Promover" de la sección Admins de abajo: ese modal
+   *  promueve al nivel de la organización que se está mirando (para una
+   *  NETWORK, da admin de RED); esto de acá SIEMPRE promueve/degrada al nivel
+   *  de ESTA sede (`org.id` es una CAMPUS en todo momento en el que esta
+   *  lista se muestra — ver el `{org.kind === 'CAMPUS' && ...}` de abajo). */
+  async function promoverDocenteInline(miembro: MiembroOrganizacion) {
+    setPending(true);
+    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/admins`, 'POST', { userId: miembro.id });
+    setPending(false);
+    if (!result.ok) {
+      reportarError(result.error);
+      return;
+    }
+    setMiembros((actuales) => actuales.map((item) => (item.id === miembro.id ? { ...item, esAdmin: true } : item)));
+    setOrg((actual) => ({
+      ...actual,
+      admins: actual.admins + 1,
+      adminsLista: [...actual.adminsLista, { id: miembro.id, name: miembro.name, email: miembro.email }],
+    }));
+  }
+
+  async function degradarDocenteInline(miembro: MiembroOrganizacion) {
+    setPending(true);
+    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/admins/${miembro.id}`, 'DELETE');
+    setPending(false);
+    if (!result.ok) {
+      reportarError(result.error);
+      return;
+    }
+    setMiembros((actuales) => actuales.map((item) => (item.id === miembro.id ? { ...item, esAdmin: false } : item)));
+    setOrg((actual) => ({
+      ...actual,
+      admins: Math.max(0, actual.admins - 1),
+      adminsLista: actual.adminsLista.filter((item) => item.id !== miembro.id),
+    }));
   }
 
   // ── Admins ─────────────────────────────────────────────────
@@ -498,112 +516,20 @@ export default function OrganizacionDetalle(props: Props) {
       {org.kind === 'CAMPUS' && (
         <section className="kodu-card p-4">
           <h2 className="text-sm font-semibold text-ink-900">Docentes</h2>
-          {miembros.length === 0 ? (
-            <p className="mt-3 text-sm text-ink-500">Todavía no tiene ningún docente.</p>
-          ) : (
-            // `table-fixed` + anchos fijos por columna en vez de
-            // `overflow-x-auto`: un nombre/email largo es UNA palabra sin
-            // espacios (`truncate`, no `break-all` acá — a diferencia de
-            // dominios/lista blanca de arriba, esta columna SÍ tiene lugar
-            // para achicarse) y las dos acciones se apilan en vez de ir
-            // lado a lado. `table-layout:auto` dejaba que el ancho mínimo de
-            // la tabla se filtrara a `document.documentElement.scrollWidth`
-            // a 360px incluso adentro de un contenedor `overflow-x-auto`
-            // (astro-island es `inline`, y esa caja intermedia no lo
-            // contenía para ese cálculo puntual del navegador) — con
-            // `table-fixed` la tabla NUNCA es más ancha que su contenedor,
-            // así que no hay nada que se pueda filtrar.
-            <table className="mt-3 w-full table-fixed text-left text-sm">
-              <colgroup>
-                <col className="w-[42%]" />
-                <col className="w-[26%]" />
-                <col className="w-[14%]" />
-                <col className="w-[18%]" />
-              </colgroup>
-              <thead className="border-b border-linea text-xs text-ink-500 uppercase">
-                <tr>
-                  <th className="truncate py-2 pr-2 font-medium">Docente</th>
-                  <th className="truncate py-2 pr-2 font-medium">Verificación</th>
-                  <th className="truncate py-2 pr-2 font-medium">Admin</th>
-                  <th className="py-2 text-right font-medium">
-                    <span className="sr-only">Acciones</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {miembros.map((miembro) => (
-                  <tr key={miembro.id} className="border-b border-linea last:border-0">
-                    <td className="py-2 pr-2">
-                      <p className="truncate font-medium text-ink-900" title={miembro.name}>
-                        {miembro.name}
-                      </p>
-                      <p className="truncate text-xs text-ink-500" title={miembro.email}>
-                        {miembro.email}
-                      </p>
-                    </td>
-                    <td className="py-2 pr-2 text-xs text-ink-700">{verificacionLabel(miembro.emailVerificationSource)}</td>
-                    <td className="py-2 pr-2 text-ink-700">{miembro.esAdmin ? 'Sí' : '—'}</td>
-                    <td className="py-2 text-right">
-                      <div className="flex flex-col items-end gap-1">
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => void abrirMover(miembro.id)}
-                          className="kodu-btn-ghost px-2 py-1 text-xs"
-                        >
-                          Mover
-                        </button>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          onClick={() => void quitarMiembro(miembro)}
-                          className="kodu-btn-ghost px-2 py-1 text-xs text-red-600"
-                        >
-                          Dar de baja
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          <div className="mt-3">
+            <MiembrosLista
+              miembros={miembros}
+              organizationNombre={org.name}
+              pending={pending}
+              puedeMover
+              onPromover={promoverDocenteInline}
+              onDegradar={degradarDocenteInline}
+              onQuitar={quitarDocente}
+              cargarDestinos={cargarDestinosDocentes}
+              onMover={moverDocente}
+            />
+          </div>
         </section>
-      )}
-
-      {moviendoId && (
-        <Modal
-          abierto
-          titulo="Mover a otra sede"
-          descripcion="El historial de consumo ya registrado queda donde se pagó — sólo cambia la sede actual."
-          onCerrar={() => setMoviendoId(null)}
-          pie={
-            <button type="button" onClick={() => setMoviendoId(null)} className="kodu-btn-ghost text-sm">
-              Cancelar
-            </button>
-          }
-        >
-          {destinos === null ? (
-            <p className="text-sm text-ink-500">Cargando sedes…</p>
-          ) : destinos.length === 0 ? (
-            <p className="text-sm text-ink-500">No hay otra sede disponible.</p>
-          ) : (
-            <ul className="max-h-72 space-y-1 overflow-y-auto">
-              {destinos.map((sede) => (
-                <li key={sede.id}>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => void confirmarMover(sede.id)}
-                    className="w-full rounded-md px-3 py-2 text-left text-sm text-ink-700 hover:bg-sutil"
-                  >
-                    {sede.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Modal>
       )}
 
       {promoviendo && (
