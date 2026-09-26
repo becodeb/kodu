@@ -107,6 +107,19 @@ const envSchema = z.object({
    * ver `src/lib/orgs/membresia.ts#emailConfiable`) — decisión del dueño.
    */
   RESEND_API_KEY: z.string().default(''),
+  /**
+   * odd/tasks/organizaciones.md (T3): remitente exigido por Resend
+   * ("Nombre <direccion@dominio>"). Sólo hace falta si `RESEND_API_KEY`
+   * tiene valor — ver `src/lib/email/resend.ts#enviarEmail`, que loguea un
+   * error y trata el envío como fallido en vez de explotar si falta.
+   */
+  RESEND_FROM: z.string().default(''),
+  /**
+   * odd/tasks/organizaciones.md (T3): sólo para los e2e (`e2e/verificacion-email.ts`)
+   * — apunta el cliente a un mock local en vez de `https://api.resend.com`.
+   * Vacía = la URL real de Resend.
+   */
+  RESEND_API_URL: z.string().default(''),
 
   /** Si los modelos multimodales reciben adjuntos (formato OpenAI `image_url`). */
   AI_VISION: z
@@ -169,6 +182,8 @@ export function getEnv(): Env {
     GOOGLE_CLIENT_SECRET: read('GOOGLE_CLIENT_SECRET'),
     KODU_ENCRYPTION_KEY: read('KODU_ENCRYPTION_KEY'),
     RESEND_API_KEY: read('RESEND_API_KEY'),
+    RESEND_FROM: read('RESEND_FROM'),
+    RESEND_API_URL: read('RESEND_API_URL'),
   });
 
   if (!parsed.success) {
@@ -179,6 +194,17 @@ export function getEnv(): Env {
   }
 
   cached = parsed.data;
+
+  // odd/tasks/organizaciones.md (T3, decisión del dueño — "fallback sin
+  // Resend"): una sola vez por arranque del proceso (cached recién se puso),
+  // no en cada request. `/admin` repite el mismo aviso en la UI
+  // (AdminLayout.astro) para quien no mira los logs del servidor.
+  if (!cached.RESEND_API_KEY) {
+    console.warn(
+      '[env] RESEND_API_KEY no está configurada: toda cuenta nueva se toma como verificada (NO_PROVIDER).',
+    );
+  }
+
   return cached;
 }
 

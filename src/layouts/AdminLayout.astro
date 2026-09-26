@@ -1,5 +1,6 @@
 ---
 import BaseLayout from './BaseLayout.astro';
+import { hasResendApiKey } from '../lib/env.ts';
 
 /**
  * Cascarón de /admin: encabezado fijo + fila de pestañas horizontal.
@@ -17,6 +18,15 @@ interface Props {
 const { title = 'Panel' } = Astro.props;
 const ruta = Astro.url.pathname;
 
+/**
+ * odd/tasks/organizaciones.md (T3, decisión del dueño — "fallback sin
+ * Resend"): en TODAS las páginas de /admin, no sólo Docentes, porque el
+ * fallback afecta a cualquier alta nueva sin importar qué pestaña se esté
+ * mirando. `hasResendApiKey()` lee `env.ts`, que además loguea el mismo
+ * aviso una vez al arrancar el servidor (para quien no entra a /admin).
+ */
+const resendApagado = !hasResendApiKey();
+
 const PESTAÑAS = [
   { href: '/admin/usuarios', etiqueta: 'Docentes' },
   { href: '/admin/proyectos', etiqueta: 'Recursos' },
@@ -32,6 +42,15 @@ const PESTAÑAS = [
     <h1 class="font-display text-2xl font-bold text-ink-900">Panel</h1>
     <p class="mt-1 text-sm text-ink-500">Motores, acceso y consumo de la plataforma.</p>
   </header>
+
+  {
+    resendApagado && (
+      <div class="mb-6 max-w-2xl rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        La verificación de email está apagada: falta <code class="font-mono">RESEND_API_KEY</code>. Toda
+        cuenta nueva se toma como verificada.
+      </div>
+    )
+  }
 
   {/*
     overflow-x-auto + el par -mx-4/px-4 hacen que en mobile la tira se pueda

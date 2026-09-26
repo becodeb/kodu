@@ -1,4 +1,8 @@
 ---
+import { prisma } from '../lib/db.ts';
+import { hasResendApiKey } from '../lib/env.ts';
+import ReenviarVerificacion from './ReenviarVerificacion.tsx';
+
 /**
  * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
  * quien entra con un email que no coincide con ninguna organización tiene
@@ -7,19 +11,51 @@
  * `Workspace.tsx` ni `ChatPanel.tsx` (otra sesión los está cambiando en
  * paralelo, feat/generacion-simple-y-reanudable).
  *
- * Sin `client:*`: es un cartel, no hace falta React acá.
+ * T3: variante para quien está acá SÓLO porque todavía no confirmó el email
+ * (Resend configurado) — con la key cargada, `unirSiCorresponde` nunca la une
+ * mientras `emailVerifiedAt` sea `null` (`emailConfiable`, membresia.ts), así
+ * que este cartel es lo único que ve hasta que confirme. Sin key, TODA cuenta
+ * nace verificada (NO_PROVIDER) y esta condición nunca se cumple — la cuenta
+ * personal de siempre (dominio/lista blanca ajenos) sigue viendo el cartel
+ * genérico de abajo.
  */
+const userId = Astro.locals.user?.id;
+const fila = userId
+  ? await prisma.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true } })
+  : null;
+const sinVerificar = hasResendApiKey() && fila !== null && fila.emailVerifiedAt === null;
 ---
 
 <div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
-  <h1 class="font-display text-xl font-bold text-ink-900">Tu cuenta es personal</h1>
-  <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
-    Todavía no usás la IA de Kodu desde ninguna institución. Un colegio te suma cuando te manda un
-    enlace de invitación, o cuando agrega tu email a su lista — apenas eso pase, vas a poder seguir
-    usando la IA.
-  </p>
-  <p class="mx-auto mt-3 max-w-md text-sm text-ink-500">
-    Tus recursos ya creados no se borraron: te vuelven a quedar disponibles en cuanto te sumes a una
-    organización.
-  </p>
+  {
+    sinVerificar ? (
+      <>
+        <h1 class="font-display text-xl font-bold text-ink-900">Confirmá tu email</h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+          Te mandamos un enlace de confirmación a tu correo. Entrá a tu bandeja (y a spam, por las
+          dudas) y tocalo para empezar a usar la IA.
+        </p>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-500">
+          Si tu colegio te mandó un enlace de invitación, podés usarlo igual sin confirmar el email
+          primero.
+        </p>
+        <div class="mt-5">
+          <ReenviarVerificacion client:load />
+        </div>
+      </>
+    ) : (
+      <>
+        <h1 class="font-display text-xl font-bold text-ink-900">Tu cuenta es personal</h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+          Todavía no usás la IA de Kodu desde ninguna institución. Un colegio te suma cuando te manda
+          un enlace de invitación, o cuando agrega tu email a su lista — apenas eso pase, vas a poder
+          seguir usando la IA.
+        </p>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-500">
+          Tus recursos ya creados no se borraron: te vuelven a quedar disponibles en cuanto te sumes a
+          una organización.
+        </p>
+      </>
+    )
+  }
 </div>
