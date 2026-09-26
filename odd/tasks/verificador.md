@@ -77,7 +77,7 @@ teacher decides with a button.
 - [x] T1: isolate `window.__koduPruebas` (prompt + normalizer + sentinel + unit tests). Route: delegated writer (4+ files).
 - [x] T2: Responses API in provider.ts + API-format field + admin + unit tests. Route: delegated writer.
 - [x] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
-- [ ] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
+- [x] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
 - [ ] T5: real gpt-6-luna check (cents). Route: inline, bounded.
 
 ## Acceptance criteria
@@ -435,3 +435,151 @@ teacher decides with a button.
   - `unirPasadas`'s duplicate threshold (same `tipo`, ≥60% word-overlap of
     `que` against the smaller word set) is a calibrated-by-hand constant —
     the task said "high normalized-word overlap" without a number.
+
+### T4 — verifier panel in the editor (2026-09-26)
+
+- `src/lib/client/verificador.ts` (new, isomorphic-ish — only `verificarRecurso`
+  uses `fetch`): `decidirTipoVerificacion`/`cambioElScriptPropio` (the pure
+  "when to verify" helper — `'nuevo'` from `esRecursoInicial(htmlAlInicioDelTurno)`,
+  the same notion the server uses for the checklist; `'ajuste'` only when the
+  resource's own `<script>` changed, comparing `htmlParaVerificador(html)`
+  output — the SAME kit/pruebas-folding function T3's own verifier uses —
+  after stripping ALL whitespace, not collapsing it: collapsing left a
+  leftover space wherever the original had none, so a pure indentation-only
+  diff still compared different); `verificarRecurso` (typed fetch wrapper,
+  `AbortSignal`, `null` on any non-`ok`/malformed response — treated the same
+  as `'error'` by the caller); `problemasAccionablesParaPanel`/
+  `problemasDeContenidoParaPanel`/`separarProblemasParaPanel` (the panel's
+  own split: `tipo!=='contenido'` + `gravedad!=='baja'` for actionable,
+  `tipo==='contenido'` + `gravedad!=='baja'` for content — `baja` never
+  reaches either bucket); `EstadoPanelVerificador` (the panel's state
+  machine: `inactivo`/`corriendo`/`resultado`/`arreglando`/`arreglado`/
+  `fallo-arreglo` — `'resultado'` covers BOTH "no problems" and "problems",
+  `PreviewPanel` picks the message); `textoCantidadProblemas` (singular
+  "1 cosa" vs. plural).
+- `src/lib/client/api.ts`: `streamAutocorreccion`'s payload gained an
+  optional `problemasVerificador?: Problema[]` — the button's only way to
+  reach `POST /api/chat/autocorreccion`'s existing T3 input, no duplicated
+  client.
+- `src/components/workspace/Workspace.tsx`:
+  - `ejecutarAutopruebaYCorreccion` now returns `Promise<string>` (the final
+    `htmlActual`, from every return point including the early ones) instead
+    of `Promise<void>` — `handleSend` needs the HTML that's vigente AFTER
+    the self-test/correction to fingerprint it for the verifier.
+  - `iniciarVerificacion(htmlAntes, htmlDespues, esRecursoInicialAlEmpezar)`:
+    called from `handleSend` right after `ejecutarAutopruebaYCorreccion`
+    resolves, with `void` (never awaited) — the chat re-enables in
+    `handleSend`'s own `finally` regardless of how long the verifier takes
+    (up to 150s × 2 parallel passes for a new resource). Tracks the
+    in-flight call in `verificacionRef` (`{fingerprint, controller}`);
+    caches a `'desactivado'` answer in `verificadorDesactivadoRef` for the
+    rest of the session (no motor → at most ONE `/api/chat/verificar` call
+    ever, not one per turn).
+  - `cancelarVerificacion()`: aborts the in-flight controller (if any) and
+    resets the panel to `inactivo` — wired into the SAME 5 reset points that
+    already clear `autopruebaAdvertencia`/`ultimasPruebas` (new turn,
+    resume-after-reload, undo, version switch, manual code edit): a stale
+    verification for HTML that's no longer current gets dropped generically,
+    without enumerating every possible cause by hand.
+  - `handleArreglarVerificador()`: the "¿Las arreglo?" handler. Calls
+    `streamAutocorreccion` with `problemasVerificador` (the panel's
+    `accionables`, never `contenido` — filtered client-side already, and
+    the server re-filters with the same `normalizarProblema`/
+    `problemasAccionables` T3 already has), applies the corrected HTML
+    exactly like the self-test's own correction path (`setHtml`,
+    `codeEditedByTeacher.current = false`, `portadaVieja`), then calls
+    `ejecutarAutopruebaYCorreccion` once more (its own up-to-2-round loop is
+    allowed to run) but NEVER calls `iniciarVerificacion` again — "no loop"
+    is enforced by simply not wiring that call in this one path. Uses its
+    OWN `AbortController` (not the shared `abortador.current`): this runs
+    with `isStreaming` already `false` (chat re-enabled), so sharing the
+    turn's own abort ref would let an unrelated "Detener" on a NEW turn
+    abort this correction instead.
+- `src/components/workspace/PreviewPanel.tsx`: new `verificador`/
+  `onArreglarVerificador` props; a new block right after "Esto es lo que
+  probé" (same visual family: `bg-sutil` rounded rows, `<details>` for the
+  actionable list, plegado by default). `aria-live="polite"` wraps the whole
+  block. The "¿Las arreglo?" button uses visible text as its accessible name
+  (a `title` tooltip, NOT `aria-label` — an `aria-label` there would have
+  overridden the accessible name computed from the visible text, an
+  accessibility anti-pattern (WCAG 2.5.3) I caught only because Playwright's
+  `getByRole('button', {name:...})` stopped matching the visible label in
+  the e2e).
+- Tests: `e2e/unidad-verificador-cliente.ts` (new, 12 cases) — the
+  when-to-verify helper (new → `nuevo`; script changed → `ajuste`; text/CSS
+  only → `null`; pruebas-block only → `null`; kit-block-only change (real
+  `aplicarKit` output, two different themes, same own script) → `null`;
+  whitespace-only → `null`; no change at all → `null`) and the panel split
+  (`problemasAccionablesParaPanel`/`problemasDeContenidoParaPanel`/
+  `separarProblemasParaPanel`, `baja` dropped from both, empty input).
+  `e2e/verificador-editor.ts` (new, browser-driven, dev server + mock, 5
+  scenes): sin motor → cero pedidos a `/v1/responses`, panel vacío, pero
+  exactamente 1 pedido a `/api/chat/verificar` (la caché de "desactivado" se
+  prueba en la escena 4, donde un ajuste de sólo texto no genera NINGÚN
+  pedido nuevo); recurso nuevo con motor activo → 2 pasadas en paralelo, el
+  panel muestra la lista accionable + un ítem "Revisá este dato", Y el
+  `<textarea>` sigue habilitado mientras "Revisando el recurso…" está en
+  pantalla (con `demoraInicialMs` en el mock para dejar la ventana); "¿Las
+  arreglo?" → el pedido del NAVEGADOR a `/api/chat/autocorreccion` (capturado
+  vía `page.on('request')`, no el pedido que ve el mock — ESE sólo ve el
+  prompt ya armado, no `problemasVerificador`) lleva `problemasVerificador`
+  con SÓLO el problema accionable, la vista previa cambia, y NINGUNA
+  verificación nueva se dispara (mismo conteo de pasadas de la escena
+  anterior); ajuste de sólo texto (mismo `<script>` byte a byte) → cero
+  pedidos nuevos; a 390px, el `<summary>` del panel no desborda (medido con
+  `boundingBox()`, no con una captura — el clamp de 500px de Chromium
+  headless es de las CAPTURAS, no del layout) y `scrollWidth` no excede
+  `clientWidth`. Además, una captura informativa en modo oscuro (no un
+  assert) para mirar a ojo. Re-corridos, sin tocar nada: `e2e/t11-autoprueba.ts`
+  (4 escenas), `e2e/t12-checklist-pruebas.ts` (5 escenas),
+  `e2e/verificador-endpoint.ts` (6 escenas) — todas verdes.
+- Checks: `npx tsc --noEmit` clean. `npx tsx e2e/unidad.ts`,
+  `e2e/unidad-kit.ts`, `e2e/unidad-pruebas-aisladas.ts`,
+  `e2e/unidad-responses.ts`, `e2e/unidad-verificador.ts`,
+  `e2e/unidad-verificador-cliente.ts` all pass (12/12 on the new file). With
+  `npm run dev` on :3000 + the mock on :4790: `npx tsx e2e/verificador-editor.ts`
+  all 5 scenes pass, `npx tsx e2e/verificador-endpoint.ts` all 6 scenes pass,
+  `npx tsx e2e/t11-autoprueba.ts` all 4 scenes pass, `npx tsx
+  e2e/t12-checklist-pruebas.ts` all 5 scenes pass. Dev server stopped with
+  `npx astro dev stop` afterward (confirmed no leftover `astro` process,
+  only `kodu_db_dev` still running).
+- Left open (T5, out of scope for T4): no real gpt-6-luna call was made.
+  `e2e/verificador-editor.ts`'s dark-mode screenshot is informational only
+  (visually inspected once during this session, not re-checked
+  automatically) — a future visual regression pass, if this repo ever gets
+  one, would need its own harness. The "¿Las arreglo?" button reuses
+  `kodu-btn-primary` at its DEFAULT size (no size override attempted) after
+  discovering elsewhere in this session that Tailwind v4 `@utility` classes
+  don't reliably lose to later same-property utility classes by source
+  order in `className` strings — a real constraint, not a preference, so a
+  smaller/denser button was not attempted.
+- Design decisions the task text didn't fully settle:
+  - "Actionable" adds a severity filter (`gravedad !== 'baja'`) on top of
+    `ai/verificador.ts`'s own `problemasAccionables` (tipo-only, used
+    server-side for `/api/chat/autocorreccion`'s general
+    `problemasVerificador` input path): the task explicitly says "Actionable
+    = tipo in logica/pedido/uso with gravedad alta|media", a stricter,
+    UI-specific notion than the server's "not contenido" — kept as a
+    separate function (`problemasAccionablesParaPanel`) rather than changing
+    the shared one, since T3's server-side filter still needs to accept
+    whatever the CLIENT already decided to send (this panel's own
+    `accionables`), not re-derive its own severity opinion.
+  - The "when to verify" helper strips ALL whitespace before comparing the
+    resource's own `<script>` content (not "collapse runs to one space"):
+    collapsing still left a single space at every position where the
+    ORIGINAL had zero whitespace (e.g. `){return` vs. `){\n  return`), which
+    kept comparing as "changed" for a pure reformatting — caught by the
+    unit test itself failing on first run.
+  - `verificadorDesactivadoRef` caches "no engine" for the lifetime of the
+    mounted `Workspace` component (i.e., until a full page reload) — not
+    persisted anywhere, and not invalidated if an admin flips the flag on in
+    another tab; the task only asked to "consider caching ... to avoid
+    calling on every turn", a hard session-scoped cache was the simplest
+    reading that still satisfies it.
+  - `handleArreglarVerificador` sends a well-formed but otherwise-empty
+    "self-test informe" shape (`errores: []`, `reinicioOk: null`,
+    `exitoVisibleAlInicio: true`, empty `diferencias`) alongside
+    `problemasVerificador`: the endpoint ignores all of that when at least
+    one actionable verifier problem is present, but the zod schema still
+    requires the fields to exist, so they're filled with harmless neutral
+    values rather than adding a second, looser schema branch server-side.
