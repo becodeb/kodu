@@ -164,7 +164,10 @@ async function asegurarMotorVerificador(adminPage: Page, mockUrl: string): Promi
   }
 
   // Siempre arranca SIN isVerifier: la escena "desactivado" depende de esto.
-  await prisma.aiModel.update({ where: { id: modelId }, data: { isVerifier: false } });
+  // Through the admin API, not Prisma: only the API calls invalidarCatalogo(),
+  // and the server caches the catalog for 30 s (a previous suite may have
+  // left the flag on in that cache).
+  await fijarIsVerifier(adminPage, modelId, false);
 
   return modelId;
 }
