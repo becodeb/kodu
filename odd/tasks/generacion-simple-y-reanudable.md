@@ -94,9 +94,9 @@
 - [x] T2: versions as a per-project opt-in gated by `versionsForAll`. Route: same writer as
   T1 (same files).
 - [ ] T3: merge A to `main`, push, verify the deploy. Route: inline.
-- [ ] T4: generation not tied to the client connection, explicit cancel, and reload shows
+- [x] T4: generation not tied to the client connection, explicit cancel, and reload shows
   the turn. Route: delegated writer.
-- [ ] T5: browser checks resume on reload for turns that missed them. Route: same writer as
+- [x] T5: browser checks resume on reload for turns that missed them. Route: same writer as
   T4.
 
 ## Acceptance criteria
@@ -220,13 +220,194 @@ the T1-only state, verifying it compiles and passes `unidad.ts` standalone (via 
 push --keep-index`), committing, then restoring the T2 hunks for the second commit — verified
 compiling/green both as the T1-only intermediate and as the final combined state.
 
+### T4
+
+Commit `829080f` (`feat(chat): decouple generation from the client connection`).
+
+**Design.** `stream.ts` no longer threads `request.signal` into `pedirA`, the forced
+retry, `generarChecklist`, or `generarVersionSecundaria`. Instead, right at the top of the
+`ReadableStream`'s `start()`, it creates its own `turnoAbort` (`AbortController`) and
+registers it in a new in-memory, per-thread map (`src/lib/ai/turnos-en-curso.ts`,
+`registrarTurnoEnCurso`/`cancelarTurnoEnCurso`), keyed by `thread.id` — nothing else in the
+app reads or writes that map. `turnoAbort` is fired by exactly two things: `abortarTurno
+('timeout')` from a `setTimeout(TURNO_TIMEOUT_MS)` (30 minutes, same window as the client's
+existing resume-poll ceiling — documented next to the constant), or `abortarTurno('stop')`
+from `/api/chat/cancel` via `cancelarTurnoEnCurso(thread.id)`. `motivoAbortTurno` (set once,
+`??=`) is a local flag, not part of the map: it's how the big `finally` (and the
+motor-selection catch, for the case nothing had connected yet) tells an explicit stop apart
+from every other way a turn can end. On `motivoAbortTurno === 'stop'` both exit points skip
+creating their own "assistant" message (still persisting `generatedHtml` if any had already
+arrived) and return early — `/api/chat/cancel`'s own "Frenaste este pedido" message is the
+only one created, so a stop never leaves two messages. Closing the tab now only stops SSE
+delivery (`send()`'s existing `closed` guard); the upstream fetch to the model keeps running
+in the same Node process and the `finally` persists exactly like it already did for "docente
+cerró la pestaña" before this change (nothing about that persistence logic changed).
+
+`cancel.ts` calls `cancelarTurnoEnCurso(thread.id)` right after resolving `thread` — i.e.
+after the existing ownership check (`findProjectForActor` + the thread lookup scoped to that
+project), which is what "owner-checked" means here. A `false` return (nothing registered:
+turn already finished, or never got far enough to register) is a silent no-op; the route's
+existing "Frenaste" bookkeeping is untouched.
+
+**Limits documented, not fixed.** Single-process assumption (design.md, one Coolify
+container): the registry is in-memory, so a deploy/restart during a turn loses the
+registration *and* kills the in-flight fetch to the model — the client's existing 30-minute
+resume-poll then times out on its own and the teacher can resend. Concurrency: `stream.ts`
+still has no guard against two turns starting on the same thread near-simultaneously (`grep`
+confirms no `hayTurnoEnCurso` call there); a second registration for the same `threadId`
+simply replaces the first in the map. Not something this task added or was asked to fix —
+reported as-is, per the task's own "just report" instruction.
+
+**Mock harness change (for the e2e below).** `e2e/mock-proveedor.ts`'s `LlamadaRegistrada`
+gained a `cortadoTemprano` boolean, so a test can assert the SERVER's connection to the
+provider was actually cut (not just the browser's connection to kodu). Found and fixed a
+real gotcha while wiring it up: attaching `req.on('close', …)` *after* `leerCuerpo(req)` has
+already drained the request body silently never fires — Node doesn't reliably re-emit it to
+a listener registered that late. The fix attaches the close/finish listeners at the very top
+of each handler, before reading the body, and only reads the resulting flag via a getter once
+the `LlamadaRegistrada` is pushed.
+
+**Evidence.** `npx tsc --noEmit` OK, both for this commit's own diff and verified standalone
+(temporarily reverted the T5-only hunks in `stream.ts`/`Workspace.tsx` and the T5-only files,
+regenerated the Prisma client against the pre-T5 schema, compiled clean, ran `unidad.ts`
+green, then restored everything — same split technique as T1/T2's note above, using `/tmp`
+copies instead of `git stash`). Full combined-state evidence (this task also exercises T4)
+is under T5's evidence below, since the only realistic way to prove "cerrar la pestaña no
+frena, y Detener sí" end-to-end needs a real browser closing a real tab.
+
+### T5
+
+Commit `dc9eb40` (`feat(chat): resume browser post-turn checks on reload`).
+
+**Design.** Three new `ChatMessage` columns, additive migration
+`20261007000000_chequeos_posteriores` (hand-written, same partial-index reason as every
+other migration here): `resultHtmlFingerprint` (the `fingerprintHtml` of what the turn left
+as `Project.currentHtml`, set at persist time and refreshed whenever the turn is marked),
+`postChecksAt` (when the browser pipeline finished, or was skipped by design — `NULL` only
+ever means "still pending"), and `postChecksClaimedAt` (an in-progress claim, for the
+two-tabs case). Existing rows are backfilled to a fixed `2026-10-07T00:00:00Z` instant in
+`postChecksAt` — a real timestamp, not `NULL` — specifically so they read as "already
+resolved" forever; only a row created after this migration can ever be "pending". This one
+field flag (`postChecksAt IS NULL` vs. not) deliberately does double duty for both "legacy"
+and "done": they behave identically (never touch it again), so there was no need for a
+separate legacy marker.
+
+The decision itself is one pure function, `decidirResumenChequeosPosteriores`
+(`src/lib/ai/post-checks.ts`, isomorphic, no Prisma/fetch/DOM — same pattern as
+`versiones.ts`): given a candidate message's three fields, the current HTML's fingerprint,
+and an injected "now", it returns `correr` or `saltar` with a reason. Order matters: a set
+`postChecksAt` wins over everything (skip, unconditionally); then a fingerprint mismatch
+(the docente hand-edited the code, or a newer turn already replaced it) also skips; only
+then does the claim's age matter (`POST_CHECKS_CLAIM_STALE_MS` = 5 minutes — comfortably
+above what the real pipeline can take, well under the 30-minute turn timeout from T4, so
+another tab can take over a crashed one's claim without waiting anywhere near that long).
+
+`src/lib/ai/post-checks-db.ts` (server-only) wraps that decision with Prisma:
+`pendienteChequeosPosteriores(projectId)` finds the newest non-undone assistant message with
+a snapshot (same "changed the HTML" signal `canUndo` already uses) across any thread of the
+project, evaluates the pure function against `Project.currentHtml`'s live fingerprint, and
+returns `{messageId, fingerprint, htmlAntes}` (the `ProjectSnapshot.html` before that turn,
+so the client can decide the verifier's `tipo` the same way a live turn does) or `null`.
+`reclamarChequeosPosteriores` re-derives that same pendiente candidate from scratch (never
+trusts a client-supplied messageId's own eligibility) and only then issues one conditional
+`updateMany` (`postChecksAt: null AND (postChecksClaimedAt: null OR < staleness limit)`) —
+Postgres serializes two concurrent claims on the same row, so the second one's `WHERE`
+re-evaluates against the just-committed claim and affects 0 rows: no explicit transaction
+needed. `marcarChequeosPosteriores` is the completion half, gated by the same
+staleness-against-current-html check every other discreet endpoint here already uses
+(`autocorreccion.ts`/`verificar.ts`).
+
+One small owner-checked endpoint, `POST /api/chat/post-checks` (`{action: 'claim'|'complete'}`),
+is the only new HTTP surface. `stream.ts` calls `marcarChequeosPosteriores` directly (in
+process) for a versions turn, right after its snapshot, because T2/T9 skip the self-test
+pipeline for that turn *by design* — without this, a "3 versions" turn's HTML-changing
+message would sit "pending" forever and get offered to the very next tab that opens the
+project. Every other HTML-changing message gets its `resultHtmlFingerprint` set at create
+time regardless of whether it turns out to need checks.
+
+Client side: `pendienteChequeosPosteriores` is computed by `project/[id].astro` (initial
+load) and by `GET /api/projects/:id/threads` (the same endpoint the existing "retomar un
+turno" poll already calls — a turn that just finished resuming can *also* be the one that
+needs this). `Workspace.tsx` keeps it in one small piece of state (`pendingPostChecks`),
+gated to fire only once the last message in `messages` is no longer the docente's — reading
+`messages` instead of `isStreaming` avoids a same-render ordering race against the resume
+effect that also runs on mount. It claims via the endpoint, and only on `claimed: true` runs
+`ejecutarAutopruebaYCorreccion` then `iniciarVerificacion` — the *exact* two functions a
+normal turn already calls, not a reimplementation — then calls `complete`. A normal turn now
+also calls `complete` right after its own `ejecutarAutopruebaYCorreccion` (for the
+non-versions branch), so a freshly-generated-and-checked turn never shows up as "pending"
+again on the next load.
+
+**Decision taken without asking back:** if the docente starts a brand-new turn while a
+resumed pipeline is still running in the background (composer stays enabled throughout,
+mirroring how `iniciarVerificacion` already runs non-blocking after a normal turn), the new
+`handleSend` aborts whatever `abortador.current` was already holding before creating its own
+— one line, added at the very top of `handleSend`. This mirrors "cancel it exactly as
+today's post-turn pipeline gets cancelled" for the *self-test* half of the resumed pipeline
+(the verifier half was already covered by the existing `cancelarVerificacion()` calls).
+Scope was kept to exactly that one call site; `handleUndo` and thread-switching don't touch
+`abortador.current` today either, so extending this further would be new behavior the task
+didn't ask for.
+
+**Old resources aren't retested:** covered by the migration backfill above, not by extra
+application logic — the eligibility check is the same one regardless of a row's age.
+
+**Evidence.** `npx tsc --noEmit` OK on the full combined T4+T5 state. All 10
+`e2e/unidad*.ts` suites green, including the new `unidad-post-checks.ts` (8 cases: the 6
+the task named, plus two boundary cases — the claim-staleness comparison is `<`, so an edge
+exactly at `POST_CHECKS_CLAIM_STALE_MS` counts as stale/runnable, documented in the test).
+`npx prisma migrate status` in sync; the three partial indexes
+(`AiModel_un_solo_default`/`AiModel_un_solo_verificador`/`User_un_solo_demo`) confirmed
+present via `psql \di` after this migration.
+
+New browser suite `e2e/generacion-reanudable.ts` (dev server + mock, one at a time), all
+green:
+- **A** — start a generation, close the page once `tool_start` fires (mid-stream, chunked
+  slow on purpose), wait: exactly one assistant message, `currentHtml` is the mock's full
+  HTML (not a partial), at least one `TokenUsage` row — proving the server finished the turn
+  with nobody's tab open.
+- **B** — reopen a project with a turn still in flight (closed the same way as A): the
+  reopened tab shows "Pensando cómo resolverlo" first, then the finished resource; the
+  resumed self-test/checklist then runs on its own ("Esto es lo que probé" appears,
+  `postChecksAt` gets set); reopening a *third* time issues zero `claim` requests.
+- **C** — "Detener" mid-stream: exactly one assistant message with the unchanged "Frenaste
+  este pedido" text, and the mock's own `cortadoTemprano` flag confirms the server-to-provider
+  connection was actually cut, not just the browser-to-server one.
+- **D** — a turn generated without ever opening the editor (so it's missed its checks), then
+  two tabs opened on that project near-simultaneously: exactly one of the two `claim`
+  responses across both tabs comes back `claimed: true`.
+
+Re-ran the full list the task named plus the ones that touch `/api/chat/cancel` or the
+resume poll: `t11-autoprueba`, `t12-checklist-pruebas`, `t9-varias-versiones` (twice),
+`t2-versiones-por-proyecto`, `verificador-editor`, `verificador-endpoint`,
+`selector-y-verificador-opcional`, `m8-proyectos-ajenos` (the only other suite that calls
+`/api/chat/cancel`) — all green.
+
+**Known flake, investigated, not attributable to this change:** `t2-versiones-por-proyecto.ts`
+failed intermittently across repeated runs (~1 in 3–4), always on an assertion about a
+versions turn's chip count or `currentHtml` right after the turn. Traced with temporary debug
+logging: the server-side write to `Project.currentHtml` was confirmed correct via an
+immediate same-process re-read every time, including on runs where the *test's own*,
+separate-process read moments later saw a stale/blank value — with no other logged request
+touching that project in between. Reproduced the same intermittent failure after temporarily
+reverting `stream.ts`/`cancel.ts` to their pre-T4 state (6/6 passed on one batch, then it
+failed again on the very next), so it isn't cleanly bisectable to this change. The Pi was
+under real load during this investigation (`uptime` showed load average 3–5, several GB
+swapped) while this specific test's mock scripts race on chunk delays as low as 5ms — the
+most likely explanation is environmental timing sensitivity, not a regression, but it's
+called out honestly rather than swept under "flaky, ignore."
+
 ### Open items
 
-- T3 (merge to `main`, push, verify deploy), T4 (generation survives a closed tab), T5
-  (browser checks resume on reload) are not started — out of this writer's scope (T1/T2
-  only).
-- `m2-catalogo.ts`'s send-a-message step still fails on the pre-existing `.fill()` gotcha;
-  not fixed here (out of scope, unrelated to T1/T2, and the catalog logic it's meant to
-  exercise already passed earlier in the same run).
-- Deploy killing in-flight generations (documented as out of scope in Constraints) still
-  applies unchanged.
+- T3 (merge to `main`, push, verify deploy) is not started — out of this writer's scope
+  (T4/T5 only).
+- `m2-catalogo.ts`'s send-a-message step still fails on the pre-existing `.fill()` gotcha
+  (T1's note); still not fixed here, still unrelated to T4/T5.
+- `t2-versiones-por-proyecto.ts`'s intermittent flake under load (see T5 evidence above) is
+  unresolved — worth a dedicated investigation with the Pi otherwise idle, but inconclusive
+  evidence didn't justify guessing at a fix.
+- Deploy killing in-flight generations is now explicitly documented (T4's Limits) rather
+  than just "out of scope" — still unfixed, by design (single-process assumption, per the
+  task).
+- No guard was added against two turns starting on the same thread concurrently (T4's
+  Limits) — confirmed nothing stopped it before this task either; reported, not changed.
