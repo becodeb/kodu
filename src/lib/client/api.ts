@@ -1,4 +1,3 @@
-import type { Speed } from '../workspace-types.ts';
 import type { ItemChecklist } from '../ai/checklist.ts';
 import type { Problema } from '../ai/verificador.ts';
 
@@ -69,15 +68,12 @@ export type StreamEvent =
    *  motor, re-pedido forzado): hay que tirar el buffer y esperar uno nuevo. */
   | { type: 'code_reset' }
   /**
-   * T7 ("Revisión automática"): cambio de fase que no es ninguno de los
-   * eventos de arriba. `'revisando'` (terminó el primer pase, está
-   * corrigiendo lo que encontró el lint antes de entregar el recurso) —
-   * la vista previa sigue mostrando el `code` anterior mientras dura,
-   * nunca se manda un `code_delta` de esta pasada. `'planificando'` (T16,
-   * round 4): sólo al crear un recurso nuevo, ANTES de la generación
-   * principal — está armando el checklist de comportamientos.
+   * Cambio de fase que no es ninguno de los eventos de arriba.
+   * `'planificando'` (T16, round 4): sólo al crear un recurso nuevo, ANTES
+   * de la generación principal — está armando el checklist de
+   * comportamientos.
    */
-  | { type: 'phase'; phase: 'revisando' | 'planificando' }
+  | { type: 'phase'; phase: 'planificando' }
   /**
    * T16 (round 4, "checklist del docente"): sólo en un turno que crea un
    * recurso NUEVO y de verdad va a generar código. Llega, si llega, ANTES
@@ -103,18 +99,13 @@ export type StreamEvent =
   /** `userMessageId` (T4) es el id REAL del mensaje "user" que este turno
    *  guardó — el cliente lo agregó de forma optimista con un id local, y
    *  necesita el real para poder reconocer este mensaje puntual más tarde
-   *  (por ejemplo, si el docente pide deshacer este turno).
-   *  `revisionVisualDisponible` (T8): el SERVIDOR decidió que corresponde
-   *  ofrecer la revisión visual de este turno — el cliente nunca lo decide
-   *  solo (ver odd/tasks/modo-prime.md). Ausente/`false` en cualquier otro
-   *  caso, incluidos todos los turnos de antes de T8. */
+   *  (por ejemplo, si el docente pide deshacer este turno). */
   | {
       type: 'done';
       messageId: string;
       userMessageId: string;
       codeUpdated: boolean;
       content: string;
-      revisionVisualDisponible?: boolean;
     }
   /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
    *  falló pero otro de la cadena tiene lugar para el pedido.
@@ -125,7 +116,7 @@ export type StreamEvent =
 /**
  * Lee el body de una `Response` de streaming como una secuencia de eventos
  * SSE ya parseados (sin tipar: cada llamador sabe qué forma esperar).
- * Compartido por `streamChat` y `streamVisualReview` (T8): las dos hablan el
+ * Compartido por `streamChat` y `streamAutocorreccion`: las dos hablan el
  * mismo protocolo de transporte (`data: <json>\n\n`, tolerante a fragmentos
  * cortados por el chunking de red), sólo cambia el VOCABULARIO de eventos.
  */
@@ -178,12 +169,9 @@ export async function* streamChat(payload: {
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
-  /** T6 ("Velocidad Rápido / A fondo"). El servidor la ignora sin el permiso
-   *  (`puedeElegirVelocidad`), así que siempre es seguro mandarla. */
-  speed?: Speed;
-  /** T9 ("Varias versiones al crear un recurso"). El servidor la ignora sin
-   *  `puedePedirVersiones` O si el recurso ya no es el de arranque, así que
-   *  también es siempre seguro mandarla. */
+  /** T9/T2 ("Varias versiones al crear un recurso", opt-in por proyecto). El
+   *  servidor la ignora sin `versionsForAll` × `Project.versionsEnabled` O si
+   *  el recurso ya no es el de arranque, así que siempre es seguro mandarla. */
   variants?: 3;
 }, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
   const response = await fetch('/api/chat/stream', {
@@ -225,48 +213,8 @@ export async function* streamChat(payload: {
 }
 
 /**
- * T8 ("Revisión visual con captura"): vocabulario reducido a propósito —
- * ver el comentario grande en `src/pages/api/chat/visual-review.ts`. Nunca
- * hay un mensaje de chat detrás de esto (discreto), así que no hace falta
- * `messageId` ni `content`.
- */
-export type VisualReviewEvent =
-  | { type: 'code'; html: string }
-  | { type: 'done'; codeUpdated: boolean }
-  /** Sólo por una respuesta HTTP que no llegó a abrir el SSE (permiso,
-   *  huella que no coincide, imagen inválida, tope de tokens): una falla
-   *  DEL MODELO adentro del SSE nunca llega como esto, siempre termina en
-   *  un "done" silencioso (ver el endpoint). */
-  | { type: 'error'; message: string };
-
-export async function* streamVisualReview(
-  payload: { projectId: string; dataUrl: string; fingerprint: string },
-  signal?: AbortSignal,
-): AsyncGenerator<VisualReviewEvent> {
-  const response = await fetch('/api/chat/visual-review', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal,
-  });
-
-  if (!response.ok || !response.body) {
-    const error = (await response.json().catch(() => null)) as { error?: string } | null;
-    yield {
-      type: 'error',
-      message: error?.error ?? `El servidor rechazó el pedido (error ${response.status}).`,
-    };
-    return;
-  }
-
-  for await (const evento of leerEventosSse(response)) {
-    yield evento as VisualReviewEvent;
-  }
-}
-
-/**
- * T12 (round 3, "Autoprueba + autocorrección"): mismo vocabulario reducido
- * que T8 — ver el comentario grande en `src/pages/api/chat/autocorreccion.ts`.
+ * T12 (round 3, "Autoprueba + autocorrección"): vocabulario reducido — ver el
+ * comentario grande en `src/pages/api/chat/autocorreccion.ts`.
  */
 export type AutocorreccionEvent =
   | { type: 'code'; html: string }

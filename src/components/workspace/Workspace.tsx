@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
-import PreviewPanel, { type PreviewPanelHandle } from './PreviewPanel.tsx';
+import PreviewPanel from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
-import { apiRequest, streamAutocorreccion, streamChat, streamVisualReview, uploadFiles } from '../../lib/client/api.ts';
+import { apiRequest, streamAutocorreccion, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../../lib/client/autoprueba.ts';
 import {
@@ -11,9 +11,7 @@ import {
   verificarRecurso,
   type EstadoPanelVerificador,
 } from '../../lib/client/verificador.ts';
-import { guardarVelocidad, leerVelocidadGuardada } from '../../lib/client/velocidad.ts';
-import { guardarVersiones, leerVersionesGuardado } from '../../lib/client/versiones.ts';
-import { fingerprintHtml } from '../../lib/ai/revision-visual.ts';
+import { fingerprintHtml } from '../../lib/ai/fingerprint.ts';
 import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import { estadoDeChecklist } from '../../lib/client/checklist.ts';
@@ -22,7 +20,6 @@ import type {
   AiPhase,
   CapacidadesEditor,
   MotorPublico,
-  Speed,
   VersionEnCurso,
   WorkspaceAsset,
   WorkspaceMessage,
@@ -50,12 +47,9 @@ interface WorkspaceProps {
    */
   initialNotice: string | null;
   /**
-   * T5 (odd/tasks/modo-prime.md): lo único que este docente puede hacer que
-   * un docente común no puede — nunca la palabra "prime" ni ninguna bandera
-   * de `AppSettings` (ver `workspace-types.ts`). T6 ("Velocidad") ya lo
-   * consume (`puedeElegirVelocidad`, `velocidadPorDefecto`); T9 ("Varias
-   * versiones") va a leer `puedePedirVersiones` de acá cuando construya su
-   * propio control.
+   * Lo que el admin permite en esta cuenta — nunca una bandera cruda de
+   * `AppSettings` (ver `workspace-types.ts`). T9/T2 ("Varias versiones")
+   * lee `puedePedirVersiones` de acá para su propio control.
    */
   capacidades: CapacidadesEditor;
   /**
@@ -122,48 +116,20 @@ export default function Workspace(props: WorkspaceProps) {
   const [model, setModel] = useState<string>(props.project.aiModelId);
 
   /**
-   * T6 ("Velocidad Rápido / A fondo"): arranca en el default de ESTA cuenta
-   * (`velocidadPorDefecto`, nunca la palabra "prime") — el mismo valor en el
-   * render del servidor y en la primera pasada del cliente, para no pelearse
-   * con la hidratación. La preferencia guardada en este navegador (si la
-   * hay) se aplica recién después, en el `useEffect` de abajo, que sólo
-   * corre en el cliente.
+   * T2 ("versiones como opt-in por proyecto"): apagado por default, y ahora
+   * persistido en el PROYECTO (`Project.versionsEnabled`, vía el mismo PATCH
+   * que el resto del editor), no por navegador — así el interruptor es del
+   * proyecto y no de quién lo abrió. El interruptor sólo se OFRECE cuando
+   * además el recurso sigue siendo el de arranque (`esRecursoInicial(html)`,
+   * recalculado en cada render): server-side, `stream.ts` vuelve a cruzar
+   * las condiciones igual, así que este estado nunca alcanza por sí solo
+   * para forzar nada.
    */
-  const [speed, setSpeed] = useState<Speed>(props.capacidades.velocidadPorDefecto === 'a_fondo' ? 'deep' : 'fast');
-
-  useEffect(() => {
-    const guardada = leerVelocidadGuardada();
-    if (guardada) setSpeed(guardada);
-    // Sólo al montar: es la misma lectura de "preferencia de este navegador"
-    // que hace `conTema` con el tema, una sola vez al abrir.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function handleSpeedChange(nuevaVelocidad: Speed) {
-    setSpeed(nuevaVelocidad);
-    guardarVelocidad(nuevaVelocidad);
-  }
-
-  /**
-   * T9 ("Varias versiones al crear un recurso"): apagado por default —a
-   * diferencia de la velocidad, acá no hay un default que dependa de la
-   * cuenta— y persistido por navegador (`client/versiones.ts`, mismo patrón
-   * que T6). El interruptor sólo se OFRECE cuando además el recurso sigue
-   * siendo el de arranque (`esRecursoInicial(html)`, recalculado en cada
-   * render): server-side, `stream.ts` vuelve a cruzar las tres condiciones
-   * igual, así que este estado nunca alcanza por sí solo para forzar nada.
-   */
-  const [versiones, setVersiones] = useState(false);
-
-  useEffect(() => {
-    if (leerVersionesGuardado()) setVersiones(true);
-    // Sólo al montar, mismo criterio que la velocidad de arriba.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [versiones, setVersiones] = useState(props.project.versionsEnabled);
 
   function handleVersionesChange(activo: boolean) {
     setVersiones(activo);
-    guardarVersiones(activo);
+    void patchProject({ versionsEnabled: activo }, true);
   }
 
   /**
@@ -301,11 +267,6 @@ export default function Workspace(props: WorkspaceProps) {
   /** Para poder cortar el turno desde el botón "Detener". */
   const abortador = useRef<AbortController | null>(null);
   const resumeTimer = useRef<number | null>(null);
-
-  /** T8 ("Revisión visual con captura"): para pedirle una captura a
-   *  PreviewPanel desde `ejecutarRevisionVisual`, sin que ese componente
-   *  tenga que saber nada de turnos ni de streaming. */
-  const previewRef = useRef<PreviewPanelHandle>(null);
 
   /** Cuándo arrancó el turno en curso (epoch ms), para el cronómetro. */
   const [turnoDesde, setTurnoDesde] = useState<number | null>(null);
@@ -574,19 +535,17 @@ export default function Workspace(props: WorkspaceProps) {
     // llegue: por eso se reasigna entero en vez de acumularse con `||`.
     const htmlAlInicioDelTurno = html;
     let cambioElHtml = false;
-    // T8 ("Revisión visual con captura"): el HTML con el que terminó este
-    // turno (el de "código" más reciente) y si el servidor ofreció mirarlo.
-    // Se leen recién DESPUÉS del `for await`, nunca adentro: la revisión
-    // visual arranca sólo una vez que el turno normal terminó del todo.
+    // El HTML con el que terminó este turno (el de "código" más reciente).
+    // Se lee recién DESPUÉS del `for await`, nunca adentro.
     let ultimoHtmlDelTurno: string | null = null;
-    let ofreceRevisionVisual = false;
 
     /**
-     * T9 ("Varias versiones al crear un recurso"): lo que este turno le pide
-     * al servidor — capacidad Y el interruptor prendido Y el recurso
-     * todavía en blanco. El servidor vuelve a cruzar las tres cosas con SUS
-     * propios datos (`variantesEfectivas`, `stream.ts`): esto sólo decide si
-     * vale la pena mandar `variants: 3`, nunca fuerza nada.
+     * T9/T2 ("Varias versiones al crear un recurso", opt-in por proyecto):
+     * lo que este turno le pide al servidor — capacidad (admin × proyecto) Y
+     * el interruptor prendido Y el recurso todavía en blanco. El servidor
+     * vuelve a cruzar las mismas condiciones con SUS propios datos
+     * (`variantesEfectivas`, `stream.ts`): esto sólo decide si vale la pena
+     * mandar `variants: 3`, nunca fuerza nada.
      */
     const pedirVersiones = props.capacidades.puedePedirVersiones && versiones && esRecursoInicial(html);
     // Progreso de las versiones de ESTE turno, si el servidor confirma que
@@ -607,11 +566,8 @@ export default function Workspace(props: WorkspaceProps) {
           model,
           attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
           codeEditedByTeacher: codeEditedByTeacher.current,
-          // T6: el servidor la ignora sin `puedeElegirVelocidad`, así que
-          // siempre es seguro mandar la actual.
-          speed,
-          // T9: mismo criterio — el servidor la ignora sin las otras dos
-          // condiciones, así que también es siempre seguro mandarla.
+          // El servidor la ignora sin las condiciones (admin × proyecto ×
+          // recurso todavía en blanco), así que siempre es seguro mandarla.
           variants: pedirVersiones ? 3 : undefined,
         },
         abortador.current.signal,
@@ -648,9 +604,9 @@ export default function Workspace(props: WorkspaceProps) {
           // T4: se recalcula en cada "code" del turno (reintento, salto de
           // motor); sólo el último importa, igual que `html` mismo.
           cambioElHtml = event.html !== htmlAlInicioDelTurno;
-          // T8: mismo criterio, para tener a mano el HTML final del turno
-          // sin depender del estado `html` (que además todavía no se pudo
-          // haber vuelto a renderizar en este punto del loop).
+          // Mismo criterio: tener a mano el HTML final del turno sin
+          // depender del estado `html` (que además todavía no se pudo haber
+          // vuelto a renderizar en este punto del loop).
           ultimoHtmlDelTurno = event.html;
           setAiPhase('coding');
           // La versión de la IA pasa a ser la vigente: lo que el docente había
@@ -672,8 +628,8 @@ export default function Workspace(props: WorkspaceProps) {
           // T9 ("Varias versiones"): `ready: false` es el anuncio de que
           // este índice va a existir (las tres llegan juntas, apenas el
           // servidor confirma el turno de versiones); `ready: true` es que
-          // ya terminó. Nunca se infiere esto del lado del cliente —server
-          // confirmado, igual que `revisionVisualDisponible` en T8.
+          // ya terminó. Nunca se infiere esto del lado del cliente, siempre
+          // confirmado por el servidor.
           versionesDelTurno = actualizarVersionEnCurso(versionesDelTurno, event.index, event.ready);
           setVersionesEnCurso(versionesDelTurno);
         } else if (event.type === 'error') {
@@ -719,32 +675,16 @@ export default function Workspace(props: WorkspaceProps) {
             },
           ]);
           if (event.codeUpdated) flashNotice('Recurso actualizado');
-          // T8: guardado para leer DESPUÉS del loop (ver más abajo) — nunca
-          // se arranca la revisión visual desde acá adentro, el turno
-          // normal tiene que terminar de escribir su mensaje primero.
-          ofreceRevisionVisual = Boolean(event.revisionVisualDisponible);
         }
       }
 
-      // T8 ("Revisión visual con captura"): el turno normal ya terminó
-      // (mensaje guardado, "done" procesado) y el servidor dijo que
-      // correspondía mirarlo. Sigue siendo EL MISMO turno para el docente:
-      // `isStreaming`/`turnoDesde` no se tocan acá (siguen como están hasta
-      // el `finally` de abajo), así que el compositor sigue deshabilitado,
-      // "Detener" sigue andando y el cronómetro no se reinicia.
-      let htmlParaAutoprueba = ultimoHtmlDelTurno;
-      if (ofreceRevisionVisual && ultimoHtmlDelTurno) {
-        htmlParaAutoprueba = await ejecutarRevisionVisual(ultimoHtmlDelTurno);
-      }
-
       // T12 (round 3, "Autoprueba + autocorrección"): el ÚLTIMO chequeo
-      // antes de soltarle el recurso al docente, después de la revisión
-      // visual si corrió (es el gate final sobre lo que el docente ve de
-      // verdad). Se salta en un turno de versiones (T9): la autoprueba
-      // corre sobre UN HTML — con 3 versiones en paralelo no hay "el"
-      // recurso vigente todavía hasta que el docente elige una, y
-      // probarlas las 3 triplicaría costo y tiempo, mismo criterio que ya
-      // usa T8 para excluir versiones de la revisión visual.
+      // antes de soltarle el recurso al docente (es el gate final sobre lo
+      // que el docente ve de verdad). Se salta en un turno de versiones
+      // (T9): la autoprueba corre sobre UN HTML — con 3 versiones en
+      // paralelo no hay "el" recurso vigente todavía hasta que el docente
+      // elige una, y probarlas las 3 triplicaría costo y tiempo.
+      const htmlParaAutoprueba = ultimoHtmlDelTurno;
       if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba) {
         const htmlTrasAutoprueba = await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
         // T4 (`odd/tasks/verificador.md`): en SEGUNDO PLANO — a propósito
@@ -779,77 +719,14 @@ export default function Workspace(props: WorkspaceProps) {
   }
 
   /**
-   * T8 ("Revisión visual con captura"): el paso final y opcional de un
-   * turno "A fondo" que cambió el recurso con un motor que ve imágenes —
-   * `handleSend` la llama después de procesar el "done" del turno normal,
-   * sólo cuando ese "done" trajo `revisionVisualDisponible: true`.
-   *
-   * Discreta: nunca toca el chat (ni mensaje nuevo, ni error visible). Si
-   * algo no sale bien — la captura falla, el servidor rechaza el pedido, el
-   * docente aprieta "Detener" — se loguea y se sale en silencio, dejando el
-   * HTML que ya había dejado el turno. `isStreaming`/`turnoDesde` los
-   * maneja `handleSend` (no se tocan acá): para el docente sigue siendo el
-   * mismo turno, con el mismo cronómetro.
-   *
-   * Devuelve el HTML con el que terminó (el corregido, o `htmlCapturado` tal
-   * cual si no cambió nada): T12 la encadena para correr la autoprueba
-   * sobre lo que el docente TERMINÓ viendo, no sobre lo que había antes de
-   * la revisión visual.
-   */
-  async function ejecutarRevisionVisual(htmlCapturado: string): Promise<string> {
-    setAiPhase('mirando');
-    let htmlFinal = htmlCapturado;
-
-    const capturado = await previewRef.current?.capturar({ formato: 'jpeg', calidad: 0.85, altoMax: 1_600 });
-    if (!capturado || 'error' in capturado) {
-      if (capturado) console.warn('[revisión visual] no se pudo capturar la vista previa:', capturado.error);
-      return htmlFinal;
-    }
-
-    abortador.current = new AbortController();
-    try {
-      for await (const event of streamVisualReview(
-        { projectId, dataUrl: capturado.dataUrl, fingerprint: fingerprintHtml(htmlCapturado) },
-        abortador.current.signal,
-      )) {
-        if (event.type === 'code') {
-          // Mismo tratamiento que un "code" del turno normal: la vista
-          // previa cambia, la portada vieja queda marcada, y lo que el
-          // docente hubiera escrito a mano ya quedó incorporado.
-          setHtml(event.html);
-          htmlFinal = event.html;
-          codeEditedByTeacher.current = false;
-          if (screenshotUrl) setPortadaVieja(true);
-          flashNotice('Recurso actualizado');
-        } else if (event.type === 'error') {
-          // Nunca visible: el turno que trajo esta oferta ya había
-          // terminado bien (ver el comentario grande de más arriba).
-          console.warn('[revisión visual]', event.message);
-        }
-        // "done" no necesita hacer nada especial: sólo marca que terminó.
-      }
-    } catch (error) {
-      // Un abort es el docente tocando "Detener" durante esta fase: se deja
-      // el HTML del turno tal cual, sin ningún aviso.
-      if ((error as Error)?.name !== 'AbortError') {
-        console.warn('[revisión visual] se cortó la conexión:', error);
-      }
-    } finally {
-      abortador.current = null;
-    }
-
-    return htmlFinal;
-  }
-
-  /**
    * T12 (round 3, "Autoprueba + autocorrección"): el último paso, opcional,
-   * de un turno que cambió el recurso — `handleSend` la llama después de la
-   * revisión visual de T8 (si corrió), sobre el HTML final de esa cadena.
-   * Corre la autoprueba de T11 en un iframe oculto; si encuentra errores
-   * reales o un reinicio roto, pide hasta 2 rondas de corrección puntual
-   * (razonamiento "low", server-side) y vuelve a probar cada una.
+   * de un turno que cambió el recurso — `handleSend` la llama sobre el HTML
+   * final del turno. Corre la autoprueba de T11 en un iframe oculto; si
+   * encuentra errores reales o un reinicio roto, pide hasta 2 rondas de
+   * corrección puntual (razonamiento "low", server-side) y vuelve a probar
+   * cada una.
    *
-   * Discreta, mismo criterio que T8: nunca toca el chat. Si la autoprueba
+   * Discreta: nunca toca el chat. Si la autoprueba
    * no se pudo correr (timeout, "Detener") no hay NADA que avisar — no es
    * que el recurso esté mal, es que no se llegó a saber. El aviso discreto
    * en el panel de vista previa (`autopruebaAdvertencia`) es SÓLO para
@@ -913,8 +790,8 @@ export default function Workspace(props: WorkspaceProps) {
           abortador.current.signal,
         )) {
           if (event.type === 'code') {
-            // Mismo tratamiento que un "code" de la revisión visual: la
-            // vista previa cambia, sin pasar por el chat.
+            // Mismo tratamiento que un "code" del turno normal: la vista
+            // previa cambia, sin pasar por el chat.
             setHtml(event.html);
             htmlCorregido = event.html;
             codeEditedByTeacher.current = false;
@@ -1391,9 +1268,6 @@ export default function Workspace(props: WorkspaceProps) {
         }
         onSend={(message) => void handleSend(message)}
         onUndo={(messageId) => void handleUndo(messageId)}
-        puedeElegirVelocidad={props.capacidades.puedeElegirVelocidad}
-        speed={speed}
-        onSpeedChange={handleSpeedChange}
         puedePedirVersiones={props.capacidades.puedePedirVersiones}
         esRecursoInicial={esRecursoInicial(html)}
         versiones={versiones}
@@ -1406,7 +1280,6 @@ export default function Workspace(props: WorkspaceProps) {
       <div className={`min-h-0 ${vistaMovil === 'recurso' ? 'flex' : 'hidden'} lg:flex`}>
 
       <PreviewPanel
-        ref={previewRef}
         html={html}
         partialHtml={partialHtml}
         onHtmlChange={(value) => {

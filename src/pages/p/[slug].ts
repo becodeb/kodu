@@ -16,10 +16,9 @@ import { ALLOWED_CDNS } from '../../lib/cdn-allowlist.ts';
  * cookie de sesión de quien lo esté mirando. La CSP corta eso: permite los CDN
  * didácticos y bloquea cualquier conexión o envío de formulario hacia la app.
  *
- * `ALLOWED_CDNS` vive en `src/lib/cdn-allowlist.ts` (T7, odd/tasks/modo-prime.md):
- * la revisión automática usa la misma lista para avisar en el editor lo que
- * esta CSP va a bloquear al publicar. Mismo orden y mismos orígenes que
- * siempre — el string de la CSP que arma este archivo no cambió.
+ * `ALLOWED_CDNS` vive en `src/lib/cdn-allowlist.ts`, su propio módulo. Mismo
+ * orden y mismos orígenes de siempre — el string de la CSP que arma este
+ * archivo no cambió.
  */
 
 const CSP = [

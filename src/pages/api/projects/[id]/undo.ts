@@ -12,8 +12,8 @@ const schema = z.object({
 
 /**
  * POST /api/projects/:id/undo — deshace el último cambio de la IA (T4,
- * odd/tasks/modo-prime.md — "Deshacer: al menos el último cambio... como es
- * barato, va para todos y con varios niveles").
+ * "Deshacer cambios de la IA": al menos el último cambio, barato, para
+ * todos y con varios niveles).
  *
  * Sólo se puede deshacer el turno MÁS NUEVO que todavía tiene instantánea: no
  * hay forma de saltear uno del medio. Si `messageId` no es exactamente ese

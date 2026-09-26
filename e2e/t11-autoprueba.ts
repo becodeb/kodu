@@ -14,20 +14,17 @@ import type { Page } from 'playwright';
  * (`ejecutarAutopruebaYCorreccion`, Workspace.tsx) contra la app real en
  * Chromium, sin ninguna llamada paga (mock en `e2e/mock-proveedor.ts`).
  *
- * Mismo patrón que `e2e/t8-revision-visual.ts` (escena de navegador: turno
- * real, phases visibles en pantalla) y `e2e/t6-velocidad.ts`/
- * `e2e/t7-revision-automatica.ts` (pisa el dialecto de razonamiento del
- * motor mock para poder distinguir en el pedido que recibe el mock la
- * velocidad de la corrección — T12 pide `reasoning_effort: "low"` siempre,
- * sin importar el nivel configurado). REUSA el AiProvider/AiModel
- * compartido "kodu-mock-t3" (mismo `kind` que T3+), filtrado por
- * `enabled`/`apiKeyCipher` como hace `e2e/arnes-robustez.ts` (la base de
- * desarrollo acumula filas viejas de otras tareas).
+ * Escena de navegador: turno real, phases visibles en pantalla, pisando el
+ * dialecto de razonamiento del motor mock para poder distinguir en el
+ * pedido que recibe el mock la velocidad de la corrección — T12 pide
+ * `reasoning_effort: "low"` siempre, sin importar el nivel configurado.
+ * REUSA el AiProvider/AiModel compartido "kodu-mock-t3" (mismo `kind` que
+ * T3+), filtrado por `enabled`/`apiKeyCipher` como hace
+ * `e2e/arnes-robustez.ts` (la base de desarrollo acumula filas viejas de
+ * otras tareas).
  *
- * No prende `primeEnabled`: la autoprueba NO es una feature de prime (T12
- * lo decidió a propósito), así que corre igual para un docente común y
- * `revisionVisualDisponible` queda siempre en `false` sin necesidad de
- * apagarla explícitamente — nada de T8 se mete en el conteo de llamadas.
+ * La autoprueba corre igual para cualquier docente, sin ningún gate de
+ * capacidad especial.
  *
  * Requiere la pila de desarrollo levantada (`docker compose up -d db`,
  * `npm run dev` en el puerto 3000, con las rutas de T12 ya cargadas — un
@@ -128,7 +125,7 @@ function htmlReinicioParcial(marca: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Helpers (mismo patrón que e2e/t8-revision-visual.ts / arnes-robustez.ts)
+// Helpers (mismo patrón que e2e/arnes-robustez.ts)
 // ─────────────────────────────────────────────────────────────
 
 async function asegurarDocente(email: string, password: string, nombre: string): Promise<string> {
@@ -228,8 +225,8 @@ async function enviarTurnoPorUi(page: Page, projectId: string, mensaje: string):
   await campoMensaje.pressSequentially(mensaje, { delay: 10 });
   await botonEnviar.click();
   // "Enviar" reaparece recién cuando `isStreaming` vuelve a `false` — eso
-  // incluye el turno normal, la revisión visual (si corriera) Y el ciclo
-  // entero de autoprueba/corrección de T12 (mismo turno para el docente).
+  // incluye el turno normal Y el ciclo entero de autoprueba/corrección de
+  // T12 (mismo turno para el docente).
   await botonEnviar.waitFor({ state: 'visible', timeout: 45_000 });
 }
 
@@ -265,11 +262,9 @@ async function main(): Promise<void> {
       `✔ dialecto del mock pisado a reasoning_effort/"none" (original: ${dialectoOriginal.reasoningParam ?? 'null'}/${dialectoOriginal.reasoningEffort ?? 'null'})`,
     );
 
-    // Sin prime: la autoprueba de T12 no es una feature de prime, y así se
-    // prueba exactamente eso — corre igual para un docente común. También
-    // deja `revisionVisualDisponible` en `false` siempre, así T8 nunca se
-    // mete en el conteo de llamadas al mock.
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+    // La autoprueba de T12 corre igual para cualquier docente, sin ningún
+    // gate de capacidad especial.
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     const docenteContext = await browser.newContext();
     const docentePage = await docenteContext.newPage();
@@ -283,9 +278,8 @@ async function main(): Promise<void> {
     const proyecto1 = await crearProyecto(docentePage, 'T11 — roto a corregido', modelId);
     mock.llamadas.length = 0;
     mock.programarRespuesta({ texto: '', html: htmlRoto('1a'), chunkDelayMs: 5, chunkBytes: 20_000 });
-    // Deliberadamente más lento que el resto (mismo truco que la escena H de
-    // t8-revision-visual.ts): la corrección de verdad tarda unos cientos de
-    // ms en streamear para que "Corrigiendo un detalle…" tenga tiempo de
+    // Deliberadamente más lento que el resto: la corrección de verdad tarda
+    // unos cientos de ms en streamear para que "Corrigiendo un detalle…" tenga tiempo de
     // pintarse en pantalla antes de que el ciclo pase a re-probar — con
     // chunks grandes/rápidos, la fase entera podía durar unos pocos ms y el
     // `waitFor` de Playwright la perdía.
@@ -432,7 +426,7 @@ async function main(): Promise<void> {
           reasoningParam: dialectoOriginal.reasoningParam,
         });
       }
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
       console.log('✔ limpieza: dialecto del mock restaurado, settings apagados');
     } catch (error) {

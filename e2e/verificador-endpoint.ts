@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
-import { fingerprintHtml } from '../src/lib/ai/revision-visual.ts';
+import { fingerprintHtml } from '../src/lib/ai/fingerprint.ts';
 import { abrirNavegador, BASE_URL, iniciarSesion } from './harness.ts';
 import { iniciarMockProveedor, PUERTO_POR_DEFECTO } from './mock-proveedor.ts';
 import type { BrowserContext, Page } from 'playwright';
@@ -59,7 +59,7 @@ ${extraHead}
 }
 
 // ─────────────────────────────────────────────────────────────
-// Helpers (mismo patrón que e2e/t8-revision-visual.ts / t12-checklist-pruebas.ts)
+// Helpers (mismo patrón que e2e/t12-checklist-pruebas.ts)
 // ─────────────────────────────────────────────────────────────
 
 async function asegurarDocente(email: string, password: string, nombre: string): Promise<string> {

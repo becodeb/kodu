@@ -11,7 +11,7 @@ import { DEFAULT_HTML } from './ai/versiones.ts';
  * puede, a propósito (M8, design.md §7).
  */
 
-/** Re-exportada desde `ai/versiones.ts` (T9, odd/tasks/modo-prime.md): ese
+/** Re-exportada desde `ai/versiones.ts` (T9): ese
  *  módulo es isomórfico (también lo importa el cliente) y no puede arrastrar
  *  Prisma, así que la constante vive ahí y este módulo —que sí importa
  *  Prisma— la reusa en vez de duplicarla. Cualquier import existente de

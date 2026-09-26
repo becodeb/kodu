@@ -9,21 +9,19 @@ import {
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
 import { aislarPruebasKit, aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
-import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
   ProviderError,
+  razonamientoNulo,
   readCompletionStream,
   requestCompletionStream,
   supportsVision,
   type ChatMessage,
   type ContentPart,
   type ProviderConfig,
-  type Speed,
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
-import { resolverCapacidades, resolverVelocidadEfectiva } from '../../../lib/ai/capacidades.ts';
-import { aplicaRevisionVisual } from '../../../lib/ai/revision-visual.ts';
+import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import {
   contenidoMensajeDeVersiones,
   directivaDeVersion,
@@ -87,18 +85,12 @@ const schema = z.object({
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
   /**
-   * T6 ("Velocidad Rápido / A fondo"): lo que eligió el docente en el
-   * compositor. Server-side, `resolverVelocidadEfectiva` (`lib/ai/capacidades.ts`)
-   * lo IGNORA por completo sin `puedeElegirVelocidad` — mandarlo desde acá no
-   * alcanza para forzar nada sin el permiso.
-   */
-  speed: z.enum(['fast', 'deep']).optional(),
-  /**
    * T9 ("Varias versiones al crear un recurso"): lo que pidió el docente en
-   * el interruptor del compositor. Server-side, `variantesEfectivas`
-   * (`lib/ai/versiones.ts`) lo cruza con `puedePedirVersiones` Y con si el
-   * recurso sigue siendo el de arranque — mandarlo desde acá no alcanza
-   * para forzar nada sin las otras dos condiciones.
+   * el interruptor del proyecto. Server-side, `variantesEfectivas`
+   * (`lib/ai/versiones.ts`) lo cruza con `AppSettings.versionsForAll`,
+   * `Project.versionsEnabled` Y con si el recurso sigue siendo el de
+   * arranque — mandarlo desde acá no alcanza para forzar nada sin las otras
+   * condiciones.
    */
   variants: z.union([z.literal(1), z.literal(3)]).optional(),
 });
@@ -227,17 +219,14 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
  * del HTML nuevo): si el modelo no declaró `<meta name="kodu-tema">` en esta
  * respuesta, el recurso no se queda sin kit, hereda el que ya tenía.
  *
- * Exportada para `e2e/unidad.ts` (mismo criterio que `pideCambio` más abajo)
- * y, desde T8, para `visual-review.ts` — mismo paso, misma razón: el HTML
- * que devuelve esa llamada también pasa por acá antes de persistirse.
+ * Exportada para `e2e/unidad.ts` (mismo criterio que `pideCambio` más abajo).
  *
  * `aplicarKitConRedDeSeguridad` y no `aplicarKit` a secas (T11, "Red de
  * seguridad: tema por defecto"): si el modelo se olvidó el meta pero igual
  * escribió clases de Tailwind, el HTML se guardaría sin ningún Tailwind
  * cargado — sin estilos para cualquier docente. Al pasar TODO HTML de
- * modelo por acá (primer pase, corrección de T7, versiones de T9, revisión
- * visual de T8), la red de seguridad cubre las cuatro fuentes con un solo
- * cambio.
+ * modelo por acá (primer pase, versiones de T9), la red de seguridad cubre
+ * esas fuentes con un solo cambio.
  */
 export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
   // T1 (verificador): después del kit, nunca antes — `aislarPruebasKit`
@@ -322,33 +311,22 @@ async function buildUserContent(
  * Usa la cadena (no la lista completa del catálogo) a propósito: es la misma
  * lista de motores que ya sabemos que están habilitados y con clave, así que
  * la sugerencia nunca apunta a algo que después no puede contestar.
- *
- * `prime` (T5) viaja igual que en el resto del catálogo: sin ella, la
- * sugerencia podría ofrecerle a un docente sin prime un motor que nunca
- * podría usar.
  */
 async function motorConCapacidad(
   actual: ProviderConfig,
   largoMensaje: number,
-  prime: boolean,
 ): Promise<ProviderConfig | null> {
-  const cadena = await cadenaDeMotores(actual.id, prime);
+  const cadena = await cadenaDeMotores(actual.id);
   return cadena.find((motor) => motor.id !== actual.id && motor.maxInputChars >= largoMensaje) ?? null;
 }
 
 /**
  * T9 ("Varias versiones al crear un recurso"): genera UNA versión
  * secundaria (2 o 3) de un turno de versiones — una llamada sola al motor
- * pedido (SIN cadena de respaldo, sin rescate de HTML del texto, sin
+ * pedido, con el razonamiento configurado del motor tal cual (sin pisar
+ * nada), SIN cadena de respaldo, sin rescate de HTML del texto, sin
  * re-pedido forzado: si algo sale mal, se descarta entera, nunca tumba el
- * turno — mismo criterio que T8 ya sienta para la revisión visual: "no hay
- * 'otro motor' al que valga la pena pasarle lo mismo") y, si corresponde, su
- * propia pasada de corrección de T7 (en `POST`, `revisarYCorregir` hace lo
- * mismo para la versión 1; esto es el equivalente para cualquier otra, con
- * el mismo criterio de "usar lo corregido si algo salió, sin reintentar una
- * segunda vez"). `anterior` para el lint SIEMPRE es `null`: una versión
- * sólo existe cuando el recurso todavía era el de arranque (T9,
- * "eligibility"), así que nunca hay nada previo con qué comparar.
+ * turno — no hay "otro motor" al que valga la pena pasarle lo mismo.
  *
  * Nunca tira: cualquier falla (red, JSON inválido, truncado, el docente
  * cancelando el turno) se loguea y devuelve `null` — el llamador la trata
@@ -359,35 +337,10 @@ async function generarVersionSecundaria(args: {
   mensajes: ChatMessage[];
   provider: ProviderConfig;
   temaProyecto: TemaId | null;
-  velocidadEfectiva: Speed | null;
-  autoReviewForAll: boolean;
-  promptBase: {
-    globalRules: RuleContext[];
-    userRules: RuleContext[];
-    assets: AssetContext[];
-    projectTitle: string;
-    turnosPrevios: number;
-  };
   userId: string;
   projectId: string;
   signal?: AbortSignal;
 }): Promise<string | null> {
-  const registrarConsumo = (usage: MotorTokenUsage | null) => {
-    if (!usage) return;
-    recordUsage({
-      userId: args.userId,
-      projectId: args.projectId,
-      aiModelId: args.provider.id,
-      model: args.provider.model,
-      promptTokens: usage.promptTokens,
-      cachedInputTokens: usage.cachedTokens,
-      completionTokens: usage.completionTokens,
-      precios: args.provider.precios,
-    }).catch((error) =>
-      console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
-    );
-  };
-
   let primeraPasada: string | null = null;
 
   try {
@@ -396,7 +349,6 @@ async function generarVersionSecundaria(args: {
       provider: args.provider,
       signal: args.signal,
       forzarHerramienta: true,
-      velocidad: args.velocidadEfectiva,
     });
 
     let usage: MotorTokenUsage | null = null;
@@ -408,7 +360,20 @@ async function generarVersionSecundaria(args: {
         if (resultado.ok) primeraPasada = aplicarKitAlTurno(resultado.html, args.temaProyecto);
       }
     }
-    registrarConsumo(usage);
+    if (usage) {
+      await recordUsage({
+        userId: args.userId,
+        projectId: args.projectId,
+        aiModelId: args.provider.id,
+        model: args.provider.model,
+        promptTokens: usage.promptTokens,
+        cachedInputTokens: usage.cachedTokens,
+        completionTokens: usage.completionTokens,
+        precios: args.provider.precios,
+      }).catch((error) =>
+        console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
+      );
+    }
   } catch (error) {
     console.warn(
       `[chat/stream] versión ${args.indice}: no se pudo generar, se descarta:`,
@@ -417,89 +382,7 @@ async function generarVersionSecundaria(args: {
     return null;
   }
 
-  if (!primeraPasada) return null;
-
-  // T7 ("Revisión automática"), misma puerta que la versión 1 en `POST`
-  // (A fondo, o `autoReviewForAll` para quien lo tiene "para todos").
-  if (args.velocidadEfectiva !== 'deep' && !args.autoReviewForAll) return primeraPasada;
-
-  const hallazgos = revisarHtml(primeraPasada, { anterior: null });
-  if (hallazgos.length === 0) return primeraPasada;
-
-  try {
-    const mensajeHallazgos = [
-      'Revisión automática antes de entregarle el recurso al docente. Corregí SÓLO esto, sin cambiar nada más del recurso:',
-      ...hallazgos.map((hallazgo, indice) => {
-        const ejemplos =
-          hallazgo.ejemplos && hallazgo.ejemplos.length > 0
-            ? ` Ejemplos: ${hallazgo.ejemplos.join(', ')}.`
-            : '';
-        return `${indice + 1}. ${hallazgo.instruccion}${ejemplos}`;
-      }),
-    ].join('\n');
-
-    // Mismo criterio que `revisarYCorregir`: el system prompt "de siempre",
-    // y la primera pasada como "el recurso actual" viaja en el mensaje de
-    // usuario (T1, "html-fuera-del-system") — la REGLA MÁS IMPORTANTE ("se
-    // EDITA lo que ya existe") sigue rigiendo, así el modelo no reescribe
-    // de cero para corregir un par de hallazgos. Sin historial: es un
-    // pedido mecánico y autocontenido.
-    const systemPromptRevision = buildSystemPrompt({
-      globalRules: args.promptBase.globalRules,
-      userRules: args.promptBase.userRules,
-      assets: args.promptBase.assets,
-      canSeeImages: supportsVision(args.provider),
-      turnosPrevios: args.promptBase.turnosPrevios,
-      herramientaForzada: true,
-    });
-
-    const respuestaRevision = await requestCompletionStream({
-      messages: [
-        { role: 'system', content: systemPromptRevision },
-        {
-          role: 'user',
-          content: `${buildCurrentResourceBlock(primeraPasada, args.promptBase.projectTitle, false)}\n\n${mensajeHallazgos}`,
-        },
-      ],
-      provider: args.provider,
-      signal: args.signal,
-      forzarHerramienta: true,
-      // Mecánico, no creativo: razonamiento OFF, sin importar la velocidad
-      // efectiva del turno — mismo criterio que la corrección de T7.
-      velocidad: 'fast',
-    });
-
-    let htmlCorregido: string | null = null;
-    let usageRevision: MotorTokenUsage | null = null;
-    for await (const event of readCompletionStream(respuestaRevision, args.provider.apiFormat)) {
-      if (event.type === 'usage') {
-        usageRevision = event.usage;
-      } else if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
-        const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
-        if (resultado.ok) htmlCorregido = aplicarKitAlTurno(resultado.html, args.temaProyecto);
-      }
-    }
-    registrarConsumo(usageRevision);
-
-    if (!htmlCorregido) return primeraPasada;
-
-    // Sólo se loguea si quedan hallazgos: no se reintenta una segunda vez,
-    // mismo límite que `revisarYCorregir` — "una sola corrección por turno".
-    const hallazgosRestantes = revisarHtml(htmlCorregido, { anterior: null });
-    if (hallazgosRestantes.length > 0) {
-      console.warn(
-        `[chat/stream] versión ${args.indice}: tras la corrección quedan ${hallazgosRestantes.length} hallazgo(s); no se reintenta una segunda vez`,
-      );
-    }
-
-    return htmlCorregido;
-  } catch (error) {
-    console.warn(
-      `[chat/stream] versión ${args.indice}: la corrección automática falló, queda la primera pasada:`,
-      (error as Error).message,
-    );
-    return primeraPasada;
-  }
+  return primeraPasada;
 }
 
 /** Tope de tiempo del paso de checklist (T16, round 4): nunca puede demorar
@@ -565,7 +448,7 @@ async function generarChecklist(args: {
       messages: construirMensajesChecklist(args.pedido),
       provider: args.provider,
       signal: controlador.signal,
-      velocidad: 'fast',
+      razonamientoOverride: razonamientoNulo(args.provider),
       maxTokensOverride: CHECKLIST_MAX_TOKENS,
       sinHerramientas: true,
     });
@@ -664,46 +547,25 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * `AppSettings` en cada request nueva, un turno en curso no hace una.
    *
    * `settings` se lee ACÁ, sin importar si es la demo o no (antes sólo se
-   * leía para la demo): T5 (odd/tasks/modo-prime.md) necesita las mismas
-   * `AppSettings` para `resolverCapacidades`, y las dos lecturas comparten
-   * la misma caché de 10s (`lib/settings.ts`) — una sola lectura por turno
-   * alcanza para las dos cosas.
+   * leía para la demo): `resolverCapacidades` necesita las mismas
+   * `AppSettings`, y las dos lecturas comparten la misma caché de 10s
+   * (`lib/settings.ts`) — una sola lectura por turno alcanza para las dos
+   * cosas.
    */
   const settings = await leerAppSettings();
   if (user.isDemo && !settings.demoEnabled) {
     return fail('La demo está cerrada por el momento.', 403);
   }
 
-  // T5: qué puede este turno — entre otras cosas, si el catálogo de abajo
-  // puede resolver, listar o usar como respaldo un motor `primeOnly` para
-  // esta cuenta. Server-only: nunca viaja al cliente.
-  const capacidades = resolverCapacidades(user, settings);
+  // Qué puede este turno: hoy sólo si el admin permite versiones. Server-only.
+  const capacidades = resolverCapacidades(settings);
 
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
 
-  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, speed, variants } = parsed.data;
-
-  /**
-   * T6: la velocidad efectiva de ESTE turno — capacidad × pedido × default
-   * (ver `resolverVelocidadEfectiva`). `null` = sin pisar nada, el
-   * razonamiento configurado de siempre; se lo pasamos tal cual a cada
-   * llamada al proveedor más abajo, cadena de respaldo y re-pedido forzado
-   * incluidos, para que la misma velocidad rija todo el turno.
-   *
-   * T7/T8 leen esta misma variable para decidir si corren: la revisión
-   * automática (combinada con `capacidades.autoReviewForAll`, ver
-   * `revisarYCorregir` más abajo) y `aplicaRevisionVisual` (T8, en el
-   * `finally`, para el flag `revisionVisualDisponible` del evento "done") —
-   * "A fondo suma razonamiento, revisión automática y revisión visual".
-   */
-  const velocidadEfectiva = resolverVelocidadEfectiva(
-    capacidades.puedeElegirVelocidad,
-    speed,
-    capacidades.velocidadPorDefecto,
-  );
+  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, variants } = parsed.data;
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -730,16 +592,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const recursoInicial = esRecursoInicial(htmlAlInicioDelTurno);
 
   /**
-   * T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un recurso"):
-   * capacidad × recurso todavía en blanco × lo pedido, en ese orden — mismo
-   * patrón que `velocidadEfectiva` de arriba resuelve `speed`. Nunca se
-   * confía en `variants` a solas: sin `puedePedirVersiones`, o con un
-   * recurso que ya no es el de arranque, esto da `false` sin importar lo
-   * que haya mandado el cliente.
+   * T9/T2 ("Varias versiones al crear un recurso", opt-in por proyecto):
+   * el interruptor del admin (`versionsForAll`) × el del proyecto
+   * (`Project.versionsEnabled`) × recurso todavía en blanco × lo pedido, en
+   * ese orden. Nunca se confía en `variants` a solas: sin las dos
+   * capacidades, o con un recurso que ya no es el de arranque, esto da
+   * `false` sin importar lo que haya mandado el cliente.
    */
   const solicitaVersiones =
     variantesEfectivas({
-      puedePedirVersiones: capacidades.puedePedirVersiones,
+      puedePedirVersiones: capacidades.puedePedirVersiones && project.versionsEnabled,
       esRecursoInicial: recursoInicial,
       variantsPedidas: variants,
     }) === 3;
@@ -764,7 +626,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * cae al default vigente. Async porque el catálogo vive en la base, con
    * caché de 30s (ver `lib/ai/catalogo.ts`).
    */
-  const provider = await normalizarMotor(model ?? project.aiModelId, capacidades.prime);
+  const provider = await normalizarMotor(model ?? project.aiModelId);
   if (!provider) {
     return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);
   }
@@ -824,7 +686,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // el HTML del recurso y el historial. Se avisa acá, con el número y con la
   // salida concreta, en vez de dejar que la API lo rechace con su propio error.
   if (message.length > provider.maxInputChars) {
-    const otro = await motorConCapacidad(provider, message.length, capacidades.prime);
+    const otro = await motorConCapacidad(provider, message.length);
 
     return fail(
       `Tu mensaje tiene ${message.length.toLocaleString('es-AR')} caracteres y ${provider.label} ` +
@@ -868,7 +730,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (provider.userTokenLimit > 0) {
     const usados = await consumedTokens(user.id, provider.id, provider.userTokenWindowHours);
     if (usados >= provider.userTokenLimit) {
-      const otro = await motorConCapacidad(provider, 0, capacidades.prime);
+      const otro = await motorConCapacidad(provider, 0);
       return fail(
         `Alcanzaste tu tope de ${provider.userTokenLimit.toLocaleString('es-AR')} tokens en ${provider.label}` +
           // Con ventana el tope se repone solo, así que decirlo cambia por
@@ -1153,7 +1015,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
           provider: usado,
           signal: request.signal,
           forzarHerramienta: forzar,
-          velocidad: velocidadEfectiva,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             // T3: un reintento arranca un pedido nuevo — cualquier parcial
@@ -1172,7 +1033,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * enterarse de que un proveedor está caído ni elegir otro a mano; se le
        * avisa qué pasó y se sigue trabajando.
        */
-      const motores = await cadenaDeMotores(provider.id, capacidades.prime);
+      const motores = await cadenaDeMotores(provider.id);
       let upstream: Response | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;
@@ -1231,23 +1092,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
           send({ type: 'variant', index: 2, ready: false });
           send({ type: 'variant', index: 3, ready: false });
 
-          const promptBaseVersiones = {
-            globalRules,
-            userRules,
-            assets: assetContexts,
-            projectTitle: project.title,
-            turnosPrevios: history.filter((entry) => entry.role === 'user').length,
-          };
-
           const generar = (indice: 2 | 3, mensajesDeEsaVersion: ChatMessage[]) =>
             generarVersionSecundaria({
               indice,
               mensajes: mensajesDeEsaVersion,
               provider,
               temaProyecto,
-              velocidadEfectiva,
-              autoReviewForAll: capacidades.autoReviewForAll,
-              promptBase: promptBaseVersiones,
               userId: user.id,
               projectId: project.id,
               signal: request.signal,
@@ -1380,195 +1230,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
         }
       }
 
-      /**
-       * T7 ("Revisión automática (lint + una corrección) y turnos
-       * progresivos", odd/tasks/modo-prime.md). Se llama sólo cuando el
-       * primer pase dejó HTML y la política del turno la pide (A fondo o
-       * `autoReviewForAll` — ver el llamador, más abajo).
-       *
-       * El primer pase YA se mandó por SSE (`send({type:'code'...})`, dentro
-       * de `consumir`/los rescates de arriba) — acá además se PERSISTE de
-       * una, sin esperar al `finally` del turno: si el docente recarga
-       * mientras esto corre, tiene que encontrar el primer pase, no una
-       * pantalla esperando algo que puede tardar (decisión del dueño,
-       * "Progresivo"). El snapshot de deshacer (T4) no se toca acá: sigue
-       * viviendo en el `finally`, comparado contra `htmlAlInicioDelTurno` —
-       * esta función sólo decide qué HTML termina en `generatedHtml` (y por
-       * lo tanto en `Project.currentHtml`) al final del turno, nunca cuántas
-       * instantáneas se crean.
-       *
-       * Nunca vuelve a tirar: cualquier problema de la corrección (error de
-       * red, JSON inválido, truncado, el docente cancelando el turno) se
-       * loguea y se sale en silencio, dejando el primer pase tal cual llegó
-       * — nunca un error visible que tape un resultado que ya estaba bien.
-       *
-       * `const` con función flecha y NO `function` con nombre a propósito:
-       * TypeScript no arrastra el chequeo `if (!project) return fail(...)`
-       * de más arriba adentro de una función declarada con `function` (el
-       * hoisting le impide asumir que ese chequeo ya corrió), pero sí lo
-       * hace para una función flecha asignada a un `const` — que es
-       * exactamente lo que esta función necesita para usar `project.id` sin
-       * un chequeo redundante.
-       */
-      const revisarYCorregir = async (): Promise<void> => {
-        if (!generatedHtml) return;
-        const primeraPasada = generatedHtml;
-
-        try {
-          // El HTML de arranque de un proyecto (`DEFAULT_HTML`, sin tema ni
-          // contenido real) no cuenta como "el docente ya tenía algo": se
-          // normaliza a `null` para que `revisarHtml` trate este turno como
-          // un recurso NUEVO (informa todo, no sólo el diff) — mismo
-          // criterio que describe la tarea.
-          const anteriorParaRevision =
-            htmlAlInicioDelTurno === DEFAULT_HTML || htmlAlInicioDelTurno.trim().length === 0
-              ? null
-              : htmlAlInicioDelTurno;
-
-          const hallazgos = revisarHtml(primeraPasada, { anterior: anteriorParaRevision });
-          if (hallazgos.length === 0) return;
-
-          console.log(
-            `[chat/stream] revisión automática: ${hallazgos.length} hallazgo(s) (${hallazgos
-              .map((h) => h.codigo)
-              .join(', ')}) a los ${transcurrido()}`,
-          );
-
-          try {
-            await prisma.project.update({ where: { id: project.id }, data: { currentHtml: primeraPasada } });
-          } catch (error) {
-            console.error('[chat/stream] no se pudo persistir el primer pase antes de revisar:', error);
-          }
-
-          send({ type: 'phase', phase: 'revisando' });
-
-          const mensajeHallazgos = [
-            'Revisión automática antes de entregarle el recurso al docente. Corregí SÓLO esto, sin cambiar nada más del recurso:',
-            ...hallazgos.map((hallazgo, indice) => {
-              const ejemplos =
-                hallazgo.ejemplos && hallazgo.ejemplos.length > 0
-                  ? ` Ejemplos: ${hallazgo.ejemplos.join(', ')}.`
-                  : '';
-              return `${indice + 1}. ${hallazgo.instruccion}${ejemplos}`;
-            }),
-          ].join('\n');
-
-          // El prompt de sistema se arma EXACTAMENTE como siempre
-          // (`buildSystemPrompt`), y el primer pase como "el recurso
-          // actual" viaja en el mensaje de usuario (T1,
-          // "html-fuera-del-system"): la REGLA MÁS IMPORTANTE ("se EDITA lo
-          // que ya existe") sigue rigiendo también para esta llamada, así
-          // que el modelo no reescribe de cero para corregir dos
-          // degradados. Sin historial: es un pedido mecánico y
-          // autocontenido, no una conversación.
-          const systemPromptRevision = buildSystemPrompt({
-            globalRules,
-            userRules,
-            assets: assetContexts,
-            canSeeImages: supportsVision(proveedorUsado),
-            turnosPrevios: history.filter((entry) => entry.role === 'user').length,
-            herramientaForzada: true,
-          });
-
-          let htmlCorregido: string | null = null;
-          let motivoFalla: string | null = null;
-          const totalesRevision: { usage: MotorTokenUsage | null } = { usage: null };
-
-          try {
-            const respuestaRevision = await requestCompletionStream({
-              messages: [
-                { role: 'system', content: systemPromptRevision },
-                {
-                  role: 'user',
-                  content: `${buildCurrentResourceBlock(primeraPasada, project.title, false)}\n\n${mensajeHallazgos}`,
-                },
-              ],
-              provider: proveedorUsado,
-              signal: request.signal,
-              forzarHerramienta: true,
-              // Mecánico, no creativo: razonamiento OFF para esta llamada
-              // puntual, sin importar la velocidad efectiva del turno —
-              // misma vía que usa T6 (`razonamientoEfectivo(proveedor,
-              // 'fast')` ya da "reasoning_effort: none"/"thinking:
-              // disabled" según el dialecto del motor, o nada si no tiene
-              // uno configurado).
-              velocidad: 'fast',
-            });
-
-            for await (const event of readCompletionStream(respuestaRevision, proveedorUsado.apiFormat)) {
-              // A propósito NUNCA se reenvían `code_start`/`code_delta` de
-              // esta llamada: la vista previa tiene que seguir mostrando el
-              // primer pase completo hasta que la corrección termine — de
-              // otro modo, reconstruir el documento desde cero se vería
-              // como un retroceso, no como una corrección (ver la tarea).
-              if (event.type === 'usage') {
-                totalesRevision.usage = event.usage;
-                continue;
-              }
-              if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
-                const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
-                if (resultado.ok) {
-                  htmlCorregido = aplicarKitAlTurno(resultado.html, temaProyecto);
-                } else {
-                  motivoFalla = resultado.reason;
-                }
-              }
-            }
-          } catch (error) {
-            motivoFalla = (error as Error).message;
-          }
-
-          // Se registra como una llamada aparte (mismo motor, mismos
-          // precios): sumarlo a `totales.usage` del turno principal
-          // pisaría/perdería el consumo del primer pase, porque más abajo
-          // sólo se graba UNA vez con el último valor recibido.
-          if (totalesRevision.usage) {
-            await recordUsage({
-              userId: user.id,
-              projectId: project.id,
-              aiModelId: proveedorUsado.id,
-              model: proveedorUsado.model,
-              promptTokens: totalesRevision.usage.promptTokens,
-              cachedInputTokens: totalesRevision.usage.cachedTokens,
-              completionTokens: totalesRevision.usage.completionTokens,
-              precios: proveedorUsado.precios,
-            }).catch((error) =>
-              console.error('[chat/stream] no se pudo registrar el consumo de la corrección:', error),
-            );
-          }
-
-          if (!htmlCorregido) {
-            console.warn(
-              `[chat/stream] la corrección automática no se aplicó (${motivoFalla ?? 'sin HTML'}); queda el primer pase`,
-            );
-            return;
-          }
-
-          const hallazgosRestantes = revisarHtml(htmlCorregido, { anterior: anteriorParaRevision });
-          if (hallazgosRestantes.length > 0) {
-            console.warn(
-              `[chat/stream] tras la corrección quedan ${hallazgosRestantes.length} hallazgo(s) (${hallazgosRestantes
-                .map((h) => h.codigo)
-                .join(', ')}); no se reintenta una segunda vez`,
-            );
-          }
-
-          generatedHtml = htmlCorregido;
-          descartarCodeDelta();
-          send({ type: 'code', html: htmlCorregido });
-
-          try {
-            await prisma.project.update({ where: { id: project.id }, data: { currentHtml: htmlCorregido } });
-          } catch (error) {
-            console.error('[chat/stream] no se pudo persistir la corrección automática:', error);
-          }
-        } catch (error) {
-          // Red de seguridad: nada de acá tiene que poder tirar abajo un
-          // turno cuyo primer pase ya está bien.
-          console.error('[chat/stream] revisión automática: falla inesperada, se deja el primer pase:', error);
-        }
-      };
-
       try {
         await consumir(upstream);
 
@@ -1612,7 +1273,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
             provider: proveedorUsado,
             signal: request.signal,
             forzarHerramienta: true,
-            velocidad: velocidadEfectiva,
           });
 
           await consumir(reintento);
@@ -1632,28 +1292,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
         /**
          * T9: la versión 1 ya tiene lo que va a tener en el caso normal
          * (tool call directo, rescate del texto, o el re-pedido forzado —
-         * las tres rutas de arriba ya corrieron) — se anuncia ACÁ, antes de
-         * la corrección de T7 de abajo, para que su chip pase a "lista" tan
-         * pronto como exista, sin esperar a que la 2 y la 3 (que corren en
-         * paralelo desde mucho antes) también terminen. Si A fondo o
-         * `autoReviewForAll` todavía la mejoran, no hace falta un segundo
-         * aviso: el chip ya está listo, y elegirla siempre relee el HTML
-         * vigente del servidor recién en ese momento (ver
+         * las tres rutas de arriba ya corrieron) — se anuncia ACÁ, sin
+         * esperar a que la 2 y la 3 (que corren en paralelo desde mucho
+         * antes) también terminen. Elegirla siempre relee el HTML vigente
+         * del servidor recién en ese momento (ver
          * `POST /api/projects/[id]/variant`), nunca el de este evento.
          */
         if (solicitaVersiones && generatedHtml) {
           send({ type: 'variant', index: 1, ready: true });
-        }
-
-        // T7: A fondo suma revisión automática, y lo mismo vale para
-        // cualquiera a quien el admin se la prendió "para todos" — misma
-        // combinación que ya anticipaba el comentario de `autoReviewForAll`
-        // en `capacidades.ts`. `velocidadEfectiva` ya es `null` (nunca
-        // 'deep') para quien no tiene permiso de elegir velocidad, así que
-        // esto nunca se dispara por accidente para un docente común sin la
-        // bandera "para todos".
-        if (generatedHtml && (velocidadEfectiva === 'deep' || capacidades.autoReviewForAll)) {
-          await revisarYCorregir();
         }
       } catch (error) {
         console.error('[chat/stream]', error);
@@ -1766,10 +1412,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
           // devuelto el documento igual, letra por letra). Una falla acá
           // nunca puede tirar abajo el turno: ya está guardado y respondido,
           // esto es sólo la posibilidad de deshacerlo después.
-          //
-          // T8 ("Revisión visual con captura"): el mismo booleano es una de
-          // las condiciones de `aplicaRevisionVisual` de acá abajo — sin
-          // cambio en el recurso no hay nada nuevo que mirar.
           const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
 
           if (cambioElHtml) {
@@ -1801,33 +1443,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
             }
           }
 
-          // T8 ("Revisión visual con captura"): el SERVIDOR decide si
-          // corresponde ofrecerla — nunca el cliente por su cuenta (ver la
-          // tarea). Se calcula acá, al final del turno, con lo que ya se
-          // sabe de esta vuelta completa: la velocidad efectiva, si el
-          // motor USADO ve imágenes, y si el turno cambió el recurso. El
-          // cliente recién arranca el segundo pedido
-          // (`/api/chat/visual-review`) después de leer este "done".
-          const revisionVisualDisponible = aplicaRevisionVisual({
-            velocidadEfectiva,
-            motorVeImagenes: supportsVision(proveedorUsado),
-            cambioElRecurso: cambioElHtml,
-            // T9 ("Varias versiones"): decisión de diseño "Revisión visual y
-            // versiones son excluyentes" — con varias versiones no corre la
-            // revisión visual (triplicaría costo y tiempo). Se usa
-            // `solicitaVersiones` (lo que este turno PIDIÓ), no cuántas
-            // salieron bien: un turno de versiones sigue siendo eso aunque
-            // la 2 y la 3 hayan fallado las dos.
-            huboVariasVersiones: solicitaVersiones,
-          });
-
           send({
             type: 'done',
             messageId: saved.id,
             userMessageId: mensajeDocenteGuardado.id,
             codeUpdated: Boolean(generatedHtml),
             content: finalText,
-            revisionVisualDisponible,
           });
         } catch (error) {
           console.error('[chat/stream] no se pudo persistir el turno:', error);

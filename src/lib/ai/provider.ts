@@ -173,22 +173,13 @@ export async function requestCompletionStream(options: {
    */
   forzarHerramienta?: boolean;
   /**
-   * T6 ("Velocidad Rápido / A fondo"): la velocidad efectiva de ESTE turno, ya
-   * resuelta por `resolverVelocidadEfectiva` (`lib/ai/capacidades.ts`).
-   * `null`/ausente = sin pisar nada, el razonamiento configurado de siempre.
-   * Viaja como parámetro y no se resuelve acá adentro: este módulo no sabe
-   * nada de usuarios ni de `AppSettings` (ver la nota sobre `catalogo.ts` más
-   * arriba). Se reenvía tal cual en el reintento por `ToolChoiceNoSoportado`
-   * y en cada saturación: es la misma velocidad durante todo el turno.
-   */
-  velocidad?: Speed | null;
-  /**
-   * T12 (round 3, `arnes-robustez`): anula `razonamientoEfectivo(provider,
-   * velocidad)` con un objeto YA ARMADO. La autocorrección de la autoprueba
-   * usa un nivel "low" que NO es parte del vocabulario `Speed` que ve el
-   * docente (la tarea pide explícitamente no ensanchar `Speed` sólo para un
-   * nivel interno) — ver `razonamientoCorreccion` más abajo. `undefined`/
-   * `null` = comportamiento de siempre (`razonamientoEfectivo`).
+   * T12 (round 3, `arnes-robustez`): anula `razonamiento(provider)` con un
+   * objeto YA ARMADO — usan esto la autocorrección de la autoprueba ("low",
+   * `razonamientoCorreccion`), el verificador ("medium",
+   * `razonamientoVerificador`) y el checklist ("none", `razonamientoNulo`),
+   * ninguno de los tres expuesto al docente. `undefined`/`null` =
+   * comportamiento de siempre (`razonamiento(provider)`: exactamente el
+   * `reasoningEffort` configurado en el motor, sin pisar nada).
    */
   razonamientoOverride?: Record<string, unknown> | null;
   /**
@@ -250,7 +241,6 @@ export async function requestCompletionStream(options: {
         provider: options.provider,
         signal: options.signal,
         forzarHerramienta: forzar,
-        velocidad: options.velocidad,
         razonamientoOverride: options.razonamientoOverride,
         maxTokensOverride: options.maxTokensOverride,
         sinHerramientas,
@@ -298,64 +288,39 @@ export function razonamiento(provider: ProviderConfig): Record<string, unknown> 
   return { reasoning_effort: provider.reasoningEffort };
 }
 
-/** T6 ("Velocidad Rápido / A fondo"): lo que pidió el docente para ESTE
- *  turno, ya resuelto contra la capacidad (`resolverVelocidadEfectiva` en
- *  `lib/ai/capacidades.ts`). Vocabulario del proveedor/protocolo — el de
- *  `Capacidades.velocidadPorDefecto` es otro, en español, para el cliente. */
-export type Speed = 'fast' | 'deep';
-
-/** De menos a más razonamiento, en el vocabulario que ya usa `AiModel.reasoningEffort`. */
-const NIVELES_RAZONAMIENTO = ['none', 'low', 'high', 'max'];
-
 /**
- * El razonamiento de ESTE turno (T6), pisado por la velocidad efectiva en vez
- * del nivel que tiene configurado el motor. Mismo dialecto que `razonamiento()`
- * — el proveedor no cambia por elegir velocidad, sólo el nivel que se le pide.
+ * El razonamiento "none" fijo del paso de checklist (T16/T20,
+ * `arnes-robustez`), sin importar el nivel configurado en el motor. Nunca
+ * expuesto al docente — es un paso auxiliar corto, no una elección de
+ * velocidad (odd/tasks/generacion-simple-y-reanudable.md sacó por completo la
+ * noción de velocidad elegible por el docente; generación y ajustes usan
+ * exactamente `razonamiento(provider)`, el nivel que el motor tiene
+ * configurado, sin pisar nada).
  *
- * `velocidad` en `null` (nadie con `puedeElegirVelocidad`, o nada que
- * resolver): exactamente `razonamiento(provider)`, sin pisar nada — el
- * comportamiento de siempre para quien no tiene el permiso.
- *
- * Dialecto desconocido (`reasoningEffort` null, mismo gate que `razonamiento`):
- * tampoco se manda nada en ninguna velocidad — no hay ningún nivel "seguro"
- * que inventarle a un proveedor que no sabemos si lo acepta.
+ * Mismo dialecto que `razonamiento()`: sin `reasoningEffort` cargado
+ * (dialecto desconocido) no se manda nada.
  */
-export function razonamientoEfectivo(
-  provider: ProviderConfig,
-  velocidad: Speed | null,
-): Record<string, unknown> {
-  if (!velocidad || !provider.reasoningEffort) return razonamiento(provider);
+export function razonamientoNulo(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
 
   if (provider.reasoningParam === 'thinking') {
-    // MiniMax no tiene niveles: Rápido apaga, A fondo prende, sin importar
-    // qué nivel tenía configurado este motor.
-    return { thinking: { type: velocidad === 'fast' ? 'disabled' : 'enabled' } };
+    return { thinking: { type: 'disabled' } };
   }
 
-  if (velocidad === 'fast') return { reasoning_effort: 'none' };
-
-  // A fondo: al menos "high", pero sin BAJAR un nivel más alto ya configurado
-  // (decisiones del dueño: "el modelo caro no necesariamente es más lento" —
-  // si ya estaba en "max", A fondo no lo achica a "high").
-  const configurado = NIVELES_RAZONAMIENTO.indexOf(provider.reasoningEffort);
-  const yaAlcanzaAlto = configurado >= NIVELES_RAZONAMIENTO.indexOf('high');
-  return { reasoning_effort: yaAlcanzaAlto ? provider.reasoningEffort : 'high' };
+  return { reasoning_effort: 'none' };
 }
 
 /**
  * El razonamiento de la autocorrección de la autoprueba (T12, round 3 de
- * `arnes-robustez`): un nivel "low" interno, nunca expuesto al docente (no es
- * parte de `Speed`, ver el comentario de `razonamientoOverride` en
- * `requestCompletionStream`). Es una corrección mecánica y acotada —el
- * detalle exacto del error ya viaja en el prompt (`autoprueba.ts`,
- * `construirMensajeCorreccion`)—, así que no necesita el razonamiento "high"
- * de A fondo, pero sí un poco más que "none": a diferencia de la corrección
- * de T7/T8 (`velocidad: 'fast'`, razonamiento apagado del todo), acá el
- * modelo tiene que releer un mensaje de error real y ubicarlo en el código,
- * no sólo reescribir con una lista de reglas ya resueltas.
+ * `arnes-robustez`): un nivel "low" interno, nunca expuesto al docente. Es
+ * una corrección mecánica y acotada —el detalle exacto del error ya viaja en
+ * el prompt (`autoprueba.ts`, `construirMensajeCorreccion`)—, así que no
+ * necesita el "high" que trae un motor bien configurado, pero sí un poco más
+ * que "none": el modelo tiene que releer un mensaje de error real y ubicarlo
+ * en el código, no sólo reescribir con una lista de reglas ya resueltas.
  *
- * Mismo dialecto que `razonamiento()`/`razonamientoEfectivo()`: sin
- * `reasoningEffort` cargado (dialecto desconocido) no se manda nada.
+ * Mismo dialecto que `razonamiento()`: sin `reasoningEffort` cargado
+ * (dialecto desconocido) no se manda nada.
  */
 export function razonamientoCorreccion(provider: ProviderConfig): Record<string, unknown> {
   if (!provider.reasoningEffort) return {};
@@ -370,9 +335,8 @@ export function razonamientoCorreccion(provider: ProviderConfig): Record<string,
 
 /**
  * El razonamiento del verificador (T3, `odd/tasks/verificador.md`): "medium"
- * fijo, sin importar el nivel configurado en el motor — ni el "flojo" que
- * puede dar `razonamientoEfectivo` ni el "low" de `razonamientoCorreccion`.
- * A diferencia de la corrección mecánica de la autoprueba (el error exacto
+ * fijo, sin importar el nivel configurado en el motor ni el "low" de
+ * `razonamientoCorreccion`. A diferencia de la corrección mecánica de la autoprueba (el error exacto
  * ya viaja en el prompt), un revisor tiene que releer el HTML entero y
  * razonar sobre lógica/contenido/pedido desde cero.
  *
@@ -394,9 +358,11 @@ export function razonamientoVerificador(provider: ProviderConfig): Record<string
 /**
  * De los niveles que puede tener `AiModel.reasoningEffort` (y el nivel
  * "medium" interno que sólo usa `razonamientoOverride`, T3 del verificador)
- * al vocabulario de `reasoning.effort` en la Responses API. "max" no es un
- * nivel real ahí: se manda como "high", el tope que la propia app conoce
- * (ver `razonamientoEfectivo` más arriba) — nunca se inventa un nivel nuevo.
+ * al vocabulario de `reasoning.effort` en la Responses API. `max` ya no es un
+ * nivel que la app produzca (la migración `20261006000000_quitar_prime` lo
+ * bajó a `high` en el catálogo), pero el mapeo se deja igual como red de
+ * seguridad ante cualquier dato viejo que todavía lo tenga guardado — nunca
+ * se inventa un nivel nuevo.
  */
 const NIVEL_RESPONSES: Record<string, string> = {
   none: 'none',
@@ -531,7 +497,6 @@ async function intentarUna(
     provider: ProviderConfig;
     signal?: AbortSignal;
     forzarHerramienta?: boolean;
-    velocidad?: Speed | null;
     razonamientoOverride?: Record<string, unknown> | null;
     maxTokensOverride?: number | null;
     sinHerramientas?: boolean;
@@ -553,7 +518,7 @@ async function intentarUna(
           messages: options.messages,
           forzarHerramienta: options.forzarHerramienta ?? false,
           sinHerramientas: options.sinHerramientas ?? false,
-          razonamiento: options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null),
+          razonamiento: options.razonamientoOverride ?? razonamiento(provider),
           maxTokens: options.maxTokensOverride ?? provider.maxTokens,
         })
       : {
@@ -576,13 +541,13 @@ async function intentarUna(
           //
           // En DeepSeek va en 'none': armar un HTML es escritura larga, no
           // razonamiento. El thinking cobra tokens y latencia a cambio de poco,
-          // rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e ignora
-          // el temperature de acá abajo. T6: pisado por la velocidad efectiva
-          // del turno cuando corresponde (`razonamientoEfectivo`); sin ella, es
-          // exactamente `razonamiento(provider)` de siempre. T12:
-          // `razonamientoOverride` (si vino) manda por encima de las dos — ver
-          // el comentario en `requestCompletionStream`.
-          ...(options.razonamientoOverride ?? razonamientoEfectivo(provider, options.velocidad ?? null)),
+          // y rechaza el tool_choice forzado (ver ToolChoiceNoSoportado) e
+          // ignora el temperature de acá abajo. Generación y ajustes usan
+          // exactamente `razonamiento(provider)`: el nivel configurado en el
+          // motor, sin pisar nada — `razonamientoOverride` (checklist,
+          // corrección, verificador) manda por encima cuando vino, ver el
+          // comentario en `requestCompletionStream`.
+          ...(options.razonamientoOverride ?? razonamiento(provider)),
           stream: true,
           temperature: 0.6,
           // Sin esto la API aplica su default (4.096) y todo recurso que pase de
@@ -660,8 +625,8 @@ export type StreamEvent =
   | { type: 'tool_start'; name: string }
   /**
    * Fragmento crudo de los `arguments` del tool call, según va llegando (T3,
-   * "Progresivo" en odd/tasks/modo-prime.md: cada resultado parcial se
-   * muestra apenas existe). `index` es el mismo índice que usa el proveedor
+   * "Progresivo": cada resultado parcial se muestra apenas existe). `index`
+   * es el mismo índice que usa el proveedor
    * para identificar el tool call; `name` es el nombre conocido HASTA ESTE
    * momento (normalmente ya está, porque llega en el mismo delta que abre el
    * tool call). Quien consume esto decide qué hacer con cada uno —

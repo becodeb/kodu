@@ -43,7 +43,7 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' 
 const prisma = new PrismaClient({ adapter });
 
 // ─────────────────────────────────────────────────────────────
-// Helpers (mismo patrón que e2e/html-fuera-del-system.ts / t7-revision-automatica.ts)
+// Helpers (mismo patrón que e2e/html-fuera-del-system.ts)
 // ─────────────────────────────────────────────────────────────
 
 async function asegurarDocente(email: string, password: string, nombre: string): Promise<string> {
@@ -169,7 +169,7 @@ async function main(): Promise<void> {
     console.log(`✔ motor mock listo (${modelId})`);
 
     // Un pedido al mock por turno: sin auto-revisión, sin versiones, "fast".
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false });
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     const docenteContext = await browser.newContext();
     const docentePage = await docenteContext.newPage();
@@ -269,7 +269,7 @@ async function main(): Promise<void> {
       const adminContext2 = await browser.newContext();
       const adminPage2 = await adminContext2.newPage();
       await iniciarSesion(adminPage2, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
     } catch (error) {
       console.error('[arnes-robustez] no se pudo restaurar settings al final:', error);

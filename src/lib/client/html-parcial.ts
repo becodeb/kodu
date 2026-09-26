@@ -1,6 +1,6 @@
 /**
  * Decodificador de JSON parcial para la vista previa en vivo (T3,
- * "Progresivo" en odd/tasks/modo-prime.md, Decisiones del dueño): mientras el
+ * "Progresivo"): mientras el
  * modelo todavía está escribiendo el tool call `update_resource_code`, el
  * servidor reenvía los fragmentos crudos del JSON de sus argumentos
  * (`{"html":"<!DOCTYPE ..."`) tal como llegan, sin esperar a que cierren.

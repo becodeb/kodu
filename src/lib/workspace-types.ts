@@ -27,26 +27,19 @@ export function debeMostrarSelectorDeMotor(motores: MotorPublico[]): boolean {
 }
 
 /**
- * Lo que el editor le puede ofrecer a ESTE docente (T5, odd/tasks/modo-prime.md
- * — "Discreto" en las decisiones del dueño: la palabra "prime" y cualquier
- * bandera de `AppSettings` NUNCA cruzan al cliente, sólo lo que puede hacer).
- * Lo arma `project/[id].astro` a partir de `Capacidades`
- * (`src/lib/ai/capacidades.ts`, server-only), quedándose SÓLO con estos dos
- * campos — nunca ese objeto entero.
+ * Lo que el editor le puede ofrecer a ESTE docente
+ * (odd/tasks/generacion-simple-y-reanudable.md): sólo lo que puede hacer,
+ * nunca la bandera cruda de `AppSettings`. Lo arma `project/[id].astro` a
+ * partir de `Capacidades` (`src/lib/ai/capacidades.ts`, server-only),
+ * quedándose SÓLO con este campo — nunca ese objeto entero.
  */
-/** T6 ("Velocidad Rápido / A fondo"): la elección de ESTE turno. Mismo
- *  vocabulario que espera `/api/chat/stream` en el body (`speed`). */
-export type Speed = 'fast' | 'deep';
-
 export interface CapacidadesEditor {
-  /** T6 ("Velocidad Rápido / A fondo"): puede elegir velocidad en el compositor. */
-  puedeElegirVelocidad: boolean;
   /**
-   * T6: qué velocidad mostrar seleccionada mientras este navegador no eligió
-   * ninguna todavía (nada en `localStorage`) — nunca la palabra "prime".
+   * T2 ("versiones como opt-in por proyecto"): el admin permite activar "3
+   * versiones" en los proyectos. El interruptor propio del proyecto vive en
+   * `WorkspaceProject.versionsEnabled` — el control sólo se ofrece cuando
+   * las dos cosas están presentes.
    */
-  velocidadPorDefecto: 'a_fondo' | 'rapido';
-  /** T9 ("Varias versiones al crear"): puede pedir varias versiones. */
   puedePedirVersiones: boolean;
 }
 
@@ -62,6 +55,10 @@ export interface WorkspaceProject {
   screenshotUrl: string | null;
   /** El recurso cambió después de la última portada (design §6). */
   portadaVieja: boolean;
+  /** T2 ("versiones como opt-in por proyecto"): el interruptor propio de
+   *  este proyecto, apagado por default. Sólo importa cuando además el
+   *  admin prendió `versionsForAll` (`CapacidadesEditor.puedePedirVersiones`). */
+  versionsEnabled: boolean;
 }
 
 export interface WorkspaceThread {
@@ -152,24 +149,10 @@ export type AiPhase =
   /** Está escribiendo el código del recurso. */
   | 'coding'
   /**
-   * T7 ("Revisión automática"): terminó el primer pase y está corrigiendo
-   * lo que encontró el lint antes de entregarle el recurso al docente. La
-   * vista previa sigue mostrando el primer pase mientras dura esta fase.
-   */
-  | 'revisando'
-  /**
-   * T8 ("Revisión visual con captura"): el turno ya terminó y está
-   * esperando el iframe, sacando la captura y mirándola con el modelo. La
-   * vista previa sigue mostrando el HTML final del turno hasta que, si
-   * corresponde, llega una versión mejorada.
-   */
-  | 'mirando'
-  /**
    * T12 (round 3, "Autoprueba + autocorrección"): corre la autoprueba de
-   * T11 en un iframe oculto, DESPUÉS de la revisión visual de T8 si
-   * corrió — es el último chequeo antes de soltarle el recurso al docente.
-   * La vista previa sigue mostrando el HTML con el que se armó el iframe
-   * oculto (nunca lo que pasa DENTRO de él).
+   * T11 en un iframe oculto — es el último chequeo antes de soltarle el
+   * recurso al docente. La vista previa sigue mostrando el HTML con el que
+   * se armó el iframe oculto (nunca lo que pasa DENTRO de él).
    */
   | 'probando'
   /**

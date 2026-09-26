@@ -1,11 +1,11 @@
 /**
- * Varias versiones al crear un recurso (T9, odd/tasks/modo-prime.md).
- * Partes puras: elegibilidad, las directivas por versión que se suman al
- * system prompt, y el texto fijo del turno. Isomórfico a propósito, como
- * kit.ts y revision-visual.ts: lo importa el servidor (stream.ts, para
- * decidir cuántas versiones corren) Y el cliente (Workspace.tsx, para saber
- * si mostrar el interruptor sin esperar a mandar el pedido) — nada de
- * Prisma, nada de red, nada de `env.ts`.
+ * Varias versiones al crear un recurso (T9; T2, odd/tasks/generacion-simple-y-reanudable.md,
+ * las convierte en opt-in por proyecto). Partes puras: elegibilidad, las
+ * directivas por versión que se suman al system prompt, y el texto fijo del
+ * turno. Isomórfico a propósito, como kit.ts: lo importa el servidor
+ * (stream.ts, para decidir cuántas versiones corren) Y el cliente
+ * (Workspace.tsx, para saber si mostrar el interruptor sin esperar a mandar
+ * el pedido) — nada de Prisma, nada de red, nada de `env.ts`.
  *
  * `DEFAULT_HTML` vive ACÁ y no en `lib/projects.ts` (que importa Prisma) por
  * la misma razón: el cliente necesita la MISMA constante para decidir si el
@@ -24,21 +24,18 @@ export const DEFAULT_HTML =
 
 /**
  * ¿Este recurso todavía es "el de arranque" — el HTML por default sin tocar,
- * o vacío? Mismo criterio que ya usa T7 para decidir si un turno cuenta como
- * "recurso nuevo" (ver `anteriorParaRevision` en stream.ts, duplicado ahí a
- * propósito porque esa rama no puede depender de este módulo — ver el
- * comentario de `revisarYCorregir`). T9 lo necesita con su propio nombre
- * porque "varias versiones" sólo tiene sentido en un turno de creación: con
- * un recurso que ya existe, versionar significaría tres ediciones
- * divergentes del trabajo del docente, no tres propuestas para elegir.
+ * o vacío? T9 lo necesita porque "varias versiones" sólo tiene sentido en un
+ * turno de creación: con un recurso que ya existe, versionar significaría
+ * tres ediciones divergentes del trabajo del docente, no tres propuestas
+ * para elegir.
  */
 export function esRecursoInicial(html: string): boolean {
   return html === DEFAULT_HTML || html.trim().length === 0;
 }
 
 export interface ElegibilidadVersionesInput {
-  /** `Capacidades.puedePedirVersiones` (capacidades.ts): prime, o
-   *  `versionsForAll`. */
+  /** `Capacidades.puedePedirVersiones` (capacidades.ts, `versionsForAll`) Y
+   *  `Project.versionsEnabled`, ya combinados por quien llama (stream.ts). */
   puedePedirVersiones: boolean;
   /** `esRecursoInicial(htmlAlInicioDelTurno)`. */
   esRecursoInicial: boolean;

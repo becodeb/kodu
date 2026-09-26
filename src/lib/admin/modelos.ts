@@ -34,14 +34,11 @@ export interface MotorAdmin {
   userTokenLimit: number;
   /** Ventana móvil del tope, en horas. 0 = desde siempre. */
   userTokenWindowHours: number;
-  /** "none" | "low" | "high" | "max", o null = no mandar el parámetro. */
+  /** "none" | "low" | "high", o null = no mandar el parámetro. */
   reasoningEffort: string | null;
   /** "reasoning_effort" (default) o "thinking". */
   reasoningParam: string | null;
   fallbackModelId: string | null;
-  /** T5 (odd/tasks/modo-prime.md): exclusivo de cuentas con prime. Nunca
-   *  coexiste con `isDefault: true` (validado en el endpoint). */
-  primeOnly: boolean;
 }
 
 export function serializarMotor(fila: AiModel & { provider: AiProvider }): MotorAdmin {
@@ -69,7 +66,6 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     reasoningEffort: fila.reasoningEffort,
     reasoningParam: fila.reasoningParam,
     fallbackModelId: fila.fallbackModelId,
-    primeOnly: fila.primeOnly,
   };
 }
 

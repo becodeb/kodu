@@ -57,11 +57,8 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
           select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
         });
 
-    // `isDemo` todavía no tiene columna propia (llega en M7). Mismo
-    // criterio para `primeAccess`: no está en el `select` de arriba, así que
-    // esta respuesta puntual no la necesita — el middleware relee el valor
-    // real de la base en la próxima request a una ruta gateada.
-    const session = { ...user, isDemo: false, primeAccess: false };
+    // `isDemo` todavía no tiene columna propia (llega en M7).
+    const session = { ...user, isDemo: false };
     setSessionCookie(cookies, await createSessionToken(session));
     return redirect('/app', 302);
   } catch (error) {

@@ -14,8 +14,7 @@ import {
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import { normalizarMotor } from '../../../lib/ai/catalogo.ts';
-import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
-import { fingerprintHtml } from '../../../lib/ai/revision-visual.ts';
+import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
 import {
   construirMensajeCorreccionVerificador,
@@ -38,13 +37,8 @@ import { fail, readBody } from '../../../lib/http.ts';
  * encontrar errores reales o un reinicio que no vuelve al estado inicial —
  * ver `ejecutarAutopruebaYCorreccion` en Workspace.tsx.
  *
- * Modelada sobre `visual-review.ts` (mismas puertas: acceso a la IA, apagado
- * de demo, acceso al proyecto, huella contra staleness, tope de tokens —
- * ver los comentarios allá para el detalle de cada una). A propósito NO
- * repite su gate de `puedeElegirVelocidad`/`supportsVision`: la autoprueba
- * no es una feature de prime, corre para cualquier docente — es el harness
- * (T9-T11) arreglando sus propios defectos, no una revisión visual con
- * modelo.
+ * Corre para cualquier docente: es el harness (T9-T11) arreglando sus
+ * propios defectos, sin ningún gate de capacidad especial.
  *
  * Discreto, igual que T8 (T12 hereda la misma decisión de diseño): no crea
  * `ChatMessage`, no crea `ProjectSnapshot` (deshacer sigue revirtiendo el
@@ -153,8 +147,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail('La demo está cerrada por el momento.', 403);
   }
 
-  const capacidades = resolverCapacidades(user, settings);
-
   const parsed = schema.safeParse(await readBody(request));
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
@@ -173,7 +165,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail('El recurso cambió después de la autoprueba. Volvé a intentarlo.', 409);
   }
 
-  const provider = await normalizarMotor(project.aiModelId, capacidades.prime);
+  const provider = await normalizarMotor(project.aiModelId);
   if (!provider) return fail('No hay ningún motor de IA habilitado.', 503);
 
   if (user.isDemo) {
@@ -292,11 +284,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
       let codeUpdated = false;
 
       try {
-        // Una sola llamada al MISMO motor, forzada (a diferencia de la
-        // revisión visual: acá no hay "el modelo puede decidir que no hace
-        // falta nada", ya se sabe que hay algo roto que corregir).
-        // Razonamiento "low" (T12: `razonamientoCorreccion`, no `Speed` —
-        // ver el comentario grande de arriba de este archivo).
+        // Una sola llamada al MISMO motor, forzada: ya se sabe que hay algo
+        // roto que corregir, no hay "el modelo puede decidir que no hace
+        // falta nada". Razonamiento "low" (T12: `razonamientoCorreccion`).
         const respuesta = await requestCompletionStream({
           messages,
           provider,
