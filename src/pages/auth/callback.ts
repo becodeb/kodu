@@ -1,3 +1,4 @@
+import { nextSeguro } from '../../lib/http.ts';
 import type { APIRoute } from 'astro';
 import { prisma } from '../../lib/db.ts';
 import { exchangeCode } from '../../lib/auth/google.ts';
@@ -22,8 +23,7 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
   // anterior) antes de usarlo como destino del redirect final.
   const nextGuardado = cookies.get('kodu_oauth_next')?.value;
   cookies.delete('kodu_oauth_next', { path: '/' });
-  const safeNext =
-    nextGuardado && nextGuardado.startsWith('/') && !nextGuardado.startsWith('//') ? nextGuardado : '/app';
+  const safeNext = nextSeguro(nextGuardado) ?? '/app';
 
   // Si el docente cancela en la pantalla de Google, vuelve con `error`.
   if (url.searchParams.get('error')) return redirect('/login?error=google-cancelado', 302);

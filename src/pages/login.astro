@@ -1,4 +1,5 @@
 ---
+import { nextSeguro } from '../lib/http.ts';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
 import GoogleButton from '../components/GoogleButton.astro';
@@ -12,7 +13,7 @@ const { demoEnabled } = await leerAppSettings();
 
 const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
 // Solo aceptamos redirecciones internas: evita open redirect via ?next=https://...
-const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
+const safeNext = nextSeguro(nextUrl);
 
 // "dominio" salió del mapa: desde M6 el dominio ya no bloquea el login
 // (design.md §10), así que `callback.ts` no vuelve a emitir ese error.

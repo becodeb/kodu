@@ -482,6 +482,13 @@ async function main(): Promise<void> {
       const paginaMalNext2 = await get(`/register?next=${encodeURIComponent('https://evil.com')}`);
       const htmlMalNext2 = await paginaMalNext2.text();
       assert.ok(!htmlMalNext2.includes('evil.com'), '"next=https://evil.com" debe ignorarse (nunca debe aparecer en la página)');
+
+      // El navegador normaliza "\" a "/": "/\evil.com" termina siendo "//evil.com".
+      for (const bypass of ['/\\evil.com', '/\t/evil.com']) {
+        const pagina = await get(`/login?next=${encodeURIComponent(bypass)}`);
+        const html = await pagina.text();
+        assert.ok(!html.includes('evil.com'), `"next=${JSON.stringify(bypass)}" debe ignorarse en /login`);
+      }
       console.log('✔ 11. la página pública muestra la sede/red y el enlace con "next"; los next ajenos se ignoran');
     }
 

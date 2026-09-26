@@ -1,4 +1,5 @@
 ---
+import { nextSeguro } from '../lib/http.ts';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
 import GoogleButton from '../components/GoogleButton.astro';
@@ -9,7 +10,7 @@ import { isGoogleEnabled } from '../lib/env.ts';
 // link) — mismo criterio anti open-redirect que login.astro: sólo rutas
 // relativas propias, nunca "//host" ni un origen ajeno.
 const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
-const safeNext = nextUrl && nextUrl.startsWith('/') && !nextUrl.startsWith('//') ? nextUrl : undefined;
+const safeNext = nextSeguro(nextUrl);
 
 // "dominio" salió del mapa: desde M6 el dominio ya no bloquea el registro
 // (design.md §10), así que `callback.ts` no vuelve a emitir ese error.

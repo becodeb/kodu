@@ -1,3 +1,4 @@
+import { nextSeguro } from '../../lib/http.ts';
 import type { APIRoute } from 'astro';
 import { authorizeUrl } from '../../lib/auth/google.ts';
 import { isGoogleEnabled } from '../../lib/env.ts';
@@ -32,7 +33,7 @@ export const GET: APIRoute = async ({ cookies, redirect, url }) => {
    * `callback.ts` la lee, la borra y decide el redirect final.
    */
   const next = url.searchParams.get('next');
-  const safeNext = next && next.startsWith('/') && !next.startsWith('//') ? next : null;
+  const safeNext = nextSeguro(next) ?? null;
   if (safeNext) {
     cookies.set('kodu_oauth_next', safeNext, {
       httpOnly: true,

@@ -35,3 +35,22 @@ export async function readBody(request: Request): Promise<Record<string, unknown
 
   return {};
 }
+
+/**
+ * Destino interno seguro para un `?next=` (login, registro, Google). Un
+ * chequeo de prefijo (`/` pero no `//`) no alcanza: `/\evil.com` lo pasa y el
+ * navegador normaliza la barra invertida a `//evil.com`, un open redirect.
+ * Se resuelve contra un origen ficticio y solo se acepta si el resultado sigue
+ * en ese origen; se devuelve la forma normalizada, nunca el texto crudo.
+ */
+export function nextSeguro(next: string | null | undefined): string | undefined {
+  if (!next || !next.startsWith('/') || /[\\\u0000-\u001f]/.test(next)) return undefined;
+  const base = 'http://kodu.invalid';
+  try {
+    const url = new URL(next, base);
+    if (url.origin !== base) return undefined;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return undefined;
+  }
+}
