@@ -74,6 +74,11 @@ T1–T10. Fuera de alcance: topes por organización, precio de cuentas personale
   `bg-slate-*`); modo oscuro y celular.
 - Aislamiento: el admin de una organización nunca ve datos de otra. Probado con e2e explícitos.
 - Raspberry con poca RAM: e2e de a uno; el dev server es un daemon (`npx astro dev stop`).
+- **Entorno aislado de la otra sesión:** esta worktree usa la base `koduedu_orgs` (clon de `koduedu` del
+  2026-09-26, en el mismo contenedor `kodu_db_dev`) y el puerto 3100 (`.env` local, sin commitear). Los e2e corren con
+  `KODU_BASE_URL=http://localhost:3100` y el dev server con `PORT=3100 npm run dev`. El clon trae aplicada la migración
+  `20261007000000_chequeos_posteriores` de la otra rama (sus tablas sobran acá; no molestan). El mock usa el 4790,
+  compartido: antes de un e2e con mock, confirmar que el puerto está libre.
 
 ## Modo de pruebas
 
@@ -88,6 +93,10 @@ TDD: **apagado** (no hay configuración de TDD ni test runner en el repo). Chequ
 ## Tareas
 
 Ruta por defecto: escritor delegado (cada tarea toca 2+ archivos no triviales). Un escritor a la vez.
+T1 y T2 van con el mismo escritor (dos commits): borrar `AuthorizedDomain` rompe `puedeUsarLaIa` y la pestaña
+Dominios, así que no compilan por separado. La pestaña Dominios se quita en T2 y la reemplaza Organizaciones en T6.
+Una cuenta personal conserva sus recursos (no se borran) pero no entra al editor; vuelven a estar disponibles si se
+une a una organización.
 
 - [ ] **T1 — Esquema y migración.** Modelos `Organization` (`CAMPUS` | `NETWORK`, `parentId` para sedes de una red),
   `OrganizationDomain` (reemplaza a `AuthorizedDomain`, patrón único global), `OrganizationAllowedEmail` (email único
