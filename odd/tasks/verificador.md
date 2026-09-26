@@ -78,7 +78,7 @@ teacher decides with a button.
 - [x] T2: Responses API in provider.ts + API-format field + admin + unit tests. Route: delegated writer.
 - [x] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
 - [x] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
-- [ ] T5: real gpt-6-luna check (cents). Route: inline, bounded.
+- [x] T5: real gpt-6-luna check (cents). Route: inline, bounded.
 
 ## Acceptance criteria
 
@@ -583,3 +583,49 @@ teacher decides with a button.
     one actionable verifier problem is present, but the zod schema still
     requires the fields to exist, so they're filled with harmless neutral
     values rather than adding a second, looser schema branch server-side.
+
+### T5 — real gpt-6-luna check (2026-09-26, inline)
+
+Key: `OPENAI_TEST_API_KEY` (echo). Temporary script, not committed. The provider row it
+created (`openai-t5`) was left disabled with its key wiped from the dev DB.
+
+- **Responses probe with tools** (`requestCompletionStream` + `readCompletionStream` in
+  `responses` mode, `forzarHerramienta`, reasoning `low`): a real `update_resource_code`
+  call streamed as `tool_start` → 98 `tool_delta` → `tool` → `usage` → `finish`, in 2.5 s
+  and 152 in / 112 out tokens.
+- **`POST /api/chat/verificar` against the real engine** (`tipo: 'nuevo'`, 2 parallel
+  passes, dev server), on two known-answer cases from `verificacion-esperada.json`:
+  - v1 (D3 media/mediana/moda): 200, 43.6 s. It found a real high-severity defect nobody had
+    listed: the resource draws in 135–175 (`VMIN`/`VMAX`) but drags in `PMIN`/`PMAX`, so
+    the point and the cursor drift apart. I checked this in the HTML. The known defect
+    (achievements never revoked) came back only as a neighbour ("challenges are evaluated
+    in Explorar mode"), which counts as the same area but not the same mechanism.
+  - v4 (healthy control, D1 fracciones): 200, 17.8 s. One medium `pedido` finding: the
+    challenges can be completed out of order. It is real, because the request says "tres
+    desafíos en orden". There were no high-severity false alarms.
+  - `TokenUsage`: one row per pass, 4 rows, with prices frozen.
+- **Cost:** USD 0.0100 (v1) + 0.0042 (v4) + ~0.0001 (probe), about USD 0.014 in total.
+- **Defect found and fixed** (`7235fb0`): `unirPasadas` let paraphrased duplicates through
+  (two pairs in the real output). The fix folds accents, drops function words, compares
+  5-letter stems, and lowers the threshold from 0.6 to 0.4. It is calibrated on the real
+  pairs: duplicates scored 0.45 and 0.52, distinct findings 0.14 at most. Both real pairs
+  are now unit cases.
+- **Test-harness defect fixed** (`e310e1c`): the e2e scripts reset `isVerifier` through
+  Prisma, which skips `invalidarCatalogo()`. The server caches the catalog for 30 s, so
+  `verificador-editor.ts` run right after `verificador-endpoint.ts` saw a stale verifier
+  and failed. The setup now goes through the admin API.
+- **Re-run after the fixes:** `npx tsc --noEmit` clean. `unidad-verificador.ts` and
+  `unidad-verificador-cliente.ts` pass. `verificador-endpoint.ts` followed by
+  `verificador-editor.ts` both pass back to back (5/5 scenes, including 390 px). I checked
+  the dark-mode screenshot myself.
+
+## Next step
+
+- Merge order: `feat/arnes-robustez` → `main`, then `feat/verificador`. `feat/verificador`
+  has 3 additive migrations (`apiFormat`, `isVerifier`, plus the ones from arnes).
+- After deploy, in /admin:
+  1. Create an OpenAI provider with its own Kodu key (not echo's), `apiFormat: responses`.
+  2. Add a `gpt-6-luna` engine at 0.10/0.01/0.50, not selectable by teachers, marked as
+     verifier.
+- PLAN §6.4 still open: measure verify → correct → blind re-evaluation with 4 requests.
+- Rotate echo's OpenAI key after testing (PLAN §6.6).
