@@ -65,6 +65,17 @@ interface WorkspaceProps {
    * — PreviewPanel oculta "Esto es lo que probé" entero en ese caso.
    */
   initialChecklist: ItemChecklist[];
+  /**
+   * T7 (`odd/tasks/verificador.md`, follow-up 2026-09-26): si hay un motor
+   * verificador usable AHORA MISMO (`motorVerificador()`, resuelto una vez
+   * en `project/[id].astro`, mismo criterio que ya usa el endpoint). `false`
+   * hace que el editor nunca llame a `/api/chat/verificar` — ver
+   * `verificadorDesactivadoRef` más abajo. El endpoint sigue devolviendo
+   * `{estado:'desactivado'}` como red de seguridad (p. ej. si se apaga a
+   * mitad de una sesión ya abierta), pero con esto en `false` esa respuesta
+   * nunca llega a pedirse.
+   */
+  verificadorActivo: boolean;
 }
 
 /**
@@ -236,8 +247,17 @@ export default function Workspace(props: WorkspaceProps) {
    *  que el motor contestó "desactivado" en ESTA sesión, no tiene sentido
    *  volver a llamarlo en cada turno — se cachea hasta que se recargue la
    *  página (si el admin lo prende mientras tanto, un refresh alcanza para
-   *  que se note). */
-  const verificadorDesactivadoRef = useRef(false);
+   *  que se note).
+   *
+   *  T7 (follow-up 2026-09-26, "el verificador es estrictamente opcional"):
+   *  arranca en `true` directamente cuando `verificadorActivo` (el servidor)
+   *  ya dijo que no hay motor — así `iniciarVerificacion` corta en su PRIMERA
+   *  línea, antes de tocar `setVerificador`/`fetch`, y nunca hay un pedido a
+   *  `/api/chat/verificar`, nunca se pinta el panel, nunca hay nada que
+   *  loguear. Mismo mecanismo que ya existía para "el motor contestó
+   *  desactivado", sólo que ahora también arranca prendido cuando el
+   *  servidor ya lo sabía de antemano. */
+  const verificadorDesactivadoRef = useRef(!props.verificadorActivo);
 
   /** Corta cualquier verificación en curso y deja el panel como si nunca
    *  hubiera arrancado — mismo punto en el que ya se limpiaban

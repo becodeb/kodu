@@ -21,7 +21,9 @@ import type { BrowserContext, Page, Request } from 'playwright';
  * bloquea el chat, qué ve el panel, y "¿Las arreglo?".
  *
  * Cuatro escenas:
- *  1 — sin motor verificador: CERO pedidos a `/v1/responses`, panel vacío.
+ *  1 — sin motor verificador: CERO pedidos a `/v1/responses` Y a
+ *      `/api/chat/verificar` (T7, follow-up 2026-09-26: `verificadorActivo`
+ *      se resuelve server-side, así que el cliente ni pregunta), panel vacío.
  *  2 — recurso NUEVO con motor verificador activo: el panel aparece con la
  *      lista accionable + un ítem "Revisá este dato", y el compositor queda
  *      HABILITADO mientras "Revisando el recurso…" sigue en pantalla.
@@ -312,9 +314,11 @@ async function main(): Promise<void> {
     await enviarA.click();
     await enviarA.waitFor({ state: 'visible', timeout: 45_000 });
 
-    // Le da un instante al `void iniciarVerificacion(...)` de fondo para
-    // llegar a pedir y contestar (el endpoint responde "desactivado" sin
-    // llamar a NADA — tiene que ser rápido).
+    // T7 (follow-up 2026-09-26, "el verificador es estrictamente opcional"):
+    // `project/[id].astro` ya resuelve `verificadorActivo` server-side con
+    // la MISMA `motorVerificador()` del endpoint — sin motor usable, el
+    // cliente ni siquiera intenta preguntar. Le da igual un instante de
+    // margen por si algo llamara de más.
     await esperar(500);
 
     assert.equal(
@@ -324,8 +328,8 @@ async function main(): Promise<void> {
     );
     assert.equal(await docentePage.getByText('Revisando el recurso…').count(), 0);
     assert.equal(await docentePage.getByText('Revisé el recurso').count(), 0);
-    assert.equal(pedidosAVerificar, 1, 'el editor SÍ pregunta una vez — la respuesta es "desactivado"');
-    console.log('✔ escena 1: sin motor verificador → cero pedidos a /v1/responses, panel vacío');
+    assert.equal(pedidosAVerificar, 0, 'T7: sin motor verificador, el editor NUNCA llama a /api/chat/verificar');
+    console.log('✔ escena 1: sin motor verificador → cero pedidos a /v1/responses Y a /api/chat/verificar, panel vacío (T7)');
 
     // ───────────────────────────────────────────────────────────
     // Escena 2 — motor verificador activo, recurso NUEVO: el panel aparece

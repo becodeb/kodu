@@ -6,7 +6,7 @@ import BannerAdmin from '../../../components/admin/BannerAdmin.astro';
 import { prisma } from '../../../lib/db.ts';
 import { getEnv } from '../../../lib/env.ts';
 import { findWorkspaceProjectForActor, portadaDesactualizada } from '../../../lib/projects.ts';
-import { motoresParaDocente, normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { motoresParaDocente, motorVerificador, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { costoPorProyecto, nivelDeConsumo } from '../../../lib/ai/usage.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
@@ -130,6 +130,14 @@ const avisoDeMotorRepunteado =
     ? 'Cambiamos el motor de este proyecto porque el anterior ya no está disponible.'
     : null;
 
+// T7 (follow-up 2026-09-26): el verificador es estrictamente opcional — si
+// no hay ningún motor marcado `isVerifier` (o no está usable), el cliente
+// nunca tiene que llamar a `/api/chat/verificar`. Se resuelve UNA vez acá,
+// server-side, con la MISMA función que ya usa el endpoint
+// (`motorVerificador`, catalogo.ts) — nunca dos criterios distintos de "hay
+// verificador o no".
+const verificadorActivo = (await motorVerificador()) !== null;
+
 // El consumo del recurso (design.md — "The workspace cost indicator"): se
 // calcula acá, en el frontmatter, no en el cliente — así se refresca cuando
 // la página se refresca y no anda pidiendo datos aparte. Ausente entero
@@ -243,5 +251,6 @@ const capacidadesEditor: CapacidadesEditor = {
     initialNotice={avisoDeMotorRepunteado}
     capacidades={capacidadesEditor}
     initialChecklist={checklistDelRecurso}
+    verificadorActivo={verificadorActivo}
   />
 </BaseLayout>
