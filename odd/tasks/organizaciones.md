@@ -109,7 +109,7 @@ une a una organización.
 - [x] **T2 — Membresía y acceso.** _(6cc5ed9 + ee46672, escritor delegado + corrección inline)_ `src/lib/orgs/`: resolver la organización de un email (dominio / lista blanca),
   unir en el momento, nueva regla `puedeUsarLaIa` (override → organización), gate de cuenta personal en `/app` y en
   las APIs de trabajo (pantalla "cuenta personal"). Check: e2e de acceso.
-- [ ] **T3 — Verificación de email.** Cliente de Resend por `fetch` (sin dependencia nueva), token de verificación,
+- [x] **T3 — Verificación de email.** _(653061a + 6d60cfd + corrección de color, escritor delegado)_ Cliente de Resend por `fetch` (sin dependencia nueva), token de verificación,
   registro con contraseña sin verificar, endpoint de verificación, fallback `NO_PROVIDER` sin key, aviso en `/admin`.
   Check: e2e con y sin key (key falsa contra un mock local).
 - [ ] **T4 — Invitaciones y elección de sede.** Página `/invitacion/[token]` (aceptar con sesión o registrarse),
@@ -146,6 +146,14 @@ une a una organización.
   **Para el deploy:** si en producción `AuthorizedDomain` tiene un comodín amplio (`*.edu.ar`), pasa a ser de
   Reditinere y todo docente de un `.edu.ar` se uniría a Reditinere. Revisar la lista de producción antes de mergear.
 
+- 2026-09-26: **T3 hecha.** `src/lib/email/resend.ts` (fetch, sin dependencia), `src/lib/orgs/verificacion.ts`
+  (sha256, 24 h, un solo uso, reemitir borra los anteriores, reenvío limitado a 1 por minuto), `/verificar-email`,
+  `POST /api/auth/verificacion/reenviar`, variante "confirmá tu email" de la cuenta personal, aviso en `/admin`.
+  Evidencia: `tsc` limpio; `e2e/verificacion-email.ts` 10/10 (con mock de Resend en 4791; el script reinicia el dev
+  server entre fases); `org-acceso` 7/7. Spot check del orquestador: `verificacion-email` 10/10 de nuevo tras
+  reemplazar `amber-*` (no existe en el repo y no cambia en oscuro) por los tokens de `BannerAdmin`.
+  Env nuevas: `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_API_URL` (en `.env.example`).
+
 ## Siguiente paso
 
-T3.
+T4.
