@@ -5,6 +5,8 @@ import { isAdminEmail } from '../../../lib/auth/domains.ts';
 import { firstIssue, registerSchema } from '../../../lib/auth/schemas.ts';
 import { createSessionToken, setSessionCookie } from '../../../lib/auth/session.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
+import { hasResendApiKey } from '../../../lib/env.ts';
+import { unirSiCorresponde } from '../../../lib/orgs/membresia.ts';
 
 /**
  * POST /api/auth/register — alta de docente, abierta a cualquier dominio
@@ -25,19 +27,35 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   try {
+    /**
+     * odd/tasks/organizaciones.md (T2, decisión del dueño — "fallback sin
+     * Resend"): mientras no haya `RESEND_API_KEY` en el entorno, toda
+     * creación de usuario se toma como verificada de una — T3 agrega el
+     * flujo real de Resend, que dejará esto en `null`/`null` hasta que el
+     * docente confirme el enlace.
+     */
+    const verificadaAlNacer = !hasResendApiKey();
+
     const user = await prisma.user.create({
       data: {
         email,
         name,
         passwordHash: await hashPassword(password),
         role: isAdminEmail(email) ? 'ADMIN' : 'DOCENTE',
+        emailVerifiedAt: verificadaAlNacer ? new Date() : null,
+        emailVerificationSource: verificadaAlNacer ? 'NO_PROVIDER' : null,
       },
       select: { id: true, email: true, name: true, role: true },
     });
 
+    // "Unirse ocurre en el momento" (decisión del dueño): si el email ya
+    // resuelve a una organización (dominio o lista blanca) y la cuenta es
+    // confiable, se une acá mismo, antes de armar la sesión.
+    const organizationId = await unirSiCorresponde(user.id);
+
     // Una cuenta nueva arranca sin permiso individual (null: sigue la regla
-    // de dominio). `isDemo` todavía no tiene columna propia — llega en M7.
-    const session = { ...user, aiAccessOverride: null, isDemo: false };
+    // de la organización). `isDemo` todavía no tiene columna propia — llega en M7.
+    const session = { ...user, aiAccessOverride: null, isDemo: false, organizationId };
     setSessionCookie(cookies, await createSessionToken(session));
     return ok({ user: session, redirect: '/app' });
   } catch (error) {

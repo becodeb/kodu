@@ -46,7 +46,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
    * `aiAccessOverride` es de tres estados y el `null` es un valor explícito
    * ("volver a la regla del dominio"), así que el body siempre manda la
    * clave — nunca se omite para "no tocar nada" (ver `[id].ts`). El backend
-   * devuelve `accesoIa` ya recalculado (incluida la regla de dominio cuando
+   * devuelve `accesoIa` ya recalculado (incluida la regla de la organización cuando
    * corresponde), así que acá no se reimplementa esa lógica.
    */
   async function fijarAccesoIa(usuario: FilaUsuarioAdmin, nuevo: boolean | null) {
@@ -92,6 +92,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
             <tr>
               <th className="px-4 py-3 font-medium">Docente</th>
               <th className="px-4 py-3 font-medium">Rol</th>
+              <th className="px-4 py-3 font-medium">Organización</th>
               <th className="px-4 py-3 font-medium">Acceso a la IA</th>
               <th className="px-4 py-3 text-right font-medium">Recursos</th>
               <th className="px-4 py-3 text-right font-medium">Tokens</th>
@@ -126,6 +127,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-ink-700">{usuario.role === 'ADMIN' ? 'Admin' : 'Docente'}</td>
+                <td className="px-4 py-3 text-ink-700">{usuario.organizationName ?? 'Cuenta personal'}</td>
                 <td className="px-4 py-3 text-ink-700">{usuario.accesoIa}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-ink-700">{usuario.proyectos}</td>
                 <td className="px-4 py-3 text-right tabular-nums text-ink-700">
@@ -177,7 +179,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                           onClick={() => void fijarAccesoIa(usuario, null)}
                           className="block w-full rounded-md px-3 py-2 text-left text-ink-700 hover:bg-sutil disabled:opacity-50"
                         >
-                          Volver a la regla del dominio
+                          Volver a la regla de la organización
                         </button>
                       )}
                       <a

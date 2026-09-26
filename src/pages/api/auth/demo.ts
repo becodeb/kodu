@@ -33,6 +33,9 @@ export const POST: APIRoute = async ({ cookies, redirect }) => {
     role: cuenta.role,
     aiAccessOverride: cuenta.aiAccessOverride,
     isDemo: cuenta.isDemo,
+    // odd/tasks/organizaciones.md (T2, decisión del dueño): "la demo queda
+    // fuera de toda organización" — siempre `null`, nunca se une por email.
+    organizationId: cuenta.organizationId,
   };
 
   // 2 horas, no las 168h por defecto de una cuenta real: la demo es de

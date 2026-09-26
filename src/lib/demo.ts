@@ -21,15 +21,16 @@ export const DEMO_NAME = 'Cuenta de demostración';
  * prenda el interruptor sin duplicar nada, el índice único la protege de
  * todos modos).
  *
- * `aiAccessOverride: true` desde el alta, a propósito: el email de la demo
- * (`demo@kodu.local`) no va a estar en la lista de ningún admin, así que sin
- * este grant explícito la regla de dominio de M6 (`puedeUsarLaIa` en
- * `auth/domains.ts`) la dejaría afuera apenas hubiera una sola fila en
- * `AuthorizedDomain`. Esto COMPONE con esa regla en vez de esquivarla: la
- * demo entra por el mismo mecanismo de grant individual que cualquier
- * docente al que un admin le habilita el acceso a mano — no hay un atajo
- * paralelo. El apagado real de la demo no toca este campo: pasa por
- * `AppSettings.demoEnabled`, chequeado aparte en `chat/stream.ts`.
+ * `aiAccessOverride: true` desde el alta, a propósito: la demo queda fuera
+ * de toda organización (odd/tasks/organizaciones.md, T1/T2, decisión del
+ * dueño), así que sin este grant explícito la regla de organización
+ * (`puedeUsarLaIa` en `orgs/acceso.ts`) la dejaría afuera apenas
+ * `organizationId` sea `null` y no sea ADMIN. Esto COMPONE con esa regla en
+ * vez de esquivarla: la demo entra por el mismo mecanismo de grant
+ * individual que cualquier docente al que un admin le habilita el acceso a
+ * mano — no hay un atajo paralelo. El apagado real de la demo no toca este
+ * campo: pasa por `AppSettings.demoEnabled`, chequeado aparte en
+ * `chat/stream.ts`.
  */
 export async function asegurarCuentaDemo(): Promise<User> {
   const existente = await prisma.user.findFirst({ where: { isDemo: true } });

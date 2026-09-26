@@ -53,6 +53,7 @@ async function resolverIdentidadFresca(
         role: true,
         aiAccessOverride: true,
         isDemo: true,
+        organizationId: true,
       },
     });
 
@@ -69,6 +70,10 @@ async function resolverIdentidadFresca(
         role: fila.role,
         aiAccessOverride: fila.aiAccessOverride,
         isDemo: fila.isDemo,
+        // odd/tasks/organizaciones.md (T1/T2): igual que aiAccessOverride/isDemo,
+        // se relee acá en cada request a una ruta gateada — nunca se firma en
+        // el JWT (ver session.ts).
+        organizationId: fila.organizationId,
       },
       fresh: true,
     };

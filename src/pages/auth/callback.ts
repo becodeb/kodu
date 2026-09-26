@@ -4,6 +4,7 @@ import { exchangeCode } from '../../lib/auth/google.ts';
 import { isAdminEmail, normalizeEmail } from '../../lib/auth/domains.ts';
 import { createSessionToken, setSessionCookie } from '../../lib/auth/session.ts';
 import { isGoogleEnabled } from '../../lib/env.ts';
+import { unirSiCorresponde } from '../../lib/orgs/membresia.ts';
 
 /**
  * GET /auth/callback — vuelta de Google.
@@ -41,10 +42,22 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
       (await prisma.user.findUnique({ where: { googleId: perfil.googleId } })) ??
       (await prisma.user.findUnique({ where: { email } }));
 
+    /**
+     * odd/tasks/organizaciones.md (T2, decisión del dueño): "Google ya viene
+     * verificado" — tanto al crear la cuenta como al VINCULAR una cuenta
+     * vieja creada con contraseña (`existente.emailVerifiedAt` todavía en
+     * `null`, nunca se pisa uno ya puesto — ni por Resend en T3 ni por el
+     * fallback sin key).
+     */
     const user = existente
       ? await prisma.user.update({
           where: { id: existente.id },
-          data: { googleId: perfil.googleId },
+          data: {
+            googleId: perfil.googleId,
+            ...(existente.emailVerifiedAt === null
+              ? { emailVerifiedAt: new Date(), emailVerificationSource: 'GOOGLE' as const }
+              : {}),
+          },
           select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
         })
       : await prisma.user.create({
@@ -53,12 +66,18 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
             name: perfil.name,
             googleId: perfil.googleId,
             role: isAdminEmail(email) ? 'ADMIN' : 'DOCENTE',
+            emailVerifiedAt: new Date(),
+            emailVerificationSource: 'GOOGLE',
           },
           select: { id: true, email: true, name: true, role: true, aiAccessOverride: true },
         });
 
+    // "Unirse ocurre en el momento" (decisión del dueño) — igual que en
+    // register.ts/login.ts.
+    const organizationId = await unirSiCorresponde(user.id);
+
     // `isDemo` todavía no tiene columna propia (llega en M7).
-    const session = { ...user, isDemo: false };
+    const session = { ...user, isDemo: false, organizationId };
     setSessionCookie(cookies, await createSessionToken(session));
     return redirect('/app', 302);
   } catch (error) {

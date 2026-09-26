@@ -1,0 +1,25 @@
+---
+/**
+ * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
+ * quien entra con un email que no coincide con ninguna organización tiene
+ * una cuenta personal que por ahora no puede usar la app. Gatea `/app`,
+ * `/app/project/[id]` y `/app/rules` A NIVEL DE PÁGINA — nunca toca
+ * `Workspace.tsx` ni `ChatPanel.tsx` (otra sesión los está cambiando en
+ * paralelo, feat/generacion-simple-y-reanudable).
+ *
+ * Sin `client:*`: es un cartel, no hace falta React acá.
+ */
+---
+
+<div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
+  <h1 class="font-display text-xl font-bold text-ink-900">Tu cuenta es personal</h1>
+  <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+    Todavía no usás la IA de Kodu desde ninguna institución. Un colegio te suma cuando te manda un
+    enlace de invitación, o cuando agrega tu email a su lista — apenas eso pase, vas a poder seguir
+    usando la IA.
+  </p>
+  <p class="mx-auto mt-3 max-w-md text-sm text-ink-500">
+    Tus recursos ya creados no se borraron: te vuelven a quedar disponibles en cuanto te sumes a una
+    organización.
+  </p>
+</div>

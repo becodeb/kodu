@@ -2,11 +2,21 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import NewProjectButton from '../../components/NewProjectButton.tsx';
 import ProjectCardActions from '../../components/ProjectCardActions.tsx';
+import CuentaPersonal from '../../components/CuentaPersonal.astro';
 import { prisma } from '../../lib/db.ts';
 import { haceTiempo } from '../../lib/format/fecha.ts';
+import { puedeUsarLaIa } from '../../lib/orgs/acceso.ts';
 
 // El middleware ya garantiza sesión en /app/**; esto es sólo para el tipo.
 const user = Astro.locals.user!;
+
+/**
+ * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
+ * quien no puede usar la IA y no es superadmin ve la pantalla de cuenta
+ * personal acá en vez de la lista de recursos. Sus recursos NO se borran —
+ * sólo dejan de listarse mientras la cuenta es personal.
+ */
+const bloqueada = !(await puedeUsarLaIa(user)) && user.role !== 'ADMIN';
 
 /**
  * A propósito `{ userId: user.id }` y NO `findProjectForActor`: esto lista
@@ -15,20 +25,22 @@ const user = Astro.locals.user!;
  * cualquier docente — no los de todo el mundo (M8, design.md §7, trampa
  * explícita de tasks.md 8.4).
  */
-const projects = await prisma.project.findMany({
-  where: { userId: user.id },
-  orderBy: { updatedAt: 'desc' },
-  select: {
-    id: true,
-    title: true,
-    description: true,
-    slug: true,
-    isInGallery: true,
-    screenshotUrl: true,
-    updatedAt: true,
-    lastAdminActionAt: true,
-  },
-});
+const projects = bloqueada
+  ? []
+  : await prisma.project.findMany({
+      where: { userId: user.id },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        slug: true,
+        isInGallery: true,
+        screenshotUrl: true,
+        updatedAt: true,
+        lastAdminActionAt: true,
+      },
+    });
 
 /** "Bajo una semana" (design.md §7): pasado ese punto, la marca desaparece sola. */
 const SEMANA_MS = 7 * 24 * 60 * 60 * 1000;
@@ -38,6 +50,10 @@ function editadoPorAdministracion(fecha: Date | null): boolean {
 ---
 
 <BaseLayout title="Mis recursos">
+  {bloqueada ? (
+    <CuentaPersonal />
+  ) : (
+    <>
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
       <h1 class="text-2xl font-bold text-ink-900">Mis recursos</h1>
@@ -129,4 +145,6 @@ function editadoPorAdministracion(fecha: Date | null): boolean {
       </ul>
     )
   }
+    </>
+  )}
 </BaseLayout>
