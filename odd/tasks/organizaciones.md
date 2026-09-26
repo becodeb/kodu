@@ -114,7 +114,7 @@ une a una organización.
   Check: e2e con y sin key (key falsa contra un mock local).
 - [x] **T4 — Invitaciones y elección de sede.** _(7938caf + 6244da5 + corrección de `next`, escritor delegado)_ Página `/invitacion/[token]` (aceptar con sesión o registrarse),
   vencimiento, cupo, revocación; selector de sede para quien entra por un dominio de red. Check: e2e.
-- [ ] **T5 — Propósito del consumo.** `recordUsage` recibe `purpose` y calcula la sede y `forNewResource`; tocar solo
+- [x] **T5 — Propósito del consumo.** _(3fe9f01, escritor delegado)_ `recordUsage` recibe `purpose` y calcula la sede y `forNewResource`; tocar solo
   las líneas de llamada en `stream.ts`, más `autocorreccion.ts` y `verificar.ts`. Check: e2e con el mock que
   confirme el propósito de cada fila.
 - [ ] **T6 — Superadmin: organizaciones.** Pestaña Organizaciones (reemplaza a Dominios): alta de colegio, red y sede;
@@ -166,6 +166,17 @@ une a una organización.
   contra un origen fijo, en los 4 lugares; `org-invitaciones` 16/16 con los dos bypass agregados.
   Invitaciones: el token se muestra UNA vez (solo se guarda el hash); para compartirlo de nuevo se crea otro.
 
+- 2026-09-26: **T5 hecha.** `recordUsage` exige `purpose` (así ningún llamador nuevo lo olvida) y calcula la sede y
+  `forNewResource`. `stream.ts`: SOLO 3 líneas `purpose:` (versión extra, checklist, turno principal con
+  `recursoInicial`, calculado al inicio del turno); diff revisado por el orquestador.
+  Evidencia: `tsc` limpio; `consumo-proposito` 8/8 (verificación y corrección heredan de la última
+  generación o ajuste del proyecto; mover al docente no reescribe filas viejas; demo → NULL); `t12-checklist-pruebas`
+  11/11. Para T7: un recurso nuevo cuenta como proyecto distinto con fila `GENERATION`, porque un primer turno fallido
+  deja el HTML por defecto y el siguiente vuelve a ser `GENERATION`.
+  Decisión técnica para T6/T8: la baja de un docente deja una exclusión por organización que bloquea volver a unirse
+  por dominio; una invitación o volver a agregarlo a la lista blanca la levanta. Sin ella, la baja de alguien que entró
+  por dominio se deshacía en el siguiente login.
+
 ## Siguiente paso
 
-T5.
+T6.
