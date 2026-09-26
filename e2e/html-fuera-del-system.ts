@@ -25,9 +25,9 @@ import type { Page } from 'playwright';
  *      anteriores) lleva HTML: lo persistido en ChatMessage sigue siendo el
  *      texto crudo del docente.
  *
- * Reusa el AiProvider/AiModel mock que dejó T3 (kind "kodu-mock-t3"), mismo
- * patrón que e2e/t7-revision-automatica.ts. Requiere la pila de desarrollo
- * levantada (`docker compose up -d db`, `npm run dev` en el puerto 3000).
+ * Reusa el AiProvider/AiModel mock que dejó T3 (kind "kodu-mock-t3").
+ * Requiere la pila de desarrollo levantada (`docker compose up -d db`,
+ * `npm run dev` en el puerto 3000).
  *
  * Corre con: npx tsx e2e/html-fuera-del-system.ts
  */
@@ -62,7 +62,7 @@ function htmlConMarca(marca: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Helpers (mismo patrón que e2e/t7-revision-automatica.ts)
+// Helpers
 // ─────────────────────────────────────────────────────────────
 
 async function asegurarDocente(email: string, password: string, nombre: string): Promise<string> {
@@ -189,9 +189,9 @@ async function main(): Promise<void> {
     const modelId = await asegurarMotorMock(adminPage, mock.url);
     console.log(`✔ motor mock listo (${modelId})`);
 
-    // Rápido, sin revisión automática ni versiones: UN pedido al mock por
-    // turno, para que `mock.llamadas[i]` sea exactamente el turno `i`.
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false });
+    // Sin versiones: UN pedido al mock por turno, para que `mock.llamadas[i]`
+    // sea exactamente el turno `i`.
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     const docenteContext = await browser.newContext();
     const docentePage = await docenteContext.newPage();
@@ -316,14 +316,14 @@ async function main(): Promise<void> {
 
     console.log('\n✔ e2e/html-fuera-del-system.ts: todas las comprobaciones pasaron');
   } finally {
-    // Mismo criterio que e2e/t7-revision-automatica.ts: no se borra el
-    // proyecto/hilo de prueba (queda como cualquier otro dato de e2e en la
-    // base de desarrollo), sólo se apaga lo que se prendió para el chequeo.
+    // No se borra el proyecto/hilo de prueba (queda como cualquier otro
+    // dato de e2e en la base de desarrollo), sólo se apaga lo que se
+    // prendió para el chequeo.
     try {
       const adminContext2 = await browser.newContext();
       const adminPage2 = await adminContext2.newPage();
       await iniciarSesion(adminPage2, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
     } catch (error) {
       console.error('[html-fuera-del-system] no se pudo restaurar settings al final:', error);

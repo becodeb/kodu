@@ -1,8 +1,6 @@
 /**
  * Kit de diseño de KoduEdu: temas, rampas de color y el bloque canónico que
- * el servidor inserta en cada recurso (ver odd/tasks/modo-prime.md,
- * "Decisiones de diseño" y "Apéndice A" — de ahí salen los 8 temas, las
- * fórmulas de rampa y el orden exacto del bloque).
+ * el servidor inserta en cada recurso.
  *
  * Módulo puro e isomórfico a propósito: lo importa tanto el servidor (para
  * plegar/aplicar el HTML guardado, T2) como el cliente en React (para pintar
@@ -2686,7 +2684,6 @@ export function plegarKit(html: string): string {
 
 // ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — tema por defecto si el modelo se olvidó del meta
-// (odd/tasks/modo-prime.md, "T11 — Red de seguridad: tema por defecto")
 // ─────────────────────────────────────────────────────────────
 
 /**

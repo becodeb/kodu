@@ -270,7 +270,7 @@ async function main(): Promise<void> {
     // Sin prime/versiones/auto-revisión: nada de eso se mete en el conteo de
     // llamadas ni en la línea de tiempo del turno — mismo criterio que
     // t11-autoprueba.ts/t12-checklist-pruebas.ts.
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     const docenteContext = await browser.newContext();
     const docentePage = await docenteContext.newPage();
@@ -593,7 +593,7 @@ async function main(): Promise<void> {
       if (modelVerificadorId) {
         await prisma.aiModel.update({ where: { id: modelVerificadorId }, data: { isVerifier: false } }).catch(() => {});
       }
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
 
       for (const projectId of proyectosCreados) {

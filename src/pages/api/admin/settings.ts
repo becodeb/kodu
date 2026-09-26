@@ -8,19 +8,16 @@ import { asegurarCuentaDemo } from '../../../lib/demo.ts';
 /**
  * PATCH /api/admin/settings — la fila única de `AppSettings` (design.md §9):
  * los dos campos de la demo (M7; specs/demo-mode/spec.md — "Global toggle")
- * y, desde T5 (odd/tasks/modo-prime.md), el interruptor general de modo
- * prime y los tres interruptores "para todos". La autenticación y la
- * frescura ya las exige el middleware (`requireFreshAdmin` en toda mutación
- * de `/api/admin/*`).
+ * y `versionsForAll` (odd/tasks/generacion-simple-y-reanudable.md, T1/T2): el
+ * único interruptor de calidad que sobrevivió a esa baja. La
+ * autenticación y la frescura ya las exige el middleware (`requireFreshAdmin`
+ * en toda mutación de `/api/admin/*`).
  */
 
 const schema = z
   .object({
     demoEnabled: z.boolean().optional(),
     demoTokenLimit: z.coerce.number().int().positive().max(100_000_000).optional(),
-    primeEnabled: z.boolean().optional(),
-    autoReviewForAll: z.boolean().optional(),
-    deepModeForAll: z.boolean().optional(),
     versionsForAll: z.boolean().optional(),
   })
   .refine((datos) => Object.keys(datos).length > 0, { message: 'No hay nada para actualizar.' });

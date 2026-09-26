@@ -322,7 +322,7 @@ async function main(): Promise<void> {
     // `reasoning_effort` y no hay nada que afirmar sobre "low".
     await fijarDialecto(adminPage, modelId, { reasoningEffort: 'none', reasoningParam: 'reasoning_effort' });
 
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     const docenteContext = await browser.newContext();
     const docentePage = await docenteContext.newPage();
@@ -584,7 +584,7 @@ async function main(): Promise<void> {
           reasoningParam: dialectoOriginal.reasoningParam,
         });
       }
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
       console.log('✔ limpieza: dialecto del mock restaurado, settings apagados');
     } catch (error) {

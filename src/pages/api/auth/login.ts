@@ -54,11 +54,6 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     role: user.role,
     aiAccessOverride: user.aiAccessOverride,
     isDemo: false,
-    // Mismo criterio que `isDemo` de arriba: no tiene columna en el `select`
-    // de esta consulta, así que ninguna cuenta real que entra por acá tiene
-    // por qué llevar prime en esta respuesta puntual — el middleware relee
-    // el valor real de la base en la próxima request a una ruta gateada.
-    primeAccess: false,
   };
   setSessionCookie(cookies, await createSessionToken(session));
 

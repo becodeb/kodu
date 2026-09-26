@@ -33,7 +33,6 @@ export const POST: APIRoute = async ({ cookies, redirect }) => {
     role: cuenta.role,
     aiAccessOverride: cuenta.aiAccessOverride,
     isDemo: cuenta.isDemo,
-    primeAccess: cuenta.primeAccess,
   };
 
   // 2 horas, no las 168h por defecto de una cuenta real: la demo es de

@@ -8,9 +8,8 @@ import type { AppSettings } from '../generated/prisma/client.ts';
  * un TTL más corto porque `demoEnabled` (M7) se consulta en cada carga de
  * `/login`, no sólo en el chat.
  *
- * T5 (odd/tasks/modo-prime.md) suma cuatro campos (`primeEnabled` y los tres
- * "para todos") a esta misma fila: no hace falta otro lector ni otro caché,
- * `resolverCapacidades` (`lib/ai/capacidades.ts`) los toma de la misma
+ * `versionsForAll` vive en esta misma fila: no hace falta otro lector ni otro
+ * caché, `resolverCapacidades` (`lib/ai/capacidades.ts`) lo toma de la misma
  * lectura que ya hacía cada request gateado.
  *
  * `specs/app-settings/spec.md` exige que un cambio se refleje "en el

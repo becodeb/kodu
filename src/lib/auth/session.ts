@@ -31,13 +31,6 @@ export interface SessionUser {
    *  migración 20260922000000). Se relee de la base en cada request a una
    *  ruta gateada (middleware.ts), nunca se firma en el JWT. */
   isDemo: boolean;
-  /** T5 (odd/tasks/modo-prime.md): cuenta marcada a mano por un admin como
-   *  una de las vías a prime (`User.primeAccess`, migración 20261002000000).
-   *  Mismo criterio que `aiAccessOverride`/`isDemo`: se relee de la base en
-   *  cada request a una ruta gateada, nunca se firma en el JWT — prime
-   *  gasta presupuesto de API de verdad, así que revocarlo tiene que surtir
-   *  efecto en el PRÓXIMO pedido, no en el próximo login. */
-  primeAccess: boolean;
 }
 
 function secretKey(): Uint8Array {
@@ -91,7 +84,6 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
       role,
       aiAccessOverride: null,
       isDemo: false,
-      primeAccess: false,
     };
   } catch {
     // Firma invalida, token expirado o manipulado: sesion inexistente.

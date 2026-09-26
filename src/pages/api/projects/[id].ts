@@ -3,8 +3,6 @@ import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
-import { leerAppSettings } from '../../../lib/settings.ts';
-import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { motoresParaDocente } from '../../../lib/ai/catalogo.ts';
 
 const updateSchema = z.object({
@@ -48,8 +46,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
   // leerlo. El chat igual re-normaliza en cada turno; esto cierra la puerta
   // de entrada.
   if (parsed.data.aiModelId !== undefined) {
-    const capacidades = resolverCapacidades(user, await leerAppSettings());
-    const elegibles = await motoresParaDocente(capacidades.puedeUsarModelosPrime);
+    const elegibles = await motoresParaDocente();
     if (!elegibles.some((motor) => motor.id === parsed.data.aiModelId)) {
       return fail('Ese motor no está disponible.', 422);
     }

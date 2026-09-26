@@ -19,13 +19,12 @@
  * único que puede agregarle es un `<meta name="viewport">` de respaldo si al
  * HTML le faltaba (odd/tasks/responsive-celulares.md, T2).
  *
- * T8 ("Revisión visual con captura"): el mismo puente sirve la captura que
- * se le manda al modelo, con otras opciones (JPEG en vez de WebP, sin bajar
- * el ancho, con tope de ALTO en vez de tope de ancho). `CAPTURE_REQUEST`
- * ahora acepta `id` (para que quien pidió la captura reconozca SU respuesta
- * — dos pedidos pueden estar en el aire a la vez, por ejemplo "sacar
- * portada" y la revisión visual de un turno) y `opciones`; sin ninguno de
- * los dos, el resultado es BYTE A BYTE el de siempre (portada de galería).
+ * El mismo puente admite otras opciones de captura (JPEG en vez de WebP, sin
+ * bajar el ancho, con tope de ALTO en vez de tope de ancho) por si algún
+ * llamador futuro las necesita. `CAPTURE_REQUEST` acepta `id` (para que
+ * quien pidió la captura reconozca SU respuesta si hubiera más de un pedido
+ * en el aire) y `opciones`; sin ninguno de los dos, el resultado es BYTE A
+ * BYTE el de siempre (portada de galería).
  */
 
 export const CAPTURE_REQUEST = '__kodu_capture_request__';
@@ -37,8 +36,8 @@ const HTML_TO_IMAGE_CDN = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.13/di
 /** Ancho al que se normaliza la captura de portada antes de guardarla. */
 const SNAPSHOT_WIDTH = 900;
 
-/** Opciones de una captura pedida por `postMessage` (T8). Todas opcionales:
- *  sin ninguna, el resultado es el de siempre (portada de galería). */
+/** Opciones de una captura pedida por `postMessage`. Todas opcionales: sin
+ *  ninguna, el resultado es el de siempre (portada de galería). */
 export interface OpcionesCaptura {
   /** `'webp'` (default, portada) o `'jpeg'`. */
   formato?: 'webp' | 'jpeg';

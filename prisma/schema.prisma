@@ -48,13 +48,6 @@ model User {
   /// Ver el indice unico parcial en la migracion 20260922000000: a lo sumo
   /// una fila en true, igual que AiModel.isDefault.
   isDemo       Boolean      @default(false)
-  /// T5 (odd/tasks/modo-prime.md, "Modo prime y funciones para todos"):
-  /// cuenta marcada a mano por un admin como una de las tres vías a prime
-  /// (las otras dos son `role === ADMIN` e `isDemo`). Sólo importa cuando
-  /// `AppSettings.primeEnabled` también está prendido — ver
-  /// `src/lib/ai/capacidades.ts`. Boolean simple (no tri-estado como
-  /// `aiAccessOverride`): acá no hay una "regla de dominio" de la que volver.
-  primeAccess  Boolean      @default(false)
   createdAt    DateTime     @default(now())
   projects     Project[]
   rules        CustomRule[]
@@ -80,17 +73,9 @@ model AppSettings {
   demoEnabled        Boolean  @default(false)
   demoTokenLimit     Int      @default(200000)
   demoCycleStartedAt DateTime @default(now())
-  /// T5 (odd/tasks/modo-prime.md): interruptor general de modo prime. Sin
-  /// esto en `true`, nadie tiene prime aunque sea ADMIN, la demo, o una
-  /// cuenta marcada (`User.primeAccess`) — ver `src/lib/ai/capacidades.ts`.
-  primeEnabled       Boolean  @default(false)
-  /// Los tres interruptores "para todos" de la capa 1 (decisiones del
-  /// dueño: "lo que no encarece va para todos"; lo que sigue SÍ encarece,
-  /// por eso son interruptores del admin y no el comportamiento por
-  /// defecto). Cada uno amplía lo que ya da prime, nunca lo reemplaza —
-  /// ver `resolverCapacidades`.
-  autoReviewForAll   Boolean  @default(false)
-  deepModeForAll     Boolean  @default(false)
+  /// odd/tasks/generacion-simple-y-reanudable.md: el único interruptor de
+  /// "capa 1" que sobrevivió a la baja de modo prime — ver
+  /// `src/lib/ai/capacidades.ts`.
   versionsForAll     Boolean  @default(false)
   updatedAt          DateTime @updatedAt
 }
@@ -178,7 +163,7 @@ model Project {
   lastAdminActor    User?      @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
   lastAdminActionAt DateTime?
   likes             ProjectLike[]
-  /// T4 (odd/tasks/modo-prime.md, "Deshacer cambios de la IA"): instantáneas
+  /// T4 ("Deshacer cambios de la IA"): instantáneas
   /// para volver atrás, podadas a las 20 más nuevas por stream.ts.
   /// Back-relation de ProjectSnapshot.project.
   snapshots         ProjectSnapshot[]
@@ -300,7 +285,7 @@ model AiModel {
   /// medianoche.
   userTokenWindowHours Int @default(0)
   /// Cuánto se le deja razonar antes de contestar, para los modelos que lo
-  /// soportan: "none" | "low" | "high" | "max". NULL = no mandar el parámetro,
+  /// soportan: "none" | "low" | "high". NULL = no mandar el parámetro,
   /// que es lo correcto para todo proveedor que no lo conozca (mandarlo a
   /// ciegas es un 400). Ver src/lib/ai/provider.ts.
   reasoningEffort String?
@@ -313,14 +298,6 @@ model AiModel {
   fallbackModelId String?
   fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)
   respaldoDe      AiModel[] @relation("Respaldo")
-
-  /// T5 (odd/tasks/modo-prime.md): motor que sólo una cuenta con prime puede
-  /// ver, elegir o recibir como eslabón de respaldo — filtrado en
-  /// `src/lib/ai/catalogo.ts` (server-side; el filtro del cliente es sólo
-  /// cosmético). No puede coexistir con `isDefault: true` (se valida en
-  /// `/api/admin/models`): el motor predeterminado tiene que poder usarlo
-  /// cualquier docente.
-  primeOnly Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -356,7 +333,7 @@ model ChatMessage {
   /// el caso normal, que es el dueño escribiendo su propio recurso.
   authorUserId String?
   authorUser   User?    @relation("ChatMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
-  /// T4 (odd/tasks/modo-prime.md): cuándo se deshizo este mensaje. `NULL` =
+  /// T4: cuándo se deshizo este mensaje. `NULL` =
   /// sigue vigente. Deshacer un turno marca A LA VEZ el mensaje "assistant"
   /// que lo cierra y el pedido "user" del docente que lo disparó, así el
   /// modelo deja de ver el turno ENTERO (ver el filtro de historial en
@@ -366,7 +343,7 @@ model ChatMessage {
   /// "assistant" que cambiaron el recurso. Relación 1:1 opcional — la FK
   /// vive del lado de ProjectSnapshot (`chatMessageId` es `@unique` ahí).
   snapshot     ProjectSnapshot?
-  /// T9 (odd/tasks/modo-prime.md, "Varias versiones al crear un recurso"):
+  /// T9 ("Varias versiones al crear un recurso"):
   /// cuál de `variants` está elegida ahora mismo (1, 2 o 3). Se pone en 1 al
   /// crear el turno (`Project.currentHtml` ya arranca en la versión 1) y
   /// cambia con `POST /api/projects/[id]/variant`. `NULL` en cualquier
@@ -394,7 +371,7 @@ model ChatMessage {
 }
 
 /// Una de las hasta 3 versiones que generó un "turno de versiones" (T9,
-/// odd/tasks/modo-prime.md — "Varias versiones al crear un recurso"):
+/// "Varias versiones al crear un recurso" (T9):
 /// cuelga del ÚNICO mensaje "assistant" que cierra ese turno (las tres
 /// comparten el mismo mensaje — el turno persiste un solo texto fijo, no
 /// uno por versión). Tabla aparte y NO una columna grande en ChatMessage a
@@ -417,7 +394,7 @@ model ResourceVariant {
 }
 
 /// Instantánea del HTML de un recurso justo ANTES de un turno de la IA que lo
-/// cambió (T4, odd/tasks/modo-prime.md — "Deshacer cambios de la IA, para
+/// cambió (T4, "Deshacer cambios de la IA, para
 /// todos, con varios niveles"). Cuelga del mensaje "assistant" que cierra ese
 /// turno (`chatMessageId`, único: a lo sumo una instantánea por turno), así
 /// "deshacer ESTE turno" es simplemente "restaurar `html` y borrar esta

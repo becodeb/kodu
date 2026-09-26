@@ -94,7 +94,7 @@ async function main(): Promise<void> {
     // fuente que usa `project/[id].astro`) para saber si corresponde un
     // selector visible o no, en vez de asumir un conteo.
     invalidarCatalogo();
-    const elegiblesDocente = await motoresParaDocente(false);
+    const elegiblesDocente = await motoresParaDocente();
     await page.getByPlaceholder('Preguntale a Kodu…').waitFor();
     if (debeMostrarSelectorDeMotor(elegiblesDocente)) {
       await page.waitForSelector('#selector-motor:has-text("MiniMax M3")');
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
     invalidarCatalogo();
 
     try {
-      const cadena = await cadenaDeMotores(MINIMAX_M3_ID, false);
+      const cadena = await cadenaDeMotores(MINIMAX_M3_ID);
       assert.equal(cadena.length, 1, `esperaba que sólo M2.7 quede en la cadena (M3 sin clave, DeepSeek sin clave), dio ${cadena.length}`);
       assert.equal(cadena[0]!.id, MINIMAX_M27_ID, 'el motor cuya cuenta no tiene clave (M3) tiene que quedar afuera de la cadena');
       console.log('✔ un motor cuya cuenta no tiene clave utilizable queda afuera de la cadena; el siguiente con clave entra');

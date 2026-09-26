@@ -27,8 +27,7 @@ import { NOMBRES_LUCIDE } from '../src/lib/ai/lucide-nombres.ts';
 
 /**
  * Pruebas unitarias del kit de diseño (src/lib/ai/kit.ts) y de la lista de
- * íconos de Lucide (src/lib/ai/lucide-nombres.ts) — tarea T1 de
- * odd/tasks/modo-prime.md.
+ * íconos de Lucide (src/lib/ai/lucide-nombres.ts).
  *
  * Archivo separado de e2e/unidad.ts a propósito: kit.ts es un módulo puro,
  * isomórfico, sin Prisma ni Node, y estas pruebas no necesitan la base de

@@ -39,9 +39,6 @@ function matches(pathname: string, prefixes: string[]): boolean {
  * cuenta de demo), lo que cambia es que el gate de `stream.ts` vuelve a leer
  * `demoEnabled` en ese pedido nuevo.
  *
- * `primeAccess` (T5, odd/tasks/modo-prime.md) se suma acá con el mismo
- * criterio: un admin que desmarca una cuenta espera que deje de gastar
- * presupuesto de API en el próximo pedido, no 168 horas después.
  */
 async function resolverIdentidadFresca(
   sesion: SessionUser,
@@ -56,7 +53,6 @@ async function resolverIdentidadFresca(
         role: true,
         aiAccessOverride: true,
         isDemo: true,
-        primeAccess: true,
       },
     });
 
@@ -73,7 +69,6 @@ async function resolverIdentidadFresca(
         role: fila.role,
         aiAccessOverride: fila.aiAccessOverride,
         isDemo: fila.isDemo,
-        primeAccess: fila.primeAccess,
       },
       fresh: true,
     };

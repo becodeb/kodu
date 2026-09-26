@@ -13,8 +13,8 @@ const schema = z.object({
 
 /**
  * POST /api/projects/:id/variant — cambia cuál de las versiones generadas
- * por un turno de versiones está activa (T9, odd/tasks/modo-prime.md —
- * "Varias versiones al crear un recurso"). Mismas guardas que
+ * por un turno de versiones está activa (T9, "Varias versiones al crear un
+ * recurso"). Mismas guardas que
  * POST /api/projects/:id/undo (T4): proyecto del actor, marca de admin, 409
  * con un turno en curso, 409 si el mensaje no es el más nuevo con versiones,
  * 404/422 por un índice ausente.

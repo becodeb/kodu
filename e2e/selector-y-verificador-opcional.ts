@@ -84,7 +84,7 @@ async function hayAvisoRepunteo(page: Page, timeoutMs = 4_000): Promise<boolean>
 async function asegurarDocenteNoPrime(): Promise<string> {
   const fila = await prisma.user.upsert({
     where: { email: DOCENTE_EMAIL },
-    update: { role: 'DOCENTE', primeAccess: false },
+    update: { role: 'DOCENTE' },
     create: {
       email: DOCENTE_EMAIL,
       name: 'Docente E2E selector/verificador opcional',
@@ -212,7 +212,7 @@ async function main(): Promise<void> {
     // Sin prime/auto-revisión/versiones — ninguno de esos se mete en el
     // conteo de pedidos ni en la línea de tiempo del turno (mismo criterio
     // que el resto de la familia verificador-*).
-    await fijarSettings(adminPage, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+    await fijarSettings(adminPage, { versionsForAll: false });
 
     // ───────────────────────────────────────────────────────────
     // Preparación determinística: "exactamente un motor elegible" (MiniMax
@@ -220,7 +220,7 @@ async function main(): Promise<void> {
     // base compartida. Se restaura en el `finally`.
     // ───────────────────────────────────────────────────────────
     invalidarCatalogo();
-    const elegiblesAntes = await motoresParaDocente(false);
+    const elegiblesAntes = await motoresParaDocente();
     motoresTemporalmenteNoSeleccionables = elegiblesAntes.map((m) => m.id).filter((id) => id !== MINIMAX_M3_ID);
     for (const id of motoresTemporalmenteNoSeleccionables) {
       await fijarSelectableByTeacher(adminPage, id, false);
@@ -397,7 +397,7 @@ async function main(): Promise<void> {
         await fijarIsVerifier(adminPage2, id, true).catch(() => {});
       }
 
-      await fijarSettings(adminPage2, { primeEnabled: false, autoReviewForAll: false, deepModeForAll: false, versionsForAll: false });
+      await fijarSettings(adminPage2, { versionsForAll: false });
       await adminContext2.close();
 
       // Un solo docente de prueba, un solo proyecto por corrida: alcanza con

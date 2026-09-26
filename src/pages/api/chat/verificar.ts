@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
-import { fingerprintHtml } from '../../../lib/ai/revision-visual.ts';
+import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
 import { motorVerificador } from '../../../lib/ai/catalogo.ts';
 import {
   razonamientoVerificador,

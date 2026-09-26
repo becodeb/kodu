@@ -37,10 +37,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     // Una cuenta nueva arranca sin permiso individual (null: sigue la regla
     // de dominio). `isDemo` todavía no tiene columna propia — llega en M7.
-    // `primeAccess` de una cuenta recién creada siempre nace en `false`
-    // (columna real, default de la migración): no hace falta leerla, se
-    // sabe de antemano.
-    const session = { ...user, aiAccessOverride: null, isDemo: false, primeAccess: false };
+    const session = { ...user, aiAccessOverride: null, isDemo: false };
     setSessionCookie(cookies, await createSessionToken(session));
     return ok({ user: session, redirect: '/app' });
   } catch (error) {
