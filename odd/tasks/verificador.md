@@ -75,7 +75,7 @@ teacher decides with a button.
 ## Tasks
 
 - [x] T1: isolate `window.__koduPruebas` (prompt + normalizer + sentinel + unit tests). Route: delegated writer (4+ files).
-- [ ] T2: Responses API in provider.ts + API-format field + admin + unit tests. Route: delegated writer.
+- [x] T2: Responses API in provider.ts + API-format field + admin + unit tests. Route: delegated writer.
 - [ ] T3: verifier backend (flag + module + endpoint + TokenUsage + correction input). Route: delegated writer.
 - [ ] T4: verifier panel in the editor + e2e with the mock. Route: delegated writer.
 - [ ] T5: real gpt-6-luna check (cents). Route: inline, bounded.
@@ -170,3 +170,117 @@ teacher decides with a button.
   but that is not yet confirmed by actually running it.
 - Commit: `b6af07e` (`feat(kit): isolate window.__koduPruebas from the
   resource's own script`).
+
+### T2 — Responses API support in provider.ts (2026-09-26)
+
+- `prisma/schema.prisma` + `prisma/migrations/20260926003251_api_format_proveedor`:
+  additive `AiProvider.apiFormat String @default("chat")`. Verified with
+  `npx prisma migrate status` (applied, in sync) and by re-running
+  `e2e/m3-motores.ts` (the full admin providers/models browser suite)
+  end to end afterwards — every existing scenario still passes untouched,
+  confirming the default keeps every pre-existing provider on the old path.
+- `src/lib/ai/catalogo.ts`: `construirConfig` maps `fila.provider.apiFormat`
+  into `ProviderConfig.apiFormat`, defensively normalizing anything that
+  isn't literally `"responses"` to `"chat"` (same "never throw on an
+  unexpected row" style as the rest of that file).
+- `src/lib/ai/provider.ts` (the actual port of
+  `experimentos/razonamiento/proxy-responses.mjs`):
+  - `ProviderConfig.apiFormat: 'chat' | 'responses'` (required field — every
+    literal `ProviderConfig` in the repo, real or test, now states it).
+  - `ChatMessage` gained `role: 'tool'` and an optional `tool_calls`/
+    `tool_call_id` (mirrors a real Chat Completions tool round-trip); no
+    current caller in this app produces that shape (every turn calls the
+    tool once and ends), it exists so the Responses mapping has something
+    faithful to translate if that ever changes.
+  - `aResponsesBody`/`aResponsesInput` (not exported, internal to
+    `intentarUna`): `messages` → `input` (system/user parts incl. images,
+    assistant text + `tool_calls` → `function_call`, `tool` →
+    `function_call_output`), `tools` flattened to
+    `{type,name,description,parameters}`, `tool_choice` honoring
+    `forzarHerramienta`/`sinHerramientas` exactly like Chat Completions,
+    `reasoning: {effort}` (mapped from the SAME object
+    `razonamiento()`/`razonamientoEfectivo()`/`razonamientoOverride` already
+    produce — `none`/`low`/`high` pass through, `max`→`high`, and the
+    "medium" `razonamientoOverride` T3 will send for the verifier maps to
+    `medium` too), `max_output_tokens`, `store:false`, `stream:true`, never
+    `temperature`. `intentarUna` picks the endpoint
+    (`/v1/responses` vs `/v1/chat/completions`) and the body shape off
+    `provider.apiFormat`; the 429/`ToolChoiceNoSoportado` retry logic in
+    `requestCompletionStream` is untouched and applies to both formats
+    (same HTTP-status-based detection, format-agnostic).
+  - `readResponsesStream` (new generator): parses the Responses SSE dialect
+    into the exact same `StreamEvent` union as Chat Completions —
+    `item_id`/`call_id` remapped to the numeric `index` the rest of the app
+    expects, usage read out of `response.completed`/`incomplete`/`failed`,
+    `response.incomplete` → `finish reason "length"` (so `tool.truncated`
+    still works), reasoning-summary events ignored. A `type: 'error'` event
+    or `response.failed` THROWS a `ProviderError` (after yielding any usage
+    already on the failed response) instead of completing silently — Chat
+    Completions never lets an error reach this deep (it's caught earlier by
+    HTTP status in `intentarUna`), so this is genuinely new behavior for
+    every caller's `for await` loop, not a preserved invariant.
+  - `readCompletionStream(response, apiFormat = 'chat')`: new optional
+    second parameter, defaulting to `'chat'` so every untouched caller (and
+    every existing test) keeps reading Chat Completions byte for byte; when
+    `'responses'`, it delegates to `readResponsesStream`.
+  - Every real call site of `readCompletionStream` now passes the resolved
+    provider's `apiFormat`: `stream.ts` (`generarVersionSecundaria`,
+    `generarChecklist`, the `consumir` closure used for both the main
+    upstream and the forced retry, and the visual auto-review pass — all via
+    the already-resolved `args.provider`/`proveedorUsado` in scope, no new
+    plumbing), `autocorreccion.ts` and `visual-review.ts` (their top-level
+    `provider`). No caller outside `provider.ts` builds its own request or
+    parses SSE directly, so this covers every "any other place that calls
+    the provider" path in the task (checked with
+    `rg "chat/completions|baseUrl|/v1/"` across `src/`).
+  - `resolverMotor`/`normalizarMotor`/`cadenaDeMotores`/`motorPorDefecto` in
+    `catalogo.ts` — the only place `ProviderConfig` is normally constructed
+    — flow through `construirConfig`, so no other file had to change.
+- Admin (`catalogo-de-proveedores` pattern): `ProveedorAdmin.apiFormat`,
+  `crearProveedorSchema`/`actualizarProveedorSchema` (zod
+  `z.enum(['chat','responses']).optional()`, omitted on create → the
+  column's own `"chat"` default), and `ProveedorForm.tsx` got a "Formato de
+  API" `<select>` ("Chat Completions (la mayoría)" / "Responses (OpenAI)")
+  with a one-line Spanish hint that OpenAI reasoning models need Responses
+  for tools — always sent in the payload like `kind`/`label`/`baseUrl`.
+- `e2e/mock-proveedor.ts`: a `/v1/responses` route (`manejarPedidoResponses`,
+  `RespuestaResponsesScript`, `programarRespuestaResponses` on the returned
+  `MockProveedor`) — a single-shot text reply by default, and a
+  `function_call` only when the request actually offers `tools` with a
+  forced `tool_choice` (mirrors, but doesn't inherit, the eager-by-default
+  behavior of the `/v1/chat/completions` route — a verifier calling with
+  `sinHerramientas` must never get an unsolicited tool call). Every existing
+  route/behavior on that file is untouched; the new route is dispatched
+  before the existing 404 fallthrough, on its own request queue.
+- Tests: `e2e/unidad-responses.ts` (new, 20 cases) — request mapping via a
+  disposable HTTP server (URL, full message mapping incl. tool round-trip
+  and an image part, tools/tool_choice forced/auto/omitted, all 4 reasoning
+  levels plus the "medium" override plus "no level configured", max tokens
+  incl. override, no temperature, store/stream/model), stream parsing via
+  hand-built `Response`/`ReadableStream` objects (text, two interleaved
+  tool calls with correct per-index deltas, `incomplete`→truncated, usage
+  mapping, `error` event, `response.failed` after usage, and one regression
+  case proving the default `readCompletionStream(response)` — no second
+  arg — still reads Chat Completions untouched), and two round trips
+  against the new mock route through the real
+  `requestCompletionStream`+`readCompletionStream` pair. `e2e/unidad.ts`'s
+  `config()` test helper got the new required `apiFormat: 'chat'` field.
+- Checks: `npx tsc --noEmit` clean. `npx tsx e2e/unidad-responses.ts` 20/20.
+  `npx tsx e2e/unidad.ts`, `npx tsx e2e/unidad-kit.ts`,
+  `npx tsx e2e/unidad-pruebas-aisladas.ts` all pass unchanged. `npx prisma
+  migrate status`: applied, database in sync. `npm run dev` on :3000 +
+  `npx tsx e2e/m3-motores.ts` (the admin providers/models browser suite,
+  the closest existing e2e to "the provider form"): all 38 scenarios pass
+  — the new `apiFormat` field doesn't disturb any existing provider CRUD
+  invariant. Dev server stopped afterwards with `npx astro dev stop`
+  (confirmed no leftover `astro` process).
+- Left open: no real OpenAI call was made (T5's job, and the task
+  constrains "only spend cents" with the echo test key) — everything above
+  is verified against the mock and hand-built SSE fixtures, not against
+  the real Responses API. `ProveedoresPanel.tsx` (the list view) doesn't
+  show `apiFormat` — only the edit form does, matching what the task asked
+  for ("editable in the admin provider form"); nothing currently needs it
+  visible in the list.
+- Commits: `2bae170` (`feat(ai): add Responses API support for OpenAI
+  reasoning models`), `65659e2` (`test(ai): cover Responses API request
+  mapping and stream parsing`).
