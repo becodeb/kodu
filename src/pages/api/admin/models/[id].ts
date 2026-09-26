@@ -33,6 +33,11 @@ const actualizarMotorSchema = z.object({
   selectableByTeacher: z.boolean().optional(),
   supportsVision: z.boolean().optional(),
   isDefault: z.boolean().optional(),
+  /** T3 (verificador): mismo criterio que `isDefault` — a lo sumo un `true`
+   *  en todo el catálogo, enforced por el índice único parcial de la
+   *  migración + la misma transacción "bajar el anterior antes de subir
+   *  éste" de más abajo. */
+  isVerifier: z.boolean().optional(),
   maxOutputTokens: z.coerce.number().int().positive().max(1_000_000).optional(),
   reasoningEffort: z.enum(['none', 'low', 'high', 'max']).nullable().optional(),
   reasoningParam: z.enum(['reasoning_effort', 'thinking']).nullable().optional(),
@@ -110,6 +115,12 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.userTokenLimit !== undefined) cambios.userTokenLimit = datos.userTokenLimit;
   if (datos.fallbackModelId !== undefined) cambios.fallbackModelId = datos.fallbackModelId;
   if (datos.primeOnly !== undefined) cambios.primeOnly = datos.primeOnly;
+  // T3 (verificador): a diferencia de `isDefault` (nunca se apaga directo,
+  // sólo se reemplaza por otro default), acá SÍ hay un estado "apagado del
+  // todo" legítimo (ningún motor marcado) — el checkbox de /admin/motores
+  // tiene que poder desmarcarlo sin elegir otro. `false` pasa por acá igual
+  // que cualquier otro campo; `true` además dispara la transacción de abajo.
+  if (datos.isVerifier !== undefined) cambios.isVerifier = datos.isVerifier;
   if (datos.priceInputPerMToken !== undefined) {
     cambios.priceInputPerMToken = precioADecimal(datos.priceInputPerMToken);
   }
@@ -120,17 +131,30 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     cambios.priceOutputPerMToken = precioADecimal(datos.priceOutputPerMToken);
   }
 
+  const subeDefault = datos.isDefault === true;
+  // T3 (verificador): mismo motivo que `subeDefault` — el índice único
+  // parcial `AiModel_un_solo_verificador` rechazaría dos `true` a la vez si
+  // no se baja el anterior ANTES, en la misma transacción.
+  const subeVerificador = datos.isVerifier === true;
+
   try {
     const actualizado =
-      datos.isDefault === true
+      subeDefault || subeVerificador
         ? await prisma.$transaction(async (tx) => {
-            // Bajar cualquier default anterior ANTES de subir este, en la
-            // misma transacción: el índice único parcial (`AiModel_un_solo_default`)
-            // rechazaría dos `true` a la vez si el orden fuera al revés.
-            await tx.aiModel.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+            if (subeDefault) {
+              await tx.aiModel.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+            }
+            if (subeVerificador) {
+              await tx.aiModel.updateMany({ where: { isVerifier: true }, data: { isVerifier: false } });
+            }
             return tx.aiModel.update({
               where: { id: existente.id },
-              data: { ...cambios, isDefault: true },
+              // `cambios` ya trae `isVerifier: true` cuando `subeVerificador`
+              // (se agregó arriba como cualquier otro campo, ver más arriba);
+              // `isDefault` es el único que nunca pasa por `cambios` — sigue
+              // el mismo comportamiento de siempre (sólo se sube acá, nunca
+              // se baja directo).
+              data: { ...cambios, ...(subeDefault ? { isDefault: true } : {}) },
               include: { provider: true },
             });
           })

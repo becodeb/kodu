@@ -65,6 +65,7 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [selectableByTeacher, setSelectableByTeacher] = useState(motor?.selectableByTeacher ?? true);
   const [supportsVision, setSupportsVision] = useState(motor?.supportsVision ?? false);
   const [primeOnly, setPrimeOnly] = useState(motor?.primeOnly ?? false);
+  const [isVerifier, setIsVerifier] = useState(motor?.isVerifier ?? false);
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(motor?.maxOutputTokens ?? 131_072));
   const [reasoningEffort, setReasoningEffort] = useState(motor?.reasoningEffort ?? '');
   const [reasoningParam, setReasoningParam] = useState(motor?.reasoningParam ?? 'reasoning_effort');
@@ -101,6 +102,7 @@ export default function ModeloForm(props: ModeloFormProps) {
       selectableByTeacher,
       supportsVision,
       primeOnly,
+      isVerifier,
       maxOutputTokens: Number(maxOutputTokens),
       reasoningEffort: reasoningEffort === '' ? null : reasoningEffort,
       reasoningParam: reasoningEffort === '' ? null : reasoningParam,
@@ -440,11 +442,20 @@ export default function ModeloForm(props: ModeloFormProps) {
             label="Solo modo prime"
             disabled={motor?.isDefault ?? false}
           />
+          <Interruptor
+            id={`${idBase}-isVerifier`}
+            checked={isVerifier}
+            onChange={setIsVerifier}
+            label="Usar como verificador"
+          />
         </div>
         <p className="-mt-2 text-xs text-ink-500">
           {motor?.isDefault
             ? 'Este motor es el predeterminado: no puede ser exclusivo de prime. Elegí otro predeterminado primero si querés marcarlo.'
             : 'Sólo lo pueden usar las cuentas con prime (admins, la demo y las cuentas marcadas). Nunca puede ser el motor predeterminado, ni el docente lo ve mencionado como "prime" en ningún lado.'}
+        </p>
+        <p className="-mt-2 text-xs text-ink-500">
+          Revisa cada recurso nuevo después de la autoprueba. Recomendado: gpt-6-luna.
         </p>
 
         {error && (

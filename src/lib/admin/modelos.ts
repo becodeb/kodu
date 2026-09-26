@@ -24,6 +24,9 @@ export interface MotorAdmin {
   enabled: boolean;
   selectableByTeacher: boolean;
   isDefault: boolean;
+  /** T3 (verificador): a lo sumo un motor en `true` — ver el índice único
+   *  parcial de la migración y `motorVerificador()` en `catalogo.ts`. */
+  isVerifier: boolean;
   sortOrder: number;
   maxOutputTokens: number;
   maxInputChars: number;
@@ -56,6 +59,7 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     enabled: fila.enabled,
     selectableByTeacher: fila.selectableByTeacher,
     isDefault: fila.isDefault,
+    isVerifier: fila.isVerifier,
     sortOrder: fila.sortOrder,
     maxOutputTokens: fila.maxOutputTokens,
     maxInputChars: fila.maxInputChars,
