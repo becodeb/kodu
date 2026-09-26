@@ -698,7 +698,21 @@ const SCRIPT_ICONOS_LEGADO = `(function () {
  * de compatibilidad — `Promise` es soporte universal en cualquier Chromium
  * moderno.
  */
-const SCRIPT_CENTINELA = `(function () {
+
+/**
+ * Id sintético de "prueba" que reporta el runner de window.__koduPruebas
+ * (SCRIPT_CENTINELA, más abajo) cuando el bloque <script data-kodu-pruebas>
+ * existe pero no dejó window.__koduPruebas como un arreglo (error de
+ * sintaxis o una excepción al evaluarlo, ver T1 de odd/tasks/verificador.md).
+ * Nunca coincide con el id de un ítem real del checklist del docente (esos
+ * son c1..cN, ver checklist.ts) — así construirMensajeCorreccion
+ * (autoprueba.ts) puede distinguir "el checklist del docente falló" de "el
+ * script de pruebas ni siquiera cargó" y pedirle al modelo que reescriba
+ * SOLO ese script. Exportado para que autoprueba.ts lo importe en vez de
+ * repetir el string a mano en las dos puntas.
+ */
+export const ID_PRUEBA_CARGA = '_kodu_pruebas_no_cargaron';
+const SCRIPT_CENTINELA_BASE_A = `(function () {
   var setTimeoutNativo = window.setTimeout;
 
   // Alert/confirm/prompt bloqueantes no deberían aparecer nunca en un
@@ -989,7 +1003,21 @@ const SCRIPT_CENTINELA = `(function () {
     return { items: lista.slice(0, tope), truncado: lista.length > tope };
   }
 
-  // ── window.__koduPruebas (round 4, T14): checklist del docente ───────
+`;
+
+/**
+ * T1 (verificador): igual que SCRIPT_ICONOS_LEGADO más arriba y
+ * BLOQUES_LEGADO_POR_ID más abajo — mismo patrón que arnes-robustez usó
+ * cada vez que un cambio a un script embebido en el bloque canónico rompía
+ * la comparación byte a byte. Copia EXACTA de esta sección de
+ * SCRIPT_CENTINELA tal como estaba ANTES de esta tarea (sin el chequeo de
+ * "script[data-kodu-pruebas] sin arreglo"), para que
+ * SCRIPT_CENTINELA_PRE_VERIFICADOR reconstruya byte a byte el centinela que
+ * ya viajaba en los recursos guardados por feat/arnes-robustez. Nunca se
+ * edita a mano: si hace falta congelar OTRA versión más adelante, se agrega
+ * una constante nueva, ésta no se toca.
+ */
+const SCRIPT_CENTINELA_PRUEBAS_ANTERIOR = `  // ── window.__koduPruebas (round 4, T14): checklist del docente ───────
   // El paso de checklist (T16, no esta tarea) le pide al modelo un test por
   // ítem del checklist, guardado en window.__koduPruebas. Corren DESPUÉS
   // de las verificaciones de base (después del reinicio final + diff), con
@@ -1083,7 +1111,127 @@ const SCRIPT_CENTINELA = `(function () {
     }
     return paso(0).then(function (r) { accionActual = 'al cargar'; return r; });
   }
+`;
 
+/**
+ * Versión ACTUAL de la sección de window.__koduPruebas (T1, verificador):
+ * único cambio contra SCRIPT_CENTINELA_PRUEBAS_ANTERIOR, ver el comentario
+ * dentro de correrPruebas().
+ */
+const SCRIPT_CENTINELA_PRUEBAS = `  // ── window.__koduPruebas (round 4, T14): checklist del docente ───────
+  // El paso de checklist (T16, no esta tarea) le pide al modelo un test por
+  // ítem del checklist, guardado en window.__koduPruebas. Corren DESPUÉS
+  // de las verificaciones de base (después del reinicio final + diff), con
+  // presupuesto propio: hasta 8 pruebas, 3s cada una, SIN contar contra el
+  // tope de 20s de las verificaciones de base (ese tope sigue midiendo sólo
+  // la carga + reinicio + diff, como antes de T14) — así una prueba lenta
+  // nunca deja resultados de base a medio hacer, y las pruebas de base
+  // nunca le roban tiempo al checklist. Peor caso total: ~20s (base) + 8×3s
+  // = 44s (documentado en odd/tasks/arnes-robustez.md para que un trabajo
+  // futuro suba el timeout del lado del cliente).
+  var TOPE_PRUEBAS = 8;
+  var TIEMPO_PRUEBA_MS = 3000;
+  var TOPE_ESPERA_PRUEBA_MS = 2000;
+
+  function crearAyudantePrueba() {
+    return {
+      esperar: function (ms) {
+        var n = Number(ms);
+        if (!isFinite(n) || n < 0) n = 0;
+        if (n > TOPE_ESPERA_PRUEBA_MS) n = TOPE_ESPERA_PRUEBA_MS;
+        return esperarMs(n);
+      },
+      clic: function (selectorOEl) {
+        var el = typeof selectorOEl === 'string' ? document.querySelector(selectorOEl) : selectorOEl;
+        if (!el || typeof el.click !== 'function') {
+          throw new Error("t.clic: no se encontró el elemento ('" + String(selectorOEl) + "')");
+        }
+        el.click();
+      },
+      texto: function (selector) {
+        var el = typeof selector === 'string' ? document.querySelector(selector) : selector;
+        return el ? textoDe(el) : '';
+      }
+    };
+  }
+
+  function idDePrueba(entrada, indice) {
+    var id = entrada && entrada.id != null ? String(entrada.id) : '';
+    id = id.trim();
+    if (!id) id = 'p' + (indice + 1);
+    return truncar(id, 40);
+  }
+
+  function normalizarResultadoPrueba(r) {
+    if (!r || typeof r !== 'object') {
+      return { ok: false, detalle: truncar('la prueba no devolvió un resultado válido', 200) };
+    }
+    return { ok: !!r.ok, detalle: truncar(r.detalle == null ? '' : r.detalle, 200) };
+  }
+
+  function correrUnaPrueba(entrada, indice, t) {
+    var id = idDePrueba(entrada, indice);
+    if (!entrada || typeof entrada.prueba !== 'function') {
+      return Promise.resolve({ id: id, ok: false, detalle: truncar('window.__koduPruebas: la entrada no tiene una función prueba', 200) });
+    }
+
+    var promesaPrueba = new Promise(function (resolve) {
+      try {
+        Promise.resolve(entrada.prueba(t)).then(
+          function (r) { resolve(normalizarResultadoPrueba(r)); },
+          function (err) { resolve({ ok: false, detalle: truncar('error: ' + (err && err.message ? err.message : String(err)), 200) }); }
+        );
+      } catch (err) {
+        resolve({ ok: false, detalle: truncar('error: ' + (err && err.message ? err.message : String(err)), 200) });
+      }
+    });
+
+    var promesaTimeout = new Promise(function (resolve) {
+      setTimeoutNativo(function () { resolve({ agotada: true }); }, TIEMPO_PRUEBA_MS);
+    });
+
+    return Promise.race([promesaPrueba, promesaTimeout]).then(function (r) {
+      var base = r && r.agotada ? { ok: false, detalle: 'la prueba tardó más de 3 s' } : r;
+      return { id: id, ok: base.ok, detalle: base.detalle };
+    });
+  }
+
+  function correrPruebas() {
+    var lista = window.__koduPruebas;
+    if (!Array.isArray(lista)) {
+      // T1 (verificador): un script[data-kodu-pruebas] con un error de
+      // sintaxis o una excepción al evaluarlo deja window.__koduPruebas sin
+      // definir — antes esto se trataba IGUAL que "recurso sin checklist"
+      // (pruebas: null, nunca dispara corrección). Si el script separado
+      // existe, es un checklist ROTO, no la ausencia de uno: se reporta
+      // como una prueba sintética fallida para que la corrección reescriba
+      // ESE script, nunca el resto del recurso. El envoltorio
+      // try{eval(...)}catch que arma aislarPruebasKit (kit.ts, server) deja
+      // el mensaje real en window.__koduPruebasError antes de que este
+      // chequeo corra.
+      if (document.querySelector('script[data-kodu-pruebas]')) {
+        var detalleCarga = typeof window.__koduPruebasError === 'string'
+          ? truncar(window.__koduPruebasError, 200)
+          : 'window.__koduPruebas no quedó definido como un arreglo';
+        return Promise.resolve([{ id: '${ID_PRUEBA_CARGA}', ok: false, detalle: detalleCarga }]);
+      }
+      return Promise.resolve(null);
+    }
+    var recortada = lista.slice(0, TOPE_PRUEBAS);
+    var t = crearAyudantePrueba();
+    var resultados = [];
+    function paso(i) {
+      if (i >= recortada.length) return Promise.resolve(resultados);
+      accionActual = 'en window.__koduPruebas[' + i + ']';
+      return correrUnaPrueba(recortada[i], i, t).then(function (r) {
+        resultados.push(r);
+        return paso(i + 1);
+      });
+    }
+    return paso(0).then(function (r) { accionActual = 'al cargar'; return r; });
+  }
+`;
+const SCRIPT_CENTINELA_BASE_B = `
   function compararSnapshots(referencia, actual, volLineas, volControles) {
     var dl = diffConjuntos(filtrarPorIndice(referencia.lineas, volLineas), filtrarPorIndice(actual.lineas, volLineas));
 
@@ -1253,6 +1401,21 @@ const SCRIPT_CENTINELA = `(function () {
     ejecutarAutoprueba(id, n);
   });
 })();`;
+
+/**
+ * SCRIPT_CENTINELA se arma en tres pedazos (T1, verificador) en vez de un
+ * único template literal, sólo para poder congelar
+ * SCRIPT_CENTINELA_PRE_VERIFICADOR sin duplicar las ~550 líneas que NO
+ * cambiaron (BASE_A, antes del centinela de window.__koduPruebas, y BASE_B,
+ * después) — ver el comentario de SCRIPT_CENTINELA_PRUEBAS_ANTERIOR. El
+ * texto final es IDÉNTICO, char a char, al de un único template literal:
+ * nada de esto cambia lo que corre en el navegador.
+ */
+const SCRIPT_CENTINELA = SCRIPT_CENTINELA_BASE_A + SCRIPT_CENTINELA_PRUEBAS + SCRIPT_CENTINELA_BASE_B;
+
+/** Ver el comentario de SCRIPT_CENTINELA_PRUEBAS_ANTERIOR. */
+const SCRIPT_CENTINELA_PRE_VERIFICADOR =
+  SCRIPT_CENTINELA_BASE_A + SCRIPT_CENTINELA_PRUEBAS_ANTERIOR + SCRIPT_CENTINELA_BASE_B;
 
 /**
  * `window.kodu`: helpers que el modelo puede llamar desde el JS que escribe
@@ -2248,9 +2411,13 @@ const BLOQUE_FIN = '<!-- kodu-kit:v1:fin -->';
  * el kit viejo. Ver el comentario de `BLOQUES_LEGADO_POR_ID` más abajo para
  * el motivo completo y cómo está fijado con un hash.
  */
-function construirBloque(tema: Tema, opts?: { legado?: boolean }): string {
+function construirBloque(tema: Tema, opts?: { legado?: boolean; centinelaAnterior?: boolean }): string {
   const config = construirTailwindConfig(tema);
   const legado = opts?.legado === true;
+  // T1 (verificador): SOLO cambia qué versión de SCRIPT_CENTINELA entra —
+  // independiente de `legado` (que además saca SCRIPT_KODU y la regla
+  // `[hidden]`). Ver el comentario de SCRIPT_CENTINELA_PRUEBAS_ANTERIOR.
+  const centinela = opts?.centinelaAnterior === true ? SCRIPT_CENTINELA_PRE_VERIFICADOR : SCRIPT_CENTINELA;
 
   const partes = [
     `${BLOQUE_PREFIJO}${tema.id}${BLOQUE_INICIO_SUFIJO}`,
@@ -2259,7 +2426,7 @@ function construirBloque(tema: Tema, opts?: { legado?: boolean }): string {
     // instalado antes que cualquier otro script del documento. Sólo en el
     // bloque actual: el legado tiene que seguir siendo byte a byte el de
     // antes de T11.
-    ...(legado ? [] : [`<script>${SCRIPT_CENTINELA}</script>`]),
+    ...(legado ? [] : [`<script>${centinela}</script>`]),
     '<link rel="preconnect" href="https://fonts.googleapis.com">',
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
     `<link rel="stylesheet" href="${tema.fontsUrl}">`,
@@ -2302,6 +2469,16 @@ const BLOQUES_LEGADO_POR_ID = new Map<TemaId, string>(
   TEMAS.map((t) => [t.id, construirBloque(t, { legado: true })]),
 );
 
+/**
+ * Bloque canónico tal como lo dejó `feat/arnes-robustez`, uno por tema — ver
+ * `SCRIPT_CENTINELA_PRE_VERIFICADOR` para el motivo completo. Mismo criterio
+ * que `BLOQUES_LEGADO_POR_ID`: reconstruido con el MISMO `construirBloque`
+ * (rama `centinelaAnterior`), nunca strings pegados a mano.
+ */
+const BLOQUES_PRE_VERIFICADOR_POR_ID = new Map<TemaId, string>(
+  TEMAS.map((t) => [t.id, construirBloque(t, { centinelaAnterior: true })]),
+);
+
 /** El bloque canónico completo de un tema, delimitado por los comentarios `kodu-kit:v1`. */
 export function bloqueKit(temaId: TemaId): string {
   const bloque = BLOQUES_POR_ID.get(temaId);
@@ -2312,6 +2489,13 @@ export function bloqueKit(temaId: TemaId): string {
 /** El bloque canónico ANTERIOR a T1 de un tema — ver `BLOQUES_LEGADO_POR_ID`. */
 export function bloqueKitLegado(temaId: TemaId): string {
   const bloque = BLOQUES_LEGADO_POR_ID.get(temaId);
+  if (!bloque) throw new Error(`tema desconocido: ${temaId}`);
+  return bloque;
+}
+
+/** El bloque canónico tal como lo dejó `feat/arnes-robustez` — ver `BLOQUES_PRE_VERIFICADOR_POR_ID`. */
+export function bloqueKitPreVerificador(temaId: TemaId): string {
+  const bloque = BLOQUES_PRE_VERIFICADOR_POR_ID.get(temaId);
   if (!bloque) throw new Error(`tema desconocido: ${temaId}`);
   return bloque;
 }
@@ -2415,10 +2599,16 @@ function buscarBloque(html: string): BloqueEncontrado | null {
 /** El bloque encontrado es EXACTAMENTE el canónico del tema que él mismo declara (nadie lo tocó a mano). */
 function bloqueEsCanonico(bloque: BloqueEncontrado): boolean {
   if (!esTemaId(bloque.id)) return false;
-  // El bloque ANTERIOR a T1 (arnes-robustez) cuenta como canónico también:
-  // así aplicarKit lo actualiza al bloque actual (con los helpers nuevos) en
-  // vez de tratarlo como editado a mano. Ver BLOQUES_LEGADO_POR_ID.
-  return bloque.texto === bloqueKit(bloque.id) || bloque.texto === bloqueKitLegado(bloque.id);
+  // El bloque ANTERIOR a T1 (arnes-robustez), y el que dejó arnes-robustez
+  // antes de esta tarea, cuentan como canónicos también: así aplicarKit los
+  // actualiza al bloque actual (con los helpers nuevos) en vez de tratarlos
+  // como editados a mano. Ver BLOQUES_LEGADO_POR_ID y
+  // BLOQUES_PRE_VERIFICADOR_POR_ID.
+  return (
+    bloque.texto === bloqueKit(bloque.id) ||
+    bloque.texto === bloqueKitLegado(bloque.id) ||
+    bloque.texto === bloqueKitPreVerificador(bloque.id)
+  );
 }
 
 /**
@@ -2660,4 +2850,412 @@ export function aplicarKitConRedDeSeguridad(html: string, opts?: { temaPrevio?: 
     !yaTieneRespaldo && !cargaTailwindPorSuCuenta(html) && usaClasesDeTailwind(html);
 
   return aplicarKit(html, necesitaRedDeSeguridad ? { temaPrevio: TEMA_RED_DE_SEGURIDAD } : opts);
+}
+
+// ─────────────────────────────────────────────────────────────
+// T1 (verificador): aislar window.__koduPruebas en su propio <script>
+// ─────────────────────────────────────────────────────────────
+
+/** Texto exacto del identificador que buscamos a nivel superior de un `<script>`. */
+const MARCADOR_PRUEBAS = 'window.__koduPruebas';
+
+/**
+ * Palabras después de las que un `/` es SIEMPRE el inicio de un regex, nunca
+ * división — el resto de los casos se decide por el ÚLTIMO token
+ * significativo (ver `extraerAsignacionTopLevel`).
+ */
+const PALABRAS_CLAVE_CONTEXTO_REGEX = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do', 'else', 'yield', 'await',
+]);
+
+function esCaracterDeIdentificador(c: string | undefined): boolean {
+  return !!c && /[A-Za-z0-9_$]/.test(c);
+}
+
+/** Blancos y comentarios (de línea y de bloque) desde `desde`; `null` si un comentario de bloque queda sin cerrar. */
+function saltarBlancoYComentarios(codigo: string, desde: number): number | null {
+  let j = desde;
+  for (;;) {
+    while (j < codigo.length && /\s/.test(codigo[j]!)) j++;
+    if (codigo[j] === '/' && codigo[j + 1] === '/') {
+      const fin = codigo.indexOf('\n', j);
+      j = fin === -1 ? codigo.length : fin;
+      continue;
+    }
+    if (codigo[j] === '/' && codigo[j + 1] === '*') {
+      const fin = codigo.indexOf('*/', j + 2);
+      if (fin === -1) return null;
+      j = fin + 2;
+      continue;
+    }
+    return j;
+  }
+}
+
+/** Un literal regex desde el `/` de apertura (con clases `[...]`, donde `/` no cierra); `null` si no cierra en la misma línea. */
+function escanearRegex(codigo: string, desde: number): number | null {
+  let j = desde + 1;
+  let enClase = false;
+  while (j < codigo.length) {
+    const c = codigo[j];
+    if (c === '\n') return null;
+    if (c === '\\') { j += 2; continue; }
+    if (c === '[') { enClase = true; j++; continue; }
+    if (c === ']') { enClase = false; j++; continue; }
+    if (c === '/' && !enClase) {
+      j++;
+      while (j < codigo.length && /[a-zA-Z]/.test(codigo[j]!)) j++;
+      return j;
+    }
+    j++;
+  }
+  return null;
+}
+
+interface AsignacionExtraida {
+  /** El código del `<script>` con la asignación quitada. */
+  resto: string;
+  /** El texto exacto de `window.__koduPruebas = [ ... ];` (con el `;` si lo tenía). */
+  extraido: string;
+}
+
+/**
+ * Busca una única asignación `window.__koduPruebas = [ ... ];` de NIVEL
+ * SUPERIOR (no anidada en una función/bloque) dentro del código de un
+ * `<script>`. Un solo escaneo char a char de todo `codigo`, con una pila que
+ * respeta paréntesis/corchetes/llaves, strings simples, template literals
+ * (con `${}` anidado, reentrando en modo "texto de plantilla" al cerrar el
+ * hueco), comentarios de línea/bloque y una heurística de regex-vs-división
+ * por el último token significativo (igual que usan los parsers reales:
+ * después de un valor es división, después de un operador/apertura/palabra
+ * clave es regex).
+ *
+ * Devuelve `null` si el marcador no aparece como una ASIGNACIÓN de nivel
+ * superior (puede aparecer dentro de un string/comentario/función, o como
+ * una simple LECTURA — `if (window.__koduPruebas)`, `.length`, `==` — en
+ * cualquier profundidad: nada de eso cuenta, ni como candidato ni como
+ * ambigüedad). Devuelve `'ambiguo'` — y `aislarPruebasKit` deja TODO el HTML sin
+ * tocar — ante cualquier cosa que no se pueda resolver con confianza: más
+ * de una asignación, una asignación anidada, algo sin balancear (string,
+ * comentario, plantilla o regex sin cerrar; paréntesis/corchetes/llaves sin
+ * cerrar en TODO el script, no sólo alrededor del marcador), o el lado
+ * derecho no es claramente un arreglo (`= [ ... ]`).
+ */
+function extraerAsignacionTopLevel(codigo: string): AsignacionExtraida | 'ambiguo' | null {
+  const n = codigo.length;
+  let i = 0;
+  const pila: Array<')' | ']' | '}' | '`'> = [];
+  let ultimoSignificativo: 'valor' | 'operador' = 'operador';
+  let encontrada: { inicio: number; fin: number } | null = null;
+  let profundidadDelArreglo: number | null = null;
+
+  while (i < n) {
+    const c = codigo[i]!;
+    const enPlantilla = pila.length > 0 && pila[pila.length - 1] === '`';
+
+    if (enPlantilla) {
+      if (c === '\\') { i += 2; continue; }
+      if (c === '`') { pila.pop(); i++; ultimoSignificativo = 'valor'; continue; }
+      if (c === '$' && codigo[i + 1] === '{') { pila.push('}'); i += 2; ultimoSignificativo = 'operador'; continue; }
+      i++;
+      continue;
+    }
+
+    if (c === '/' && codigo[i + 1] === '/') {
+      const fin = codigo.indexOf('\n', i);
+      i = fin === -1 ? n : fin;
+      continue;
+    }
+    if (c === '/' && codigo[i + 1] === '*') {
+      const fin = codigo.indexOf('*/', i + 2);
+      if (fin === -1) return 'ambiguo';
+      i = fin + 2;
+      continue;
+    }
+
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      let cerrado = false;
+      while (j < n) {
+        if (codigo[j] === '\\') { j += 2; continue; }
+        if (codigo[j] === '\n') break;
+        if (codigo[j] === c) { cerrado = true; j++; break; }
+        j++;
+      }
+      if (!cerrado) return 'ambiguo';
+      i = j;
+      ultimoSignificativo = 'valor';
+      continue;
+    }
+
+    if (c === '`') {
+      pila.push('`');
+      i++;
+      continue;
+    }
+
+    if (c === '/') {
+      if (ultimoSignificativo === 'operador') {
+        const fin = escanearRegex(codigo, i);
+        if (fin === null) return 'ambiguo';
+        i = fin;
+        ultimoSignificativo = 'valor';
+        continue;
+      }
+      i++;
+      ultimoSignificativo = 'operador';
+      continue;
+    }
+
+    if (
+      c === 'w' &&
+      codigo.startsWith(MARCADOR_PRUEBAS, i) &&
+      !esCaracterDeIdentificador(codigo[i - 1]) &&
+      !esCaracterDeIdentificador(codigo[i + MARCADOR_PRUEBAS.length])
+    ) {
+      const inicio = i;
+      let j = i + MARCADOR_PRUEBAS.length;
+      const salto1 = saltarBlancoYComentarios(codigo, j);
+
+      // Una LECTURA (`if (window.__koduPruebas)`, `.length`, comparación con
+      // `==`/`===`, etc.) no es una asignación: se trata como una referencia
+      // cualquiera y se sigue escaneando, sin marcarla como candidata ni
+      // como ambigüedad — sólo un `=` suelto (nunca `==`/`===`) cuenta.
+      if (salto1 === null || codigo[salto1] !== '=' || codigo[salto1 + 1] === '=') {
+        i = inicio + MARCADOR_PRUEBAS.length;
+        ultimoSignificativo = 'valor';
+        continue;
+      }
+
+      // A partir de acá SÍ es una asignación de verdad: una anidada, una
+      // segunda, o un lado derecho que no es un arreglo son todas formas
+      // que preferimos no tocar antes que arriesgar una mala lectura.
+      if (pila.length !== 0) return 'ambiguo'; // no es de nivel superior
+      if (encontrada) return 'ambiguo'; // ya había una asignación
+
+      j = salto1 + 1;
+      const salto2 = saltarBlancoYComentarios(codigo, j);
+      if (salto2 === null) return 'ambiguo';
+      j = salto2;
+      if (codigo[j] !== '[') return 'ambiguo'; // sólo reconoce la forma arreglo
+
+      profundidadDelArreglo = pila.length;
+      pila.push(']');
+      encontrada = { inicio, fin: -1 };
+      i = j + 1;
+      ultimoSignificativo = 'operador';
+      continue;
+    }
+
+    if (c === '(' || c === '[' || c === '{') {
+      pila.push(c === '(' ? ')' : c === '[' ? ']' : '}');
+      i++;
+      ultimoSignificativo = 'operador';
+      continue;
+    }
+
+    if (c === ')' || c === ']' || c === '}') {
+      if (pila.length === 0 || pila[pila.length - 1] !== c) return 'ambiguo';
+      pila.pop();
+      i++;
+      ultimoSignificativo = 'valor';
+      if (encontrada && encontrada.fin === -1 && profundidadDelArreglo !== null && pila.length === profundidadDelArreglo) {
+        let k = i;
+        while (k < n && /\s/.test(codigo[k]!)) k++;
+        if (codigo[k] === ';') k++;
+        encontrada.fin = k;
+        i = k;
+        profundidadDelArreglo = null;
+      }
+      continue;
+    }
+
+    if (/\s/.test(c)) { i++; continue; }
+
+    if (esCaracterDeIdentificador(c)) {
+      let j = i;
+      while (j < n && esCaracterDeIdentificador(codigo[j])) j++;
+      const palabra = codigo.slice(i, j);
+      i = j;
+      ultimoSignificativo = PALABRAS_CLAVE_CONTEXTO_REGEX.has(palabra) ? 'operador' : 'valor';
+      continue;
+    }
+
+    ultimoSignificativo = 'operador';
+    i++;
+  }
+
+  if (pila.length !== 0) return 'ambiguo'; // algo (string/plantilla/regex/bracket) quedó sin cerrar
+  if (!encontrada || encontrada.fin === -1) return null; // el marcador nunca cerró un arreglo (no debería pasar sin ya haber vuelto 'ambiguo')
+
+  const extraido = codigo.slice(encontrada.inicio, encontrada.fin);
+  const resto = codigo.slice(0, encontrada.inicio) + codigo.slice(encontrada.fin);
+  return { resto, extraido };
+}
+
+/**
+ * Envuelve el texto fuente de `window.__koduPruebas = [ ... ];` en un
+ * `eval()` indirecto adentro de un `try/catch` (T1, verificador): a
+ * diferencia de envolver el código TAL CUAL en un `try{ ... }catch`, esto
+ * también atrapa un error de SINTAXIS — un script inline con JS
+ * sintácticamente roto no corre NADA, ni siquiera el `try` que lo rodea; acá
+ * el ÚNICO código que corre de verdad es `try{eval(<string>)}catch(e){...}`,
+ * siempre válido, y lo frágil viaja como STRING que `eval` recién compila en
+ * tiempo de ejecución — ahí SÍ es una excepción capturable como cualquier
+ * otra. Así el checklist roto de un docente nunca puede tirar un error
+ * global que el centinela (SCRIPT_CENTINELA) atribuya al RECURSO.
+ *
+ * `JSON.stringify` escapa comillas/backslashes/control chars de sobra;
+ * la única trampa propia es `</script` DENTRO del string, que el PARSER DE
+ * HTML (no JS) cortaría ahí mismo si viajara literal — se neutraliza
+ * insertando una barra invertida entre `<` y `/` (`\/` es un escape válido
+ * e inocuo en un string JS, pero ya no arranca un tag de cierre para HTML).
+ */
+function envolverPruebas(codigoFuente: string): string {
+  const comoTexto = JSON.stringify(codigoFuente).replace(/<\/(script)/gi, '<\\/$1');
+  return `try{eval(${comoTexto})}catch(e){window.__koduPruebasError=e?String(e):'error desconocido'}`;
+}
+
+const ENVOLTORIO_PREFIJO = 'try{eval(';
+const ENVOLTORIO_SUFIJO = ")}catch(e){window.__koduPruebasError=e?String(e):'error desconocido'}";
+
+/** El contenido de un `<script data-kodu-pruebas>` ya pasó por `envolverPruebas` (idempotencia). */
+function yaEnvuelto(contenido: string): boolean {
+  if (!contenido.startsWith(ENVOLTORIO_PREFIJO) || !contenido.endsWith(ENVOLTORIO_SUFIJO)) return false;
+  const medio = contenido.slice(ENVOLTORIO_PREFIJO.length, contenido.length - ENVOLTORIO_SUFIJO.length);
+  return medio.length >= 2 && medio.startsWith('"') && medio.endsWith('"');
+}
+
+/** ¿El nombre aparece como atributo de la etiqueta, con o sin valor (`data-x` o `data-x="y"`)? */
+function tieneAtributoBooleano(etiquetaHtml: string, nombre: string): boolean {
+  return new RegExp(`(?:^|\\s)${nombre}(?:[\\s=>/]|$)`, 'i').test(etiquetaHtml);
+}
+
+/** `<script>` sin `src` (inline) y sin un `type` que no sea JS clásico/módulo. */
+function esScriptJsProcesable(etiquetaApertura: string): boolean {
+  if (valorAtributo(etiquetaApertura, 'src') !== null) return false;
+  const tipo = valorAtributo(etiquetaApertura, 'type');
+  if (tipo === null) return true;
+  const normalizado = tipo.trim().toLowerCase();
+  return normalizado === '' || normalizado === 'text/javascript' || normalizado === 'application/javascript' || normalizado === 'module';
+}
+
+interface ScriptEncontrado {
+  aperturaDesde: number;
+  etiquetaApertura: string;
+  contenidoDesde: number;
+  contenidoHasta: number;
+  /** Índice justo DESPUÉS del `>` de la etiqueta `</script>` de cierre. */
+  cierreHasta: number;
+}
+
+/** Todas las etiquetas `<script>` de `html`, en orden. Terminador literal
+ *  `</script` (case-insensitive), igual que el parser HTML de verdad: una
+ *  apertura sin cierre correspondiente se descarta (no hay nada seguro que
+ *  hacer con ella acá). */
+function listarScripts(html: string): ScriptEncontrado[] {
+  const resultado: ScriptEncontrado[] = [];
+  const htmlMin = html.toLowerCase();
+  const reApertura = /<script\b[^>]*>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = reApertura.exec(html)) !== null) {
+    const contenidoDesde = m.index + m[0].length;
+    const cierreDesde = htmlMin.indexOf('</script', contenidoDesde);
+    if (cierreDesde === -1) { reApertura.lastIndex = contenidoDesde; continue; }
+    const finEtiquetaCierre = html.indexOf('>', cierreDesde);
+    if (finEtiquetaCierre === -1) { reApertura.lastIndex = contenidoDesde; continue; }
+    const cierreHasta = finEtiquetaCierre + 1;
+    resultado.push({ aperturaDesde: m.index, etiquetaApertura: m[0], contenidoDesde, contenidoHasta: cierreDesde, cierreHasta });
+    reApertura.lastIndex = cierreHasta;
+  }
+  return resultado;
+}
+
+/**
+ * Aísla `window.__koduPruebas` del resto del script del recurso (T1,
+ * verificador — `odd/tasks/verificador.md`): el modelo puede seguir
+ * ignorando el pedido del prompt de escribirlo en su propio
+ * `<script data-kodu-pruebas>`, así que esto lo hace de nuevo del lado del
+ * servidor, y además blinda CUALQUIER `<script data-kodu-pruebas>` (lo haya
+ * escrito el modelo directo, o lo haya armado esta misma función) contra un
+ * error de sintaxis o una excepción al evaluarlo — ver `envolverPruebas`.
+ *
+ * Aplicada en `aplicarKitAlTurno` (stream.ts), el mismo choke point por el
+ * que pasa el HTML de generación, ajuste y corrección antes de guardarse:
+ * ningún camino se olvida de esto.
+ *
+ * Reglas:
+ *  1. Nunca toca nada dentro del bloque canónico del kit (`buscarBloque`).
+ *  2. Un `<script data-kodu-pruebas>` que ya existe se envuelve ENTERO con
+ *     `envolverPruebas` (si todavía no lo estaba) — sin importar su forma:
+ *     no hace falta encontrar una asignación limpia adentro, todo ese
+ *     script es, por contrato del prompt, el checklist del docente.
+ *  3. Como mucho UN `<script>` sin ese atributo puede tener una asignación
+ *     `window.__koduPruebas = [ ... ];` de nivel superior extraíble (ver
+ *     `extraerAsignacionTopLevel`): se saca de ahí y se inserta, envuelta,
+ *     en un `<script data-kodu-pruebas>` nuevo justo después de ESE script.
+ *  4. Cualquier ambigüedad — en cualquier script, no sólo en el elegido — o
+ *     más de un candidato de extracción entre TODOS los scripts del
+ *     documento deja el HTML byte a byte sin tocar: mejor no tocar el
+ *     checklist que arriesgar el resto del recurso.
+ *
+ * Pura e idempotente: un `<script data-kodu-pruebas>` ya envuelto no vuelve
+ * a envolverse (`yaEnvuelto`), y un script del que ya se extrajo la
+ * asignación ya no la contiene, así que una segunda pasada no encuentra
+ * nada más que hacer.
+ */
+export function aislarPruebasKit(html: string): string {
+  const bloque = buscarBloque(html);
+  const rangoKitDesde = bloque ? bloque.desde : -1;
+  const rangoKitHasta = bloque ? bloque.hasta : -1;
+
+  const scripts = listarScripts(html).filter(
+    (s) => !(s.aperturaDesde >= rangoKitDesde && s.cierreHasta <= rangoKitHasta),
+  );
+
+  let candidato: { script: ScriptEncontrado; resto: string; extraido: string } | null = null;
+  const yaSeparados: ScriptEncontrado[] = [];
+  let ambiguo = false;
+
+  for (const script of scripts) {
+    if (!esScriptJsProcesable(script.etiquetaApertura)) continue;
+    if (tieneAtributoBooleano(script.etiquetaApertura, 'data-kodu-pruebas')) {
+      yaSeparados.push(script);
+      continue;
+    }
+    const contenido = html.slice(script.contenidoDesde, script.contenidoHasta);
+    if (!contenido.includes('__koduPruebas')) continue;
+    const resultado = extraerAsignacionTopLevel(contenido);
+    if (resultado === 'ambiguo') { ambiguo = true; break; }
+    if (resultado === null) continue;
+    if (candidato) { ambiguo = true; break; } // más de un candidato en TODO el documento
+    candidato = { script, resto: resultado.resto, extraido: resultado.extraido };
+  }
+
+  if (ambiguo) return html;
+  if (!candidato && yaSeparados.length === 0) return html;
+
+  const ediciones: Array<{ desde: number; hasta: number; texto: string }> = [];
+
+  for (const script of yaSeparados) {
+    const contenido = html.slice(script.contenidoDesde, script.contenidoHasta);
+    if (yaEnvuelto(contenido)) continue;
+    ediciones.push({ desde: script.contenidoDesde, hasta: script.contenidoHasta, texto: envolverPruebas(contenido) });
+  }
+
+  if (candidato) {
+    ediciones.push({ desde: candidato.script.contenidoDesde, hasta: candidato.script.contenidoHasta, texto: candidato.resto });
+    ediciones.push({
+      desde: candidato.script.cierreHasta,
+      hasta: candidato.script.cierreHasta,
+      texto: `\n<script data-kodu-pruebas>${envolverPruebas(candidato.extraido)}</script>`,
+    });
+  }
+
+  ediciones.sort((a, b) => b.desde - a.desde);
+  let resultado = html;
+  for (const edicion of ediciones) {
+    resultado = resultado.slice(0, edicion.desde) + edicion.texto + resultado.slice(edicion.hasta);
+  }
+  return resultado;
 }

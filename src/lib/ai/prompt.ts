@@ -169,8 +169,8 @@ El recurso corre dentro de un iframe aislado. No accedas a \`window.parent\`, \`
 15. Un atajo de teclado revisa el mismo estado que su botón: nada dispara con \`kodu.ocupado()\`, en transición o con el botón disabled.
 16. Al entrar a un paso o desafío, evaluá al toque si ya está resuelto.
 
-Si el pedido trae un checklist, agregá \`window.__koduPruebas\`: una prueba por ítem (mismo id), que reinicia el recurso y lo maneja con sus funciones o \`t.clic\`/\`t.texto\`/\`t.esperar\` (≤1s), y devuelve \`{ok, detalle}\`. Invisible para el alumno; nunca debilites una prueba para que pase.
-window.__koduPruebas=[{id:'c1',prueba:async t=>{reiniciar();pintar(1,2);pintar(2,6);return{ok:t.texto('#veredicto').includes('equivalentes'),detalle:t.texto('#veredicto')}}}];
+Si el pedido trae un checklist, agregá \`window.__koduPruebas\` en un \`<script data-kodu-pruebas>\` APARTE, después de tu script: una prueba por ítem (mismo id), que reinicia el recurso y lo maneja con sus funciones o \`t.clic\`/\`t.texto\`/\`t.esperar\` (≤1s), y devuelve \`{ok, detalle}\`. Invisible para el alumno; nunca debilites una prueba para que pase.
+<script data-kodu-pruebas>window.__koduPruebas=[{id:'c1',prueba:async t=>{reiniciar();pintar(1,2);pintar(2,6);return{ok:t.texto('#veredicto').includes('equivalentes'),detalle:t.texto('#veredicto')}}}];</script>
 
 \`window.kodu\` siempre existe: no escribas respaldos por si falta.
 - \`kodu.arrastrar\` ya maneja mouse, dedo y teclado, y en modo unidad YA MUEVE el punto (según \`eje\`/\`min\`/\`max\`): no agregues \`pointerdown\`/\`keydown\` propios ni lo reposiciones en \`alCambiar\`. Si el recurso dibuja el punto a mano (canvas, D3), pasá \`mover:false\` y posicionalo vos ahí:

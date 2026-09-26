@@ -8,7 +8,7 @@ import {
   type AssetContext,
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
-import { aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
+import { aislarPruebasKit, aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
 import { revisarHtml } from '../../../lib/ai/revision.ts';
 import {
   ProviderError,
@@ -240,7 +240,13 @@ function sseFrame(payload: Record<string, unknown>): Uint8Array {
  * cambio.
  */
 export function aplicarKitAlTurno(html: string, temaPrevio: TemaId | null): string {
-  return aplicarKitConRedDeSeguridad(html, { temaPrevio });
+  // T1 (verificador): después del kit, nunca antes — `aislarPruebasKit`
+  // busca el bloque canónico (`buscarBloque`) para nunca tocarlo, y
+  // `aplicarKitConRedDeSeguridad` es quien lo inserta o actualiza. El orden
+  // no cambia el resultado (aislarPruebasKit ignora ese bloque de cualquier
+  // forma), pero así queda documentado un único orden, no dos que hay que
+  // razonar por separado.
+  return aislarPruebasKit(aplicarKitConRedDeSeguridad(html, { temaPrevio }));
 }
 
 /**

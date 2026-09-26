@@ -23,6 +23,7 @@
  */
 
 import type { ItemChecklist } from './checklist.ts';
+import { ID_PRUEBA_CARGA } from './kit.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Tipos: mismo vocabulario que `autoprueba:resultado` en kit.ts
@@ -193,12 +194,28 @@ export function construirMensajeCorreccion(args: {
     indice++;
   }
 
+  // T1 (verificador): el script[data-kodu-pruebas] ni siquiera cargó (error
+  // de sintaxis o una excepción al evaluarlo, ver correrPruebas en
+  // SCRIPT_CENTINELA). A diferencia de una prueba que corrió y dio `ok:
+  // false`, acá no hay nada que "decidir" — el checklist entero es lo roto,
+  // nunca el resto del recurso — así que el mensaje es directo: reescribir
+  // SOLO ese script.
+  const fallaCarga = (informe.pruebas ?? []).find((prueba) => prueba.id === ID_PRUEBA_CARGA && prueba.ok === false);
+  if (fallaCarga) {
+    partes.push(
+      `${indice}. El script separado de pruebas (<script data-kodu-pruebas>) no se pudo cargar — esto NO es culpa del resto del recurso: ${fallaCarga.detalle}. Reescribí SOLO ese script con un window.__koduPruebas válido; no toques nada más.`,
+    );
+    indice++;
+  }
+
   // T17 (round 4): pruebas del checklist del docente (`window.__koduPruebas`)
   // que dieron `ok: false`. Antes de tocar nada, decidir CUÁL de los dos está
   // mal (el recurso o la prueba) — un checklist mal escrito existe, y
   // "arreglar" el recurso para que pase una prueba mal escrita rompería lo
   // que el docente sí pidió.
-  const pruebasFallidas = (informe.pruebas ?? []).filter((prueba) => prueba.ok === false);
+  const pruebasFallidas = (informe.pruebas ?? []).filter(
+    (prueba) => prueba.ok === false && prueba.id !== ID_PRUEBA_CARGA,
+  );
   if (pruebasFallidas.length > 0) {
     partes.push(
       `${indice}. El recurso no cumple estas pruebas del checklist del docente. Para cada una, decidí primero, contra lo que pidió el docente, si lo que está mal es el RECURSO o la PRUEBA — corregí sólo lo que esté mal. Nunca debilites ni borres una prueba para que pase:`,
