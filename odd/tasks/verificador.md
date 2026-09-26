@@ -173,7 +173,7 @@ teacher decides with a button.
 
 ### T2 — Responses API support in provider.ts (2026-09-26)
 
-- `prisma/schema.prisma` + `prisma/migrations/20260926003251_api_format_proveedor`:
+- `prisma/schema.prisma` + `prisma/migrations/20261004120000_api_format_proveedor`:
   additive `AiProvider.apiFormat String @default("chat")`. Verified with
   `npx prisma migrate status` (applied, in sync) and by re-running
   `e2e/m3-motores.ts` (the full admin providers/models browser suite)
