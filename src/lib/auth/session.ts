@@ -31,6 +31,16 @@ export interface SessionUser {
    *  migración 20260922000000). Se relee de la base en cada request a una
    *  ruta gateada (middleware.ts), nunca se firma en el JWT. */
   isDemo: boolean;
+  /**
+   * odd/tasks/organizaciones.md (T1/T2): la sede a la que pertenece (`null` =
+   * cuenta personal). Se relee de la base en cada request a una ruta gateada
+   * (middleware.ts), igual que `aiAccessOverride`/`isDemo` — nunca se firma
+   * en el JWT. Arranca en `null` acá (`verifySessionToken` sólo reconstruye
+   * identidad, el JWT no la firma) — un valor degradado en `null` nunca
+   * AMPLÍA el acceso de nadie, sólo puede negarlo de más hasta que
+   * `middleware.ts` lo refresque en la próxima ruta gateada.
+   */
+  organizationId: string | null;
 }
 
 function secretKey(): Uint8Array {
@@ -84,6 +94,7 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
       role,
       aiAccessOverride: null,
       isDemo: false,
+      organizationId: null,
     };
   } catch {
     // Firma invalida, token expirado o manipulado: sesion inexistente.

@@ -13,8 +13,8 @@ import { accesoIaDeUsuario } from '../../../../lib/admin/usuarios.ts';
  * (`requireFreshAdmin` en toda mutación de `/api/admin`, ver
  * `src/middleware.ts`); acá sólo queda la lógica de negocio.
  *
- * `aiAccessOverride: null` es un valor explícito ("volver a la regla del
- * dominio"), no "no lo toques" — por eso el campo es `.nullable().optional()`
+ * `aiAccessOverride: null` es un valor explícito ("volver a la regla de la
+ * organización"), no "no lo toques" — por eso el campo es `.nullable().optional()`
  * y no simplemente opcional: hace falta distinguir "no vino en el body" de
  * "vino, y es null".
  */
@@ -62,13 +62,16 @@ export const PATCH: APIRoute = async ({ params, request }) => {
     // la pisa — es justo la distinción que necesita "volver a la regla del
     // dominio" (ver el comentario de arriba).
     data: { role: datos.role, aiAccessOverride: datos.aiAccessOverride },
-    select: { id: true, email: true, role: true, aiAccessOverride: true },
+    select: { id: true, email: true, role: true, aiAccessOverride: true, organizationId: true },
   });
 
   // Se devuelve el texto ya calculado (no sólo el booleano crudo) para que
-  // la tabla no tenga que reimplementar la regla de dominio del lado del
-  // cliente ni pedir otra vuelta sólo para refrescar la columna.
-  const accesoIa = await accesoIaDeUsuario(actualizado.email, actualizado.aiAccessOverride);
+  // la tabla no tenga que reimplementar la regla de organización del lado
+  // del cliente ni pedir otra vuelta sólo para refrescar la columna.
+  const accesoIa = await accesoIaDeUsuario({
+    aiAccessOverride: actualizado.aiAccessOverride,
+    organizationId: actualizado.organizationId,
+  });
 
   return ok({
     usuario: {

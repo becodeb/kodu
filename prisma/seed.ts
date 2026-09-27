@@ -6,13 +6,18 @@ import { getAllowedDomains } from '../src/lib/env.ts';
 
 /**
  * Seed idempotente: crea la cuenta ADMIN inicial, las reglas globales base
- * que el SPEC (§4.2) inyecta en cada llamada a la IA, y siembra
- * `AuthorizedDomain` desde `ALLOWED_EMAIL_DOMAINS` (design.md §10) — sólo la
- * primera vez, porque un .sql no puede leer el .env y un despliegue
- * existente no puede perder sus dominios configurados al actualizar.
+ * que el SPEC (§4.2) inyecta en cada llamada a la IA, y siembra la
+ * organización Reditinere con sus dominios (odd/tasks/organizaciones.md, T1/T2
+ * — reemplaza a `AuthorizedDomain`/`ALLOWED_EMAIL_DOMAINS`, design.md §10
+ * vieja). El id de Reditinere es el MISMO uuid fijo y literal que usó la
+ * migración 20261010000000_organizaciones — así un despliegue existente (que
+ * ya trae Reditinere de esa migración) no crea una segunda organización acá.
  *
  * Ejecutar con: npm run db:seed
  */
+
+/** Mismo uuid fijo que prisma/migrations/20261010000000_organizaciones/migration.sql. */
+const REDITINERE_ID = '7e00bcaa-9eab-4849-852e-8fc2806d1cbb';
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL ?? '' });
 const prisma = new PrismaClient({ adapter });
@@ -50,28 +55,46 @@ async function main(): Promise<void> {
   const password = process.env.SEED_ADMIN_PASSWORD ?? 'Kodu.Admin.2026';
   const name = process.env.SEED_ADMIN_NAME ?? 'Administración KoduEdu';
 
+  const reditinere = await prisma.organization.upsert({
+    where: { id: REDITINERE_ID },
+    update: {},
+    create: { id: REDITINERE_ID, name: 'Reditinere', kind: 'CAMPUS' },
+    select: { id: true },
+  });
+
   const admin = await prisma.user.upsert({
     where: { email },
     update: { role: 'ADMIN' },
-    create: { email, name, role: 'ADMIN', passwordHash: await bcrypt.hash(password, 12) },
+    create: {
+      email,
+      name,
+      role: 'ADMIN',
+      passwordHash: await bcrypt.hash(password, 12),
+      organizationId: reditinere.id,
+      // El admin semilla entra por contraseña, sin Resend en un ambiente
+      // recién creado: se toma como verificado, mismo criterio que
+      // `register.ts` (odd/tasks/organizaciones.md, T2).
+      emailVerifiedAt: new Date(),
+      emailVerificationSource: 'NO_PROVIDER',
+    },
     select: { id: true, email: true },
   });
   console.log(`✔ Admin listo: ${admin.email}`);
 
-  const dominiosExistentes = await prisma.authorizedDomain.count();
+  const dominiosExistentes = await prisma.organizationDomain.count({ where: { organizationId: reditinere.id } });
   if (dominiosExistentes === 0) {
     const patrones = getAllowedDomains();
     if (patrones.length > 0) {
-      await prisma.authorizedDomain.createMany({
-        data: patrones.map((pattern) => ({ pattern })),
+      await prisma.organizationDomain.createMany({
+        data: patrones.map((pattern) => ({ pattern, organizationId: reditinere.id })),
         skipDuplicates: true,
       });
-      console.log(`✔ ${patrones.length} dominio(s) sembrado(s) desde ALLOWED_EMAIL_DOMAINS`);
+      console.log(`✔ ${patrones.length} dominio(s) de Reditinere sembrado(s) desde ALLOWED_EMAIL_DOMAINS`);
     } else {
-      console.log('… ALLOWED_EMAIL_DOMAINS está vacía: no se sembró ningún dominio (lista abierta)');
+      console.log('… ALLOWED_EMAIL_DOMAINS está vacía: no se sembró ningún dominio de Reditinere (lista abierta)');
     }
   } else {
-    console.log(`… AuthorizedDomain ya tiene ${dominiosExistentes} fila(s): no se resiembra`);
+    console.log(`… Reditinere ya tiene ${dominiosExistentes} dominio(s): no se resiembra`);
   }
 
   for (const rule of GLOBAL_RULES) {

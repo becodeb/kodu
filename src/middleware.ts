@@ -13,8 +13,20 @@ import { prisma } from './lib/db.ts';
  * Privado: todo lo que cuelgue de "/app" y "/admin", y las APIs de trabajo.
  */
 
-const PROTECTED_PAGE_PREFIXES = ['/app', '/admin'];
-const PROTECTED_API_PREFIXES = ['/api/projects', '/api/chat', '/api/rules', '/api/uploads', '/api/admin'];
+// odd/tasks/organizaciones.md (T4): "/org" y "/api/org" quedan gateados (sesión
+// + identidad fresca) pero NO admin-only acá — el admin de organización es un
+// DOCENTE (decisión del dueño), así que la autorización puntual de CADA
+// organización pasa por el chokepoint de `orgs/alcance.ts`
+// (`requireOrgAdmin`/`requireFreshOrgAdmin`), nunca por este middleware.
+const PROTECTED_PAGE_PREFIXES = ['/app', '/admin', '/org'];
+const PROTECTED_API_PREFIXES = [
+  '/api/projects',
+  '/api/chat',
+  '/api/rules',
+  '/api/uploads',
+  '/api/admin',
+  '/api/org',
+];
 const ADMIN_PAGE_PREFIXES = ['/admin'];
 const ADMIN_API_PREFIXES = ['/api/admin'];
 const GUEST_ONLY_PATHS = ['/login', '/register'];
@@ -53,6 +65,7 @@ async function resolverIdentidadFresca(
         role: true,
         aiAccessOverride: true,
         isDemo: true,
+        organizationId: true,
       },
     });
 
@@ -69,6 +82,10 @@ async function resolverIdentidadFresca(
         role: fila.role,
         aiAccessOverride: fila.aiAccessOverride,
         isDemo: fila.isDemo,
+        // odd/tasks/organizaciones.md (T1/T2): igual que aiAccessOverride/isDemo,
+        // se relee acá en cada request a una ruta gateada — nunca se firma en
+        // el JWT (ver session.ts).
+        organizationId: fila.organizationId,
       },
       fresh: true,
     };

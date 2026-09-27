@@ -1,8 +1,16 @@
 ---
+import { nextSeguro } from '../lib/http.ts';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import AuthForm from '../components/AuthForm.tsx';
 import GoogleButton from '../components/GoogleButton.astro';
 import { isGoogleEnabled } from '../lib/env.ts';
+
+// odd/tasks/organizaciones.md (T4): "next" para volver al enlace de
+// invitación después de crear la cuenta (`/invitacion/[token]` arma este
+// link) — mismo criterio anti open-redirect que login.astro: sólo rutas
+// relativas propias, nunca "//host" ni un origen ajeno.
+const nextUrl = Astro.url.searchParams.get('next') ?? undefined;
+const safeNext = nextSeguro(nextUrl);
 
 // "dominio" salió del mapa: desde M6 el dominio ya no bloquea el registro
 // (design.md §10), así que `callback.ts` no vuelve a emitir ese error.
@@ -41,7 +49,7 @@ const googleActivo = isGoogleEnabled();
 
       {googleActivo && (
         <>
-          <GoogleButton />
+          <GoogleButton next={safeNext} />
           <div class="my-5 flex items-center gap-3">
             <span class="h-px flex-1 bg-linea"></span>
             <span class="text-xs text-ink-500">o con tu correo</span>
@@ -50,7 +58,7 @@ const googleActivo = isGoogleEnabled();
         </>
       )}
 
-      <AuthForm client:load mode="register" />
+      <AuthForm client:load mode="register" nextUrl={safeNext} />
 
       <p class="mt-6 text-center text-sm text-ink-500">
         ¿Ya tenés cuenta?{' '}

@@ -1,27 +1,46 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import RulesManager from '../../components/RulesManager.tsx';
+import CuentaPersonal from '../../components/CuentaPersonal.astro';
 import { prisma } from '../../lib/db.ts';
+import { puedeUsarLaIa } from '../../lib/orgs/acceso.ts';
 
 const user = Astro.locals.user!;
 
+/**
+ * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
+ * quien no puede usar la IA y no es superadmin ve la pantalla de cuenta
+ * personal en vez del gestor de reglas — tienen sentido sólo junto a un
+ * chat que esta cuenta todavía no puede usar.
+ */
+const bloqueada = !(await puedeUsarLaIa(user)) && user.role !== 'ADMIN';
+
 // El docente ve sus reglas + las institucionales (estas últimas de sólo lectura
 // salvo que sea ADMIN).
-const rules = await prisma.customRule.findMany({
-  where: { OR: [{ userId: user.id }, { isGlobal: true }] },
-  orderBy: [{ isGlobal: 'asc' }, { createdAt: 'asc' }],
-  select: { id: true, title: true, content: true, isGlobal: true, isActive: true },
-});
+const rules = bloqueada
+  ? []
+  : await prisma.customRule.findMany({
+      where: { OR: [{ userId: user.id }, { isGlobal: true }] },
+      orderBy: [{ isGlobal: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, title: true, content: true, isGlobal: true, isActive: true },
+    });
 ---
 
 <BaseLayout title="Reglas y contexto">
-  <header class="mb-6 max-w-2xl">
-    <h1 class="text-2xl font-bold text-ink-900">Reglas y contexto</h1>
-    <p class="mt-1 text-sm text-ink-500">
-      Estas directivas se le inyectan a la IA en cada mensaje, antes de tu pedido. Sirven para fijar
-      criterios que no querés repetir cada vez: nivel, tono, accesibilidad, formato de las consignas.
-    </p>
-  </header>
+  {bloqueada ? (
+    <CuentaPersonal />
+  ) : (
+    <>
+      <header class="mb-6 max-w-2xl">
+        <h1 class="text-2xl font-bold text-ink-900">Reglas y contexto</h1>
+        <p class="mt-1 text-sm text-ink-500">
+          Estas directivas se le inyectan a la IA en cada mensaje, antes de tu pedido. Sirven para
+          fijar criterios que no querés repetir cada vez: nivel, tono, accesibilidad, formato de las
+          consignas.
+        </p>
+      </header>
 
-  <RulesManager client:load initialRules={rules} isAdmin={user.role === 'ADMIN'} />
+      <RulesManager client:load initialRules={rules} isAdmin={user.role === 'ADMIN'} />
+    </>
+  )}
 </BaseLayout>

@@ -21,8 +21,8 @@ import { calcularCostoTurno, type Precios } from '../src/lib/ai/usage.ts';
  *
  * **`aiAccessOverride` no se prueba acá.** M5 lo dejó afuera a propósito —
  * esa columna todavía no existe, ver `src/lib/admin/usuarios.ts` — así que
- * "Acceso a la IA" sólo puede leer "Sí · por dominio" en este entorno
- * (`ALLOWED_EMAIL_DOMAINS` vacío ⇒ todo dominio entra).
+ * "Acceso a la IA" lee "Cuenta personal": desde odd/tasks/organizaciones.md
+ * (T2) el acceso sale de la organización, y estos docentes se crean sin una.
  *
  * **La escena 5.8 ("abrir un recurso ajeno")** verifica sólo que el enlace
  * exista, apunte al id correcto y abra el recurso — el bypass de propiedad
@@ -346,42 +346,45 @@ async function main(): Promise<void> {
       // MULTI: rol, acceso, recursos, tokens, USD, última actividad.
       const filaMulti = await celdas(EMAIL_MULTI);
       assert.match(filaMulti[1]!, /Docente/);
-      assert.match(filaMulti[2]!, /Sí · por dominio/);
-      assert.equal(filaMulti[3], '1', 'un recurso creado');
-      assert.equal(filaMulti[4], '25.500', 'tokens acumulados de los 3 turnos');
-      assert.match(filaMulti[5]!, /^≈ US\$ 0,30$/, 'costo positivo real, con el prefijo de aproximación');
-      assert.notEqual(filaMulti[6], 'Nunca');
+      // Desde T2 (odd/tasks/organizaciones.md) la columna 2 es la organización y
+      // el acceso sale de ella. Estos docentes se crean sin organización, pero
+      // en una base migrada los que ya existían quedaron en Reditinere.
+      assert.match(filaMulti[3]!, filaMulti[2] === '—' ? /Cuenta personal/ : /Por organización/);
+      assert.equal(filaMulti[4], '1', 'un recurso creado');
+      assert.equal(filaMulti[5], '25.500', 'tokens acumulados de los 3 turnos');
+      assert.match(filaMulti[6]!, /^≈ US\$ 0,30$/, 'costo positivo real, con el prefijo de aproximación');
+      assert.notEqual(filaMulti[7], 'Nunca');
       console.log('✔ tabla: fila multi-día/multi-motor con los 6 campos correctos');
 
       // UNO: costo también positivo y marcado como aproximado.
       const filaUno = await celdas(EMAIL_UNO);
-      assert.equal(filaUno[4], '1.500');
-      assert.match(filaUno[5]!, /^≈ US\$/);
+      assert.equal(filaUno[5], '1.500');
+      assert.match(filaUno[6]!, /^≈ US\$/);
       console.log('✔ tabla: fila de un solo turno');
 
       // VACÍO: nunca "US$ 0,00" para algo que jamás corrió; tokens en 0.
       const filaVacio = await celdas(EMAIL_VACIO);
-      assert.equal(filaVacio[3], '1', 'tiene un recurso aunque nunca lo usó');
-      assert.equal(filaVacio[4], '0');
-      assert.equal(filaVacio[5], '—', 'sin ningún turno, el costo es desconocido, no gratis');
+      assert.equal(filaVacio[4], '1', 'tiene un recurso aunque nunca lo usó');
+      assert.equal(filaVacio[5], '0');
+      assert.equal(filaVacio[6], '—', 'sin ningún turno, el costo es desconocido, no gratis');
       console.log('✔ tabla: fila sin ningún turno muestra "—", nunca "US$ 0,00"');
 
       // GRATIS: costo CONOCIDO en cero, sin el prefijo "≈" (no es una estimación).
       const filaGratis = await celdas(EMAIL_GRATIS);
-      assert.equal(filaGratis[4], '6.500');
-      assert.equal(filaGratis[5], 'US$ 0,00', 'motor gratuito: costo cero conocido, sin "≈"');
+      assert.equal(filaGratis[5], '6.500');
+      assert.equal(filaGratis[6], 'US$ 0,00', 'motor gratuito: costo cero conocido, sin "≈"');
       console.log('✔ tabla: fila 100% gratuita muestra "US$ 0,00" exacto, sin aproximar');
 
       // SIN PRECIO: hay uso real, pero el precio nunca se cargó → "—", nunca $0.
       const filaSinPrecio = await celdas(EMAIL_SIN_PRECIO);
-      assert.notEqual(filaSinPrecio[4], '0', 'sí hubo tokens');
-      assert.equal(filaSinPrecio[5], '—', 'motor sin precio cargado: desconocido, no "US$ 0,00"');
+      assert.notEqual(filaSinPrecio[5], '0', 'sí hubo tokens');
+      assert.equal(filaSinPrecio[6], '—', 'motor sin precio cargado: desconocido, no "US$ 0,00"');
       console.log('✔ tabla: motor sin precio cargado nunca se confunde con "gratis"');
 
       // PROMOVER: nunca tuvo actividad ni recursos.
       const filaPromover = await celdas(EMAIL_PROMOVER);
-      assert.equal(filaPromover[3], '0');
-      assert.equal(filaPromover[6], 'Nunca', 'sin recursos ni turnos, la actividad es "Nunca"');
+      assert.equal(filaPromover[4], '0');
+      assert.equal(filaPromover[7], 'Nunca', 'sin recursos ni turnos, la actividad es "Nunca"');
       console.log('✔ tabla: docente sin ningún recurso ni turno muestra "Nunca"');
 
       // ───────────────────────────────────────────────────────────
@@ -391,10 +394,10 @@ async function main(): Promise<void> {
       await conTema(page, 'dark');
       await page.waitForSelector('th:has-text("Docente")');
       const filaMultiDark = await celdas(EMAIL_MULTI);
-      assert.equal(filaMultiDark[4], '25.500');
-      assert.match(filaMultiDark[5]!, /^≈ US\$ 0,30$/);
+      assert.equal(filaMultiDark[5], '25.500');
+      assert.match(filaMultiDark[6]!, /^≈ US\$ 0,30$/);
       const filaGratisDark = await celdas(EMAIL_GRATIS);
-      assert.equal(filaGratisDark[5], 'US$ 0,00');
+      assert.equal(filaGratisDark[6], 'US$ 0,00');
       console.log('✔ tabla: las mismas cifras se sostienen en tema oscuro');
 
       // ───────────────────────────────────────────────────────────

@@ -5,6 +5,9 @@ import { isAdminEmail } from '../../../lib/auth/domains.ts';
 import { firstIssue, registerSchema } from '../../../lib/auth/schemas.ts';
 import { createSessionToken, setSessionCookie } from '../../../lib/auth/session.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
+import { hasResendApiKey } from '../../../lib/env.ts';
+import { unirSiCorresponde } from '../../../lib/orgs/membresia.ts';
+import { emitirYEnviarVerificacion } from '../../../lib/orgs/verificacion.ts';
 
 /**
  * POST /api/auth/register — alta de docente, abierta a cualquier dominio
@@ -25,19 +28,48 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   }
 
   try {
+    /**
+     * odd/tasks/organizaciones.md (T2/T3, decisión del dueño — "fallback sin
+     * Resend"): mientras no haya `RESEND_API_KEY` en el entorno, toda
+     * creación de usuario se toma como verificada de una. Con la key
+     * cargada, queda sin verificar hasta que confirme el enlace que se
+     * manda abajo.
+     */
+    const verificadaAlNacer = !hasResendApiKey();
+
     const user = await prisma.user.create({
       data: {
         email,
         name,
         passwordHash: await hashPassword(password),
         role: isAdminEmail(email) ? 'ADMIN' : 'DOCENTE',
+        emailVerifiedAt: verificadaAlNacer ? new Date() : null,
+        emailVerificationSource: verificadaAlNacer ? 'NO_PROVIDER' : null,
       },
       select: { id: true, email: true, name: true, role: true },
     });
 
+    // T3: con Resend configurado, se manda el mail de verificación acá mismo.
+    // El registro NUNCA falla por esto — si el envío falla (proveedor caído,
+    // falta RESEND_FROM), el docente puede pedirlo de nuevo desde el cartel
+    // de "cuenta personal" (POST /api/auth/verificacion/reenviar).
+    if (!verificadaAlNacer) {
+      const envio = await emitirYEnviarVerificacion(user);
+      if (!envio.ok) {
+        console.error('[auth/register] no se pudo mandar el mail de verificación:', envio.motivo);
+      }
+    }
+
+    // "Unirse ocurre en el momento" (decisión del dueño): si el email ya
+    // resuelve a una organización (dominio o lista blanca) y la cuenta es
+    // confiable, se une acá mismo, antes de armar la sesión. Con la cuenta
+    // recién creada sin verificar (Resend cargado), `emailConfiable` corta
+    // esto en `false` y no hace nada — se une recién al confirmar el enlace.
+    const organizationId = await unirSiCorresponde(user.id);
+
     // Una cuenta nueva arranca sin permiso individual (null: sigue la regla
-    // de dominio). `isDemo` todavía no tiene columna propia — llega en M7.
-    const session = { ...user, aiAccessOverride: null, isDemo: false };
+    // de la organización). `isDemo` todavía no tiene columna propia — llega en M7.
+    const session = { ...user, aiAccessOverride: null, isDemo: false, organizationId };
     setSessionCookie(cookies, await createSessionToken(session));
     return ok({ user: session, redirect: '/app' });
   } catch (error) {

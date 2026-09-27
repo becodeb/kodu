@@ -1,3 +1,4 @@
+import { nextSeguro } from '../../lib/http.ts';
 import type { APIRoute } from 'astro';
 import { authorizeUrl } from '../../lib/auth/google.ts';
 import { isGoogleEnabled } from '../../lib/env.ts';
@@ -10,7 +11,7 @@ import { isGoogleEnabled } from '../../lib/env.ts';
  * podría empujarle a un docente un callback armado y hacerlo entrar a una
  * cuenta que no es la suya.
  */
-export const GET: APIRoute = async ({ cookies, redirect }) => {
+export const GET: APIRoute = async ({ cookies, redirect, url }) => {
   if (!isGoogleEnabled()) return redirect('/login?error=google-no-configurado', 302);
 
   const state = crypto.randomUUID();
@@ -22,6 +23,28 @@ export const GET: APIRoute = async ({ cookies, redirect }) => {
     path: '/',
     maxAge: 600,
   });
+
+  /**
+   * odd/tasks/organizaciones.md (T4): "next" para volver al enlace de
+   * invitación después de entrar con Google (GoogleButton.astro se lo pasa
+   * cuando `login.astro`/`register.astro` traían uno). Se revalida ACÁ
+   * también — nunca se confía en la validación de quien arma el link — y se
+   * guarda en su propia cookie de un solo uso, mismo criterio que el state:
+   * `callback.ts` la lee, la borra y decide el redirect final.
+   */
+  const next = url.searchParams.get('next');
+  const safeNext = nextSeguro(next) ?? null;
+  if (safeNext) {
+    cookies.set('kodu_oauth_next', safeNext, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: import.meta.env.PROD,
+      path: '/',
+      maxAge: 600,
+    });
+  } else {
+    cookies.delete('kodu_oauth_next', { path: '/' });
+  }
 
   return redirect(authorizeUrl(state), 302);
 };

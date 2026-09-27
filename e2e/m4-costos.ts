@@ -138,6 +138,7 @@ async function main(): Promise<void> {
         output: new Prisma.Decimal('2'),
         cachedInput: new Prisma.Decimal('0.5'),
       },
+      purpose: 'GENERATION',
     });
 
     const filaPago = await prisma.tokenUsage.findFirstOrThrow({
@@ -182,6 +183,7 @@ async function main(): Promise<void> {
       cachedInputTokens: 0,
       completionTokens: 400,
       precios: { input: new Prisma.Decimal('0'), output: new Prisma.Decimal('0'), cachedInput: new Prisma.Decimal('0') },
+      purpose: 'GENERATION',
     });
 
     const filaGratis = await prisma.tokenUsage.findFirstOrThrow({ where: { projectId: proyectoGratisId } });
@@ -204,6 +206,7 @@ async function main(): Promise<void> {
       cachedInputTokens: 0,
       completionTokens: 300,
       precios: null,
+      purpose: 'GENERATION',
     });
 
     const filaSinPrecio = await prisma.tokenUsage.findFirstOrThrow({ where: { projectId: proyectoSinPrecioId } });
@@ -250,6 +253,7 @@ async function main(): Promise<void> {
       cachedInputTokens: 0,
       completionTokens: Math.ceil(CONSUMO_MEDIO * 0.3),
       precios: { input: new Prisma.Decimal('0'), output: new Prisma.Decimal('0'), cachedInput: new Prisma.Decimal('0') },
+      purpose: 'GENERATION',
     });
     console.log('✔ preparado un recurso con tokens por encima del corte de "Consumo medio"');
 

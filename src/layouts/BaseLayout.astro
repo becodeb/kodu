@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import { getEnv } from '../lib/env.ts';
+import { prisma } from '../lib/db.ts';
 
 interface Props {
   title?: string;
@@ -33,6 +34,29 @@ const {
 const user = Astro.locals.user;
 // Para marcar el enlace de la seccion en la que esta parado el docente.
 const ruta = Astro.url.pathname;
+
+/**
+ * odd/tasks/organizaciones.md (T8): "Mi organización" — sólo para un DOCENTE
+ * que administra alguna (campus o red); el superadmin ya tiene "Panel" y no
+ * es su herramienta principal (igual puede entrar a `/org` escribiendo la
+ * URL — la página autoriza sola con `alcance.ts`, este link es sólo el
+ * atajo).
+ *
+ * Opción MÁS BARATA que sigue siendo correcta: en vez de llamar a
+ * `alcanceDeAdmin` (2-3 queries, remembering archivado/membresía vigente —
+ * ver alcance.ts) en CADA página del sitio para un docente logueado, alcanza
+ * con una existencia de fila `OrganizationAdmin` (`findFirst`, un solo índice
+ * por `userId`). La única diferencia observable: un docente que dejó de ser
+ * elegible (se fue de la sede/red que administraba, fila "colgada" — ver el
+ * comentario de `alcance.ts`) puede ver el link un instante de más hasta que
+ * alguien borre esa fila vieja; al entrar, `/org` hace el chequeo COMPLETO y
+ * lo manda de vuelta a `/app` si ya no le sirve. Nunca al revés: no puede
+ * FALTAR el link para alguien que sigue siendo un admin vigente.
+ */
+const esPotencialAdminDeOrganizacion =
+  user && user.role !== 'ADMIN'
+    ? (await prisma.organizationAdmin.findFirst({ where: { userId: user.id }, select: { userId: true } })) !== null
+    : false;
 const pageTitle = title === 'Kodu' ? title : `${title} · Kodu`;
 
 // Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
@@ -126,6 +150,21 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
             </div>
 
             <div class="flex items-center gap-2 justify-self-end text-sm">
+              {esPotencialAdminDeOrganizacion && (
+                <a
+                  href="/org"
+                  aria-current={ruta.startsWith('/org') ? 'page' : undefined}
+                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2 py-1.5 text-sm sm:px-2.5 ${
+                    ruta.startsWith('/org')
+                      ? 'border-brand-300 text-brand-700'
+                      : 'border-linea text-ink-700 hover:border-ink-500'
+                  }`}
+                >
+                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
+                  <span class="hidden sm:inline">Mi organización</span>
+                  <span class="sm:hidden">Org</span>
+                </a>
+              )}
               {user?.role === 'ADMIN' && (
                 /* Distinto por tipo, no por volumen: un objeto con borde y un
                    punto, contra los enlaces de texto pelado del centro — así

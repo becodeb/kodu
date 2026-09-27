@@ -1,0 +1,15 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import OrganizacionesPanel from '../../../components/admin/OrganizacionesPanel.tsx';
+import { listarOrganizacionesSuperadmin } from '../../../lib/orgs/gestion.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/** — y esta página
+// es superadmin-only (T6), así que Astro.locals.user siempre existe acá con
+// role 'ADMIN' (gestion.ts lo vuelve a confirmar solo, ver el comentario de
+// listarOrganizacionesSuperadmin).
+const arbol = await listarOrganizacionesSuperadmin(Astro.locals.user!);
+---
+
+<AdminLayout title="Organizaciones">
+  <OrganizacionesPanel client:load initialRedes={arbol.redes} initialStandalone={arbol.standalone} />
+</AdminLayout>

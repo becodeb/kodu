@@ -1,0 +1,250 @@
+# Organizaciones, panel de organización y métricas de precio
+
+Documento vivo de la feature (flujo ODD). Espejo en Engram: proyecto `kodu`, tópico `odd/organizaciones/tasks`.
+Rama `feat/organizaciones` (worktree `../kodu-wt/organizaciones`), cortada de `origin/main` en `93e3504`.
+
+## Objetivo
+
+Vender Kodu por colegio (sede) o por red de colegios y medir si el precio cierra. Una organización da acceso a sus
+docentes, tiene un admin propio que ve solo lo suyo, y el superadmin ve consumo y costo por organización y por mes,
+separado por paso (generación, ajuste, checklist, corrección, verificación, versión extra).
+
+## Problema
+
+- Hoy el acceso a la IA sale de una lista global de dominios (`AuthorizedDomain`) más un permiso individual
+  (`User.aiAccessOverride`). No existe la noción de colegio ni de red.
+- El registro con contraseña no verifica el email: cualquiera puede escribir `profe@colegio.edu.ar`.
+- `TokenUsage` no dice para qué fue cada llamada, así que no se puede medir el costo de un ajuste, que es el supuesto
+  más débil de `experimentos/razonamiento/PLAN-produccion.md` (rama `exp/medicion-arnes`, §4 y §6.2).
+
+## Decisiones del dueño (no reabrir)
+
+- **Un docente pertenece a UNA sola organización** (una sede; en una red, una sede de esa red).
+- **Verificación de email:** Google ya viene verificado. El registro con contraseña manda un mail de verificación por
+  Resend. Mientras no haya `RESEND_API_KEY` en el entorno, toda creación de usuario se toma como verificada.
+- **No hay dominios globales.** Los dominios pertenecen a una organización. Migración: se crea la organización
+  **Reditinere** y se le asigna todo lo que existe hoy (dominios y usuarios).
+- **Cuenta personal:** quien entra con un email que no coincide con ninguna organización tiene una cuenta personal que
+  por ahora no puede usar la app (más adelante tendrá precio propio). Pasa a ser de una organización al aceptar un
+  enlace de invitación o cuando la organización agrega su email a la lista blanca.
+- **Admins de organización:** el superadmin crea la organización y nombra al primer admin; los admins de la
+  organización pueden promover o quitar a otros admins de la suya.
+- **Sin topes por organización por ahora.** Siguen los topes existentes por docente y por motor.
+- **Red con dominio compartido:** quien entra por un dominio de la red elige su sede la primera vez; el admin de la
+  red puede cambiarla después.
+
+## Decisiones de diseño (tomadas en esta sesión, con la conformidad implícita del dueño)
+
+- **Fallback sin Resend:** el usuario se asocia igual, pero se guarda el origen real de la verificación
+  (`emailVerifiedAt` + `emailVerificationSource`: `GOOGLE` | `EMAIL` | `NO_PROVIDER`). `/admin` muestra un aviso
+  "La verificación de email está apagada: falta `RESEND_API_KEY`" y el servidor loguea una advertencia al arrancar.
+  Al cargar la key, quienes quedaron con `NO_PROVIDER` se pueden auditar; no se les quita nada.
+- **El enlace de invitación nunca exige email verificado**: tener el enlace es la prueba.
+- **Unirse ocurre en el momento**: al aceptar el enlace, al verificar el email, al entrar con Google, o cuando la
+  organización agrega el dominio o el email a la lista blanca (a cuentas personales ya verificadas).
+- **La demo queda fuera de toda organización** y sigue usando `aiAccessOverride = true`.
+- **`aiAccessOverride` se conserva** como poder del superadmin: `false` corta la IA aunque la persona esté en una
+  organización; `true` la habilita sin organización (lo usa la demo). `null` = decide la organización.
+- **El admin de organización ve conteos, no contenido.** Ve cuántos recursos generó cada docente, pero no los
+  recursos ni los chats (la galería pública sigue siendo pública).
+- **Costo congelado por organización:** `TokenUsage` guarda la sede (`organizationId`) en el momento de la llamada. Si
+  un docente cambia de sede, el historial queda donde se pagó.
+- **Propósito de cada llamada:** enum `UsagePurpose` (`GENERATION`, `ADJUSTMENT`, `CHECKLIST`, `CORRECTION`,
+  `VERIFICATION`, `EXTRA_VERSION`), nulo para las filas históricas. Más `forNewResource` (booleano nulo) para poder
+  sumar el costo total de un recurso nuevo contra el de un ajuste: las correcciones y verificaciones lo heredan de la
+  última fila `GENERATION`/`ADJUSTMENT` del mismo proyecto y usuario, sin tocar el cliente.
+- **Entrega:** estrategia `exception-ok`. El dueño no usa PRs y mergea ramas a `main` cuando lo aprueba; pushear a
+  `main` despliega. Nada se pushea ni se mergea sin su pedido.
+
+## Alcance autorizado
+
+T1–T10. Fuera de alcance: topes por organización, precio de cuentas personales, SSO, tocar datos de producción.
+
+## Restricciones
+
+- No tocar `src/pages/api/chat/stream.ts`, `Workspace.tsx`, `ChatPanel.tsx` ni `src/pages/api/chat/cancel.ts` (los
+  cambia otra sesión en `feat/generacion-simple-y-reanudable`). Excepción: SOLO las líneas de llamada a
+  `recordUsage` en `stream.ts` para pasar el propósito. Avisar al dueño al cerrar para mergear con cuidado.
+- Migraciones `20261010000000_*` en adelante, escritas a mano. Nunca `prisma migrate dev`. Aplicar con psql al
+  contenedor `kodu_db_dev`, `npx prisma migrate resolve --applied <nombre>`, `npx prisma generate`, y confirmar que
+  siguen `AiModel_un_solo_default`, `AiModel_un_solo_verificador` y `User_un_solo_demo`.
+- Prisma no avisa de columnas borradas: buscar cada nombre de campo con `rg`.
+- Catálogo de motores cacheado 30 s: en los e2e, cambiar flags por la API de admin.
+- UI en español rioplatense con voseo; solo tokens semánticos de `src/styles/global.css` (nunca `bg-white` ni
+  `bg-slate-*`); modo oscuro y celular.
+- Aislamiento: el admin de una organización nunca ve datos de otra. Probado con e2e explícitos.
+- Raspberry con poca RAM: e2e de a uno; el dev server es un daemon (`npx astro dev stop`).
+- **Entorno aislado de la otra sesión:** esta worktree usa la base `koduedu_orgs` (clon de `koduedu` del
+  2026-09-26, en el mismo contenedor `kodu_db_dev`) y el puerto 3100 (`.env` local, sin commitear). Los e2e corren con
+  `KODU_BASE_URL=http://localhost:3100` y el dev server con `PORT=3100 npm run dev`. El clon trae aplicada la migración
+  `20261007000000_chequeos_posteriores` de la otra rama (sus tablas sobran acá; no molestan). El mock usa el 4790,
+  compartido: antes de un e2e con mock, confirmar que el puerto está libre.
+
+## Modo de pruebas
+
+TDD: **apagado** (no hay configuración de TDD ni test runner en el repo). Chequeos funcionales por tarea:
+`npx tsc --noEmit` y scripts `npx tsx e2e/<archivo>.ts` con `node:assert` (dev server en 3000, mock en 4790).
+
+## Pronóstico de entrega
+
+~3.500 líneas autoradas en total (estimado). Estrategia `exception-ok` (ver arriba); commits por unidad de trabajo en
+`feat/organizaciones`.
+
+## Tareas
+
+Ruta por defecto: escritor delegado (cada tarea toca 2+ archivos no triviales). Un escritor a la vez.
+T1 y T2 van con el mismo escritor (dos commits): borrar `AuthorizedDomain` rompe `puedeUsarLaIa` y la pestaña
+Dominios, así que no compilan por separado. La pestaña Dominios se quita en T2 y la reemplaza Organizaciones en T6.
+Una cuenta personal conserva sus recursos (no se borran) pero no entra al editor; vuelven a estar disponibles si se
+une a una organización.
+
+- [x] **T1 — Esquema y migración.** _(d51e3d2, escritor delegado)_ Modelos `Organization` (`CAMPUS` | `NETWORK`, `parentId` para sedes de una red),
+  `OrganizationDomain` (reemplaza a `AuthorizedDomain`, patrón único global), `OrganizationAllowedEmail` (email único
+  global), `OrganizationInvite` (hash del token, vencimiento y cupo opcionales, usos, revocado),
+  `OrganizationAdmin` (usuario ↔ organización que administra), `EmailVerificationToken`. En `User`:
+  `organizationId`, `emailVerifiedAt`, `emailVerificationSource`. En `TokenUsage`: `organizationId`, `purpose`,
+  `forNewResource`. Backfill: Reditinere, sus dominios, todos los usuarios no demo, `TokenUsage.organizationId`
+  histórico, `emailVerifiedAt` para cuentas de Google. Borrar `AuthorizedDomain` y todas sus referencias.
+  Check: migración aplicada, 3 índices parciales presentes, `tsc` limpio.
+- [x] **T2 — Membresía y acceso.** _(6cc5ed9 + ee46672, escritor delegado + corrección inline)_ `src/lib/orgs/`: resolver la organización de un email (dominio / lista blanca),
+  unir en el momento, nueva regla `puedeUsarLaIa` (override → organización), gate de cuenta personal en `/app` y en
+  las APIs de trabajo (pantalla "cuenta personal"). Check: e2e de acceso.
+- [x] **T3 — Verificación de email.** _(653061a + 6d60cfd + corrección de color, escritor delegado)_ Cliente de Resend por `fetch` (sin dependencia nueva), token de verificación,
+  registro con contraseña sin verificar, endpoint de verificación, fallback `NO_PROVIDER` sin key, aviso en `/admin`.
+  Check: e2e con y sin key (key falsa contra un mock local).
+- [x] **T4 — Invitaciones y elección de sede.** _(7938caf + 6244da5 + corrección de `next`, escritor delegado)_ Página `/invitacion/[token]` (aceptar con sesión o registrarse),
+  vencimiento, cupo, revocación; selector de sede para quien entra por un dominio de red. Check: e2e.
+- [x] **T5 — Propósito del consumo.** _(3fe9f01, escritor delegado)_ `recordUsage` recibe `purpose` y calcula la sede y `forNewResource`; tocar solo
+  las líneas de llamada en `stream.ts`, más `autocorreccion.ts` y `verificar.ts`. Check: e2e con el mock que
+  confirme el propósito de cada fila.
+- [x] **T6 — Superadmin: organizaciones.** _(a98a60a + 8de7c7e + a98e739 + corrección, escritor delegado)_ Pestaña Organizaciones (reemplaza a Dominios): alta de colegio, red y sede;
+  dominios; lista blanca; nombrar al primer admin; mover docentes. Actualizar el conteo de pestañas de
+  `e2e/m1-admin-shell.ts`. Check: e2e.
+- [x] **T7 — Superadmin: métricas de precio.** _(7c73181 + 7c7eb60 + corrección, escritor delegado)_ Por organización y mes: docentes registrados, activos, recursos
+  creados, turnos, tokens y USD; costo promedio por recurso nuevo y por ajuste; costo por docente activo; filas sin
+  precio marcadas como incompletas (nunca sumar NULL como 0). Check: e2e con filas sembradas y cifras calculadas a mano.
+- [x] **T8 — Panel de la organización.** _(5f672bd + 79bfc71 + 4233674, escritor delegado)_ `/org`: docentes (lista, baja → cuenta personal, lista blanca, enlaces,
+  admins), recursos por docente, tokens y costo por docente y por mes, desglose por sede en una red. Móvil y modo
+  oscuro. Check: e2e de navegador.
+- [x] **T9 — Aislamiento.** _(fdae39e, escritor delegado con postura adversarial)_ e2e explícitos: el admin de A no ve ni muta nada de B (páginas y APIs, ids ajenos
+  adivinados); el admin de una sede no ve la sede hermana; el de la red ve solo sus sedes; un docente no entra a `/org`.
+- [x] **T10 — Cierre.** _(c91d2d6 docs + 8ded4ca m8, orquestador + diagnóstico delegado)_ Docs, regresión de las suites existentes afectadas (m1, m5, m6, m7), aviso de merge de
+  `stream.ts`.
+
+## Progreso
+
+- 2026-09-26: exploración y decisiones del dueño. Documento creado.
+- 2026-09-26: **T1 + T2 hechas.** Evidencia: `tsc` limpio; 3 índices parciales presentes; `prisma migrate diff` solo
+  muestra columnas de la migración ajena `20261007…`; `rg` sin referencias vivas a `AuthorizedDomain`;
+  `e2e/org-acceso.ts` 7/7 (reemplaza a `m6-acceso.ts`); `m1-admin-shell` y `m7-demo` verdes; seed idempotente.
+  El escritor verificó el backfill sobre una tabla `AuthorizedDomain` vacía; lo repetí en una base descartable con 2
+  dominios y un usuario de Google: los dominios pasan a Reditinere, Google queda verificado, cero usuarios no demo sin
+  organización.
+  Corrección del orquestador: el escritor había movido todo `app/project/[id].astro` a un componente nuevo; ese
+  archivo lo cambia la otra rama, así que se revirtió a un gate de 8 líneas (redirige a `/app`) con su escenario en el
+  e2e.
+  **Para el deploy:** si en producción `AuthorizedDomain` tiene un comodín amplio (`*.edu.ar`), pasa a ser de
+  Reditinere y todo docente de un `.edu.ar` se uniría a Reditinere. Revisar la lista de producción antes de mergear.
+
+- 2026-09-26: **T3 hecha.** `src/lib/email/resend.ts` (fetch, sin dependencia), `src/lib/orgs/verificacion.ts`
+  (sha256, 24 h, un solo uso, reemitir borra los anteriores, reenvío limitado a 1 por minuto), `/verificar-email`,
+  `POST /api/auth/verificacion/reenviar`, variante "confirmá tu email" de la cuenta personal, aviso en `/admin`.
+  Evidencia: `tsc` limpio; `e2e/verificacion-email.ts` 10/10 (con mock de Resend en 4791; el script reinicia el dev
+  server entre fases); `org-acceso` 7/7. Spot check del orquestador: `verificacion-email` 10/10 de nuevo tras
+  reemplazar `amber-*` (no existe en el repo y no cambia en oscuro) por los tokens de `BannerAdmin`.
+  Env nuevas: `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_API_URL` (en `.env.example`).
+
+- 2026-09-26: **T4 hecha.** `src/lib/orgs/alcance.ts` es el ÚNICO punto que decide qué administra alguien
+  (`alcanceDeAdmin`, `puedeAdministrar`, `campusesAdministrables`, `requireOrgAdmin`, `requireFreshOrgAdmin`; una fila
+  de `OrganizationAdmin` solo cuenta si la persona pertenece a esa sede o a una sede de esa red; organización ajena →
+  404). Invitaciones con hash, aceptación con un UPDATE condicional dentro de una transacción, página
+  `/invitacion/[token]`, selector de sede, `next` en registro, login y Google.
+  Evidencia: `tsc` limpio; `org-invitaciones` 16/16 (incluye aislamiento entre sedes hermanas, red y organización
+  ajena, y dos aceptaciones concurrentes de cupo 1); `org-acceso` 7/7; `verificacion-email` 10/10.
+  Corrección del orquestador: el chequeo de `next` (`/` pero no `//`, heredado de `main` en `login.astro`) dejaba
+  pasar `/\evil.com`, que el navegador convierte en `//evil.com`. Ahora `nextSeguro()` en `src/lib/http.ts` resuelve
+  contra un origen fijo, en los 4 lugares; `org-invitaciones` 16/16 con los dos bypass agregados.
+  Invitaciones: el token se muestra UNA vez (solo se guarda el hash); para compartirlo de nuevo se crea otro.
+
+- 2026-09-26: **T5 hecha.** `recordUsage` exige `purpose` (así ningún llamador nuevo lo olvida) y calcula la sede y
+  `forNewResource`. `stream.ts`: SOLO 3 líneas `purpose:` (versión extra, checklist, turno principal con
+  `recursoInicial`, calculado al inicio del turno); diff revisado por el orquestador.
+  Evidencia: `tsc` limpio; `consumo-proposito` 8/8 (verificación y corrección heredan de la última
+  generación o ajuste del proyecto; mover al docente no reescribe filas viejas; demo → NULL); `t12-checklist-pruebas`
+  11/11. Para T7: un recurso nuevo cuenta como proyecto distinto con fila `GENERATION`, porque un primer turno fallido
+  deja el HTML por defecto y el siguiente vuelve a ser `GENERATION`.
+  Decisión técnica para T6/T8: la baja de un docente deja una exclusión por organización que bloquea volver a unirse
+  por dominio; una invitación o volver a agregarlo a la lista blanca la levanta. Sin ella, la baja de alguien que entró
+  por dominio se deshacía en el siguiente login.
+
+- 2026-09-26: **T6 hecha.** `OrganizationExclusion` (migración `20261010300000_exclusiones_de_organizacion`, índices
+  parciales confirmados), `src/lib/orgs/gestion.ts` (todas las operaciones pasan por `alcance.ts`; T8 las reusa),
+  APIs `/api/admin/organizaciones/**`, pestaña Organizaciones después de Docentes, detalle con dominios, lista blanca,
+  admins y docentes (mover / dar de baja).
+  Evidencia: `tsc` limpio; `admin-organizaciones` 15/15; `m1-admin-shell` (7 pestañas); `org-invitaciones` 16/16;
+  `org-acceso` 7/7. Capturas revisadas por el orquestador (escritorio claro, 360 oscuro).
+  Correcciones del orquestador: el escritor dio por "preexistente" el fallo de `m5-usuarios`, pero lo había roto T2 (la
+  tabla ganó la columna Organización y el texto "Sí · por dominio" ya no existe); se realinearon los índices y pasa.
+  "standalone" y "fallback" pasaron a castellano en la interfaz.
+  **Deuda para T8:** en 360 px la tabla de docentes del detalle queda apretada (nombres cortados, "Dar de baja" en 3
+  renglones). T8 hace una lista de docentes compartida, con tarjetas en celular, y la reusa acá.
+
+- 2026-09-26: **T7 hecha.** `src/lib/metricas/consumo.ts` (agregación pura con Decimal, cargador por mes y sedes,
+  desglose por docente para T8; meses en hora de Buenos Aires), `src/lib/admin/metricas.ts`, pestaña **Métricas**
+  (`/admin/metricas`, renderizada en el servidor, tarjetas bajo `sm:`), CSV en `/api/admin/metricas.csv`, supuestos del
+  plan (0,020 / 0,010 / 0,43) al lado de los promedios.
+  Evidencia: `tsc` limpio; `admin-metricas` 7/7 (cifras calculadas a mano, frontera de mes, "≥", CSV, 403);
+  `m1-admin-shell` (8 pestañas); `m4-costos` 17/17.
+  Corrección del orquestador: con una sola fila sin precio, el mes valía `null` y su barra quedaba en altura 0 (en la
+  captura, enero "≥ US$ 0,15" sin barra). Ahora se dibuja el piso, translúcido y punteado, con prueba en el e2e.
+  Abiertos (sin decidir, para el dueño): las organizaciones archivadas siguen contando su costo histórico, con la
+  marca "(archivada)". Las tablas `sr-only` de `GraficoColumnas`/`GraficoBarras` tienen el mismo riesgo de desborde
+  a 360 px que se arregló acá con `table-layout: fixed`.
+
+- 2026-09-26: **T8 hecha.** `/org` (docentes, acceso, consumo; "Toda la red" con desglose por sede), 7 APIs bajo
+  `/api/org/**` por `alcance.ts` + `gestion.ts`, `src/lib/orgs/panel.ts`, `MiembrosLista` compartida (tarjetas en
+  celular) que también reemplazó la tabla del detalle de superadmin (deuda de T6 saldada, capturas revisadas), link
+  "Mi organización" en el header (chequeo barato de `OrganizationAdmin`; `/org` hace el control real).
+  Evidencia: `tsc` limpio; `org-panel` 16/16 (incluye título de recurso ausente del HTML, costo congelado por sede tras
+  mover a un docente, 404 con ids adivinados); `admin-organizaciones` 11/11; `org-invitaciones` 16/16; `m1` 11/11.
+  Detalle menor: `/org?sede=<ajena>` responde el 404 en JSON (mismo que las APIs), no una página; solo se ve
+  adulterando la URL.
+  Abiertos para el dueño: si el superadmin también ve el link "Mi organización"; si "última actividad" debería
+  considerar el consumo además de `Project.updatedAt`.
+
+- 2026-09-26: **T9 hecha, sin agujeros.** `e2e/aislamiento-organizaciones.ts` descubre las rutas del sistema de
+  archivos (`api/org`, `api/admin`, `api/invitaciones`, `org`, `admin`) y falla si alguna no tiene expectativa: 55
+  rutas × 9 actores, 155 casos, con ids ajenos adivinados, verificación en la base de que nada mutó, fugas de
+  contenido (títulos, emails ajenos), escalada, bypass M8 de `/api/projects` (un admin de org nunca lo alcanza) y
+  CSRF de formulario cruzado.
+  Control del orquestador: todas las rutas administrativas pasan por `requireOrgAdmin`/`requireFreshOrgAdmin`;
+  `miembros/[userId]` autoriza con la sede REAL del docente; `lista-blanca/[emailId]` y `admins/[userId]` borran con
+  `where: { id, organizationId }`, así que un id ajeno no afecta nada. La suite volvió a pasar (155/155).
+
+- 2026-09-26: **T10 hecha.** README y `.env.example` describen organizaciones y verificación. Regresión completa en serie
+  (36 suites): 32 verdes. De las 4 rojas: `m8-proyectos-ajenos` era regresión de T2 (sus docentes nacían sin
+  organización y ahora son cuentas personales) → fixture con organización (8ded4ca), verde aislada 2 veces y en el
+  control del orquestador. `m3-motores` y `t11-autoprueba` pasan aisladas (contaminación de estado o RAM en la corrida
+  larga; `m3` verde en el control del orquestador). `t2-versiones-por-proyecto` es inestable también en `main`
+  (93e3504: 1 de 5 falla; rama: 4 de 5), por una carrera de ~250 ms entre la UI y la lectura de la base; no se tocó.
+  Ojo: la rama falla más seguido, y no está probado que sea solo ruido.
+
+## Para mergear (decide el dueño)
+
+- La rama tiene 34 commits sobre `93e3504`; no está pusheada ni mergeada.
+- **Coinciden con `feat/generacion-simple-y-reanudable` 3 archivos:** `prisma/schema.prisma` (modelos nuevos en
+  ambas), `src/pages/api/chat/stream.ts` (acá solo 3 líneas `purpose:` dentro de las llamadas a `recordUsage`; la
+  otra rama desacopló la generación de la conexión, así que hay que reubicarlas), `src/pages/app/project/[id].astro`
+  (acá solo el gate de 8 líneas). `purpose` es obligatorio en `recordUsage`: si alguna llamada queda sin él después
+  del merge, `tsc` la marca.
+- **Migraciones:** `20261010000000_organizaciones` y `20261010300000_exclusiones_de_organizacion`, escritas a mano;
+  en producción se aplican con `migrate deploy` después de las `20261006-20261009` de la otra rama.
+- **Antes del deploy:** revisar los `AuthorizedDomain` de producción; un comodín como `*.edu.ar` pasa a Reditinere y
+  uniría a Reditinere a cualquier docente de un `.edu.ar`. Cargar `RESEND_API_KEY` y `RESEND_FROM` (dominio verificado
+  en Resend); mientras falten, toda cuenta nueva se toma como verificada y `/admin` lo avisa.
+- Abiertos sin decidir: organizaciones archivadas en las métricas; link "Mi organización" para el superadmin;
+  "última actividad" con consumo; el 404 en JSON de `/org?sede=<ajena>`.
+
+## Siguiente paso
+
+Que el dueño revise y decida el merge. Nada más pendiente dentro del alcance.

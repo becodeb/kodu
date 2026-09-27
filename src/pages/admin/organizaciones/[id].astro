@@ -1,0 +1,22 @@
+---
+import AdminLayout from '../../../layouts/AdminLayout.astro';
+import OrganizacionDetalle from '../../../components/admin/OrganizacionDetalle.tsx';
+import { obtenerDetalleOrganizacion, listarMiembros, GestionError } from '../../../lib/orgs/gestion.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+let organizacion;
+try {
+  organizacion = await obtenerDetalleOrganizacion(Astro.locals.user!, Astro.params.id!);
+} catch (error) {
+  if (error instanceof GestionError) return Astro.redirect('/admin/organizaciones', 302);
+  throw error;
+}
+
+// Los miembros sólo existen para una CAMPUS (regla de aplicación, ver
+// gestion.ts) — una NETWORK no tiene docentes propios, sólo sedes.
+const miembros = organizacion.kind === 'CAMPUS' ? await listarMiembros(Astro.locals.user!, Astro.params.id!) : [];
+---
+
+<AdminLayout title={organizacion.name}>
+  <OrganizacionDetalle client:load initialOrganizacion={organizacion} initialMiembros={miembros} />
+</AdminLayout>

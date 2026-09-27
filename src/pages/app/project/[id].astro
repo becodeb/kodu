@@ -13,8 +13,16 @@ import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { pendienteChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
+import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
 
 const user = Astro.locals.user!;
+
+// odd/tasks/organizaciones.md (T2): una cuenta personal no entra al editor;
+// /app le explica por qué. Gate mínimo a propósito: este archivo lo cambia
+// otra rama en paralelo.
+if (!(await puedeUsarLaIa(user))) {
+  return Astro.redirect('/app', 302);
+}
 
 // M8 (design.md §7): un ADMIN entra acá aunque no sea el dueño — es el único
 // punto que decide eso, ver src/lib/projects.ts. Un DOCENTE (incluida la

@@ -1,0 +1,55 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { verificarToken } from '../lib/orgs/verificacion.ts';
+
+/**
+ * odd/tasks/organizaciones.md (T3): destino del enlace del mail de Resend.
+ * Pública a propósito — el middleware sólo gatea "/app" y "/admin"
+ * (src/middleware.ts), así que esto anda con o sin sesión abierta. Nunca
+ * revela a quién pertenece un token que falla: los tres motivos
+ * (inválido/vencido/usado) muestran variantes del mismo cartel genérico.
+ */
+const token = Astro.url.searchParams.get('token');
+const resultado = token ? await verificarToken(token) : ({ ok: false, motivo: 'invalido' } as const);
+
+const MENSAJE_POR_MOTIVO: Record<'invalido' | 'vencido' | 'usado', string> = {
+  invalido: 'No reconocemos este enlace.',
+  vencido: 'Este enlace venció (dura 24 horas).',
+  usado: 'Este enlace ya se usó.',
+};
+---
+
+<BaseLayout title="Verificación de email">
+  <div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
+    {
+      resultado.ok ? (
+        <>
+          <h1 class="font-display text-xl font-bold text-ink-900">Listo, confirmamos tu email</h1>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Ya podés entrar a Kodu con tu cuenta y usar la IA.
+          </p>
+          <a
+            href="/app"
+            class="mt-6 inline-block rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+          >
+            Ir a mis recursos
+          </a>
+        </>
+      ) : (
+        <>
+          <h1 class="font-display text-xl font-bold text-ink-900">Este enlace no es válido</h1>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">{MENSAJE_POR_MOTIVO[resultado.motivo]}</p>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-500">
+            Entrá a tu cuenta y pedí uno nuevo desde el cartel de "cuenta personal".
+          </p>
+          <a
+            href="/login"
+            class="mt-6 inline-block rounded-lg border border-linea px-4 py-2 text-sm font-medium text-ink-700 transition-colors hover:border-ink-500"
+          >
+            Ir a iniciar sesión
+          </a>
+        </>
+      )
+    }
+  </div>
+</BaseLayout>

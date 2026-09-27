@@ -4,6 +4,7 @@ import { verifyPassword } from '../../../lib/auth/password.ts';
 import { firstIssue, loginSchema } from '../../../lib/auth/schemas.ts';
 import { createSessionToken, setSessionCookie } from '../../../lib/auth/session.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
+import { unirSiCorresponde } from '../../../lib/orgs/membresia.ts';
 
 /**
  * POST /api/auth/login — valida credenciales y abre la cookie de sesion.
@@ -43,6 +44,13 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     return credencialesInvalidas;
   }
 
+  // "Unirse ocurre en el momento" (decisión del dueño, odd/tasks/organizaciones.md
+  // T2): un login opportunistamente intenta unir a quien todavía es personal
+  // pero ya es confiable y su email ya resuelve a una organización (p. ej. un
+  // admin recién agregó su dominio a la lista blanca). Idempotente si ya
+  // tiene organización o no corresponde.
+  const organizationId = await unirSiCorresponde(user.id);
+
   // `aiAccessOverride` ya tiene columna propia (M6); el JWT sólo firma
   // identidad (session.ts) así que esto es sólo lo que ve la respuesta —
   // la próxima request a una ruta protegida lo vuelve a leer de la base.
@@ -54,6 +62,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     role: user.role,
     aiAccessOverride: user.aiAccessOverride,
     isDemo: false,
+    organizationId,
   };
   setSessionCookie(cookies, await createSessionToken(session));
 
