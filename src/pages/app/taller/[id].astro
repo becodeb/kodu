@@ -1,0 +1,27 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import TallerDeIdeas from '../../../components/taller/TallerDeIdeas.tsx';
+import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
+import { hayTurnoEnCurso, sesionParaCliente } from '../../../lib/taller/sesiones.ts';
+import { nombreDeLaIdea } from '../../../lib/taller/ficha.ts';
+import { NOMBRE_TALLER } from '../../../lib/taller/prompt.ts';
+
+/** Una charla del Taller de ideas (odd/tasks/taller-de-ideas.md). */
+
+const user = Astro.locals.user!;
+
+if (!(await puedeUsarLaIa(user))) {
+  return Astro.redirect('/app', 302);
+}
+
+const sesion = await sesionParaCliente(Astro.params.id!, user.id);
+if (!sesion) {
+  return Astro.redirect('/app/taller', 302);
+}
+
+const titulo = nombreDeLaIdea(sesion.title, sesion.brief);
+---
+
+<BaseLayout title={`${titulo} · ${NOMBRE_TALLER}`} wide compactMobile>
+  <TallerDeIdeas client:load sesion={sesion} enCurso={hayTurnoEnCurso(sesion.id)} />
+</BaseLayout>

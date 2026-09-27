@@ -1,0 +1,126 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import PuertasTaller from '../../../components/taller/PuertasTaller.tsx';
+import ProjectCardActions from '../../../components/ProjectCardActions.tsx';
+import { prisma } from '../../../lib/db.ts';
+import { haceTiempo } from '../../../lib/format/fecha.ts';
+import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
+import { leerFichaGuardada, nombreDeLaIdea, progresoFicha } from '../../../lib/taller/ficha.ts';
+import { NOMBRE_TALLER } from '../../../lib/taller/prompt.ts';
+
+/**
+ * El Taller de ideas (odd/tasks/taller-de-ideas.md): las dos puertas para
+ * empezar una charla nueva y "Mis ideas", las charlas guardadas.
+ */
+
+const user = Astro.locals.user!;
+
+// Misma regla que el editor: una cuenta personal ve en /app por qué no puede.
+if (!(await puedeUsarLaIa(user))) {
+  return Astro.redirect('/app', 302);
+}
+
+const sesiones = await prisma.ideaSession.findMany({
+  where: { userId: user.id },
+  orderBy: { updatedAt: 'desc' },
+  select: {
+    id: true,
+    mode: true,
+    title: true,
+    brief: true,
+    finalPrompt: true,
+    projectId: true,
+    updatedAt: true,
+  },
+});
+
+const ideas = sesiones.map((sesion) => {
+  const ficha = leerFichaGuardada(sesion.brief);
+  const estado = sesion.projectId
+    ? 'Recurso creado'
+    : sesion.finalPrompt
+      ? 'Pedido listo para crear'
+      : `En charla · ${Math.round(progresoFicha(ficha) * 100)}% de la ficha`;
+  return {
+    id: sesion.id,
+    nombre: nombreDeLaIdea(sesion.title, ficha),
+    tema: ficha.tema ?? null,
+    estado,
+    projectId: sesion.projectId,
+    listo: Boolean(sesion.finalPrompt) && !sesion.projectId,
+    cuando: haceTiempo(sesion.updatedAt),
+  };
+});
+---
+
+<BaseLayout title={NOMBRE_TALLER} description="Pensá con Kodu la herramienta para tu clase antes de crearla.">
+  <div class="max-w-3xl">
+    <h1 class="font-display text-3xl text-ink-900">{NOMBRE_TALLER}</h1>
+    <p class="mt-2 text-ink-700">
+      Pensá con Kodu la herramienta para tu clase antes de crearla. Te va a hacer muchas preguntas, con
+      respuestas para tocar: así entiende bien lo que te imaginás, y al final arma el pedido por vos.
+    </p>
+  </div>
+
+  <section class="mt-6" aria-label="Empezar una idea nueva">
+    <PuertasTaller client:load mostrarAtajo />
+  </section>
+
+  <section class="mt-10" aria-labelledby="mis-ideas">
+    <h2 id="mis-ideas" class="text-lg font-semibold text-ink-900">Mis ideas</h2>
+
+    {
+      ideas.length === 0 ? (
+        <p class="mt-2 text-sm text-ink-500">
+          Todavía no pensaste ninguna idea acá. Cuando empieces una, queda guardada y la podés retomar cuando
+          quieras.
+        </p>
+      ) : (
+        <ul class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {ideas.map((idea) => (
+            <li class="kodu-card flex flex-col p-4">
+              <a href={`/app/taller/${idea.id}`} class="font-semibold text-ink-900 hover:text-brand-600">
+                {idea.nombre}
+              </a>
+              {idea.tema && idea.tema !== idea.nombre && (
+                <p class="mt-1 line-clamp-2 text-xs text-ink-500">{idea.tema}</p>
+              )}
+              <p class="mt-3 flex items-center gap-1.5 text-xs text-ink-500">
+                <span
+                  class={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${idea.listo || idea.projectId ? 'bg-brand-600' : 'bg-linea'}`}
+                  aria-hidden="true"
+                />
+                {idea.estado} · {idea.cuando}
+              </p>
+
+              <div class="mt-3 flex items-center gap-3 border-t border-linea pt-3 text-xs">
+                <a
+                  href={`/app/taller/${idea.id}`}
+                  class="rounded-lg bg-brand-600 px-2.5 py-1.5 font-semibold text-white transition-colors hover:bg-brand-700"
+                >
+                  {idea.projectId ? 'Ver la charla' : 'Seguir'}
+                </a>
+                {idea.projectId && (
+                  <a
+                    href={`/app/project/${idea.projectId}`}
+                    class="rounded-lg border border-linea px-2.5 py-1.5 font-medium text-ink-700 transition-colors hover:border-ink-500"
+                  >
+                    Ir al recurso
+                  </a>
+                )}
+                <span class="ml-auto">
+                  <ProjectCardActions
+                    client:visible
+                    projectId={idea.id}
+                    title={idea.nombre}
+                    deletePath={`/api/taller/${idea.id}`}
+                  />
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+</BaseLayout>

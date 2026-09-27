@@ -6,6 +6,7 @@ import CuentaPersonal from '../../components/CuentaPersonal.astro';
 import { prisma } from '../../lib/db.ts';
 import { haceTiempo } from '../../lib/format/fecha.ts';
 import { puedeUsarLaIa } from '../../lib/orgs/acceso.ts';
+import { NOMBRE_TALLER } from '../../lib/taller/prompt.ts';
 
 // El middleware ya garantiza sesión en /app/**; esto es sólo para el tipo.
 const user = Astro.locals.user!;
@@ -42,6 +43,14 @@ const projects = bloqueada
       },
     });
 
+/**
+ * odd/tasks/taller-de-ideas.md: las ideas del Taller que todavía no se
+ * convirtieron en recurso, para invitar a retomarlas desde acá.
+ */
+const ideasEnCurso = bloqueada
+  ? 0
+  : await prisma.ideaSession.count({ where: { userId: user.id, projectId: null } });
+
 /** "Bajo una semana" (design.md §7): pasado ese punto, la marca desaparece sola. */
 const SEMANA_MS = 7 * 24 * 60 * 60 * 1000;
 function editadoPorAdministracion(fecha: Date | null): boolean {
@@ -65,13 +74,30 @@ function editadoPorAdministracion(fecha: Date | null): boolean {
     <NewProjectButton client:load />
   </div>
 
+  {/* odd/tasks/taller-de-ideas.md: la entrada al Taller desde el panel. */}
+  <a
+    href="/app/taller"
+    class="kodu-card mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 p-4 transition-colors hover:border-brand-300"
+  >
+    <span class="min-w-0 flex-1">
+      <span class="block font-semibold text-ink-900">{NOMBRE_TALLER}</span>
+      <span class="mt-0.5 block text-sm text-ink-500">
+        {ideasEnCurso > 0
+          ? `Tenés ${ideasEnCurso === 1 ? 'una idea en camino. Retomala' : `${ideasEnCurso} ideas en camino. Retomalas`} cuando quieras, o pensá una nueva con Kodu.`
+          : '¿Sabés qué vas a dar pero no qué herramienta usar? Pensala con Kodu antes de crearla: te pregunta, te propone ideas y arma el pedido por vos.'}
+      </span>
+    </span>
+    <span class="kodu-btn-ghost shrink-0">{ideasEnCurso > 0 ? 'Ver mis ideas' : 'Pensar una idea'}</span>
+  </a>
+
   {
     projects.length === 0 ? (
       <div class="kodu-card mt-6 p-10 text-center">
         <h2 class="text-lg font-semibold text-ink-900">Todavía no creaste recursos</h2>
         <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
           Tocá <strong>Nuevo recurso</strong> y describile a la IA la actividad que necesitás: la vas
-          a ver armarse en vivo en el panel de vista previa.
+          a ver armarse en vivo en el panel de vista previa. Si todavía no sabés qué pedir, empezá por el
+          <a href="/app/taller" class="font-medium text-brand-600 hover:underline">{NOMBRE_TALLER}</a>.
         </p>
       </div>
     ) : (

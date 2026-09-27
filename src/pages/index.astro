@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { prisma } from '../lib/db.ts';
+import { NOMBRE_TALLER } from '../lib/taller/prompt.ts';
 
 const user = Astro.locals.user;
 
@@ -279,6 +280,19 @@ const publicados = await prisma.project.findMany({
           ))
         }
       </ul>
+
+      {/* odd/tasks/taller-de-ideas.md: para quien tiene el tema pero no el
+          pedido. Sin sesión, /app/taller manda a iniciar sesión y vuelve. */}
+      <div class="mt-10 flex flex-wrap items-center justify-between gap-4 rounded-[10px] border border-brand-300 bg-superficie px-5 py-5">
+        <div class="max-w-[60ch]">
+          <h3 class="font-semibold text-ink-900">¿Tenés el tema pero no sabés qué pedir? {NOMBRE_TALLER}</h3>
+          <p class="mt-1 text-sm leading-relaxed text-ink-500">
+            Contale a Kodu qué vas a dar y a quién. Te pregunta por tu clase, te propone ideas de herramientas
+            para que tus estudiantes experimenten, y arma el pedido completo por vos.
+          </p>
+        </div>
+        <a href="/app/taller" class="kodu-btn-primary shrink-0">Pensar una idea</a>
+      </div>
     </div>
   </section>
 

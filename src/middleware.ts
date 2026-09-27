@@ -26,6 +26,8 @@ const PROTECTED_API_PREFIXES = [
   '/api/uploads',
   '/api/admin',
   '/api/org',
+  // odd/tasks/taller-de-ideas.md: las páginas del Taller viven bajo /app.
+  '/api/taller',
 ];
 const ADMIN_PAGE_PREFIXES = ['/admin'];
 const ADMIN_API_PREFIXES = ['/api/admin'];

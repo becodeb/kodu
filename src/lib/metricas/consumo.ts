@@ -248,7 +248,7 @@ function promediar(suma: SumaUsd, denominador: number): PromedioConDudas {
   return { promedio: suma.suma.div(denominador), filasSinPrecio: suma.filasSinPrecio };
 }
 
-/** Orden fijo de "Costo por paso" en la UI — los 6 propósitos, siempre en
+/** Orden fijo de "Costo por paso" en la UI — los 7 propósitos, siempre en
  *  el mismo orden aunque un grupo no tenga filas de alguno, más "Sin
  *  clasificar" (histórico, `purpose: null`) al final. */
 const ORDEN_PROPOSITOS: UsagePurpose[] = [
@@ -258,6 +258,8 @@ const ORDEN_PROPOSITOS: UsagePurpose[] = [
   'CORRECTION',
   'VERIFICATION',
   'EXTRA_VERSION',
+  // odd/tasks/taller-de-ideas.md: pensar la idea, antes de generar nada.
+  'IDEATION',
 ];
 
 export interface FilaCostoPorPaso {

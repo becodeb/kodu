@@ -134,3 +134,16 @@ SQL puro (producción corre `prisma migrate deploy`, sin `tsx`):
 * **Por qué:** el repo no tiene test runner, y en desarrollo no siempre hay una clave real de proveedor cargada. `e2e/mock-proveedor.ts` levanta un servidor HTTP liviano que habla el mismo dialecto SSE que un proveedor real (texto, tool call por chunks, cortes de red simulados), sin necesitar ninguna clave.
 * **Cómo correrlos:** con la pila de desarrollo levantada (`docker compose up -d db`, `npm run dev` en el puerto 3000), `npx tsx e2e/<archivo>.ts`. Cada script deja o reusa su propio `AiProvider`/`AiModel` mock (`kind: "kodu-mock-t3"`) en la base de desarrollo, para no tener que cargar una key real en cada chequeo.
 * **Qué cubren:** `e2e/unidad*.ts` (unitarias con `node:assert`, sin navegador), `e2e/m*.ts` (panel de administración y flujos generales de la plataforma) y `e2e/t3-*.ts` a `e2e/t10-*.ts` (kit, vista previa progresiva, Deshacer, modo prime, velocidad, revisión automática y visual, varias versiones, y la guardia de invariante de `e2e/t10-docente-comun.ts` que confirma que un docente sin marcar ve exactamente lo mismo con el interruptor general de prime apagado o prendido).
+
+---
+
+### 12. Taller de ideas
+
+* **Para qué:** un lugar para pensar la herramienta con la IA **antes** de crearla (`/app/taller`). Sirve para quien tiene el tema pero no sabe qué herramienta usar, y para quien ya se la imagina y quiere pedirla bien. Detalle completo en `odd/tasks/taller-de-ideas.md`.
+* **Dos puertas:** "Tengo un tema, busco una idea" (la IA pregunta por la clase y propone 2 o 3 ideas distintas para elegir) y "Ya tengo una idea" (la IA la interpreta y la completa). Las dos arrancan con una primera pregunta fija, sin gastar IA.
+* **Cómo conversa:** de 1 a 3 preguntas por mensaje, con respuestas sugeridas para tocar, siempre a alto nivel y sin nada técnico. A la derecha, la ficha "Tu idea" se llena sola; al final queda el pedido, editable, y el botón **Crear mi recurso**.
+* **Paso al editor:** crea el recurso con el título y la descripción de la charla, le pasa los adjuntos, y el editor manda el pedido solo al abrirse. La charla queda de sólo lectura y vinculada al recurso ("Ver cómo pensamos esta idea").
+* **Entradas:** menú de arriba, ventana de "Nuevo recurso" (recomendado), panel de mis recursos y la página de inicio.
+* **Motor y consumo:** el motor predeterminado del catálogo, con su respaldo. Cada respuesta se registra como `IDEATION` (sin recurso) y aparece como "Taller de ideas" en `/admin/metricas`.
+* **Migración:** `20261011000000_taller_de_ideas` — tablas `IdeaSession`, `IdeaMessage`, `IdeaAsset` y el valor `IDEATION` en `UsagePurpose`.
+* **Pruebas:** `npx tsx e2e/unidad-taller.ts` (sin base) y `npx tsx e2e/taller-de-ideas.ts` (con la pila de desarrollo y el proveedor simulado).
