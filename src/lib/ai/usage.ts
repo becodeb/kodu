@@ -89,8 +89,9 @@ export function calcularCostoTurno(
  */
 export interface UsageRecord {
   userId: string;
-  /** El recurso en el que se gastó el turno. */
-  projectId: string;
+  /** El recurso en el que se gastó el turno. `null` sólo en el Taller de
+   *  ideas (`IDEATION`): la charla existe antes que el recurso. */
+  projectId: string | null;
   aiModelId: string;
   model: string;
   promptTokens: number;

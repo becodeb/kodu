@@ -39,6 +39,7 @@ export const ETIQUETA_PROPOSITO: Record<string, string> = {
   CORRECTION: 'Corrección',
   VERIFICATION: 'Verificación',
   EXTRA_VERSION: 'Versión extra',
+  IDEATION: 'Taller de ideas',
 };
 
 export interface FilaMetricasOrganizacion {

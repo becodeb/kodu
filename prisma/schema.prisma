@@ -255,6 +255,8 @@ model User {
   organizationInvitesCreated       OrganizationInvite[]       @relation("OrganizationInviteCreatedBy")
   organizationExclusionsCreated    OrganizationExclusion[]    @relation("OrganizationExclusionCreatedBy")
   emailVerificationTokens          EmailVerificationToken[]
+  /// odd/tasks/taller-de-ideas.md: las charlas del Taller de ideas ("Mis ideas").
+  ideaSessions                     IdeaSession[]
 
   @@index([organizationId])
 }
@@ -288,6 +290,10 @@ enum UsagePurpose {
   CORRECTION
   VERIFICATION
   EXTRA_VERSION
+  /// odd/tasks/taller-de-ideas.md: una respuesta del Taller de ideas. Nunca
+  /// tiene `projectId` (la charla existe antes que el recurso) y
+  /// `forNewResource` queda en NULL: no es ni una generación ni un ajuste.
+  IDEATION
 }
 
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
@@ -388,9 +394,101 @@ model Project {
   /// para volver atrás, podadas a las 20 más nuevas por stream.ts.
   /// Back-relation de ProjectSnapshot.project.
   snapshots         ProjectSnapshot[]
+  /// odd/tasks/taller-de-ideas.md: la charla del Taller de ideas de la que
+  /// salió este recurso, si salió de una. Back-relation de IdeaSession.project.
+  ideaSession       IdeaSession?
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
+}
+
+/// odd/tasks/taller-de-ideas.md: por cuál de las dos puertas entró el
+/// docente al Taller. `TOPIC` = "tengo un tema, busco una idea"; `IDEA` = "ya
+/// tengo la idea, quiero pedirla bien". Cambia la apertura y cómo sigue la IA,
+/// no lo que se guarda.
+enum IdeaMode {
+  TOPIC
+  IDEA
+}
+
+/// odd/tasks/taller-de-ideas.md: una charla del Taller de ideas, desde la
+/// primera pregunta hasta el pedido final. Vive ANTES que el recurso (el
+/// recurso recién se crea al tocar "Crear mi recurso"), por eso no cuelga de
+/// `Project` sino del docente.
+model IdeaSession {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode        IdeaMode
+  /// Nombre corto de la idea, lo propone la IA cuando ya lo sabe. NULL al
+  /// principio: "Mis ideas" muestra el tema o "Idea sin nombre" mientras tanto.
+  title       String?
+  /// JSON de `FichaIdea` (`src/lib/taller/ficha.ts`): lo que se va sabiendo,
+  /// campo por campo. Texto y no `Json` por el mismo criterio que
+  /// `ChatMessage.checklist`: se lee y se escribe entero, nunca se consulta
+  /// adentro.
+  brief       String   @default("{}")
+  /// El pedido final que se le va a mandar al editor. NULL hasta que la IA lo
+  /// arma; después el docente lo puede editar a mano.
+  finalPrompt String?
+  /// El docente editó `finalPrompt` a mano después de la última respuesta de
+  /// la IA: el próximo turno se lo avisa al modelo, igual que
+  /// `codeEditedByTeacher` en el editor.
+  finalPromptEditedByTeacher Boolean @default(false)
+  /// Una línea para la ficha del recurso ("qué es y para quién"). La propone
+  /// la IA junto con el pedido.
+  description String?
+  /// El recurso que salió de esta charla. NULL mientras la idea está en
+  /// curso; con valor, la charla queda de sólo lectura. `SetNull`: borrar el
+  /// recurso no borra la charla, que vuelve a quedar en curso.
+  projectId   String?  @unique
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages IdeaMessage[]
+  assets   IdeaAsset[]
+
+  @@index([userId, updatedAt])
+}
+
+/// odd/tasks/taller-de-ideas.md: un mensaje de la charla del Taller.
+model IdeaMessage {
+  id        String      @id @default(uuid())
+  sessionId String
+  session   IdeaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      String // "user" | "assistant"
+  /// Lo que se ve en la burbuja. En un mensaje de la IA, sin las preguntas ni
+  /// las ideas: esas viajan aparte, abajo.
+  content   String
+  /// Sólo en mensajes de la IA: JSON de `PreguntaTaller[]`, las preguntas con
+  /// sus respuestas sugeridas para tocar.
+  questions String?
+  /// Sólo en mensajes de la IA: JSON de `IdeaPropuesta[]`, las 2 o 3 ideas que
+  /// propuso (modo "tengo un tema").
+  proposals String?
+  /// Sólo en mensajes del docente: JSON de URLs adjuntas, mismo criterio que
+  /// `ChatMessage.attachments`.
+  attachments String?
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+/// odd/tasks/taller-de-ideas.md: una imagen o un PDF que el docente subió al
+/// Taller (una ficha de trabajo, una foto del pizarrón). Al crear el recurso
+/// se copia como `ProjectAsset` (misma URL, el archivo no se duplica).
+model IdeaAsset {
+  id            String      @id @default(uuid())
+  sessionId     String
+  session       IdeaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  filename      String
+  url           String
+  fileType      String // "image" | "pdf"
+  extractedText String?
+  createdAt     DateTime    @default(now())
+
+  @@index([sessionId])
 }
 
 /// Un "me gusta" de un docente sobre un recurso publicado (galeria, M9). No
