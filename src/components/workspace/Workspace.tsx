@@ -80,6 +80,13 @@ interface WorkspaceProps {
    * abajo.
    */
   pendingPostChecks: ChequeosPosterioresPendientes | null;
+  /**
+   * odd/tasks/taller-de-ideas.md: el recurso se acaba de crear desde el
+   * Taller de ideas y todavía no tiene ningún mensaje. Se manda solo al
+   * abrir, con las imágenes del Taller adjuntas, como si el docente lo
+   * hubiera escrito. `null` en cualquier otro caso.
+   */
+  pedidoInicial?: { texto: string; adjuntos: string[] } | null;
 }
 
 /**
@@ -564,7 +571,22 @@ export default function Workspace(props: WorkspaceProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPostChecks, messages]);
 
-  async function handleSend(message: string, isRetry = false) {
+  /**
+   * odd/tasks/taller-de-ideas.md: el pedido que armó el Taller se manda solo,
+   * UNA vez, al montar. La condición "sin mensajes" la decide el servidor
+   * (`pedidoInicial` sólo llega con el hilo vacío), así que recargar después
+   * de que se mandó no lo repite: ya hay un mensaje del docente guardado.
+   */
+  const pedidoInicialEnviado = useRef(false);
+  useEffect(() => {
+    if (!props.pedidoInicial || pedidoInicialEnviado.current || props.messages.length > 0) return;
+    pedidoInicialEnviado.current = true;
+    void handleSend(props.pedidoInicial.texto, false, props.pedidoInicial.adjuntos);
+    // Sólo al montar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSend(message: string, isRetry = false, adjuntosForzados?: string[]) {
     setError(null);
     setFailedMessage(null);
     setFallback(null);
@@ -584,7 +606,9 @@ export default function Workspace(props: WorkspaceProps) {
     // HTML: el prompt se arma en el servidor con `project.currentHtml`.
     await flushSave();
 
-    const attachmentUrls = pendingAssets.map((asset) => asset.url);
+    // `adjuntosForzados`: el pedido inicial del Taller de ideas trae sus
+    // propias imágenes, que nunca pasaron por `pendingAssets`.
+    const attachmentUrls = adjuntosForzados ?? pendingAssets.map((asset) => asset.url);
 
     // Id provisorio: todavía no existe la fila del lado del servidor. Se
     // reemplaza por el id real (T4) apenas llega "done" — sin eso, un

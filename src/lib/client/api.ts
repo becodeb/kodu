@@ -119,8 +119,9 @@ export type StreamEvent =
  * Compartido por `streamChat` y `streamAutocorreccion`: las dos hablan el
  * mismo protocolo de transporte (`data: <json>\n\n`, tolerante a fragmentos
  * cortados por el chunking de red), sólo cambia el VOCABULARIO de eventos.
+ * El Taller de ideas (`TallerDeIdeas.tsx`) también lo usa.
  */
-async function* leerEventosSse(response: Response): AsyncGenerator<unknown> {
+export async function* leerEventosSse(response: Response): AsyncGenerator<unknown> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';

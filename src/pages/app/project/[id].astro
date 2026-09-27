@@ -14,6 +14,7 @@ import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { pendienteChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
 import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
+import { pedidoParaElEditor } from '../../../lib/taller/prompt.ts';
 
 const user = Astro.locals.user!;
 
@@ -169,6 +170,26 @@ const chequeosPosterioresPendientes = await pendienteChequeosPosteriores(project
 const capacidadesEditor: CapacidadesEditor = {
   puedePedirVersiones: capacidades.puedePedirVersiones,
 };
+
+// odd/tasks/taller-de-ideas.md: si este recurso salió del Taller de ideas, la
+// charla queda a un click ("Ver cómo pensamos esta idea"), y mientras el hilo
+// siga vacío el pedido final se manda solo al abrir. Sólo para el dueño: las
+// charlas del Taller no las ve nadie más, ni un admin.
+const ideaDeOrigen =
+  user.id === project.userId
+    ? await prisma.ideaSession.findUnique({
+        where: { projectId: project.id },
+        select: { id: true, finalPrompt: true },
+      })
+    : null;
+
+const pedidoInicial =
+  ideaDeOrigen?.finalPrompt && messages.length === 0 && project.threads.length <= 1
+    ? {
+        texto: pedidoParaElEditor(ideaDeOrigen.finalPrompt),
+        adjuntos: project.assets.filter((asset) => asset.fileType === 'image').map((asset) => asset.url),
+      }
+    : null;
 ---
 
 <BaseLayout title={project.title} description={project.description ?? undefined} wide compactMobile>
@@ -202,6 +223,15 @@ const capacidadesEditor: CapacidadesEditor = {
     <h1 class="font-display truncate text-sm tracking-tight text-ink-900 uppercase max-lg:min-w-0">
       {project.title}
     </h1>
+
+    {ideaDeOrigen && (
+      <a
+        href={`/app/taller/${ideaDeOrigen.id}`}
+        class="shrink-0 text-xs whitespace-nowrap text-brand-600 hover:underline max-sm:hidden"
+      >
+        Ver cómo pensamos esta idea
+      </a>
+    )}
 
     {/* No dentro de ChatPanel: el indicador vive en la miga de pan, a
         distancia de la columna donde está la atención (design.md). Ausente
@@ -262,5 +292,6 @@ const capacidadesEditor: CapacidadesEditor = {
     initialChecklist={checklistDelRecurso}
     verificadorActivo={verificadorActivo}
     pendingPostChecks={chequeosPosterioresPendientes}
+    pedidoInicial={pedidoInicial}
   />
 </BaseLayout>
