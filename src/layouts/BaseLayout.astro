@@ -34,6 +34,8 @@ const {
 const user = Astro.locals.user;
 // Para marcar el enlace de la seccion en la que esta parado el docente.
 const ruta = Astro.url.pathname;
+// El Taller de ideas vive bajo /app pero es otro destino del menú.
+const enElTaller = ruta === '/app/taller' || ruta.startsWith('/app/taller/');
 
 /**
  * odd/tasks/organizaciones.md (T8): "Mi organización" — sólo para un DOCENTE
@@ -130,7 +132,7 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
               />
             </a>
 
-            <div class="flex items-center gap-3 text-sm sm:gap-6">
+            <div class="flex items-center gap-2.5 text-sm whitespace-nowrap sm:gap-6">
               <a
                 href="/gallery"
                 class="kodu-nav-link"
@@ -139,12 +141,27 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
                 Galería
               </a>
               {user && (
+                /* odd/tasks/taller-de-ideas.md: un destino más, no un ajuste. En
+                   el celular se achica a "Taller" para que la barra entre. */
+                <a
+                  href="/app/taller"
+                  class="kodu-nav-link"
+                  aria-current={enElTaller ? 'page' : undefined}
+                >
+                  <span class="hidden sm:inline">Taller de ideas</span>
+                  <span class="sm:hidden">Taller</span>
+                </a>
+              )}
+              {user && (
                 <a
                   href="/app"
                   class="kodu-nav-link"
-                  aria-current={ruta.startsWith('/app') ? 'page' : undefined}
+                  aria-current={ruta.startsWith('/app') && !enElTaller ? 'page' : undefined}
                 >
-                  Mis recursos
+                  {/* Con el Taller, la barra no entra en un celular con
+                      "Mis recursos" entero (se partía en dos líneas). */}
+                  <span class="hidden sm:inline">Mis recursos</span>
+                  <span class="sm:hidden">Recursos</span>
                 </a>
               )}
             </div>
@@ -179,7 +196,10 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
                   }`}
                 >
                   <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
-                  Panel
+                  {/* En el celular, sólo el punto: con el Taller en la barra, el
+                      texto no entra junto con el resto. */}
+                  <span class="hidden sm:inline">Panel</span>
+                  <span class="sr-only sm:hidden">Panel de administración</span>
                 </a>
               )}
               {user ? (

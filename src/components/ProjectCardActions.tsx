@@ -4,6 +4,9 @@ import { apiRequest } from '../lib/client/api.ts';
 interface ProjectCardActionsProps {
   projectId: string;
   title: string;
+  /** Qué se borra. Por defecto el recurso; el Taller de ideas lo reusa para
+   *  borrar una charla de "Mis ideas" (`/api/taller/:id`). */
+  deletePath?: string;
 }
 
 /**
@@ -19,7 +22,7 @@ interface ProjectCardActionsProps {
  * El primer clic arma, el segundo confirma. Así un roce no borra nada, y el que
  * quiere borrar lo hace con dos toques sin cambiar de contexto.
  */
-export default function ProjectCardActions({ projectId, title }: ProjectCardActionsProps) {
+export default function ProjectCardActions({ projectId, title, deletePath }: ProjectCardActionsProps) {
   const [armado, setArmado] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +57,7 @@ export default function ProjectCardActions({ projectId, title }: ProjectCardActi
     }
 
     setPending(true);
-    const result = await apiRequest(`/api/projects/${projectId}`, 'DELETE');
+    const result = await apiRequest(deletePath ?? `/api/projects/${projectId}`, 'DELETE');
 
     if (!result.ok) {
       setError(result.error);
