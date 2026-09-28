@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+import { CHROME, rutas } from './common.mjs';
+const b = await chromium.launch(CHROME);
+const ctx = await b.newContext({ viewport: { width: 946, height: 506 } });
+await rutas(ctx);
+const v = await ctx.newPage();
+await v.goto('http://localhost:8765/res/estados-del-agua.html?video&dpr=2');
+await v.waitForFunction(() => window.__listo && document.fonts.status === 'loaded');
+await v.evaluate(() => { window.__video.configurar([{ t: 0.2, tipo: 'mechero' }]); window.__video.cuadro(2.1); });
+await v.screenshot({ path: 'thumb_agua.png', clip: { x: 0, y: 40, width: 946, height: 279 } });
+await b.close();
