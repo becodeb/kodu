@@ -83,7 +83,7 @@ paneles de admin queda para después (el dueño lo pidió aparte).
 
 Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor).
 
-- [ ] **T1 — Modelo y reglas.** Migración `20261012000000_planes_y_cobros`: catálogo de precios editable (bandas
+- [x] **T1 — Modelo y reglas.** Migración `20261012000000_planes_y_cobros`: catálogo de precios editable (bandas
   institucionales e individuales), licencia/suscripción de organización (estado, período, matrícula declarada, razón
   social, CUIT), suscripción individual, pagos, facturas, libro de créditos, estado de dominio (verificado/pendiente).
   Organizaciones existentes → `MANUAL` activa. Módulo puro `src/lib/billing/` con bandas, ciclo lectivo, prorrateo y
@@ -110,7 +110,13 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 ## Progreso y evidencia
 
 - 2026-09-30: worktree, base `koduedu_planes` con migraciones al día, `npm run check` verde en la base.
+- T1 (delegada, disparador de escritor): `8eb8a9d` modelo + migración + seed, `436d2cb` módulo `src/lib/billing/`.
+  Chequeos: migrate deploy OK, seed ×2 idempotente, `npm run check` verde, `unidad-planes.ts` 39/39 (re-corrido por el
+  orquestador), `unidad.ts` 77/77. Semántica: créditos mensuales vencen al cambiar de mes (entrada `EXPIRY`), bienvenida
+  nunca vence; débito con `ceil`, mínimo 1; prorrateo con `Math.round` sobre días inclusivos; Argentina como UTC-3 fijo.
+  La licencia vive solo en la organización raíz (convención, no forzada en la base); `IndividualSubscription` solo
+  existe para el plan pago (sin fila = Gratis). Licencias `MANUAL` con `declaredStudents = 0`.
 
 ## Próximo paso
 
-T1.
+T2 y T3 (un solo escritor: ambos tocan el acceso a la IA).
