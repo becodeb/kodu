@@ -62,6 +62,10 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
           where: { id: existente.id },
           data: {
             googleId: perfil.googleId,
+            // ADMIN_EMAILS también promueve cuentas que ya existían (antes sólo
+            // valía al crear). Es seguro acá: Google ya confirmó el correo.
+            // Sólo promueve; nunca degrada a un admin que salió de la lista.
+            ...(existente.role !== 'ADMIN' && isAdminEmail(email) ? { role: 'ADMIN' as const } : {}),
             ...(existente.emailVerifiedAt === null
               ? { emailVerifiedAt: new Date(), emailVerificationSource: 'GOOGLE' as const }
               : {}),
