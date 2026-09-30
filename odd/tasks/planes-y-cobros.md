@@ -1,0 +1,116 @@
+# Planes, precios y cobros
+
+Documento vivo de la feature (flujo ODD). Espejo en Engram: proyecto `kodu`, tópico `odd/planes-y-cobros/tasks`.
+Rama `feat/planes-y-cobros` (worktree `../kodu-wt/planes`), cortada de `origin/main` en `3bddaac`.
+Base de datos propia `koduedu_planes` en `kodu_db_dev`, servidor en el puerto 3200.
+
+## Objetivo
+
+Que Kodu se pueda contratar y pagar desde la app, con precios públicos y transparentes:
+
+- **Instituciones** (colegio o red de colegios): licencia institucional por matrícula, docentes ilimitados, pago
+  mensual o por ciclo lectivo, prueba de 30 días, alta por cuenta propia.
+- **Docentes individuales** (sin institución): créditos que se consumen según el costo real de la IA; plan Gratis y
+  plan Individual pago.
+
+## Problema
+
+- No existe ningún código de cobro, planes ni créditos.
+- Hoy una cuenta personal (sin organización) no puede usar la IA (`src/lib/orgs/acceso.ts`); el dueño ya había
+  dicho que "más adelante tendrá precio propio". Esta feature lo implementa.
+- Las organizaciones hoy solo las crea el superadmin. Tiene que existir un alta por cuenta propia sin abrir la puerta a
+  que cualquiera reclame un dominio ajeno.
+
+## Decisiones del dueño (no reabrir)
+
+- **Se cobra en pesos con Mercado Pago.** Dólares, más adelante.
+- **Instituciones: licencia por matrícula (cantidad de alumnos), docentes ilimitados.** No se cobra por docentes ni
+  por uso: el costo variable desincentiva que el colegio motive a sus docentes. Nunca se bloquea el alta de docentes.
+- **Bandas de matrícula:** Pequeña hasta 300, Mediana 301–800, Grande 801–1.500, más de 1.500 o redes grandes:
+  "Hablemos". Una red declara la matrícula total de sus sedes.
+- **Precios públicos y calculadora:** el colegio pone su matrícula y ve plan y precio. Se puede contratar solo; si
+  hace falta, el dueño confirma la matrícula y los dominios por detrás sin frenar la prueba.
+- **Ciclo lectivo = 1 de marzo al último día de febrero.** El plan de ciclo lectivo cuesta 10 cuotas y cubre 12
+  meses. También hay pago mensual.
+- **Alta a mitad de año:** de marzo a agosto se paga la parte proporcional hasta fin de febrero (a la tarifa del
+  ciclo); de septiembre a diciembre se contrata el ciclo siguiente y lo que queda del año va de regalo. En enero y
+  febrero se contrata el ciclo que empieza en marzo, con esos días de regalo.
+- **Prueba de 30 días** para instituciones, sin tarjeta. Al terminar sin pago: solo lectura (ven sus recursos, no
+  generan).
+- **Individuales:** plan Gratis con 100 créditos de bienvenida (únicos) + 50 por mes (no se acumulan); plan
+  Individual mensual o anual con 1.000 créditos por mes. Organizaciones no tienen créditos.
+- **Redes:** varios dominios de mail, sedes, e invitaciones (ya existen en el modelo de organizaciones).
+- **Los precios se editan desde el superadmin**, no quedan fijos en el código. Los valores iniciales son de ejemplo.
+- **Facturación:** el dueño es monotributista; emite Factura C. No facturar no es opción (ver "Por qué").
+
+## Decisiones de diseño (de esta sesión)
+
+- **1 crédito = USD 0,0025 de costo real** (configurable). Un recurso nuevo ≈ 10 créditos.
+- **Puertos y adaptadores** para cobro y facturación: `PaymentGateway` con adaptador `simulado` (local y e2e) y
+  `mercadopago`; `Invoicer` con adaptador `simulado` y `arca` (WSFE, homologación primero). Se elige por env.
+- **Dominio del creador verificado al instante** (ya verificó su mail); los dominios extra quedan pendientes hasta que
+  el superadmin los confirme. Dominios públicos (gmail, hotmail, outlook, yahoo, etc.) rechazados.
+- **Organizaciones existentes** (Reditinere y las creadas a mano) quedan como licencia `MANUAL` activa: nada cambia
+  para quienes ya usan Kodu.
+- **Pago fallido:** 7 días de gracia y después solo lectura.
+- **Webhooks idempotentes**: nunca se confía en el cuerpo del webhook; se relee el recurso en el proveedor.
+- **Aviso del tope del monotributo** en el superadmin (facturado en los últimos 12 meses contra un tope editable).
+- **Estrategia de entrega:** `single-pr` — el dueño mergea las features enteras a `main` (así se hizo con
+  organizaciones y taller). Commits por unidad de trabajo en la rama.
+
+## Por qué
+
+- El colegio quiere un costo fijo para su presupuesto; la IA cuesta USD 0,43–1,58 por docente activo por mes, así que
+  una licencia fija cubre el costo con margen aunque la usen a fondo.
+- Mercado Pago informa a ARCA lo que se cobra y los colegios necesitan la factura para registrar el gasto: no facturar
+  expone a multas y a una recategorización o exclusión de oficio.
+
+## Alcance autorizado
+
+Modelo de datos, reglas de ciclo y bandas, créditos, acceso según estado de licencia, cobro con Mercado Pago (y
+simulado), alta de instituciones, páginas `/precios`, `/app/plan`, `/org/plan`, superadmin de precios, revisión de
+altas y cobros manuales, facturación Factura C, y un modo de prueba local completo. La revisión amplia de los
+paneles de admin queda para después (el dueño lo pidió aparte).
+
+## Modo TDD y chequeos
+
+- **TDD: apagado.** Fuente: no hay configuración de TDD en el proyecto ni pedido del usuario; no hay test runner.
+- **Chequeos por tarea:** `npm run check` (tsc), `npm run build`, scripts unitarios `npx tsx e2e/unidad-*.ts` y e2e
+  `npx tsx e2e/<script>.ts` contra `KODU_BASE_URL=http://localhost:3200`, con el patrón de `e2e/harness.ts`.
+- RDD: apagado por el usuario (global) — sin revisión nativa.
+
+## Tareas
+
+Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor).
+
+- [ ] **T1 — Modelo y reglas.** Migración `20261012000000_planes_y_cobros`: catálogo de precios editable (bandas
+  institucionales e individuales), licencia/suscripción de organización (estado, período, matrícula declarada, razón
+  social, CUIT), suscripción individual, pagos, facturas, libro de créditos, estado de dominio (verificado/pendiente).
+  Organizaciones existentes → `MANUAL` activa. Módulo puro `src/lib/billing/` con bandas, ciclo lectivo, prorrateo y
+  regla de fin de año. Chequeo: `e2e/unidad-planes.ts`.
+- [ ] **T2 — Créditos individuales.** Libro de créditos (bienvenida 100, 50/mes perezoso, 1.000/mes Individual), débito
+  desde `costUsd` en `recordUsage` solo para cuentas personales, gate en `puedeUsarLaIa` y endpoints, saldo en el
+  encabezado y mensaje de "sin créditos". Chequeo: unidad + e2e.
+- [ ] **T3 — Acceso por estado de licencia.** Prueba, activa, gracia de 7 días, solo lectura; `MANUAL` siempre activa.
+  Chequeo: e2e.
+- [ ] **T4 — Cobro.** Puerto `PaymentGateway`, adaptador simulado (página local de pago con aprobar/rechazar que
+  dispara el webhook), adaptador Mercado Pago (suscripciones + pago único para el prorrateo), webhook idempotente,
+  endpoints de checkout para institución e individual, cancelación y arrepentimiento. Chequeo: e2e con simulado.
+- [ ] **T5 — Alta de instituciones.** Formulario (nombre, colegio o red, matrícula, dominios, sedes), bloqueo de
+  dominios públicos, dominios extra pendientes, arranque de la prueba, aviso al superadmin. Chequeo: e2e.
+- [ ] **T6 — Páginas.** `/precios` pública con calculadora y tarjetas (mensual / ciclo lectivo), `/app/plan`,
+  `/org/plan`, preguntas frecuentes, en el design system de kodu. Chequeo: build + capturas.
+- [ ] **T7 — Superadmin.** Editor de precios, cola de revisión (confirmar dominios y matrícula), activación manual
+  por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
+- [ ] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
+  pago, CAE guardado, reintento si ARCA falla. Chequeo: unidad + e2e con simulado.
+- [ ] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
+  (individual e institución).
+
+## Progreso y evidencia
+
+- 2026-09-30: worktree, base `koduedu_planes` con migraciones al día, `npm run check` verde en la base.
+
+## Próximo paso
+
+T1.
