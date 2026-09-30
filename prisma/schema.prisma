@@ -560,6 +560,45 @@ model CreditLedgerEntry {
   @@index([userId, createdAt])
 }
 
+/// odd/tasks/planes-y-cobros.md (T4): estado del adaptador SIMULADO de
+/// `PaymentGateway` (`src/lib/billing/pasarela/simulado.ts`) — SÓLO existe
+/// mientras `BILLING_PROVIDER=simulado` (local y e2e); el adaptador real
+/// (`mercadopago.ts`) no toca esta tabla nunca.
+///
+/// Una fila SIN `parentId` es el "checkout" original (lo que ve la página
+/// `/pago-simulado/[id]`: un pago único, o el primer cobro de una
+/// suscripción). Una fila CON `parentId` es un cobro de renovación simulado
+/// ("Simular cobro de renovación"/"Simular cobro fallido" en la página del
+/// padre) — el padre sigue existiendo como la "suscripción", cada renovación
+/// es su propia fila con su propio id (mismo criterio que Mercado Pago: cada
+/// cobro recurrente es un pago distinto, todos con el mismo
+/// `externalReference`).
+model PagoSimulado {
+  id                String   @id @default(uuid())
+  /// 'SUBSCRIPTION' (institución u individual, admite renovaciones) u
+  /// 'ONE_TIME' (un solo pago, sin renovación — hoy sin uso real de T4, pero
+  /// el puerto lo contempla).
+  kind              String
+  /// El id de nuestro propio "checkout row" (`Payment.id` para el primer
+  /// cobro) — igual en el padre y en TODAS sus renovaciones, como
+  /// `external_reference` en Mercado Pago.
+  externalReference String
+  concept           String
+  amountArs         Decimal  @db.Decimal(12, 2)
+  /// 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'.
+  status            String   @default("PENDING")
+  payerEmail        String
+  /// A dónde redirige la página simulada tras aprobar/rechazar.
+  backUrl           String
+  parentId          String?
+  parent            PagoSimulado?  @relation("Renovaciones", fields: [parentId], references: [id], onDelete: Cascade)
+  renewals          PagoSimulado[] @relation("Renovaciones")
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  @@index([externalReference])
+}
+
 enum ModelChoice {
   /// Fuera de servicio desde 2026-08-27 (dejo de ser gratuito). Se conserva
   /// porque hay consumo historico que lo referencia.
