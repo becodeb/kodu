@@ -27,6 +27,17 @@ export interface LicenciaParaAcceso {
   status: LicenseStatus;
   trialEndsAt: Date | null;
   graceEndsAt: Date | null;
+  /**
+   * odd/tasks/planes-y-cobros.md (T4): sólo importa cuando `status ===
+   * 'ACTIVE'` — si se pidió cancelar al fin del período (T4, endpoints de
+   * cancelación) y ese período YA terminó, se trata como CANCELED (decisión
+   * de diseño: "al fin del período la licencia se lee como CANCELED,
+   * perezoso" — no hace falta un cron que la pase a CANCELED de verdad, esta
+   * misma función lo resuelve en el instante). `undefined`/`false`/`null` =
+   * comportamiento de siempre (T1/T3, sin tocar).
+   */
+  cancelAtPeriodEnd?: boolean;
+  currentPeriodEnd?: Date | null;
 }
 
 export type RazonAcceso =
@@ -48,8 +59,13 @@ export interface ResultadoAcceso {
 
 export function licenseAllowsAi(license: LicenciaParaAcceso, now: Date): ResultadoAcceso {
   switch (license.status) {
-    case 'ACTIVE':
+    case 'ACTIVE': {
+      // T4: cancelación perezosa — ver el comentario de `cancelAtPeriodEnd`.
+      if (license.cancelAtPeriodEnd && license.currentPeriodEnd && now.getTime() > license.currentPeriodEnd.getTime()) {
+        return { allowed: false, reason: 'canceled' };
+      }
       return { allowed: true, reason: 'active' };
+    }
 
     case 'MANUAL':
       return { allowed: true, reason: 'manual' };

@@ -461,6 +461,24 @@ model Payment {
   /// El estado crudo tal cual lo devolvió el proveedor, para diagnóstico —
   /// `status` es la traducción normalizada que usa el resto del código.
   rawStatus                String?
+  /// odd/tasks/planes-y-cobros.md (T4): el intervalo elegido AL CONTRATAR
+  /// ('MONTHLY'/'CYCLE' institucional, 'MONTHLY'/'ANNUAL' individual),
+  /// snapshot de texto (no un enum: los dos catálogos de intervalo son
+  /// distintos y esta columna sirve para los dos). Sólo hace falta en el
+  /// checkout ROW original (el primer cobro) — `aplicar.ts` lo lee para
+  /// saber cómo armar el período; en una renovación se copia del padre.
+  intervalSnapshot         String?
+  /// SÓLO para el primer checkout INDIVIDUAL (T4): el id de la
+  /// `preapproval` del lado del proveedor, guardado acá porque todavía no
+  /// existe ninguna `IndividualSubscription` en la que guardarlo — recién se
+  /// crea cuando este pago se aprueba, momento en el que este valor se copia
+  /// a `IndividualSubscription.externalSubscriptionId` y esta columna deja
+  /// de usarse. `null` en cualquier otro Payment.
+  pendingExternalSubscriptionId String?
+  /// T4, arrepentimiento (10 días): marcado cuando hace falta que el
+  /// superadmin (T7) devuelva este pago a mano — el puerto `PaymentGateway`
+  /// de este cambio no expone un método de reintegro automático.
+  refundRequested          Boolean                 @default(false)
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
 

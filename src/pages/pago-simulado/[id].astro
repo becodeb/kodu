@@ -1,0 +1,43 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PagoSimuladoPanel from '../../components/PagoSimuladoPanel.tsx';
+import { getEnv, isProduction } from '../../lib/env.ts';
+import { obtenerPagoSimulado } from '../../lib/billing/pasarela/simulado.ts';
+
+/**
+ * /pago-simulado/[id] (odd/tasks/planes-y-cobros.md T4): la página del
+ * adaptador SIMULADO de cobro. SOLO existe con `BILLING_PROVIDER=simulado`
+ * fuera de producción — 404 en cualquier otro caso (nunca hay una página de
+ * "aprobar a mano" contra un proveedor real).
+ */
+if (getEnv().BILLING_PROVIDER !== 'simulado' || isProduction()) {
+  return new Response('No encontrado', { status: 404 });
+}
+
+const { id } = Astro.params;
+const fila = id ? await obtenerPagoSimulado(id) : null;
+if (!fila) {
+  return new Response('No encontramos ese pago simulado.', { status: 404 });
+}
+
+const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+---
+
+<BaseLayout title="Pago simulado — Kodu">
+  <div class="kodu-card mx-auto mt-8 max-w-lg p-8 sm:mt-16">
+    <p class="text-xs font-semibold uppercase tracking-wide text-brand-600">
+      Pago simulado — no es un cobro real
+    </p>
+    <h1 class="mt-2 font-display text-xl font-bold text-ink-900">{fila.concept}</h1>
+    <p class="mt-3 text-3xl font-bold text-ink-900">{formateador.format(fila.amountArs)}</p>
+    <p class="mt-1 text-sm text-ink-500">Estado actual: {fila.status}</p>
+
+    <PagoSimuladoPanel
+      client:load
+      id={fila.id}
+      esSuscripcion={fila.kind === 'SUBSCRIPTION'}
+      yaResuelto={fila.status !== 'PENDING'}
+      esCancelado={fila.status === 'CANCELLED'}
+    />
+  </div>
+</BaseLayout>

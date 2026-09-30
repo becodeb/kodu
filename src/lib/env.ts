@@ -137,6 +137,37 @@ const envSchema = z.object({
    * rotar la otra (ver design.md §4).
    */
   KODU_ENCRYPTION_KEY: z.string().default(''),
+
+  /**
+   * odd/tasks/planes-y-cobros.md (T4): qué adaptador de `PaymentGateway` usa
+   * el servidor (`src/lib/billing/pasarela/`). `simulado` es el default —
+   * anda sin ninguna credencial, pensado para dev y los e2e. En producción,
+   * si queda en `simulado` (o si `mercadopago` no tiene `MP_ACCESS_TOKEN`
+   * cargado), los endpoints de checkout se niegan con un error claro: nunca
+   * se simula un cobro real en silencio (decisión de esta tarea).
+   */
+  BILLING_PROVIDER: z.enum(['simulado', 'mercadopago']).default('simulado'),
+  /** Access token de la cuenta de Mercado Pago (Credenciales de producción o
+   *  de prueba, según el entorno). Vacío = el adaptador `mercadopago` no
+   *  puede operar. */
+  MP_ACCESS_TOKEN: z.string().default(''),
+  /** Clave secreta de la firma de webhooks de Mercado Pago ("Tus
+   *  integraciones" → esa aplicación → Webhooks → clave secreta), usada para
+   *  validar `x-signature`. Vacía = el webhook NO valida firma (sólo debería
+   *  quedar vacía en un entorno sin la app de Mercado Pago configurada
+   *  todavía; nunca en producción). */
+  MP_WEBHOOK_SECRET: z.string().default(''),
+  /**
+   * SOLO para los e2e (`e2e/planes-cobro.ts`): "ahora" fijo que reemplaza a
+   * `new Date()` en los cálculos de ciclo lectivo (`ciclo.ts#firstCharge`) al
+   * contratar una licencia por CICLO — así el e2e puede probar un alta en
+   * cualquier mes del año sin esperar al calendario real. Fecha ISO
+   * ("2026-10-05T12:00:00Z"). Se ignora por completo salvo que
+   * `BILLING_PROVIDER=simulado` Y `NODE_ENV` no sea `production` (ver
+   * `billingNow()` más abajo) — imposible de activar en producción incluso
+   * si alguien la carga por error.
+   */
+  BILLING_FAKE_NOW: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -184,6 +215,10 @@ export function getEnv(): Env {
     RESEND_API_KEY: read('RESEND_API_KEY'),
     RESEND_FROM: read('RESEND_FROM'),
     RESEND_API_URL: read('RESEND_API_URL'),
+    BILLING_PROVIDER: read('BILLING_PROVIDER'),
+    MP_ACCESS_TOKEN: read('MP_ACCESS_TOKEN'),
+    MP_WEBHOOK_SECRET: read('MP_WEBHOOK_SECRET'),
+    BILLING_FAKE_NOW: read('BILLING_FAKE_NOW'),
   });
 
   if (!parsed.success) {
@@ -226,6 +261,23 @@ export function hasResendApiKey(): boolean {
 
 export function isProduction(): boolean {
   return getEnv().NODE_ENV === 'production';
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T4): "ahora" para todo cálculo de cobro que
+ * dependa de la fecha (`ciclo.ts#firstCharge` al contratar). Es `new Date()`
+ * salvo en un e2e local: `BILLING_FAKE_NOW` sólo se honra con
+ * `BILLING_PROVIDER=simulado` y fuera de producción — las dos condiciones
+ * juntas, no una sola, para que cargarla por error en un entorno real (o
+ * dejarla en un `.env` de producción por descuido) nunca tenga efecto.
+ */
+export function billingNow(): Date {
+  const env = getEnv();
+  if (env.BILLING_PROVIDER === 'simulado' && env.NODE_ENV !== 'production' && env.BILLING_FAKE_NOW) {
+    const parsed = new Date(env.BILLING_FAKE_NOW);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
 }
 
 /** Lista de dominios institucionales habilitados, normalizada. */

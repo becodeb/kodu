@@ -98,7 +98,7 @@ async function licenciaDeLaRaiz(
 
   const license = await prisma.organizationLicense.findUnique({
     where: { organizationId: rootId },
-    select: { status: true, trialEndsAt: true, graceEndsAt: true },
+    select: { status: true, trialEndsAt: true, graceEndsAt: true, cancelAtPeriodEnd: true, currentPeriodEnd: true },
   });
 
   return {

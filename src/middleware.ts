@@ -28,6 +28,13 @@ const PROTECTED_API_PREFIXES = [
   '/api/org',
   // odd/tasks/taller-de-ideas.md: las páginas del Taller viven bajo /app.
   '/api/taller',
+  // odd/tasks/planes-y-cobros.md (T4): checkout/cancelación de cobro y las
+  // acciones de la página simulada — SIEMPRE con sesión. El webhook real
+  // (`/api/billing/webhook/*`) queda AFUERA a propósito: lo llama Mercado
+  // Pago server-to-server, sin cookie de sesión posible.
+  '/api/billing/org',
+  '/api/billing/individual',
+  '/api/billing/pago-simulado',
 ];
 const ADMIN_PAGE_PREFIXES = ['/admin'];
 const ADMIN_API_PREFIXES = ['/api/admin'];

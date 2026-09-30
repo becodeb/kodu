@@ -16,6 +16,22 @@ export function requireUser(locals: App.Locals): SessionUser | Response {
   return locals.user;
 }
 
+/**
+ * odd/tasks/planes-y-cobros.md (T4): igual que `requireUser`, más la
+ * identidad fresca — para mutaciones de cobro (`/api/billing/individual/*`)
+ * que no pasan por `requireFreshOrgAdmin` (no hay organización de por
+ * medio), mismo criterio que las mutaciones de `/api/admin`.
+ */
+export function requireFreshUser(locals: App.Locals): SessionUser | Response {
+  const resultado = requireUser(locals);
+  if (resultado instanceof Response) return resultado;
+
+  if (!locals.identityFresh) {
+    return fail('No pudimos confirmar tu sesión. Probá de nuevo en unos segundos.', 503);
+  }
+  return resultado;
+}
+
 export function requireAdmin(locals: App.Locals): SessionUser | Response {
   const resultado = requireUser(locals);
   if (resultado instanceof Response) return resultado;

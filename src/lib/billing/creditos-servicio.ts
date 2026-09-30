@@ -139,6 +139,43 @@ export async function ensureGrants(userId: string, now: Date): Promise<void> {
   }
 }
 
+/**
+ * odd/tasks/planes-y-cobros.md (T4): al aprobarse el primer pago del plan
+ * Individual, subir el otorgamiento de ESTE mes al nivel de Individual
+ * (1.000) aunque el docente ya se haya llevado el otorgamiento FREE del mes
+ * (50) — decisión de diseño: "topping up... así el docente no pierde
+ * créditos FREE injustamente" (no se le resta nada de lo ya otorgado, sólo
+ * se completa la diferencia con un `ADJUSTMENT` positivo).
+ *
+ * Llama primero a `ensureGrants` (asegura que exista ALGÚN otorgamiento de
+ * este período — normalmente ya existe, del alta de la cuenta). Si el
+ * otorgamiento de este período ya es `PLAN_GRANT`, no hace nada (ya está al
+ * nivel Individual). Pensada para llamarse UNA sola vez, cuando
+ * `src/lib/billing/aplicar.ts` aplica el pago aprobado — la idempotencia de
+ * ESA llamada (por `providerPaymentId`) es lo que evita un tope doble, no
+ * esta función por sí sola.
+ */
+export async function otorgarTopeIndividual(userId: string, now: Date): Promise<void> {
+  await ensureGrants(userId, now);
+
+  const periodKey = monthlyGrantPeriodKey(now);
+  const plan = await prisma.individualPlan.findUniqueOrThrow({
+    where: { key: 'INDIVIDUAL' },
+    select: { monthlyCredits: true },
+  });
+
+  const otorgamiento = await prisma.creditLedgerEntry.findFirst({
+    where: { userId, periodKey, kind: { in: ['MONTHLY_GRANT', 'PLAN_GRANT'] } },
+  });
+  if (!otorgamiento || otorgamiento.kind === 'PLAN_GRANT') return;
+  if (otorgamiento.delta >= plan.monthlyCredits) return;
+
+  const diferencia = plan.monthlyCredits - otorgamiento.delta;
+  await prisma.creditLedgerEntry.create({
+    data: { userId, delta: diferencia, kind: 'ADJUSTMENT', periodKey: null },
+  });
+}
+
 function esViolacionDeUnico(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
