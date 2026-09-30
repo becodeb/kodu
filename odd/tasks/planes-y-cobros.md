@@ -88,10 +88,10 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   social, CUIT), suscripción individual, pagos, facturas, libro de créditos, estado de dominio (verificado/pendiente).
   Organizaciones existentes → `MANUAL` activa. Módulo puro `src/lib/billing/` con bandas, ciclo lectivo, prorrateo y
   regla de fin de año. Chequeo: `e2e/unidad-planes.ts`.
-- [ ] **T2 — Créditos individuales.** Libro de créditos (bienvenida 100, 50/mes perezoso, 1.000/mes Individual), débito
+- [x] **T2 — Créditos individuales.** Libro de créditos (bienvenida 100, 50/mes perezoso, 1.000/mes Individual), débito
   desde `costUsd` en `recordUsage` solo para cuentas personales, gate en `puedeUsarLaIa` y endpoints, saldo en el
   encabezado y mensaje de "sin créditos". Chequeo: unidad + e2e.
-- [ ] **T3 — Acceso por estado de licencia.** Prueba, activa, gracia de 7 días, solo lectura; `MANUAL` siempre activa.
+- [x] **T3 — Acceso por estado de licencia.** Prueba, activa, gracia de 7 días, solo lectura; `MANUAL` siempre activa.
   Chequeo: e2e.
 - [ ] **T4 — Cobro.** Puerto `PaymentGateway`, adaptador simulado (página local de pago con aprobar/rechazar que
   dispara el webhook), adaptador Mercado Pago (suscripciones + pago único para el prorrateo), webhook idempotente,
@@ -104,6 +104,9 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
 - [ ] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
   pago, CAE guardado, reintento si ARCA falla. Chequeo: unidad + e2e con simulado.
+- [ ] **T2b — Débito sin precio.** Si el motor no tiene precio cargado, `costUsd` queda nulo y a una cuenta personal
+  no se le descuenta nada. Descontar con una estimación conservadora por tokens (o el precio del motor por defecto) y
+  avisar en el superadmin. Encontrado en T2.
 - [ ] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
   (individual e institución).
 
@@ -116,7 +119,13 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   nunca vence; débito con `ceil`, mínimo 1; prorrateo con `Math.round` sobre días inclusivos; Argentina como UTC-3 fijo.
   La licencia vive solo en la organización raíz (convención, no forzada en la base); `IndividualSubscription` solo
   existe para el plan pago (sin fila = Gratis). Licencias `MANUAL` con `declaredStudents = 0`.
+- T2 `11cd423` y T3 `c154510` (delegadas juntas: ambas tocan el acceso). `resolverAccesoIa` en `src/lib/orgs/acceso.ts`
+  devuelve una razón legible por máquina; `puedeUsarLaIa` queda como envoltorio. Raíz sin licencia → `license_missing`
+  (falla cerrado y se loguea). Solo lectura deja abrir el editor con un aviso. Chequeos: check verde, build verde,
+  `unidad-planes` 39/39, `unidad` 77/77, `unidad-creditos` 9/9 (re-corrido por el orquestador), `planes-acceso` 8/8,
+  `org-acceso` 7/7, `consumo-proposito` 8/8 (se les agregó licencia `MANUAL` a sus organizaciones de prueba y se
+  actualizaron dos escenarios que suponían "cuenta personal = siempre bloqueada").
 
 ## Próximo paso
 
-T2 y T3 (un solo escritor: ambos tocan el acceso a la IA).
+T4 (cobro) junto con T2b.
