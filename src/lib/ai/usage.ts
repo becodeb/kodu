@@ -1,5 +1,6 @@
 import { prisma } from '../db.ts';
 import { Prisma, type UsagePurpose } from '../../generated/prisma/client.ts';
+import { debitUsage } from '../billing/creditos-servicio.ts';
 
 /**
  * Registro de tokens por usuario y proveedor.
@@ -169,7 +170,7 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
   const forNewResource =
     forNewResourceDirecto(record.purpose) ?? (await forNewResourceHeredado(record.projectId, record.userId));
 
-  await prisma.tokenUsage.create({
+  const fila = await prisma.tokenUsage.create({
     data: {
       userId: record.userId,
       projectId: record.projectId,
@@ -187,6 +188,16 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       forNewResource,
     },
   });
+
+  // odd/tasks/planes-y-cobros.md (T2): sólo las cuentas PERSONALES (sin
+  // organización) consumen créditos — "organizaciones no tienen créditos",
+  // decisión del dueño. Sin costo conocido (motor con precio sin cargar) no
+  // se debita nada: nunca se inventa un costo (mismo criterio que
+  // `calcularCostoTurno`). Puede dejar el saldo en negativo para ESTE turno
+  // — el próximo pedido queda bloqueado por `resolverAccesoIa`.
+  if (organizationId === null && costo.costUsd !== null && costo.costUsd.greaterThan(0)) {
+    await debitUsage(record.userId, fila.id, costo.costUsd.toNumber());
+  }
 }
 
 /** Tokens acumulados por un usuario en UN motor puntual (prompt + respuesta). */

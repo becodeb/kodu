@@ -38,7 +38,7 @@ import {
 } from '../../../lib/ai/checklist.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
-import { puedeUsarLaIa } from '../../../lib/auth/domains.ts';
+import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import {
@@ -549,8 +549,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * transmitiendo: el middleware relee `aiAccessOverride` en cada request
    * nueva a esta ruta, y un turno en curso no hace una request nueva.
    */
-  if (!(await puedeUsarLaIa(user))) {
-    return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
+  const accesoIa = await resolverAccesoIa(user);
+  if (!accesoIa.allowed) {
+    // odd/tasks/planes-y-cobros.md (T2/T3): mensaje concreto por razón
+    // (sin créditos / licencia institucional no activa / etc.), un solo
+    // lugar lo traduce (mensajeAccesoIa, acceso.ts).
+    return fail(mensajeAccesoIa(accesoIa), 403, { reason: accesoIa.reason });
   }
 
   /**

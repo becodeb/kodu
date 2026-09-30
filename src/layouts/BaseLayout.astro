@@ -2,6 +2,7 @@
 import '../styles/global.css';
 import { getEnv } from '../lib/env.ts';
 import { prisma } from '../lib/db.ts';
+import { ensureGrants, balance } from '../lib/billing/creditos-servicio.ts';
 
 interface Props {
   title?: string;
@@ -60,6 +61,22 @@ const esPotencialAdminDeOrganizacion =
     ? (await prisma.organizationAdmin.findFirst({ where: { userId: user.id }, select: { userId: true } })) !== null
     : false;
 const pageTitle = title === 'Kodu' ? title : `${title} · Kodu`;
+
+/**
+ * odd/tasks/planes-y-cobros.md (T2): saldo de créditos en el encabezado,
+ * sólo para una cuenta PERSONAL (sin organización) que no sea el superadmin
+ * (el superadmin siempre tiene acceso, sin créditos de por medio — tabla de
+ * verdad de `resolverAccesoIa`). `ensureGrants` es idempotente: llamarlo acá
+ * de nuevo (puede que ya haya corrido en esta misma request, por ejemplo
+ * dentro de `resolverAccesoIa` en `/app`) no duplica nada.
+ */
+const saldoCreditos =
+  user && user.role !== 'ADMIN' && user.organizationId === null
+    ? await (async () => {
+        await ensureGrants(user.id, new Date());
+        return balance(user.id);
+      })()
+    : null;
 
 // Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
 // salir de PUBLIC_SITE_URL: detrás del proxy, Astro.url cree que el sitio es
@@ -167,6 +184,16 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
             </div>
 
             <div class="flex items-center gap-2 justify-self-end text-sm">
+              {saldoCreditos !== null && (
+                <a
+                  href="/app/plan"
+                  class="flex items-center gap-1.5 rounded-lg border border-linea bg-sutil px-2 py-1.5 text-sm text-ink-700 hover:border-ink-500 sm:px-2.5"
+                >
+                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
+                  <span class="hidden sm:inline">Te quedan {saldoCreditos} créditos</span>
+                  <span class="sm:hidden">{saldoCreditos} créditos</span>
+                </a>
+              )}
               {esPotencialAdminDeOrganizacion && (
                 <a
                   href="/org"

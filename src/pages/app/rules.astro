@@ -3,7 +3,7 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import RulesManager from '../../components/RulesManager.tsx';
 import CuentaPersonal from '../../components/CuentaPersonal.astro';
 import { prisma } from '../../lib/db.ts';
-import { puedeUsarLaIa } from '../../lib/orgs/acceso.ts';
+import { resolverAccesoIa } from '../../lib/orgs/acceso.ts';
 
 const user = Astro.locals.user!;
 
@@ -13,7 +13,8 @@ const user = Astro.locals.user!;
  * personal en vez del gestor de reglas — tienen sentido sólo junto a un
  * chat que esta cuenta todavía no puede usar.
  */
-const bloqueada = !(await puedeUsarLaIa(user)) && user.role !== 'ADMIN';
+const accesoIa = await resolverAccesoIa(user);
+const bloqueada = !accesoIa.allowed && user.role !== 'ADMIN';
 
 // El docente ve sus reglas + las institucionales (estas últimas de sólo lectura
 // salvo que sea ADMIN).
@@ -28,7 +29,7 @@ const rules = bloqueada
 
 <BaseLayout title="Reglas y contexto">
   {bloqueada ? (
-    <CuentaPersonal />
+    <CuentaPersonal acceso={accesoIa} />
   ) : (
     <>
       <header class="mb-6 max-w-2xl">

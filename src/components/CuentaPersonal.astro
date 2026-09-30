@@ -3,8 +3,26 @@ import { prisma } from '../lib/db.ts';
 import { hasResendApiKey } from '../lib/env.ts';
 import { emailConfiable } from '../lib/orgs/membresia.ts';
 import { organizacionParaEmail } from '../lib/orgs/resolucion.ts';
+import { mensajeAccesoIa, type ResultadoAccesoIa } from '../lib/orgs/acceso.ts';
 import ReenviarVerificacion from './ReenviarVerificacion.tsx';
 import ElegirSede from './ElegirSede.tsx';
+
+interface Props {
+  /**
+   * odd/tasks/planes-y-cobros.md (T2/T3): cuando el llamador ya resolvió
+   * `resolverAccesoIa`, se lo pasa acá para mostrar el motivo puntual (sin
+   * créditos, licencia institucional no activa) en vez del cartel genérico
+   * de "cuenta personal". `undefined` conserva el comportamiento de siempre
+   * (páginas que todavía no migraron a `resolverAccesoIa`).
+   */
+  acceso?: ResultadoAccesoIa;
+}
+
+const { acceso } = Astro.props;
+const razonConcreta =
+  acceso && acceso.reason !== 'no_credits' && !acceso.reason.startsWith('license_') && acceso.reason !== 'org_archived'
+    ? null
+    : acceso;
 
 /**
  * odd/tasks/organizaciones.md (T2, decisión del dueño — "Cuenta personal"):
@@ -70,6 +88,22 @@ const requiereElegirSede =
           redName={requiereElegirSede.red.name}
           sedes={requiereElegirSede.sedes}
         />
+      </>
+    ) : razonConcreta && razonConcreta.reason === 'no_credits' ? (
+      <>
+        <h1 class="font-display text-xl font-bold text-ink-900">Te quedaste sin créditos</h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">{mensajeAccesoIa(razonConcreta)}</p>
+        <a href="/app/plan" class="kodu-btn kodu-btn-primary mt-5 inline-flex">Ver mi plan</a>
+      </>
+    ) : razonConcreta ? (
+      <>
+        <h1 class="font-display text-xl font-bold text-ink-900">
+          {razonConcreta.esAdminOrg ? 'Tu licencia no está activa' : 'La licencia de tu institución no está activa'}
+        </h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">{mensajeAccesoIa(razonConcreta)}</p>
+        {razonConcreta.esAdminOrg && (
+          <a href="/org/plan" class="kodu-btn kodu-btn-primary mt-5 inline-flex">Contratar</a>
+        )}
       </>
     ) : (
       <>

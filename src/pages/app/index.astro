@@ -5,7 +5,7 @@ import ProjectCardActions from '../../components/ProjectCardActions.tsx';
 import CuentaPersonal from '../../components/CuentaPersonal.astro';
 import { prisma } from '../../lib/db.ts';
 import { haceTiempo } from '../../lib/format/fecha.ts';
-import { puedeUsarLaIa } from '../../lib/orgs/acceso.ts';
+import { resolverAccesoIa } from '../../lib/orgs/acceso.ts';
 import { NOMBRE_TALLER } from '../../lib/taller/prompt.ts';
 
 // El middleware ya garantiza sesión en /app/**; esto es sólo para el tipo.
@@ -17,7 +17,8 @@ const user = Astro.locals.user!;
  * personal acá en vez de la lista de recursos. Sus recursos NO se borran —
  * sólo dejan de listarse mientras la cuenta es personal.
  */
-const bloqueada = !(await puedeUsarLaIa(user)) && user.role !== 'ADMIN';
+const accesoIa = await resolverAccesoIa(user);
+const bloqueada = !accesoIa.allowed && user.role !== 'ADMIN';
 
 /**
  * A propósito `{ userId: user.id }` y NO `findProjectForActor`: esto lista
@@ -60,7 +61,7 @@ function editadoPorAdministracion(fecha: Date | null): boolean {
 
 <BaseLayout title="Mis recursos">
   {bloqueada ? (
-    <CuentaPersonal />
+    <CuentaPersonal acceso={accesoIa} />
   ) : (
     <>
   <div class="flex flex-wrap items-end justify-between gap-4">

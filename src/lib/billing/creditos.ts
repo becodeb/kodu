@@ -54,3 +54,15 @@ export function monthlyGrantPeriodKey(date: Date): string {
 /** Llave de idempotencia fija de la bienvenida: una sola fila `WELCOME` por
  *  usuario, para siempre — nunca un "YYYY-MM" (no es un otorgamiento mensual). */
 export const WELCOME_PERIOD_KEY = 'once';
+
+/**
+ * "D/M" del 1º del PRÓXIMO mes calendario (hora de Argentina) — cuándo se
+ * repone el otorgamiento mensual (T2, mensaje de "sin créditos" en la UI:
+ * "Se renuevan el 1/11"). Reusa `monthlyGrantPeriodKey` como única fuente del
+ * mes actual en vez de recalcularlo con Date directo.
+ */
+export function proximaRenovacionEtiqueta(now: Date): string {
+  const [year, month] = monthlyGrantPeriodKey(now).split('-').map(Number);
+  const mesSiguiente = month === 12 ? 1 : month + 1;
+  return `1/${mesSiguiente}`;
+}

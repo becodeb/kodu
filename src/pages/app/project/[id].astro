@@ -13,15 +13,20 @@ import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { pendienteChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
-import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
+import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { pedidoParaElEditor } from '../../../lib/taller/prompt.ts';
 
 const user = Astro.locals.user!;
 
-// odd/tasks/organizaciones.md (T2): una cuenta personal no entra al editor;
-// /app le explica por qué. Gate mínimo a propósito: este archivo lo cambia
-// otra rama en paralelo.
-if (!(await puedeUsarLaIa(user))) {
+// odd/tasks/organizaciones.md (T2) / odd/tasks/planes-y-cobros.md (T3): una
+// cuenta personal sin créditos (o cualquier otro bloqueo "duro") no entra al
+// editor; /app le explica por qué. Una institución en modo sólo-lectura
+// (licencia vencida/sin pagar/cancelada) SÍ entra — decisión del dueño: "ven
+// sus recursos, no generan" — sólo se le muestra un cartel arriba. Gate
+// mínimo a propósito: este archivo lo cambia otra rama en paralelo.
+const accesoIa = await resolverAccesoIa(user);
+const soloLectura = !accesoIa.allowed && accesoIa.reason.startsWith('license_') && accesoIa.reason !== 'license_missing';
+if (!accesoIa.allowed && !soloLectura) {
   return Astro.redirect('/app', 302);
 }
 
@@ -249,6 +254,18 @@ const pedidoInicial =
       su propio recurso — incluida la demo — nunca la ve. */}
   {actuaComoAdminAjeno && (
     <BannerAdmin ownerName={project.user.name} backHref={`/admin/usuarios/${project.userId}`} />
+  )}
+
+  {/* odd/tasks/planes-y-cobros.md (T3): sólo lectura por estado de licencia
+      -- distinto texto para quien administra la institución vs. un docente
+      miembro cualquiera (decisión del dueño). */}
+  {soloLectura && (
+    <div class="kodu-card mb-4 border-brand-300 bg-brand-50 p-4 text-sm text-ink-700 dark:bg-brand-950/30">
+      <p class="font-medium text-ink-900">{mensajeAccesoIa(accesoIa)}</p>
+      {accesoIa.esAdminOrg && (
+        <a href="/org/plan" class="kodu-btn kodu-btn-primary mt-3 inline-flex">Contratar</a>
+      )}
+    </div>
   )}
 
   <Workspace
