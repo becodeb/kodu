@@ -61,6 +61,13 @@ model Organization {
   members       User[]
   /// Consumo con la sede congelada al momento de la llamada (design.md).
   tokenUsage    TokenUsage[]
+  /// odd/tasks/planes-y-cobros.md (T1): sólo existe para una organización de
+  /// TOPE (parentId null) — una sede de una red usa la licencia de su red, no
+  /// la suya propia. 1:1 opcional porque una `CAMPUS` con `parentId` no la
+  /// tiene.
+  license       OrganizationLicense?
+  /// Pagos institucionales de esta organización (T1/T4).
+  payments      Payment[]
 
   @@index([parentId])
 }
@@ -72,15 +79,27 @@ model Organization {
 /// dominio de una `NETWORK` es compartido por todas sus sedes — quien entra
 /// por ese dominio elige su sede la primera vez (T4).
 model OrganizationDomain {
-  id             String       @id @default(uuid())
+  id             String                   @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   /// "rededucativa.edu.ar" o "*.edu.ar". Siempre en minúsculas, sin "@".
-  pattern        String       @unique
+  pattern        String                   @unique
   note           String?
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime                 @default(now())
+  /// odd/tasks/planes-y-cobros.md (T1): el dominio del creador de la
+  /// organización queda `VERIFIED` al instante (ya verificó su mail); un
+  /// dominio extra que agrega después queda `PENDING` hasta que el
+  /// superadmin lo confirme (T5/T7). Todas las filas que ya existían antes de
+  /// esta columna pasan a `VERIFIED` en la migración: no eran parte de un
+  /// alta propia, las cargó el superadmin a mano.
+  status         DomainVerificationStatus @default(PENDING)
 
   @@index([organizationId])
+}
+
+enum DomainVerificationStatus {
+  VERIFIED
+  PENDING
 }
 
 /// odd/tasks/organizaciones.md (T1): lista blanca de emails puntuales (no todo
@@ -189,6 +208,358 @@ model EmailVerificationToken {
   @@index([userId])
 }
 
+// ─────────────────────────────────────────────────────────────
+// odd/tasks/planes-y-cobros.md (T1): planes, precios y cobros.
+// ─────────────────────────────────────────────────────────────
+
+/// Bandas de matrícula institucional (decisión del dueño, no reabrir):
+/// Pequeña hasta 300, Mediana 301–800, Grande 801–1.500. Más de 1.500 (o una
+/// red grande) no matchea ninguna banda: es "Hablemos" — ver
+/// `src/lib/billing/bandas.ts`, que es la única fuente de verdad de este
+/// cálculo (esta tabla sólo guarda el PRECIO de cada banda, editable desde el
+/// superadmin).
+enum BandKey {
+  PEQUENA
+  MEDIANA
+  GRANDE
+}
+
+/// Catálogo de precios de las bandas institucionales. Fila por banda, editada
+/// desde el superadmin (T7) — los valores que trae `prisma/seed.ts` son
+/// PLACEHOLDER, no precios reales (decisión del dueño: "los precios se editan
+/// desde el superadmin, no quedan fijos en el código").
+model InstitutionalBand {
+  id              String   @id @default(uuid())
+  key             BandKey  @unique
+  name            String
+  minStudents     Int
+  /// `null` = sin techo propio (no se usa hoy: las tres bandas tienen techo;
+  /// se deja abierto por si el dueño agrega una banda superior sin pasar por
+  /// "Hablemos").
+  maxStudents     Int?
+  monthlyPriceArs Decimal  @db.Decimal(12, 2)
+  /// Precio del ciclo lectivo COMPLETO (12 meses, decisión del dueño: "cuesta
+  /// 10 cuotas"). Default sugerido = 10 × `monthlyPriceArs`, pero es una
+  /// columna editable a mano, no una cuenta derivada: el superadmin puede
+  /// ofrecer un descuento distinto sin que el sistema se lo pise.
+  cyclePriceArs   Decimal  @db.Decimal(12, 2)
+  active          Boolean  @default(true)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+/// Plan Gratis o Individual de un docente sin organización (decisión del
+/// dueño). `FREE` no tiene `annualPriceArs` (no se vende anual) ni se crea
+/// nunca una `IndividualSubscription` para él — ver ese modelo.
+enum IndividualPlanKey {
+  FREE
+  INDIVIDUAL
+}
+
+/// Catálogo de precios de los planes individuales, editable desde el
+/// superadmin (T7) — mismo criterio que `InstitutionalBand`.
+model IndividualPlan {
+  id              String            @id @default(uuid())
+  key             IndividualPlanKey @unique
+  name            String
+  /// 0 para FREE.
+  monthlyPriceArs Decimal           @db.Decimal(12, 2)
+  /// `null` para FREE (no se vende anual).
+  annualPriceArs  Decimal?          @db.Decimal(12, 2)
+  /// Créditos que otorga cada mes (50 en FREE, 1.000 en INDIVIDUAL — ver
+  /// `src/lib/billing/creditos.ts` para la semántica exacta de "por mes").
+  monthlyCredits  Int
+  /// Créditos de bienvenida, ÚNICOS, sólo al crear la cuenta (100 en FREE, 0
+  /// en INDIVIDUAL — decisión del dueño).
+  welcomeCredits  Int               @default(0)
+  active          Boolean           @default(true)
+  sortOrder       Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+/// Fila única de configuración de cobro (mismo patrón que `AppSettings`: un
+/// singleton, `id` fijo en 1 con un CHECK en la migración — nunca una segunda
+/// fila). Editable desde el superadmin (T7).
+model BillingSettings {
+  id                        Int      @id @default(1)
+  /// 1 crédito = este valor en USD de costo real (decisión de diseño: "1
+  /// crédito = USD 0,0025 de costo real"). Configurable.
+  creditUsdValue            Decimal  @db.Decimal(12, 6)
+  /// Días de prueba sin tarjeta para una institución (decisión del dueño: 30).
+  trialDays                 Int
+  /// Días de gracia tras un pago fallido antes de pasar a sólo lectura
+  /// (decisión del dueño: 7).
+  graceDays                 Int
+  /// Tope anual del monotributo del dueño, para el aviso en el superadmin
+  /// (T7) — facturado en los últimos 12 meses contra este tope. `null` = sin
+  /// tope cargado todavía (no se dispara ningún aviso).
+  monotributoAnnualCapArs   Decimal? @db.Decimal(14, 2)
+  /// Matrícula a partir de la cual (además de 1.500) se ofrece "Hablemos" en
+  /// vez de una banda con precio fijo (decisión del dueño: 1.500).
+  hablemosThresholdStudents Int
+  updatedAt                 DateTime @updatedAt
+}
+
+/// Estado de la licencia de una organización (decisiones del dueño y de
+/// diseño de esta sesión). `MANUAL` es el estado de las organizaciones que ya
+/// existían antes de esta feature (Reditinere y las creadas a mano por el
+/// superadmin) y de cualquier alta futura activada a mano por transferencia
+/// (T7) — siempre se trata como activa, nunca expira ni entra en gracia (ver
+/// `src/lib/billing/acceso-licencia.ts`).
+enum LicenseStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  READ_ONLY
+  CANCELED
+  MANUAL
+}
+
+/// Cómo se factura una licencia institucional (decisión del dueño: "también
+/// hay pago mensual" además del ciclo lectivo completo).
+enum OrgBillingInterval {
+  MONTHLY
+  CYCLE
+}
+
+/// De dónde salió la licencia: alta por cuenta propia (calculadora pública,
+/// T5) o cargada a mano por el superadmin (T7) — incluye toda organización
+/// preexistente, migrada en esta misma migración.
+enum LicenseCreatedVia {
+  SELF_SERVE
+  MANUAL
+}
+
+/// odd/tasks/planes-y-cobros.md (T1): licencia institucional. 1:1 con
+/// `Organization`, pero SÓLO existe en la organización de TOPE (`parentId`
+/// null) — una sede de una red usa la licencia de su red (decisión del
+/// dueño: "una red declara la matrícula total de sus sedes"); esa regla de
+/// aplicación no se puede expresar como constraint de Prisma, así que
+/// `src/lib/billing/acceso-licencia.ts` y quien la llame tienen que resolver
+/// siempre la licencia de la RAÍZ de la jerarquía, nunca la de la sede.
+model OrganizationLicense {
+  id                     String             @id @default(uuid())
+  organizationId         String             @unique
+  organization           Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  status                 LicenseStatus      @default(TRIAL)
+  interval               OrgBillingInterval @default(MONTHLY)
+  /// Matrícula total declarada al contratar (una red, la suma de sus sedes).
+  declaredStudents       Int
+  /// La banda que le tocó a `declaredStudents` en el momento de contratar,
+  /// CONGELADA (un cambio de precio de la banda después no mueve licencias ya
+  /// contratadas). `null` cuando superó el umbral "Hablemos" (banda
+  /// negociada a mano, sin fila de `InstitutionalBand` que la represente).
+  bandKey                BandKey?
+  /// Sólo con `status = TRIAL`: cuándo termina la prueba de 30 días.
+  trialEndsAt            DateTime?
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  /// Sólo con `status = PAST_DUE`: hasta cuándo sigue con acceso pese al pago
+  /// fallido (decisión del dueño: 7 días de gracia).
+  graceEndsAt            DateTime?
+  cancelAtPeriodEnd      Boolean            @default(false)
+  /// Razón social y CUIT para la Factura C (T8). `null` hasta que se cargan
+  /// (pueden completarse después del alta, antes del primer cobro real).
+  legalName              String?
+  cuit                   String?
+  /// Ids del lado de Mercado Pago (T4). `null` con el adaptador simulado o
+  /// mientras la licencia es `MANUAL`.
+  externalSubscriptionId String?
+  externalCustomerId     String?
+  createdVia             LicenseCreatedVia  @default(SELF_SERVE)
+  /// Cuándo el superadmin confirmó los dominios/matrícula de un alta propia
+  /// (T5/T7). `null` = todavía sin revisar (la prueba de 30 días NUNCA se
+  /// frena por esto — decisión del dueño).
+  reviewedAt             DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  payments Payment[]
+}
+
+/// Estado de la suscripción Individual paga (no hay `TRIAL` ni `MANUAL`: los
+/// docentes individuales no tienen prueba ni alta a mano — decisiones del
+/// dueño, esta feature es la primera vez que una cuenta personal paga algo).
+enum IndividualSubStatus {
+  ACTIVE
+  PAST_DUE
+  READ_ONLY
+  CANCELED
+}
+
+enum IndividualInterval {
+  MONTHLY
+  ANNUAL
+}
+
+/// odd/tasks/planes-y-cobros.md (T1): suscripción al plan Individual pago.
+/// 1:1 con `User`, y OPCIONAL a propósito: el plan Gratis NUNCA crea una fila
+/// acá — "sin fila" es la representación de FREE (T2 lee la ausencia, no un
+/// `planKey = FREE`). Sólo existe mientras el docente paga el plan Individual.
+model IndividualSubscription {
+  id                     String              @id @default(uuid())
+  userId                 String              @unique
+  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                 IndividualSubStatus @default(ACTIVE)
+  interval               IndividualInterval
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  cancelAtPeriodEnd      Boolean             @default(false)
+  externalSubscriptionId String?
+  externalCustomerId     String?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  payments Payment[]
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+}
+
+/// `SIMULADO` = adaptador local de pruebas (design.md: "página local de pago
+/// con aprobar/rechazar"); `MERCADOPAGO` = el proveedor real. Se elige por env
+/// (T4).
+enum PaymentProvider {
+  SIMULADO
+  MERCADOPAGO
+}
+
+/// Un cobro, institucional o individual. Exactamente uno de
+/// `organizationId`/`userId` va cargado — la migración agrega un CHECK que lo
+/// hace cumplir en la base (mismo criterio que el CHECK de `AppSettings.id`:
+/// no se puede expresar en `schema.prisma`, se agrega a mano en el SQL).
+model Payment {
+  id                       String                  @id @default(uuid())
+  organizationId           String?
+  organization             Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationLicenseId    String?
+  organizationLicense      OrganizationLicense?    @relation(fields: [organizationLicenseId], references: [id], onDelete: SetNull)
+  userId                   String?
+  user                     User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  individualSubscriptionId String?
+  individualSubscription   IndividualSubscription? @relation(fields: [individualSubscriptionId], references: [id], onDelete: SetNull)
+  amountArs                Decimal                 @db.Decimal(12, 2)
+  status                   PaymentStatus           @default(PENDING)
+  provider                 PaymentProvider
+  /// Id del pago/orden del lado del proveedor. Único: es la clave de
+  /// idempotencia del webhook (design.md: "nunca se confía en el cuerpo del
+  /// webhook; se relee el recurso en el proveedor" — este id es lo que se usa
+  /// para releerlo). `null` sólo mientras el adaptador simulado no lo asignó
+  /// todavía.
+  providerPaymentId        String?                 @unique
+  /// Qué período cubre este cobro (coincide con lo que calcula
+  /// `src/lib/billing/ciclo.ts#firstCharge` para el primer cobro de una
+  /// licencia institucional).
+  periodStart              DateTime
+  periodEnd                DateTime
+  /// El estado crudo tal cual lo devolvió el proveedor, para diagnóstico —
+  /// `status` es la traducción normalizada que usa el resto del código.
+  rawStatus                String?
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+
+  invoice Invoice?
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([providerPaymentId])
+}
+
+enum InvoiceStatus {
+  PENDING
+  ISSUED
+  FAILED
+}
+
+/// Factura C (el dueño es monotributista — decisión del dueño, "facturar no
+/// es opción"). 1:1 con `Payment`. `type` es una columna y no un enum de una
+/// sola opción a propósito: el día que el dueño deje de ser monotributista y
+/// pueda emitir Factura A/B, no hace falta una migración de esquema.
+model Invoice {
+  id                 String        @id @default(uuid())
+  paymentId          String        @unique
+  payment            Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  type               String        @default("C")
+  pointOfSale        Int
+  /// `null` hasta que ARCA (o el adaptador simulado) la emite.
+  number             Int?
+  cae                String?
+  caeDueDate         DateTime?
+  status             InvoiceStatus @default(PENDING)
+  /// Cuántas veces se reintentó emitirla (design.md: "reintento si ARCA
+  /// falla", T8).
+  attempts           Int           @default(0)
+  lastError          String?
+  /// Datos del receptor de la Factura C: CUIT/DNI institucional o del
+  /// docente individual.
+  recipientDocType   String
+  recipientDocNumber String
+  recipientName      String
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+}
+
+/// De dónde salió un movimiento del libro de créditos de un docente
+/// individual (nunca de una organización: "organizaciones no tienen
+/// créditos", decisión del dueño).
+enum CreditKind {
+  /// Bienvenida al crear la cuenta FREE. Única por usuario (ver el índice más
+  /// abajo) — nunca expira (decisión de diseño).
+  WELCOME
+  /// Otorgamiento mensual perezoso (FREE: 50/mes; ver
+  /// `src/lib/billing/creditos.ts` para la semántica exacta de "no se
+  /// acumulan").
+  MONTHLY_GRANT
+  /// Otorgamiento mensual del plan Individual pago (1.000/mes).
+  PLAN_GRANT
+  /// Débito por el costo real de un turno (T2: `recordUsage` para una cuenta
+  /// personal).
+  USAGE
+  /// Corrección manual de saldo (superadmin, T7).
+  ADJUSTMENT
+  /// Vencimiento de créditos de un mes anterior que no se usaron (ver
+  /// `MONTHLY_GRANT`) — negativo, nunca positivo.
+  EXPIRY
+}
+
+/// Libro de movimientos de crédito de un docente individual. El saldo es la
+/// SUMA de `delta`: no hay columna de saldo desnormalizada (mismo criterio
+/// que `ProjectLike` — un contador paralelo se desincroniza).
+model CreditLedgerEntry {
+  id           String      @id @default(uuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Positivo en WELCOME/MONTHLY_GRANT/PLAN_GRANT, negativo en
+  /// USAGE/EXPIRY, cualquier signo en ADJUSTMENT.
+  delta        Int
+  kind         CreditKind
+  /// Sólo en un `USAGE`: el turno que generó el débito. `onDelete: SetNull`
+  /// porque el movimiento de crédito tiene que sobrevivir aunque el turno se
+  /// pode más adelante.
+  tokenUsageId String?
+  tokenUsage   TokenUsage? @relation(fields: [tokenUsageId], references: [id], onDelete: SetNull)
+  /// Llave de idempotencia de un otorgamiento: "YYYY-MM" en hora de Buenos
+  /// Aires para `MONTHLY_GRANT`/`PLAN_GRANT` (ver
+  /// `src/lib/billing/creditos.ts#monthlyGrantPeriodKey`), la cadena fija
+  /// "once" para `WELCOME` (una sola vez por usuario, para siempre). `null`
+  /// en USAGE/ADJUSTMENT/EXPIRY, que no son idempotentes por período — el
+  /// índice único de abajo no los alcanza (Postgres no compara NULLs como
+  /// iguales), y está bien: no hace falta.
+  periodKey    String?
+  createdAt    DateTime    @default(now())
+
+  /// Idempotencia: un otorgamiento del mismo tipo no se duplica en el mismo
+  /// período (o, para WELCOME, nunca más de una vez).
+  @@unique([userId, kind, periodKey])
+  @@index([userId, createdAt])
+}
+
 enum ModelChoice {
   /// Fuera de servicio desde 2026-08-27 (dejo de ser gratuito). Se conserva
   /// porque hay consumo historico que lo referencia.
@@ -200,14 +571,14 @@ enum ModelChoice {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
+  id                               String                     @id @default(uuid())
+  email                            String                     @unique
   /// Opcional: quien entra con Google no tiene contrasena en Kodu.
-  passwordHash String?
+  passwordHash                     String?
   /// `sub` de Google. Identifica la cuenta aunque cambie el correo visible.
-  googleId     String?      @unique
-  name         String
-  role         Role         @default(DOCENTE)
+  googleId                         String?                    @unique
+  name                             String
+  role                             Role                       @default(DOCENTE)
   /// Permiso individual de acceso a la IA (design.md #10). `null` = sin
   /// opinion, sigue la regla de dominio; `true` = habilitado a mano por un
   /// admin sin importar el dominio; `false` = revocado a mano sin importar
@@ -215,37 +586,37 @@ model User {
   /// `deepseekEnabled` y contestaba otra pregunta (si el docente podia usar
   /// DeepSeek); sus valores `true` NO se heredan como permiso — la migracion
   /// los limpia a `null`.
-  aiAccessOverride Boolean?
+  aiAccessOverride                 Boolean?
   /// Cuenta compartida de demo publica (design.md #8; specs/demo-mode).
   /// Ver el indice unico parcial en la migracion 20260922000000: a lo sumo
   /// una fila en true, igual que AiModel.isDefault.
-  isDemo       Boolean      @default(false)
+  isDemo                           Boolean                    @default(false)
   /// odd/tasks/organizaciones.md (T1/T2): la sede a la que pertenece (siempre
   /// una `Organization` de kind `CAMPUS`, regla de aplicación — un docente
   /// pertenece a UNA sola, decisión del dueño). `NULL` = cuenta personal.
   /// `onDelete: SetNull`: borrar la organización nunca borra al docente, lo
   /// deja personal de nuevo.
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId                   String?
+  organization                     Organization?              @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   /// odd/tasks/organizaciones.md (T1/T3): cuándo (y por qué medio,
   /// `emailVerificationSource`) se confirmó el email. `NULL` = todavía no
   /// verificado — sólo posible en un registro con contraseña con
   /// `RESEND_API_KEY` cargada (ver `src/lib/orgs/membresia.ts#emailConfiable`).
-  emailVerifiedAt         DateTime?
-  emailVerificationSource EmailVerificationSource?
-  createdAt    DateTime     @default(now())
-  projects     Project[]
-  rules        CustomRule[]
-  tokenUsage   TokenUsage[]
+  emailVerifiedAt                  DateTime?
+  emailVerificationSource          EmailVerificationSource?
+  createdAt                        DateTime                   @default(now())
+  projects                         Project[]
+  rules                            CustomRule[]
+  tokenUsage                       TokenUsage[]
   /// "Me gusta" que este docente puso en recursos publicados de otros
   /// (o propios) en la galeria. Back-relation de ProjectLike.user.
-  likes        ProjectLike[]
+  likes                            ProjectLike[]
   /// M8 (design.md #7): recursos ajenos donde esta cuenta actuó como el
   /// último admin. Back-relation de Project.lastAdminActor.
-  adminActedProjects Project[]    @relation("ProjectLastAdminActor")
+  adminActedProjects               Project[]                  @relation("ProjectLastAdminActor")
   /// M8: turnos de chat que esta cuenta escribió actuando como admin sobre
   /// un recurso que no le pertenece. Back-relation de ChatMessage.authorUser.
-  authoredMessages   ChatMessage[] @relation("ChatMessageAuthor")
+  authoredMessages                 ChatMessage[]              @relation("ChatMessageAuthor")
   /// odd/tasks/organizaciones.md: back-relations de las tablas de
   /// organización (T1). Ninguna cambia el borrado de esta cuenta — todas son
   /// onDelete: SetNull o Cascade del OTRO lado (ver cada modelo).
@@ -257,6 +628,15 @@ model User {
   emailVerificationTokens          EmailVerificationToken[]
   /// odd/tasks/taller-de-ideas.md: las charlas del Taller de ideas ("Mis ideas").
   ideaSessions                     IdeaSession[]
+  /// odd/tasks/planes-y-cobros.md (T1): plan Individual pago de esta cuenta
+  /// (docente sin organización). 1:1 opcional — sin fila = plan Gratis (T2
+  /// lee la ausencia como FREE, nunca se crea una fila para el plan gratis).
+  individualSubscription           IndividualSubscription?
+  /// Pagos individuales de esta cuenta (T1/T4).
+  payments                         Payment[]
+  /// Libro de créditos de esta cuenta (T1/T2). Sólo tiene filas una cuenta
+  /// personal: las organizaciones no tienen créditos (decisión del dueño).
+  creditLedgerEntries              CreditLedgerEntry[]
 
   @@index([organizationId])
 }
@@ -299,48 +679,52 @@ enum UsagePurpose {
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
 /// por usuario del proveedor pago, y poder ver quien gasta cuanto.
 model TokenUsage {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                       String              @id @default(uuid())
+  userId                   String
+  user                     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
-  provider         ModelChoice?
-  aiModelId        String?
-  aiModel          AiModel?     @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
-  model            String
-  promptTokens     Int          @default(0)
-  completionTokens Int          @default(0)
+  provider                 ModelChoice?
+  aiModelId                String?
+  aiModel                  AiModel?            @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+  model                    String
+  promptTokens             Int                 @default(0)
+  completionTokens         Int                 @default(0)
   /// Subconjunto de promptTokens, NO un adicional (ver src/lib/ai/provider.ts).
-  cachedInputTokens Int         @default(0)
+  cachedInputTokens        Int                 @default(0)
   /// A que recurso perteneceio el turno. NULL en todo lo historico: nunca se
   /// backfillea, es dato que no existia antes de esta columna.
-  projectId String?
-  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId                String?
+  project                  Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
   /// Congelado al momento de escribir, con los tres precios vigentes ese dia
   /// (ver abajo). NULL cuando a ese motor le faltaba algun precio: nunca se
   /// inventa un costo. Escala 10, no 6: ver la migracion 20260920000000.
-  costUsd                  Decimal? @db.Decimal(16, 10)
-  priceInputSnapshot       Decimal? @db.Decimal(12, 6)
-  priceOutputSnapshot      Decimal? @db.Decimal(12, 6)
-  priceCachedInputSnapshot Decimal? @db.Decimal(12, 6)
-  createdAt        DateTime     @default(now())
+  costUsd                  Decimal?            @db.Decimal(16, 10)
+  priceInputSnapshot       Decimal?            @db.Decimal(12, 6)
+  priceOutputSnapshot      Decimal?            @db.Decimal(12, 6)
+  priceCachedInputSnapshot Decimal?            @db.Decimal(12, 6)
+  createdAt                DateTime            @default(now())
   /// odd/tasks/organizaciones.md (T1): la sede CONGELADA al momento de la
   /// llamada (decisión del dueño — "costo congelado por organización"). Si el
   /// docente cambia de sede después, este historial no se mueve. `NULL` en
   /// las filas de la demo (queda fuera de toda organización) y en todo lo
   /// histórico de una cuenta personal. `onDelete: SetNull`: borrar la
   /// organización no borra el consumo ya facturado.
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationId           String?
+  organization             Organization?       @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   /// Para qué fue este turno. `NULL` en toda fila histórica (T1) — nunca se
   /// inventa un propósito para consumo que ya pasó.
-  purpose        UsagePurpose?
+  purpose                  UsagePurpose?
   /// odd/tasks/organizaciones.md (T1): si este turno correspondía a un
   /// recurso NUEVO (para sumar su costo total contra el de un ajuste). Las
   /// correcciones y verificaciones lo heredan de la última fila
   /// GENERATION/ADJUSTMENT del mismo proyecto y usuario (T5) — acá sólo se
   /// declara la columna. `NULL` en las filas históricas, mismo criterio que
   /// `purpose`.
-  forNewResource Boolean?
+  forNewResource           Boolean?
+  /// odd/tasks/planes-y-cobros.md (T1/T2): a lo sumo una fila de crédito
+  /// `USAGE` referencia este turno (débito del costo real, sólo para cuentas
+  /// personales). Back-relation de CreditLedgerEntry.tokenUsage.
+  creditLedgerEntries      CreditLedgerEntry[]
 
   @@index([userId, provider])
   @@index([createdAt])
@@ -350,44 +734,44 @@ model TokenUsage {
 }
 
 model Project {
-  id            String         @id @default(uuid())
-  title         String         @default("Nuevo Recurso")
-  description   String?
-  slug          String         @unique
-  currentHtml   String         @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
-  screenshotUrl String?
+  id                String            @id @default(uuid())
+  title             String            @default("Nuevo Recurso")
+  description       String?
+  slug              String            @unique
+  currentHtml       String            @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
+  screenshotUrl     String?
   /// Cuando se saco la portada vigente. Se compara contra `updatedAt` para
   /// saber si quedo vieja (ver design.md §6 de publicacion-likes-y-motores).
   /// NULL = portada sacada antes de que esta columna existiera; se trata
   /// como FRESCA, nunca como vieja.
-  screenshotAt  DateTime?
-  isInGallery   Boolean        @default(false)
+  screenshotAt      DateTime?
+  isInGallery       Boolean           @default(false)
   /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
-  selectedModel ModelChoice    @default(MINIMAX)
-  aiModelId     String?
-  aiModel       AiModel?       @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
-  userId        String
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedModel     ModelChoice       @default(MINIMAX)
+  aiModelId         String?
+  aiModel           AiModel?          @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+  userId            String
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Marca los recursos creados por la cuenta compartida de demo (design.md
   /// #8): habilita el purgado masivo desde /admin/demo sin rozar nada de
   /// docentes reales.
-  createdByDemo Boolean        @default(false)
+  createdByDemo     Boolean           @default(false)
   /// odd/tasks/generacion-simple-y-reanudable.md (T2): opt-in per project for
   /// "3 versions per request", off by default. Only takes effect when
   /// `AppSettings.versionsForAll` is also on — see
   /// `src/lib/ai/versiones.ts`/`capacidades.ts`.
-  versionsEnabled Boolean      @default(false)
-  threads       ChatThread[]
-  assets        ProjectAsset[]
-  tokenUsage    TokenUsage[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  versionsEnabled   Boolean           @default(false)
+  threads           ChatThread[]
+  assets            ProjectAsset[]
+  tokenUsage        TokenUsage[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
   /// M8 (design.md #7): último admin que actuó sobre este recurso sin ser
   /// su dueño, y cuándo. Un puntero simple, no un historial — se
   /// sobrescribe en cada mutación hecha por un admin en nombre de otro
   /// docente. NULL mientras el dueño es el único que lo tocó.
   lastAdminActorId  String?
-  lastAdminActor    User?      @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
+  lastAdminActor    User?             @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
   lastAdminActionAt DateTime?
   likes             ProjectLike[]
   /// T4 ("Deshacer cambios de la IA"): instantáneas
@@ -416,35 +800,35 @@ enum IdeaMode {
 /// recurso recién se crea al tocar "Crear mi recurso"), por eso no cuelga de
 /// `Project` sino del docente.
 model IdeaSession {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  mode        IdeaMode
+  id                         String   @id @default(uuid())
+  userId                     String
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode                       IdeaMode
   /// Nombre corto de la idea, lo propone la IA cuando ya lo sabe. NULL al
   /// principio: "Mis ideas" muestra el tema o "Idea sin nombre" mientras tanto.
-  title       String?
+  title                      String?
   /// JSON de `FichaIdea` (`src/lib/taller/ficha.ts`): lo que se va sabiendo,
   /// campo por campo. Texto y no `Json` por el mismo criterio que
   /// `ChatMessage.checklist`: se lee y se escribe entero, nunca se consulta
   /// adentro.
-  brief       String   @default("{}")
+  brief                      String   @default("{}")
   /// El pedido final que se le va a mandar al editor. NULL hasta que la IA lo
   /// arma; después el docente lo puede editar a mano.
-  finalPrompt String?
+  finalPrompt                String?
   /// El docente editó `finalPrompt` a mano después de la última respuesta de
   /// la IA: el próximo turno se lo avisa al modelo, igual que
   /// `codeEditedByTeacher` en el editor.
-  finalPromptEditedByTeacher Boolean @default(false)
+  finalPromptEditedByTeacher Boolean  @default(false)
   /// Una línea para la ficha del recurso ("qué es y para quién"). La propone
   /// la IA junto con el pedido.
-  description String?
+  description                String?
   /// El recurso que salió de esta charla. NULL mientras la idea está en
   /// curso; con valor, la charla queda de sólo lectura. `SetNull`: borrar el
   /// recurso no borra la charla, que vuelve a quedar en curso.
-  projectId   String?  @unique
-  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  projectId                  String?  @unique
+  project                    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
   messages IdeaMessage[]
   assets   IdeaAsset[]
@@ -454,23 +838,23 @@ model IdeaSession {
 
 /// odd/tasks/taller-de-ideas.md: un mensaje de la charla del Taller.
 model IdeaMessage {
-  id        String      @id @default(uuid())
-  sessionId String
-  session   IdeaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String // "user" | "assistant"
+  id          String      @id @default(uuid())
+  sessionId   String
+  session     IdeaSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String // "user" | "assistant"
   /// Lo que se ve en la burbuja. En un mensaje de la IA, sin las preguntas ni
   /// las ideas: esas viajan aparte, abajo.
-  content   String
+  content     String
   /// Sólo en mensajes de la IA: JSON de `PreguntaTaller[]`, las preguntas con
   /// sus respuestas sugeridas para tocar.
-  questions String?
+  questions   String?
   /// Sólo en mensajes de la IA: JSON de `IdeaPropuesta[]`, las 2 o 3 ideas que
   /// propuso (modo "tengo un tema").
-  proposals String?
+  proposals   String?
   /// Sólo en mensajes del docente: JSON de URLs adjuntas, mismo criterio que
   /// `ChatMessage.attachments`.
   attachments String?
-  createdAt DateTime    @default(now())
+  createdAt   DateTime    @default(now())
 
   @@index([sessionId, createdAt])
 }
@@ -517,14 +901,14 @@ model ProjectLike {
 model AiProvider {
   /// Generado por la app con crypto.randomUUID() ANTES de cifrar la clave: es
   /// el AAD del cifrado (ver src/lib/crypto/secretos.ts). No lleva @default.
-  id String @id
+  id        String @id
   /// Slug estable: "gmi", "deepseek", "openrouter". Es lo que hace legible
   /// "el mismo proveedor dos veces".
-  kind String
+  kind      String
   /// Lo que distingue dos cuentas del mismo kind en el desplegable del
   /// formulario de motor: "GMI — cuenta de la escuela".
-  label String
-  baseUrl String
+  label     String
+  baseUrl   String
   /// T2 (verificador): "chat" (Chat Completions, todo lo que había antes de
   /// esta columna) o "responses" (OpenAI Responses API — la única que
   /// combina function tools con razonamiento). String, no enum: mismo
@@ -534,7 +918,7 @@ model AiProvider {
   /// AES-256-GCM. Formato "v1.<nonce>.<ct>.<tag>" en base64url. Nunca sale del server.
   apiKeyCipher String?
   /// Ultimos 4 caracteres de la clave en claro, para reconocerla en el panel.
-  apiKeyHint String?
+  apiKeyHint   String?
 
   /// Apagar la cuenta apaga sus motores sin tocarles su propio `enabled`, así
   /// que volver a prenderla restaura el estado anterior de cada uno.
@@ -550,27 +934,27 @@ model AiProvider {
 /// verdad en tiempo de ejecucion. Cada fila es un motor que un admin puede
 /// prender, apagar, reordenar o marcar como el que arranca por defecto.
 model AiModel {
-  id String @id
+  id            String     @id
   /// La cuenta de proveedor dueña de la clave y la URL base (ver AiProvider).
   /// `onDelete: Restrict` porque no hay ruta de borrado de proveedor.
-  providerId String
-  provider   AiProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  providerId    String
+  provider      AiProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
   /// El identificador exacto que espera la API del proveedor.
   providerModel String
   /// Lo que ve el docente en el selector.
-  displayName String
+  displayName   String
   /// Una linea para el docente, debajo del selector.
-  description String?
+  description   String?
   /// Nota interna. El docente nunca la ve.
-  adminNote String?
+  adminNote     String?
 
   /// Precio APROXIMADO en USD por millon de tokens. NULL = sin cargar (≠ 0 = gratis).
-  priceInputPerMToken Decimal? @db.Decimal(12, 6)
+  priceInputPerMToken       Decimal? @db.Decimal(12, 6)
   /// Entrada que el proveedor ya tenia cacheada. Suele costar bastante menos.
   priceCachedInputPerMToken Decimal? @db.Decimal(12, 6)
   priceOutputPerMToken      Decimal? @db.Decimal(12, 6)
 
-  enabled Boolean @default(true)
+  enabled             Boolean @default(true)
   /// Aparece en el selector del docente. DeepSeek va en false: es el respaldo.
   selectableByTeacher Boolean @default(true)
   /// Ver el indice unico parcial en la migracion: a lo sumo un true.
@@ -589,11 +973,11 @@ model AiModel {
   /// escribe, no esto. Alto a propósito, porque la IA reescribe el recurso
   /// ENTERO en cada turno y no un diff: la respuesta pesa lo que pesa el
   /// documento, siempre.
-  maxOutputTokens Int     @default(131072)
-  maxInputChars   Int     @default(400000)
-  supportsVision  Boolean @default(false)
+  maxOutputTokens      Int     @default(131072)
+  maxInputChars        Int     @default(400000)
+  supportsVision       Boolean @default(false)
   /// Tope por usuario, en tokens. 0 = sin tope.
-  userTokenLimit  Int     @default(0)
+  userTokenLimit       Int     @default(0)
   /// La ventana sobre la que se mide `userTokenLimit`, en horas. 0 = desde
   /// siempre (el comportamiento viejo: un tope de por vida que no se repone).
   ///
@@ -602,17 +986,17 @@ model AiModel {
   /// programado que resetee contadores, no hay estado que se pueda corromper,
   /// y el cupo se va liberando de a poco en vez de volver todo junto a
   /// medianoche.
-  userTokenWindowHours Int @default(0)
+  userTokenWindowHours Int     @default(0)
   /// Cuánto se le deja razonar antes de contestar, para los modelos que lo
   /// soportan: "none" | "low" | "high". NULL = no mandar el parámetro,
   /// que es lo correcto para todo proveedor que no lo conozca (mandarlo a
   /// ciegas es un 400). Ver src/lib/ai/provider.ts.
-  reasoningEffort String?
+  reasoningEffort      String?
   /// Con qué nombre viaja el razonamiento, porque no hay uno solo:
   ///   "reasoning_effort" → DeepSeek, dialecto OpenAI. Manda el nivel tal cual.
   ///   "thinking"         → MiniMax M3. Manda {type: "enabled"|"disabled"}.
   /// NULL = usar "reasoning_effort". Sólo importa si reasoningEffort no es NULL.
-  reasoningParam  String?
+  reasoningParam       String?
 
   fallbackModelId String?
   fallbackModel   AiModel?  @relation("Respaldo", fields: [fallbackModelId], references: [id], onDelete: SetNull)
@@ -640,40 +1024,40 @@ model ChatThread {
 }
 
 model ChatMessage {
-  id          String     @id @default(uuid())
-  threadId    String
-  thread      ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  role        String // "user" | "assistant" | "system"
-  content     String
-  attachments String? // URLs de archivos o PDFs parseados
-  createdAt   DateTime   @default(now())
+  id                    String            @id @default(uuid())
+  threadId              String
+  thread                ChatThread        @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  role                  String // "user" | "assistant" | "system"
+  content               String
+  attachments           String? // URLs de archivos o PDFs parseados
+  createdAt             DateTime          @default(now())
   /// Quién escribió este turno cuando NO fue la persona dueña del recurso
   /// (M8, design.md #7): un admin actuando en nombre de un docente. NULL en
   /// el caso normal, que es el dueño escribiendo su propio recurso.
-  authorUserId String?
-  authorUser   User?    @relation("ChatMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorUserId          String?
+  authorUser            User?             @relation("ChatMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
   /// T4: cuándo se deshizo este mensaje. `NULL` =
   /// sigue vigente. Deshacer un turno marca A LA VEZ el mensaje "assistant"
   /// que lo cierra y el pedido "user" del docente que lo disparó, así el
   /// modelo deja de ver el turno ENTERO (ver el filtro de historial en
   /// stream.ts) y no sólo la mitad.
-  undoneAt     DateTime?
+  undoneAt              DateTime?
   /// La instantánea de "el HTML de antes de este turno", sólo en mensajes
   /// "assistant" que cambiaron el recurso. Relación 1:1 opcional — la FK
   /// vive del lado de ProjectSnapshot (`chatMessageId` es `@unique` ahí).
-  snapshot     ProjectSnapshot?
+  snapshot              ProjectSnapshot?
   /// T9 ("Varias versiones al crear un recurso"):
   /// cuál de `variants` está elegida ahora mismo (1, 2 o 3). Se pone en 1 al
   /// crear el turno (`Project.currentHtml` ya arranca en la versión 1) y
   /// cambia con `POST /api/projects/[id]/variant`. `NULL` en cualquier
   /// mensaje que no sea un turno de versiones.
-  chosenVariantIndex Int?
+  chosenVariantIndex    Int?
   /// Las hasta 3 versiones que generó ESTE turno en paralelo (T9), cuando
   /// correspondía (`puedePedirVersiones` Y el recurso todavía era el de
   /// arranque). `stream.ts` las borra al empezar cualquier turno POSTERIOR
   /// del mismo proyecto — nunca se acumulan turno a turno. Back-relation de
   /// ResourceVariant.chatMessage.
-  variants     ResourceVariant[]
+  variants              ResourceVariant[]
   /// T16 (round 4, odd/tasks/arnes-robustez.md): el checklist de
   /// comportamientos armado ANTES de generar un recurso NUEVO
   /// (`src/lib/ai/checklist.ts`, JSON de `ItemChecklist[]`, mismo criterio
@@ -684,7 +1068,7 @@ model ChatMessage {
   /// "assistant" con `checklist != null` y `undoneAt == null` más reciente
   /// (`checklistActual`, `src/lib/ai/checklist-db.ts`) — deshacer ese turno
   /// lo descarta solo, sin lógica aparte.
-  checklist    String?
+  checklist             String?
   /// T5 (odd/tasks/generacion-simple-y-reanudable.md): la huella
   /// (`fingerprintHtml`) del HTML que este turno dejó como
   /// `Project.currentHtml`, capturada al persistir el turno y REFRESCADA
@@ -699,14 +1083,14 @@ model ChatMessage {
   /// verdad candidata: las filas viejas se backfillearon a un instante fijo
   /// "legacy" (no `NULL`) para que se lean como "ya resueltas" para siempre,
   /// nunca como pendientes — ver la migración.
-  postChecksAt DateTime?
+  postChecksAt          DateTime?
   /// T5: una pestaña que está A PUNTO de correr el pipeline reanudado
   /// reclama acá (UPDATE atómico, `post-checks-db.ts`) para que dos
   /// pestañas abiertas al mismo proyecto nunca lo corran las dos. Un reclamo
   /// que nunca terminó en `postChecksAt` (la pestaña se cerró a mitad de
   /// camino) queda viejo pasados `POST_CHECKS_CLAIM_STALE_MS` y cualquier
   /// otra pestaña puede reintentar.
-  postChecksClaimedAt DateTime?
+  postChecksClaimedAt   DateTime?
 
   @@index([threadId, createdAt])
 }
@@ -772,15 +1156,15 @@ model CustomRule {
 }
 
 model ProjectAsset {
-  id        String   @id @default(uuid())
-  projectId String
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  filename  String
-  url       String
-  fileType  String // "image" | "pdf"
+  id            String   @id @default(uuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filename      String
+  url           String
+  fileType      String // "image" | "pdf"
   // Texto extraido de los PDFs para inyectarlo como contexto de la IA (SPEC 4.2).
   extractedText String?
-  createdAt DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([projectId])
 }

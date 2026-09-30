@@ -97,6 +97,8 @@ async function main(): Promise<void> {
     console.log(`… Reditinere ya tiene ${dominiosExistentes} dominio(s): no se resiembra`);
   }
 
+  await seedCatalogoDePrecios();
+
   for (const rule of GLOBAL_RULES) {
     const existing = await prisma.customRule.findFirst({
       where: { title: rule.title, isGlobal: true },
@@ -112,6 +114,97 @@ async function main(): Promise<void> {
     }
   }
   console.log(`✔ ${GLOBAL_RULES.length} reglas globales sincronizadas`);
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T1): catálogo de precios editable desde el
+ * superadmin. Los montos de acá son PLACEHOLDER — el dueño los edita desde
+ * `/admin` (T7) apenas defina precios reales; sólo importa que el catálogo
+ * exista con una fila por banda/plan. `upsert` por `key` (única): correr el
+ * seed de nuevo nunca pisa un precio que el superadmin ya haya cambiado a
+ * mano — el `update: {}` no toca ninguna columna en una fila existente.
+ */
+async function seedCatalogoDePrecios(): Promise<void> {
+  const bandas: Array<{
+    key: 'PEQUENA' | 'MEDIANA' | 'GRANDE';
+    name: string;
+    minStudents: number;
+    maxStudents: number;
+    monthlyPriceArs: number;
+    sortOrder: number;
+  }> = [
+    { key: 'PEQUENA', name: 'Pequeña', minStudents: 1, maxStudents: 300, monthlyPriceArs: 90_000, sortOrder: 0 },
+    { key: 'MEDIANA', name: 'Mediana', minStudents: 301, maxStudents: 800, monthlyPriceArs: 180_000, sortOrder: 1 },
+    { key: 'GRANDE', name: 'Grande', minStudents: 801, maxStudents: 1500, monthlyPriceArs: 350_000, sortOrder: 2 },
+  ];
+
+  for (const banda of bandas) {
+    await prisma.institutionalBand.upsert({
+      where: { key: banda.key },
+      update: {},
+      create: {
+        key: banda.key,
+        name: banda.name,
+        minStudents: banda.minStudents,
+        maxStudents: banda.maxStudents,
+        // PLACEHOLDER (decisión del dueño: "los valores iniciales son de
+        // ejemplo"). Default sugerido = 10 × mensual (el ciclo cuesta 10
+        // cuotas, design.md), pero es una columna editable, no una cuenta
+        // derivada — ver el comentario del modelo en schema.prisma.
+        monthlyPriceArs: banda.monthlyPriceArs,
+        cyclePriceArs: banda.monthlyPriceArs * 10,
+        sortOrder: banda.sortOrder,
+      },
+    });
+  }
+  console.log(`✔ ${bandas.length} banda(s) institucional(es) sembrada(s) (precios PLACEHOLDER, editables en /admin)`);
+
+  const planes: Array<{
+    key: 'FREE' | 'INDIVIDUAL';
+    name: string;
+    monthlyPriceArs: number;
+    annualPriceArs: number | null;
+    monthlyCredits: number;
+    welcomeCredits: number;
+    sortOrder: number;
+  }> = [
+    { key: 'FREE', name: 'Gratis', monthlyPriceArs: 0, annualPriceArs: null, monthlyCredits: 50, welcomeCredits: 100, sortOrder: 0 },
+    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 1_000, welcomeCredits: 0, sortOrder: 1 },
+  ];
+
+  for (const plan of planes) {
+    await prisma.individualPlan.upsert({
+      where: { key: plan.key },
+      update: {},
+      create: {
+        key: plan.key,
+        name: plan.name,
+        monthlyPriceArs: plan.monthlyPriceArs,
+        annualPriceArs: plan.annualPriceArs,
+        monthlyCredits: plan.monthlyCredits,
+        welcomeCredits: plan.welcomeCredits,
+        sortOrder: plan.sortOrder,
+      },
+    });
+  }
+  console.log(`✔ ${planes.length} plan(es) individual(es) sembrado(s) (precios PLACEHOLDER, editables en /admin)`);
+
+  // La migración 20261012000000_planes_y_cobros ya inserta esta fila (mismo
+  // criterio que AppSettings): acá sólo se asegura que exista, sin pisar
+  // nada que el superadmin ya haya cambiado.
+  await prisma.billingSettings.upsert({
+    where: { id: 1 },
+    update: {},
+    create: {
+      id: 1,
+      creditUsdValue: 0.0025,
+      trialDays: 30,
+      graceDays: 7,
+      monotributoAnnualCapArs: null,
+      hablemosThresholdStudents: 1500,
+    },
+  });
+  console.log('✔ configuración de cobro (BillingSettings) verificada');
 }
 
 main()
