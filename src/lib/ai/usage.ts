@@ -83,6 +83,61 @@ export function calcularCostoTurno(
 }
 
 /**
+ * odd/tasks/planes-y-cobros.md (T2b): conservador a propósito — más caro que
+ * cualquier motor real cargado hoy en el catálogo (ver `prisma/seed.ts`),
+ * para que subestimar el costo real de un motor sin precio nunca le salga
+ * gratis a Kodu. Sólo se usa cuando NI el turno concreto NI el motor default
+ * del catálogo tienen un precio cargado — el caso normal (motor default con
+ * precio) usa ESE precio, más ajustado a la realidad.
+ */
+const FALLBACK_PRICE_INPUT_PER_M_USD = 5;
+const FALLBACK_PRICE_OUTPUT_PER_M_USD = 15;
+
+/**
+ * odd/tasks/planes-y-cobros.md (T2b, encontrado en T2): `recordUsage` NUNCA
+ * debitaba nada a una cuenta personal cuando el motor usado no tenía precio
+ * cargado (`costUsd` queda `null` — "nunca se inventa un costo", ver
+ * `calcularCostoTurno`) — un docente podía generar gratis sin límite con
+ * cualquier motor al que el superadmin todavía no le cargó precio.
+ *
+ * Esta función estima un costo CONSERVADOR sólo para decidir CUÁNTOS
+ * CRÉDITOS debitar (nunca toca `TokenUsage.costUsd`, que sigue `null` — el
+ * resto del código sigue leyendo "null = costo real desconocido" sin que
+ * este débito lo contradiga): primero intenta con el precio del motor
+ * DEFAULT del catálogo (`AiModel.isDefault`, si tiene los tres precios
+ * cargados); si tampoco hay default con precio, usa el precio fijo de
+ * arriba. Devuelve `0` (nunca negativo) si ni con la estimación hay nada que
+ * cobrar (tokens en 0).
+ */
+export async function estimarCostoConservador(
+  promptTokens: number,
+  cachedInputTokens: number,
+  completionTokens: number,
+): Promise<Prisma.Decimal> {
+  const modeloDefault = await prisma.aiModel.findFirst({
+    where: { isDefault: true },
+    select: { priceInputPerMToken: true, priceOutputPerMToken: true, priceCachedInputPerMToken: true },
+  });
+
+  const precios: Precios =
+    modeloDefault?.priceInputPerMToken && modeloDefault?.priceOutputPerMToken
+      ? {
+          input: modeloDefault.priceInputPerMToken,
+          output: modeloDefault.priceOutputPerMToken,
+          cachedInput: modeloDefault.priceCachedInputPerMToken,
+        }
+      : {
+          input: new Prisma.Decimal(FALLBACK_PRICE_INPUT_PER_M_USD),
+          output: new Prisma.Decimal(FALLBACK_PRICE_OUTPUT_PER_M_USD),
+          cachedInput: null,
+        };
+
+  // `precios` nunca es `null` acá, así que `calcularCostoTurno` tampoco
+  // devuelve `costUsd: null`.
+  return calcularCostoTurno(promptTokens, cachedInputTokens, completionTokens, precios).costUsd!;
+}
+
+/**
  * El registro de un turno, ya sobre el catálogo (`AiModel`): `provider` (el
  * enum viejo) queda afuera a propósito — es dato histórico, no algo que las
  * filas nuevas vuelvan a escribir (ver design.md §3). La columna admite NULL
@@ -191,12 +246,25 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
 
   // odd/tasks/planes-y-cobros.md (T2): sólo las cuentas PERSONALES (sin
   // organización) consumen créditos — "organizaciones no tienen créditos",
-  // decisión del dueño. Sin costo conocido (motor con precio sin cargar) no
-  // se debita nada: nunca se inventa un costo (mismo criterio que
-  // `calcularCostoTurno`). Puede dejar el saldo en negativo para ESTE turno
-  // — el próximo pedido queda bloqueado por `resolverAccesoIa`.
-  if (organizationId === null && costo.costUsd !== null && costo.costUsd.greaterThan(0)) {
-    await debitUsage(record.userId, fila.id, costo.costUsd.toNumber());
+  // decisión del dueño. Puede dejar el saldo en negativo para ESTE turno —
+  // el próximo pedido queda bloqueado por `resolverAccesoIa`.
+  if (organizationId === null) {
+    if (costo.costUsd !== null && costo.costUsd.greaterThan(0)) {
+      await debitUsage(record.userId, fila.id, costo.costUsd.toNumber());
+    } else if (costo.costUsd === null) {
+      // odd/tasks/planes-y-cobros.md (T2b): el motor no tiene precio cargado
+      // — en vez de no debitar nada (lo que dejaba generar gratis sin
+      // límite), se debita una estimación conservadora. `TokenUsage.costUsd`
+      // sigue `null` (nunca se inventa el costo REAL, sólo se estima para
+      // decidir el débito de créditos).
+      console.warn(
+        `[billing] motor "${record.model}" sin precio cargado — se debita una estimación conservadora de créditos al usuario ${record.userId} (turno ${fila.id}).`,
+      );
+      const estimado = await estimarCostoConservador(record.promptTokens, record.cachedInputTokens, record.completionTokens);
+      if (estimado.greaterThan(0)) {
+        await debitUsage(record.userId, fila.id, estimado.toNumber());
+      }
+    }
   }
 }
 
