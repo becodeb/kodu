@@ -93,7 +93,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   encabezado y mensaje de "sin créditos". Chequeo: unidad + e2e.
 - [x] **T3 — Acceso por estado de licencia.** Prueba, activa, gracia de 7 días, solo lectura; `MANUAL` siempre activa.
   Chequeo: e2e.
-- [ ] **T4 — Cobro.** Puerto `PaymentGateway`, adaptador simulado (página local de pago con aprobar/rechazar que
+- [x] **T4 — Cobro.** Puerto `PaymentGateway`, adaptador simulado (página local de pago con aprobar/rechazar que
   dispara el webhook), adaptador Mercado Pago (suscripciones + pago único para el prorrateo), webhook idempotente,
   endpoints de checkout para institución e individual, cancelación y arrepentimiento. Chequeo: e2e con simulado.
 - [ ] **T5 — Alta de instituciones.** Formulario (nombre, colegio o red, matrícula, dominios, sedes), bloqueo de
@@ -104,9 +104,16 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
 - [ ] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
   pago, CAE guardado, reintento si ARCA falla. Chequeo: unidad + e2e con simulado.
-- [ ] **T2b — Débito sin precio.** Si el motor no tiene precio cargado, `costUsd` queda nulo y a una cuenta personal
+- [x] **T2b — Débito sin precio.** Si el motor no tiene precio cargado, `costUsd` queda nulo y a una cuenta personal
   no se le descuenta nada. Descontar con una estimación conservadora por tokens (o el precio del motor por defecto) y
   avisar en el superadmin. Encontrado en T2.
+- [ ] **T4b — Renovación del ciclo y del anual.** Mercado Pago no garantiza (no se pudo confirmar) que una suscripción
+  con `frequency: 12` cobre una vez por año, así que el ciclo lectivo y el anual individual se cobran como pago único y
+  se renuevan con un nuevo checkout. Falta: aviso 30 días antes del fin (banner + mail por Resend si está configurado)
+  con el enlace para pagar el ciclo siguiente.
+- [ ] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
+  Confirmar dos supuestos no verificados: que `PUT /preapproval` cambia el monto, y que cada cobro recurrente trae el
+  mismo `external_reference` (de eso depende distinguir primer cobro de renovación en `aplicar.ts`).
 - [ ] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
   (individual e institución).
 
@@ -125,7 +132,15 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   `unidad-planes` 39/39, `unidad` 77/77, `unidad-creditos` 9/9 (re-corrido por el orquestador), `planes-acceso` 8/8,
   `org-acceso` 7/7, `consumo-proposito` 8/8 (se les agregó licencia `MANUAL` a sus organizaciones de prueba y se
   actualizaron dos escenarios que suponían "cuenta personal = siempre bloqueada").
+- T4 y T2b (delegadas): `0d746dc`, `cd8666e`, `ac4e811`, `8842083`, `d0b29be`. Puerto `PaymentGateway` con adaptadores
+  `simulado` (página `/pago-simulado/[id]`, solo con `BILLING_PROVIDER=simulado`) y `mercadopago` (fetch, sin SDK),
+  webhook con `x-signature` que relee el recurso y es idempotente, `src/lib/billing/aplicar.ts` como único lugar que
+  aplica efectos. Mensual = suscripción; ciclo lectivo y anual = pago único (ver T4b). El arrepentimiento marca el pago
+  para reintegro manual (no hay reintegro automático). Hechos de Mercado Pago confirmados por búsqueda, no por la
+  página oficial (daba 404 a WebFetch). Chequeos: check y build verdes; re-corrido por el orquestador `unidad-planes`
+  45, `unidad` 77, `unidad-pasarela` 14, `unidad-creditos` 9 — todos verdes; `planes-cobro` 12/12 y `planes-acceso`
+  8/8 según el escritor.
 
 ## Próximo paso
 
-T4 (cobro) junto con T2b.
+T5 (alta de instituciones).
