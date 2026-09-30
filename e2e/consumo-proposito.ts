@@ -308,6 +308,16 @@ async function main(): Promise<void> {
     prisma.organization.create({ data: { name: ORG_A_NAME, kind: 'CAMPUS' } }),
     prisma.organization.create({ data: { name: ORG_B_NAME, kind: 'CAMPUS' } }),
   ]);
+  // odd/tasks/planes-y-cobros.md (T3): sin licencia, resolverAccesoIa deniega
+  // con `license_missing` (fail-closed) — estas organizaciones de prueba
+  // necesitan una MANUAL activa, igual que cualquier organización
+  // preexistente (T1), para poder generar con la IA en este script.
+  await prisma.organizationLicense.createMany({
+    data: [
+      { organizationId: orgA.id, status: 'MANUAL', declaredStudents: 0, createdVia: 'MANUAL' },
+      { organizationId: orgB.id, status: 'MANUAL', declaredStudents: 0, createdVia: 'MANUAL' },
+    ],
+  });
   console.log(`✔ dos organizaciones CAMPUS de prueba creadas (${orgA.id}, ${orgB.id})`);
 
   const docenteId = await asegurarDocente(DOCENTE_EMAIL, DOCENTE_PASSWORD, 'Docente E2E (consumo-proposito)', orgA.id);

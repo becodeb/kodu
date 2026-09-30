@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { createProject } from '../../../lib/projects.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
-import { puedeUsarLaIa } from '../../../lib/orgs/acceso.ts';
+import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 
 const createSchema = z.object({
   title: z.string().trim().min(1).max(120).default('Nuevo Recurso'),
@@ -18,8 +18,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * personal"): quien no puede usar la IA y no es superadmin no puede crear
    * recursos nuevos — los que ya tenía siguen ahí, sólo se corta el alta.
    */
-  if (!(await puedeUsarLaIa(user)) && user.role !== 'ADMIN') {
-    return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
+  if (user.role !== 'ADMIN') {
+    const accesoIa = await resolverAccesoIa(user);
+    if (!accesoIa.allowed) {
+      return fail(mensajeAccesoIa(accesoIa), 403, { reason: accesoIa.reason });
+    }
   }
 
   const parsed = createSchema.safeParse(await readBody(request));

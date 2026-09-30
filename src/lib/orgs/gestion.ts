@@ -88,9 +88,24 @@ export async function crearOrganizacion(actor: ActorGestion, datos: DatosNuevaOr
     }
   }
 
+  const parentIdFinal = datos.kind === 'CAMPUS' ? (datos.parentId ?? null) : null;
+
   const creada = await prisma.organization.create({
-    data: { name, kind: datos.kind, parentId: datos.kind === 'CAMPUS' ? (datos.parentId ?? null) : null },
+    data: { name, kind: datos.kind, parentId: parentIdFinal },
   });
+
+  // odd/tasks/planes-y-cobros.md (T3): sólo una organización de TOPE (sin
+  // padre) tiene licencia propia -- una sede que nace DENTRO de una red usa
+  // la de su red (comentario de `OrganizationLicense` en schema.prisma).
+  // Toda alta a mano del superadmin nace MANUAL activa (decisión del dueño:
+  // "organizaciones existentes quedan como MANUAL" -- una alta nueva del
+  // superadmin nunca pasó por la calculadora ni por la prueba de 30 días de
+  // T5, es en los hechos el mismo caso).
+  if (parentIdFinal === null) {
+    await prisma.organizationLicense.create({
+      data: { organizationId: creada.id, status: 'MANUAL', declaredStudents: 0, createdVia: 'MANUAL' },
+    });
+  }
 
   // Una sede nueva de una red que YA tiene dominio compartido cambia el
   // picker de esa red (sedesPorRed) — invalidar siempre es más barato que

@@ -42,7 +42,6 @@ const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@rededucativa.edu.ar';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'Kodu.Admin.2026';
 const DOCENTE_PASSWORD = 'Docente.E2E.2026';
 
-const REFUSAL = 'Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.';
 const CUENTA_PERSONAL_TEXTO = 'Tu cuenta es personal';
 
 // Sufijo único por corrida: nada de esto debería sobrevivir un `finally`,
@@ -76,12 +75,27 @@ const prisma = new PrismaClient({ adapter });
 
 const fixtureIds = { campus: '', red: '', sedeDeLaRed: '', archivar: '' };
 
+/**
+ * odd/tasks/planes-y-cobros.md (T3): toda organización de TOPE necesita su
+ * `OrganizationLicense` — sin ella, `resolverAccesoIa` deniega con
+ * `license_missing` (fail-closed, nunca "sin fila = acceso libre"). Estos
+ * fixtures se crean por Prisma directo (no por `crearOrganizacion`, que sí
+ * la pone sola), así que hay que ponerla a mano — `MANUAL` activa, mismo
+ * estado que cualquier organización preexistente (T1).
+ */
+async function conLicenciaManual(organizationId: string): Promise<void> {
+  await prisma.organizationLicense.create({
+    data: { organizationId, status: 'MANUAL', declaredStudents: 0, createdVia: 'MANUAL' },
+  });
+}
+
 async function crearFixtures(): Promise<void> {
   const campus = await prisma.organization.create({
     data: { name: `Campus E2E ${SUFIJO}`, kind: 'CAMPUS' },
     select: { id: true },
   });
   fixtureIds.campus = campus.id;
+  await conLicenciaManual(campus.id);
   await prisma.organizationDomain.create({ data: { organizationId: campus.id, pattern: DOMINIO_CAMPUS } });
   await prisma.organizationAllowedEmail.create({ data: { organizationId: campus.id, email: EMAIL_LISTA } });
 
@@ -90,6 +104,7 @@ async function crearFixtures(): Promise<void> {
     select: { id: true },
   });
   fixtureIds.red = red.id;
+  await conLicenciaManual(red.id);
   await prisma.organizationDomain.create({ data: { organizationId: red.id, pattern: DOMINIO_RED } });
   const sede = await prisma.organization.create({
     data: { name: `Sede de la red E2E ${SUFIJO}`, kind: 'CAMPUS', parentId: red.id },
@@ -102,6 +117,7 @@ async function crearFixtures(): Promise<void> {
     select: { id: true },
   });
   fixtureIds.archivar = archivar.id;
+  await conLicenciaManual(archivar.id);
   await prisma.organizationDomain.create({ data: { organizationId: archivar.id, pattern: DOMINIO_ARCHIVAR } });
 }
 
@@ -184,8 +200,12 @@ async function main(): Promise<void> {
     }
 
     // ───────────────────────────────────────────────────────────
-    // 2. Email personal: sin organización, no puede crear un recurso, ve la
-    //    pantalla de cuenta personal en /app.
+    // 2. Email personal: sin organización. odd/tasks/planes-y-cobros.md (T2)
+    //    le da créditos gratis (bienvenida + mensual) apenas se registra, así
+    //    que SÍ puede crear un recurso — ya no es "cuenta personal =
+    //    bloqueada sin más" (eso era la regla vieja de T2 de organizaciones,
+    //    reemplazada). Lo que sigue probando esta organización es que NO se
+    //    une a ninguna (nunca se le inventa una organización).
     // ───────────────────────────────────────────────────────────
     {
       const { page, body } = await registrar(EMAIL_PERSONAL);
@@ -195,19 +215,21 @@ async function main(): Promise<void> {
       const respuestaProyecto = await crearProyecto(page);
       assert.equal(
         respuestaProyecto.status(),
-        403,
-        `una cuenta personal no debe poder crear un recurso (dio ${respuestaProyecto.status()})`,
+        200,
+        `una cuenta personal recién creada tiene créditos gratis y debe poder crear un recurso (dio ${respuestaProyecto.status()})`,
       );
-      const cuerpo = (await respuestaProyecto.json()) as { error?: string };
-      assert.equal(cuerpo.error, REFUSAL, 'el mensaje de rechazo debe ser el literal del spec de acceso a la IA');
 
       await page.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
       const texto = await page.locator('body').textContent();
       assert.ok(
-        texto?.includes(CUENTA_PERSONAL_TEXTO),
-        `/app debe mostrar la pantalla de cuenta personal (vio: ${texto?.slice(0, 200)})`,
+        texto?.includes('créditos'),
+        `/app debe mostrar el saldo de créditos de una cuenta personal (vio: ${texto?.slice(0, 200)})`,
       );
-      console.log('✔ 2. email personal: sin organización, sin crear recursos, /app muestra "cuenta personal"');
+      assert.ok(
+        !texto?.includes(CUENTA_PERSONAL_TEXTO),
+        'con créditos disponibles ya no se muestra el cartel de "cuenta personal" bloqueada',
+      );
+      console.log('✔ 2. email personal: sin organización, con créditos gratis puede crear un recurso');
     }
 
     // ───────────────────────────────────────────────────────────
@@ -345,8 +367,10 @@ async function main(): Promise<void> {
         null,
         'un dominio de red no debe unir sola a ninguna sede — queda personal hasta elegir (T4)',
       );
+      // Sigue siendo una cuenta personal (T4, sin elegir sede todavía) — con
+      // créditos gratis (T2) igual puede crear un recurso mientras tanto.
       const respuestaProyecto = await crearProyecto(page);
-      assert.equal(respuestaProyecto.status(), 403, 'sigue siendo una cuenta personal: no puede crear recursos');
+      assert.equal(respuestaProyecto.status(), 200, 'una cuenta personal con créditos gratis puede crear un recurso');
       console.log('✔ 6. dominio de una NETWORK: la cuenta queda personal, pendiente del picker de sede (T4)');
     }
 
