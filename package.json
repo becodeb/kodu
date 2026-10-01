@@ -14,7 +14,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test:cobros": "tsx scripts/probar-cobros.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
