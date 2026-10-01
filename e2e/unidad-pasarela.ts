@@ -98,6 +98,59 @@ await prueba('verifyNotification: sin MP_WEBHOOK_SECRET configurado, no hay nada
   assert.equal(gateway.verifyNotification(headers, query), true);
 });
 
+await prueba('verifyNotification: el manifiesto usa data.id en minúsculas (T4c fase 3, doc oficial)', () => {
+  // Un id de preapproval es hex alfanumérico — si Mercado Pago lo manda con
+  // alguna letra en mayúscula, el manifiesto tiene que firmarse con el id
+  // YA EN MINÚSCULAS (documentado) o la firma nunca valida.
+  const secret = 'clave-secreta-de-prueba';
+  const gateway = new GatewayMercadoPago('token-no-usado', secret);
+  const ts = '1700000000';
+  const idEnMinusculas = 'abc123def456';
+  const xSignature = armarXSignature(secret, idEnMinusculas, 'req-abc', ts);
+  const headers = new Headers({ 'x-signature': xSignature, 'x-request-id': 'req-abc' });
+  // La query llega con el id en MAYÚSCULAS (como podría mandarlo un cliente
+  // o quedar en un log) — debe igual validar porque se normaliza antes de
+  // construir el manifiesto.
+  const query = new URLSearchParams({ 'data.id': idEnMinusculas.toUpperCase() });
+  assert.equal(gateway.verifyNotification(headers, query), true);
+});
+
+// ─────────────────────────────────────────────────────────────
+// mercadopago.ts — parseNotification: formato nuevo (type+data.id, firmado)
+// y formato IPN legado (topic+id, sin firma) — T4c fase 3, confirmado
+// contra el sandbox real que Mercado Pago todavía manda el segundo.
+// ─────────────────────────────────────────────────────────────
+
+await prueba('parseNotification: formato nuevo {type, data:{id}} — payment', () => {
+  const gateway = new GatewayMercadoPago('token-no-usado', '');
+  const notif = gateway.parseNotification({ type: 'payment', data: { id: '123' } }, new URLSearchParams());
+  assert.deepEqual(notif, { kind: 'payment', id: '123' });
+});
+
+await prueba('parseNotification: formato IPN legado ?topic=payment&id=123 (sin cuerpo)', () => {
+  const gateway = new GatewayMercadoPago('token-no-usado', '');
+  const notif = gateway.parseNotification(null, new URLSearchParams({ topic: 'payment', id: '123' }));
+  assert.deepEqual(notif, { kind: 'payment', id: '123' });
+});
+
+await prueba('parseNotification: IPN legado ?topic=preapproval&id=X mapea a subscription_preapproval', () => {
+  const gateway = new GatewayMercadoPago('token-no-usado', '');
+  const notif = gateway.parseNotification(null, new URLSearchParams({ topic: 'preapproval', id: 'X' }));
+  assert.deepEqual(notif, { kind: 'subscription_preapproval', id: 'X' });
+});
+
+await prueba('parseNotification: IPN legado ?topic=authorized_payment&id=X mapea a subscription_authorized_payment', () => {
+  const gateway = new GatewayMercadoPago('token-no-usado', '');
+  const notif = gateway.parseNotification(null, new URLSearchParams({ topic: 'authorized_payment', id: 'X' }));
+  assert.deepEqual(notif, { kind: 'subscription_authorized_payment', id: 'X' });
+});
+
+await prueba('parseNotification: ?topic=merchant_order se ignora a propósito (unknown)', () => {
+  const gateway = new GatewayMercadoPago('token-no-usado', '');
+  const notif = gateway.parseNotification(null, new URLSearchParams({ topic: 'merchant_order', id: 'X' }));
+  assert.deepEqual(notif, { kind: 'unknown', id: 'X' });
+});
+
 // ─────────────────────────────────────────────────────────────
 // mercadopago.ts — createSubscriptionCheckout: colchón de start_date.
 // ─────────────────────────────────────────────────────────────

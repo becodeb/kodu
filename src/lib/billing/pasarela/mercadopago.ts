@@ -249,7 +249,12 @@ export class GatewayMercadoPago implements PaymentGateway {
 
     const xSignature = headers.get('x-signature');
     const xRequestId = headers.get('x-request-id');
-    const dataId = query.get('data.id') ?? query.get('id');
+    // T4c fase 3: el manifiesto SIEMPRE usa el `data.id` de la QUERY STRING
+    // (nunca el del cuerpo) y, según la documentación de Mercado Pago, se
+    // pasa a minúsculas cuando es alfanumérico (los ids de `preapproval`
+    // son hex alfanumérico; los de `payment` son sólo dígitos, donde
+    // `toLowerCase()` no cambia nada — es seguro aplicarlo siempre).
+    const dataId = (query.get('data.id') ?? query.get('id'))?.toLowerCase();
     if (!xSignature) return false;
 
     const partes = Object.fromEntries(
@@ -278,15 +283,23 @@ export class GatewayMercadoPago implements PaymentGateway {
 
   parseNotification(body: unknown, query: URLSearchParams): NotificacionRecibida {
     const data = body as { type?: string; action?: string; data?: { id?: string } } | null;
-    // Formato "nuevo" (type + data.id) y el legado (?topic=&id=) — Mercado
-    // Pago mandó los dos formatos históricamente según la integración.
+    // Formato "nuevo" (`type` + `data.id`, firmado con `x-signature`) y el
+    // IPN legado (`?topic=&id=`, SIN firma — T4c fase 3: confirmado contra
+    // el sandbox real que Mercado Pago todavía lo manda para Checkout Pro a
+    // través de `notification_url`). Los nombres de tópico difieren entre
+    // ambos formatos para el mismo evento: el IPN usa `preapproval` /
+    // `authorized_payment`, el nuevo usa `subscription_preapproval` /
+    // `subscription_authorized_payment`. `merchant_order` (IPN) se ignora a
+    // propósito — Kodu no usa envíos ni "orden de pago" de marketplace.
     const tipo = data?.type ?? query.get('topic') ?? undefined;
     const id = data?.data?.id ?? query.get('id') ?? query.get('data.id') ?? undefined;
 
     if (!id) return { kind: 'unknown', id: null };
     if (tipo === 'payment') return { kind: 'payment', id };
-    if (tipo === 'subscription_preapproval') return { kind: 'subscription_preapproval', id };
-    if (tipo === 'subscription_authorized_payment') return { kind: 'subscription_authorized_payment', id };
+    if (tipo === 'subscription_preapproval' || tipo === 'preapproval') return { kind: 'subscription_preapproval', id };
+    if (tipo === 'subscription_authorized_payment' || tipo === 'authorized_payment') {
+      return { kind: 'subscription_authorized_payment', id };
+    }
     return { kind: 'unknown', id };
   }
 }
