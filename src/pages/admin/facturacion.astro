@@ -1,0 +1,215 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { prisma } from '../../lib/db.ts';
+import { billingNow } from '../../lib/env.ts';
+import { resumenMonotributo } from '../../lib/billing/monotributo.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T7, punto 4): pagos, facturas y el panel del
+ * monotributo. El middleware ya garantiza ADMIN en /admin/**.
+ */
+const params = Astro.url.searchParams;
+const statusPedido = params.get('status');
+const providerPedido = params.get('provider');
+const mesPedido = params.get('mes'); // "YYYY-MM"
+
+const where: Record<string, unknown> = {};
+if (statusPedido && ['PENDING', 'APPROVED', 'REJECTED', 'REFUNDED'].includes(statusPedido)) where.status = statusPedido;
+if (providerPedido && ['SIMULADO', 'MERCADOPAGO', 'MANUAL'].includes(providerPedido)) where.provider = providerPedido;
+if (mesPedido && /^\d{4}-\d{2}$/.test(mesPedido)) {
+  const [year, month] = mesPedido.split('-').map(Number);
+  where.createdAt = { gte: new Date(Date.UTC(year, month - 1, 1)), lt: new Date(Date.UTC(year, month, 1)) };
+}
+
+const [pagos, monotributo] = await Promise.all([
+  prisma.payment.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+    include: {
+      organization: { select: { name: true } },
+      user: { select: { email: true } },
+      invoice: { select: { id: true, status: true, number: true, lastError: true, attempts: true } },
+    },
+  }),
+  resumenMonotributo(billingNow()),
+]);
+
+const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'numeric', year: 'numeric' });
+
+const ETIQUETA_ESTADO: Record<string, string> = { PENDING: 'Pendiente', APPROVED: 'Aprobado', REJECTED: 'Rechazado', REFUNDED: 'Reintegrado' };
+const ETIQUETA_FACTURA: Record<string, string> = { PENDING: 'En proceso', ISSUED: 'Emitida', FAILED: 'Falló' };
+
+const porcentaje = monotributo.porcentaje !== null ? Math.round(monotributo.porcentaje * 100) : null;
+const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red-500' : porcentaje >= 70 ? 'bg-amber-500' : 'bg-brand-600';
+---
+
+<AdminLayout title="Facturación">
+  <div class="max-w-4xl space-y-8">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Facturación</h1>
+      <p class="mt-1 text-sm text-ink-500">Pagos, facturas y el tope del monotributo.</p>
+    </div>
+
+    <section class="kodu-card p-4">
+      <h2 class="mb-2 text-sm font-semibold text-ink-900">Monotributo — últimos 12 meses</h2>
+      <p class="text-2xl font-display tabular-nums text-ink-900">{formateador.format(monotributo.facturado12m)}</p>
+      {monotributo.capArs !== null ? (
+        <>
+          <p class="text-xs text-ink-500">de un tope de {formateador.format(monotributo.capArs)} ({porcentaje}%)</p>
+          <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-sutil">
+            <div class={`h-full rounded-full ${colorBarra}`} style={`width: ${Math.min(100, porcentaje ?? 0)}%`} />
+          </div>
+          {porcentaje !== null && porcentaje >= 90 && (
+            <p class="mt-2 text-sm text-red-600">Te estás acercando al tope del monotributo.</p>
+          )}
+          {porcentaje !== null && porcentaje >= 70 && porcentaje < 90 && (
+            <p class="mt-2 text-sm text-amber-600">Te estás acercando al tope del monotributo.</p>
+          )}
+        </>
+      ) : (
+        <p class="text-xs text-ink-500">Sin tope cargado — configuralo en Precios.</p>
+      )}
+    </section>
+
+    <section class="kodu-card p-4">
+      <h2 class="mb-3 text-sm font-semibold text-ink-900">Filtros</h2>
+      <form method="get" class="flex flex-wrap gap-3">
+        <select name="status" class="kodu-input w-auto" onchange="this.form?.requestSubmit()">
+          <option value="">Todos los estados</option>
+          {['PENDING', 'APPROVED', 'REJECTED', 'REFUNDED'].map((s) => (
+            <option value={s} selected={statusPedido === s}>{ETIQUETA_ESTADO[s]}</option>
+          ))}
+        </select>
+        <select name="provider" class="kodu-input w-auto" onchange="this.form?.requestSubmit()">
+          <option value="">Todos los medios</option>
+          {['SIMULADO', 'MERCADOPAGO', 'MANUAL'].map((p) => (
+            <option value={p} selected={providerPedido === p}>{p}</option>
+          ))}
+        </select>
+        <input type="month" name="mes" class="kodu-input w-auto" value={mesPedido ?? ''} onchange="this.form?.requestSubmit()" />
+      </form>
+    </section>
+
+    <section class="kodu-card overflow-x-auto p-4">
+      <h2 class="mb-3 text-sm font-semibold text-ink-900">Pagos ({pagos.length})</h2>
+      <table class="w-full text-left text-sm">
+        <thead class="text-xs text-ink-500">
+          <tr>
+            <th class="pb-2 pr-2">Fecha</th>
+            <th class="pb-2 pr-2">Quién</th>
+            <th class="pb-2 pr-2">Monto</th>
+            <th class="pb-2 pr-2">Medio</th>
+            <th class="pb-2 pr-2">Estado</th>
+            <th class="pb-2 pr-2">Factura</th>
+            <th class="pb-2">Reintegro</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-linea">
+          {pagos.map((p) => (
+            <tr>
+              <td class="py-2 pr-2">{formateadorFecha.format(p.createdAt)}</td>
+              <td class="py-2 pr-2">{p.organization?.name ?? p.user?.email ?? '—'}</td>
+              <td class="py-2 pr-2 tabular-nums">{formateador.format(Number(p.amountArs))}</td>
+              <td class="py-2 pr-2">{p.provider}</td>
+              <td class="py-2 pr-2">{ETIQUETA_ESTADO[p.status] ?? p.status}</td>
+              <td class="py-2 pr-2" data-invoice={p.invoice?.id}>
+                {p.invoice ? (
+                  <>
+                    {p.invoice.status === 'ISSUED' && p.invoice.number ? `N.º ${p.invoice.number}` : ETIQUETA_FACTURA[p.invoice.status]}
+                    {p.invoice.lastError && <span class="block text-xs text-red-600">{p.invoice.lastError}</span>}
+                    {p.invoice.status !== 'ISSUED' && (
+                      <button type="button" class="ml-2 text-xs text-brand-600 hover:underline" data-accion="reintentar-factura" data-invoice-id={p.invoice.id}>
+                        Reintentar
+                      </button>
+                    )}
+                  </>
+                ) : '—'}
+              </td>
+              <td class="py-2">
+                {p.refundRequested ? (
+                  p.refundedAt ? (
+                    <span class="text-xs text-ink-500">Hecho</span>
+                  ) : (
+                    <button type="button" class="text-xs text-brand-600 hover:underline" data-accion="marcar-reintegro" data-payment-id={p.id}>
+                      Marcar hecho
+                    </button>
+                  )
+                ) : (
+                  '—'
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="kodu-card p-4">
+      <h2 class="mb-3 text-sm font-semibold text-ink-900">Acciones manuales sobre una organización</h2>
+      <p class="mb-2 text-xs text-ink-500">
+        Pasar una licencia a MANUAL (o sacarla) — para activar manualmente la primera vez, usá "Activar licencia manual
+        por transferencia" en Altas o en el detalle de la organización.
+      </p>
+      <div class="flex flex-wrap items-end gap-2">
+        <label class="kodu-label">
+          Id de la organización (raíz)
+          <input class="kodu-input" id="input-org-manual" placeholder="uuid de la organización" />
+        </label>
+        <button type="button" class="kodu-btn-ghost text-xs" id="boton-a-manual">Pasar a MANUAL</button>
+        <button type="button" class="kodu-btn-ghost text-xs" id="boton-de-manual">Sacar de MANUAL</button>
+      </div>
+    </section>
+  </div>
+</AdminLayout>
+
+<script>
+  function mensajeFlotante(texto: string) {
+    window.alert(texto);
+  }
+
+  async function post(url: string, body: unknown) {
+    const respuesta = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const datos = await respuesta.json();
+    if (!respuesta.ok) throw new Error(datos.error ?? 'No se pudo completar la acción.');
+    return datos;
+  }
+
+  document.addEventListener('click', async (ev) => {
+    const boton = (ev.target as HTMLElement).closest<HTMLElement>('[data-accion]');
+    if (!boton) return;
+    try {
+      if (boton.dataset.accion === 'reintentar-factura') {
+        await post('/api/admin/billing/facturas/reintentar', { invoiceId: boton.dataset.invoiceId });
+        mensajeFlotante('Reintento registrado.');
+      } else if (boton.dataset.accion === 'marcar-reintegro') {
+        await post('/api/admin/billing/reintegro', { paymentId: boton.dataset.paymentId });
+        boton.textContent = 'Hecho';
+      }
+    } catch (err) {
+      mensajeFlotante(err instanceof Error ? err.message : 'No se pudo completar la acción.');
+    }
+  });
+
+  document.getElementById('boton-a-manual')?.addEventListener('click', async () => {
+    const organizationId = (document.getElementById('input-org-manual') as HTMLInputElement).value.trim();
+    if (!organizationId) return;
+    try {
+      await post('/api/admin/billing/altas/manual-estado', { organizationId, aManual: true });
+      mensajeFlotante('Pasada a MANUAL.');
+    } catch (err) {
+      mensajeFlotante(err instanceof Error ? err.message : 'No se pudo completar la acción.');
+    }
+  });
+  document.getElementById('boton-de-manual')?.addEventListener('click', async () => {
+    const organizationId = (document.getElementById('input-org-manual') as HTMLInputElement).value.trim();
+    if (!organizationId) return;
+    try {
+      await post('/api/admin/billing/altas/manual-estado', { organizationId, aManual: false });
+      mensajeFlotante('Sacada de MANUAL.');
+    } catch (err) {
+      mensajeFlotante(err instanceof Error ? err.message : 'No se pudo completar la acción.');
+    }
+  });
+</script>
