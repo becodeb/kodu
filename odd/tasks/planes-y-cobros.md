@@ -114,11 +114,13 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - [ ] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
   Confirmar dos supuestos no verificados: que `PUT /preapproval` cambia el monto, y que cada cobro recurrente trae el
   mismo `external_reference` (de eso depende distinguir primer cobro de renovación en `aplicar.ts`).
+- [ ] **T10 — Créditos al pasarse a Individual.** Hoy el pago completa la asignación del mes hasta 1.000 contando los 50
+  gratis ya dados: quien gastó sus 50 y paga recibe 950. Propuesta: dar 1.000 nuevos al pagar. Pendiente de decisión.
 - [ ] **T8b — Umbral de identificación del consumidor final.** No se pudo confirmar en fuente oficial el monto desde el
   cual una Factura C a consumidor final exige DNI/CUIT. Hoy todo pago individual sale como consumidor final. Confirmar
   antes de facturar de verdad con ARCA.
 - [ ] **T8c — Probar ARCA en homologación** con el certificado del dueño (nunca se ejecutó contra ARCA real).
-- [ ] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
+- [x] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
   (individual e institución).
 
 ## Progreso y evidencia
@@ -176,7 +178,15 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   de la transacción del webhook; el bloqueo `PENDING|FAILED → ISSUING` evita emitir dos veces. Sin `INVOICE_PROVIDER` en
   producción las facturas quedan pendientes con aviso. Chequeos según el escritor: check, build, `unidad-facturador`
   13/13 (incluye firma real con openssl), `planes-facturacion` 7/7, regresiones verdes.
+- T9 (delegada): `1c609c6`, `14e2259`, `840dddc`, `6fa7ecf`. `npm run test:cobros` (11 scripts, levanta y baja su propio
+  servidor, se niega a correr contra una base que parezca de producción), `e2e/planes-recorrido.ts` (recorridos
+  completos en navegador), `docs/probar-cobros.md` + link en el README. El escritor corrigió 5 problemas de los tests
+  (hidratación, URL absoluta de invitación, selectores, dos aserciones mal planteadas); ninguno del producto.
+- **Verificación independiente del orquestador (2026-10-01):** `npm run test:cobros` 11/11 verde en 332,8 s;
+  `migrate deploy` en base vacía + `migrate diff --exit-code` sin diferencias; con el servidor en 3200: `org-acceso`,
+  `consumo-proposito`, `org-invitaciones`, `admin-organizaciones`, `admin-metricas` verdes.
 
 ## Próximo paso
 
-T9 (guía de prueba local y corrida completa).
+Que el dueño pruebe en local con `docs/probar-cobros.md`. Pendientes antes de producción: T4c (sandbox de Mercado
+Pago), T8b (umbral de identificación), T8c (ARCA homologación), precios reales en `/admin/precios`, y decidir T10.
