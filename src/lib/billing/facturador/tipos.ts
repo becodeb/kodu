@@ -78,10 +78,28 @@ export interface FacturaEmitida {
 export type FacturaError =
   | { kind: 'config'; message: string }
   | { kind: 'rejected'; message: string; observaciones?: string[] }
-  | { kind: 'network'; message: string };
+  | { kind: 'network'; message: string }
+  /** odd/tasks/planes-y-cobros.md (T8c): WSAA rechazó el login porque ya hay
+   *  un TA vigente que Kodu no tiene guardado (`coe.alreadyAuthenticated`) —
+   *  ni es un error de red ni ARCA rechazó la factura: hay que esperar a que
+   *  ese TA ajeno venza, o pedir un certificado nuevo. `message` ya viene
+   *  redactado para mostrar tal cual en `/admin/facturacion`. */
+  | { kind: 'auth_conflict'; message: string };
 
 export type ResultadoFactura = { ok: true; data: FacturaEmitida } | { ok: false; error: FacturaError };
 
+/** Resultado de `Invoicer.ping()` — un chequeo de salud liviano y sin
+ *  credenciales (T8c: `FEDummy` no exige `Auth`), para que
+ *  `/admin/facturacion` muestre "ARCA responde" sin arriesgar un login. */
+export interface PingResultado {
+  ok: boolean;
+  appServer?: string;
+  dbServer?: string;
+  authServer?: string;
+  error?: string;
+}
+
 export interface Invoicer {
   issueInvoiceC(input: FacturaInput): Promise<ResultadoFactura>;
+  ping(): Promise<PingResultado>;
 }

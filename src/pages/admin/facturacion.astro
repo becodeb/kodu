@@ -4,8 +4,23 @@ import { prisma } from '../../lib/db.ts';
 import { billingNow } from '../../lib/env.ts';
 import { resumenMonotributo } from '../../lib/billing/monotributo.ts';
 import { resolverFacturador } from '../../lib/billing/facturador/index.ts';
+import type { PingResultado } from '../../lib/billing/facturador/tipos.ts';
 
-const facturacionApagada = resolverFacturador() === null;
+const facturador = resolverFacturador();
+const facturacionApagada = facturador === null;
+
+/**
+ * odd/tasks/planes-y-cobros.md (T8c): `FEDummy`/ping de salud — no exige
+ * `Auth`, así que no arriesga un login ni se ve afectado por un TA ajeno
+ * vigente (`alreadyAuthenticated`). Con límite de tiempo propio: nunca deja
+ * esta página colgada esperando a ARCA.
+ */
+const estadoArca: PingResultado | null = facturador
+  ? await Promise.race([
+      facturador.ping(),
+      new Promise<PingResultado>((resolve) => setTimeout(() => resolve({ ok: false, error: 'ARCA no respondió a tiempo (5s).' }), 5000)),
+    ])
+  : null;
 
 /**
  * odd/tasks/planes-y-cobros.md (T7, punto 4): pagos, facturas y el panel del
@@ -60,6 +75,16 @@ const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red
         <p class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
           La facturación automática está apagada (falta configurar <code>INVOICE_PROVIDER</code>). Las facturas nuevas
           quedan "En proceso" hasta que se configure un adaptador — nunca se inventa un CAE.
+        </p>
+      )
+    }
+
+    {
+      estadoArca && (
+        <p class={`rounded-lg px-3 py-2 text-sm ${estadoArca.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+          {estadoArca.ok
+            ? `ARCA responde (AppServer ${estadoArca.appServer}, DbServer ${estadoArca.dbServer}, AuthServer ${estadoArca.authServer}).`
+            : `ARCA no responde: ${estadoArca.error}`}
         </p>
       )
     }

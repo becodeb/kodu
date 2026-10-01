@@ -1574,3 +1574,26 @@ enum RenewalReminderSubject {
   ORG_LICENSE
   INDIVIDUAL_SUB
 }
+
+/// odd/tasks/planes-y-cobros.md (T8c): el TA (`LoginTicketResponse`) de WSAA,
+/// persistido — el cache en memoria de `arca.ts` se perdía en cada reinicio
+/// del servidor y WSAA RECHAZA un login nuevo mientras el TA anterior sigue
+/// vigente (`coe.alreadyAuthenticated`, ~12hs de validez): sin esta tabla, un
+/// deploy podía dejar la facturación rota hasta que ese TA huérfano venciera.
+/// Única fila por `cuit` + `entorno` + `service` (WSAA emite un TA por
+/// servicio, no uno general). `obtenerTicketVigente` toma un
+/// `pg_advisory_xact_lock` sobre esta llave antes de leer/escribir, para que
+/// dos procesos no logueen en paralelo y pisen el TA del otro.
+model ArcaAccessTicket {
+  id             String   @id @default(uuid())
+  cuit           String
+  entorno        String
+  service        String
+  token          String   @db.Text
+  sign           String   @db.Text
+  generationTime DateTime
+  expirationTime DateTime
+  updatedAt      DateTime @updatedAt
+
+  @@unique([cuit, entorno, service])
+}

@@ -4,6 +4,7 @@ import {
   MARCADOR_FORZAR_FALLO_SIMULADO,
   type FacturaInput,
   type Invoicer,
+  type PingResultado,
   type ResultadoFactura,
 } from './tipos.ts';
 
@@ -20,6 +21,11 @@ import {
  * string largo y arbitrario que ningún nombre real va a contener.
  */
 export class FacturadorSimulado implements Invoicer {
+  /** Siempre "OK": no hay nada remoto que chequear (T8c, `Invoicer.ping`). */
+  async ping(): Promise<PingResultado> {
+    return { ok: true, appServer: 'OK (simulado)', dbServer: 'OK (simulado)', authServer: 'OK (simulado)' };
+  }
+
   async issueInvoiceC(input: FacturaInput): Promise<ResultadoFactura> {
     if (input.recipient.name.includes(MARCADOR_FORZAR_FALLO_SIMULADO)) {
       return { ok: false, error: { kind: 'rejected', message: 'Fallo forzado (prueba): CAE no otorgado.' } };
