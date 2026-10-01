@@ -1,5 +1,5 @@
 import { prisma } from '../db.ts';
-import { Prisma, type UsagePurpose } from '../../generated/prisma/client.ts';
+import { Prisma, type UsagePurpose, type EditMode } from '../../generated/prisma/client.ts';
 import { debitUsage } from '../billing/creditos-servicio.ts';
 import { precioVigente, type PriceSchedule } from './pricing.ts';
 
@@ -179,6 +179,29 @@ export interface UsageRecord {
    * únicas con `purpose: null`, y esas nunca se escriben por acá.
    */
   purpose: UsagePurpose;
+  /**
+   * odd/tasks/ahorro-tokens.md (T3a): cómo se escribió el código en este
+   * turno (ver el enum `EditMode`). `null`/`undefined` para cualquier turno
+   * que no escribe código, o para un motor que no ofrece la edición por
+   * fragmentos — mismo criterio "nunca inventar un dato" que el resto de
+   * los campos opcionales de este registro.
+   */
+  editMode?: 'full' | 'fragments' | 'fragments_fallback' | null;
+}
+
+/** odd/tasks/ahorro-tokens.md (T3a): `UsageRecord.editMode` (minúsculas,
+ *  vocabulario del llamador) al enum de Prisma. `undefined`/`null` pasa. */
+function editModeAEnum(editMode: UsageRecord['editMode']): EditMode | null {
+  switch (editMode) {
+    case 'full':
+      return 'FULL';
+    case 'fragments':
+      return 'FRAGMENTS';
+    case 'fragments_fallback':
+      return 'FRAGMENTS_FALLBACK';
+    default:
+      return null;
+  }
 }
 
 /** GENERATION/CHECKLIST/EXTRA_VERSION nacen de un recurso nuevo;
@@ -264,6 +287,7 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       organizationId,
       purpose: record.purpose,
       forNewResource,
+      editMode: editModeAEnum(record.editMode),
     },
   });
 

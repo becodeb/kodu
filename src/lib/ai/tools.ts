@@ -7,7 +7,22 @@
 
 export const UPDATE_RESOURCE_CODE = 'update_resource_code';
 
-export const RESOURCE_TOOLS = [
+/**
+ * Forma común de una definición de tool call (dialecto Chat Completions,
+ * `{type:'function', function:{...}}`), para que `provider.ts` pueda tener un
+ * solo tipo de array con `UPDATE_RESOURCE_CODE` y `EDIT_RESOURCE_CODE` juntos
+ * sin que TypeScript los vea como dos literales incompatibles (T3a).
+ */
+export interface AiTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+export const RESOURCE_TOOLS: AiTool[] = [
   {
     type: 'function' as const,
     function: {
@@ -28,6 +43,90 @@ export const RESOURCE_TOOLS = [
     },
   },
 ];
+
+/**
+ * odd/tasks/ahorro-tokens.md (T3a): segunda herramienta, ofrecida sólo en
+ * turnos de AJUSTE (nunca para un recurso nuevo) cuando el interruptor
+ * global está prendido (ver `src/lib/settings.ts`,
+ * `AppSettings.fragmentEditsEnabled`). En vez del documento completo, el
+ * modelo manda una lista de reemplazos puntuales: cada `find` tiene que
+ * aparecer EXACTAMENTE una vez en el HTML real guardado, y la aplicación es
+ * todo-o-nada (`applyResourceEdits`, en `./edits.ts`) — si cualquiera falla,
+ * el recurso no se toca.
+ */
+export const EDIT_RESOURCE_CODE = 'edit_resource_code';
+
+export const EDIT_RESOURCE_TOOL: AiTool = {
+  type: 'function' as const,
+  function: {
+    name: EDIT_RESOURCE_CODE,
+    description:
+      'Edita el HTML actual del recurso aplicando una lista de reemplazos de texto puntuales, sin reescribir el documento entero. Preferila para cambios localizados (un texto, un color, una función). Usá update_resource_code cuando el pedido reestructura el recurso o cuando el cambio toca más o menos un tercio del documento o más. Cada "find" tiene que ser una copia EXACTA (mismos espacios y saltos de línea) de un fragmento que aparece UNA SOLA VEZ en el HTML actual: si alguno no matchea exactamente una vez, no se aplica NINGÚN cambio.',
+    parameters: {
+      type: 'object',
+      properties: {
+        edits: {
+          type: 'array',
+          description: 'Reemplazos a aplicar. Cada find tiene que ser único en el documento actual.',
+          items: {
+            type: 'object',
+            properties: {
+              find: {
+                type: 'string',
+                description:
+                  'Texto EXACTO a buscar en el HTML actual, copiado literal del documento (mismos espacios y saltos de línea). Tiene que aparecer una sola vez.',
+              },
+              replace: {
+                type: 'string',
+                description: 'Texto que reemplaza al find encontrado.',
+              },
+            },
+            required: ['find', 'replace'],
+          },
+        },
+      },
+      required: ['edits'],
+    },
+  },
+};
+
+export interface RawResourceEdit {
+  find: string;
+  replace: string;
+}
+
+export type ParsedResourceEdits =
+  | { ok: true; edits: RawResourceEdit[] }
+  /** Mismo vocabulario que `ParsedResourceCode`: `empty` acá es "sin ediciones". */
+  | { ok: false; reason: 'truncated' | 'invalid' | 'empty' };
+
+/**
+ * Valida el argumento de `edit_resource_code` ANTES de tocar el HTML. No
+ * aplica nada: eso es trabajo de `applyResourceEdits` (`./edits.ts`), que
+ * además necesita el HTML real contra el que matchear.
+ */
+export function parseEditResourceArgs(rawArguments: string, truncated = false): ParsedResourceEdits {
+  let parsed: { edits?: unknown };
+  try {
+    parsed = JSON.parse(rawArguments) as { edits?: unknown };
+  } catch {
+    return { ok: false, reason: truncated ? 'truncated' : 'invalid' };
+  }
+
+  if (!Array.isArray(parsed.edits)) return { ok: false, reason: 'invalid' };
+  if (parsed.edits.length === 0) return { ok: false, reason: 'empty' };
+
+  const edits: RawResourceEdit[] = [];
+  for (const raw of parsed.edits) {
+    if (typeof raw !== 'object' || raw === null) return { ok: false, reason: 'invalid' };
+    const { find, replace } = raw as { find?: unknown; replace?: unknown };
+    if (typeof find !== 'string' || find.length === 0) return { ok: false, reason: 'invalid' };
+    if (typeof replace !== 'string') return { ok: false, reason: 'invalid' };
+    edits.push({ find, replace });
+  }
+
+  return { ok: true, edits };
+}
 
 export type ParsedResourceCode =
   | { ok: true; html: string }

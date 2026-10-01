@@ -5,6 +5,7 @@ import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../
 import {
   buildCurrentResourceBlock,
   buildSystemPrompt,
+  MAX_HTML_CHARS,
   type AssetContext,
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
@@ -43,9 +44,12 @@ import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import {
   UPDATE_RESOURCE_CODE,
+  EDIT_RESOURCE_CODE,
   parseUpdateResourceArgs,
+  parseEditResourceArgs,
   rescatarHtmlDelTexto,
 } from '../../../lib/ai/tools.ts';
+import { applyResourceEdits, EDIT_FAILURE_MESSAGES } from '../../../lib/ai/edits.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
@@ -777,6 +781,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // regla de colisión con la guía de preguntas tempranas.
   const forzar = pideCambio(message);
 
+  // odd/tasks/ahorro-tokens.md (T3a): sólo en un AJUSTE (nunca un recurso
+  // nuevo) y con el interruptor global prendido. `settings` ya se leyó una
+  // sola vez más arriba para `resolverCapacidades`.
+  const editsEnabled = forzar && !recursoInicial && settings.fragmentEditsEnabled;
+
   const systemPrompt = buildSystemPrompt({
     globalRules,
     userRules,
@@ -799,7 +808,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // este turno puntual, así que va en el mismo bloque, nunca mezclado con
   // el `message` del docente que se persiste tal cual (ver `buildUserContent`).
   const currentResourceBlock =
-    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false) +
+    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false, editsEnabled) +
     (checklistVigente.length > 0 ? `\n\n${bloqueChecklistParaAjuste(checklistVigente)}` : '');
 
   const userContent = await buildUserContent(
@@ -1063,6 +1072,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           provider: usado,
           signal: turnoAbort.signal,
           forzarHerramienta: forzar,
+          editsEnabled,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             // T3: un reintento arranca un pedido nuevo — cualquier parcial
@@ -1231,6 +1241,22 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // cambié el fondo", el recurso no cambia y el docente no entiende por qué.
       let codeProblem: string | null = null;
       let finishReason = '';
+      // odd/tasks/ahorro-tokens.md (T3a): cómo terminó escribiéndose el
+      // código en este turno, para `TokenUsage.editMode`. `null` si este
+      // turno no escribió código (consulta sin cambios, o falló del todo).
+      let editModeAplicado: 'full' | 'fragments' | 'fragments_fallback' | null = null;
+      // El detalle de la última edición rechazada (`edit_resource_code`),
+      // para armar el mensaje de recuperación de UNA sola vez más abajo. En
+      // un objeto y no en un `let` suelto por el mismo motivo que `totales`
+      // más abajo: lo completa `consumir`, una función anidada, y con una
+      // variable suelta el análisis de flujo de TypeScript no puede seguirle
+      // el tipo de vuelta a través del `await`.
+      const estadoEdicion: { ultimoFallo: { find: string; detalle: string } | null } = { ultimoFallo: null };
+      // Si ya se usó la única oportunidad de recuperación de una edición
+      // fallida (ver más abajo), el camino genérico de "no llamó nada" no
+      // tiene que disparar un SEGUNDO reintento si esa recuperación terminó
+      // sin código ni problema (el modelo sólo contestó texto, por ejemplo).
+      let recuperacionDeEdicionIntentada = false;
       /**
        * Va en un objeto y no en un `let` suelto porque lo completa `consumir`,
        * que es una función anidada: con una variable suelta, el análisis de
@@ -1287,9 +1313,47 @@ export const POST: APIRoute = async ({ request, locals }) => {
               const html = aplicarKitAlTurno(result.html, temaProyecto);
               generatedHtml = html;
               codeProblem = null;
+              // Si antes hubo un intento de edición fallido en este mismo turno,
+              // esto es la caída a reescritura completa (T3a), no un turno "full" liso.
+              editModeAplicado = estadoEdicion.ultimoFallo ? 'fragments_fallback' : 'full';
               send({ type: 'code', html });
             } else {
               codeProblem = CODE_PROBLEMS[result.reason];
+              send({ type: 'error', message: codeProblem });
+            }
+          }
+
+          /**
+           * odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code`. Se aplica
+           * SIEMPRE contra `htmlAlInicioDelTurno` (el HTML real guardado,
+           * nunca lo que ya se haya mandado en este mismo turno) — en un
+           * turno normal eso es exactamente "el HTML vigente", porque nada
+           * más lo toca antes de este punto.
+           */
+          if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
+            descartarCodeDelta();
+            const parsed = parseEditResourceArgs(event.arguments, event.truncated);
+
+            if (!parsed.ok) {
+              codeProblem = CODE_PROBLEMS[parsed.reason];
+              estadoEdicion.ultimoFallo = { find: '', detalle: codeProblem };
+              send({ type: 'error', message: codeProblem });
+              continue;
+            }
+
+            const aplicado = applyResourceEdits(htmlAlInicioDelTurno, parsed.edits, MAX_HTML_CHARS);
+
+            if (aplicado.ok) {
+              const html = aplicarKitAlTurno(aplicado.html, temaProyecto);
+              generatedHtml = html;
+              codeProblem = null;
+              editModeAplicado = 'fragments';
+              estadoEdicion.ultimoFallo = null;
+              send({ type: 'code', html });
+            } else {
+              const detalle = EDIT_FAILURE_MESSAGES[aplicado.reason];
+              codeProblem = `No pude aplicar uno de los cambios puntuales: ${detalle}. No toqué el recurso.`;
+              estadoEdicion.ultimoFallo = { find: aplicado.find, detalle };
               send({ type: 'error', message: codeProblem });
             }
           }
@@ -1300,14 +1364,58 @@ export const POST: APIRoute = async ({ request, locals }) => {
         await consumir(upstream);
 
         /**
+         * odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code` falló (0 o
+         * 2+ matches, JSON inválido o recortado, o cayó en zona plegada/
+         * truncada). El recurso NO se tocó. Se le explica EXACTAMENTE qué
+         * `find` falló y por qué, y se le da UNA sola oportunidad de
+         * corregirlo —con `edit_resource_code` de nuevo o cayendo a
+         * `update_resource_code` con el documento completo—, reusando el
+         * mismo mecanismo de "un reintento y no más" que el camino de abajo.
+         */
+        if (editsEnabled && estadoEdicion.ultimoFallo && !generatedHtml) {
+          console.warn(
+            `[chat/stream] edit_resource_code falló (${estadoEdicion.ultimoFallo.detalle}); se da una oportunidad de corregirlo a los ${transcurrido()}`,
+          );
+          reiniciarCodeDelta();
+          send({ type: 'notice', message: 'Ese cambio puntual no se pudo aplicar. Se lo vuelvo a pedir…' });
+
+          const pistaFind = estadoEdicion.ultimoFallo.find
+            ? ` El "find" que falló fue: ${JSON.stringify(estadoEdicion.ultimoFallo.find.slice(0, 300))}.`
+            : '';
+
+          const reintentoEdicion = await requestCompletionStream({
+            messages: [
+              ...messages,
+              { role: 'assistant', content: assistantText },
+              {
+                role: 'user',
+                content:
+                  `No pude aplicar esa edición: ${estadoEdicion.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
+              },
+            ],
+            provider: proveedorUsado,
+            signal: turnoAbort.signal,
+            forzarHerramienta: true,
+            editsEnabled: true,
+          });
+
+          recuperacionDeEdicionIntentada = true;
+          await consumir(reintentoEdicion);
+        }
+
+        /**
          * Se pidió un cambio y no llegó código. Antes de darlo por perdido:
          *
          * 1) Puede que el modelo haya escrito el HTML en el texto en vez de
          *    llamar la herramienta. Ese trabajo se rescata en vez de tirarlo.
          * 2) Si no, se le vuelve a pedir una sola vez. Un reintento y no más:
          *    si tampoco así lo hace, es mejor decirlo que quedar en un bucle.
+         *
+         * No corre si ya se usó la oportunidad de recuperar una edición
+         * fallida de arriba (`recuperacionDeEdicionIntentada`): esa YA fue
+         * el único reintento de este turno.
          */
-        if (forzar && !generatedHtml && !codeProblem) {
+        if (forzar && !generatedHtml && !codeProblem && !recuperacionDeEdicionIntentada) {
           const rescatado = rescatarHtmlDelTexto(assistantText);
 
           if (rescatado) {
@@ -1320,7 +1428,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }
         }
 
-        if (forzar && !generatedHtml && !codeProblem) {
+        if (forzar && !generatedHtml && !codeProblem && !recuperacionDeEdicionIntentada) {
           console.warn(`[chat/stream] no aplicó el cambio; se re-pide a los ${transcurrido()}`);
           // T3: el re-pedido forzado es un tool call nuevo de cero.
           reiniciarCodeDelta();
@@ -1395,6 +1503,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             precios: proveedorUsado.precios,
             schedule: proveedorUsado.schedule,
             purpose: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
+            editMode: editModeAplicado,
           }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
         }
 

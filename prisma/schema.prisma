@@ -749,6 +749,12 @@ model AppSettings {
   /// "capa 1" que sobrevivió a la baja de modo prime — ver
   /// `src/lib/ai/capacidades.ts`.
   versionsForAll     Boolean  @default(false)
+  /// odd/tasks/ahorro-tokens.md (T3a): interruptor global de edición por
+  /// fragmentos (`edit_resource_code`) en turnos de ajuste/autocorrección.
+  /// Default `true` en código (para una fila NUEVA), pero la migración que
+  /// agrega esta columna la deja en `false` en toda base existente — se
+  /// prende a mano desde `/admin/generacion` recién después de medir T3b.
+  fragmentEditsEnabled Boolean  @default(true)
   updatedAt          DateTime @updatedAt
 }
 
@@ -768,6 +774,20 @@ enum UsagePurpose {
   /// tiene `projectId` (la charla existe antes que el recurso) y
   /// `forNewResource` queda en NULL: no es ni una generación ni un ajuste.
   IDEATION
+}
+
+/// odd/tasks/ahorro-tokens.md (T3a): cómo se escribió el código en ESTE
+/// turno. `FULL` = `update_resource_code` (documento completo, el único modo
+/// que existía antes de T3a). `FRAGMENTS` = `edit_resource_code` aplicado
+/// con éxito. `FRAGMENTS_FALLBACK` = se ofreció/intentó edición por
+/// fragmentos pero el turno terminó resolviéndose con el documento completo
+/// (el reintento de recuperación cayó a un rewrite). `NULL` en toda fila
+/// histórica (de antes de esta columna) y en cualquier turno que no escribe
+/// código (CHECKLIST, VERIFICATION, IDEATION): nunca se inventa un modo.
+enum EditMode {
+  FULL
+  FRAGMENTS
+  FRAGMENTS_FALLBACK
 }
 
 /// Consumo de tokens por turno. Existe por dos motivos: hacer cumplir el tope
@@ -808,6 +828,9 @@ model TokenUsage {
   /// Para qué fue este turno. `NULL` en toda fila histórica (T1) — nunca se
   /// inventa un propósito para consumo que ya pasó.
   purpose                  UsagePurpose?
+  /// odd/tasks/ahorro-tokens.md (T3a): ver `EditMode`. `NULL` en toda fila
+  /// histórica y en los turnos que no escriben código.
+  editMode                 EditMode?
   /// odd/tasks/organizaciones.md (T1): si este turno correspondía a un
   /// recurso NUEVO (para sumar su costo total contra el de un ajuste). Las
   /// correcciones y verificaciones lo heredan de la última fila

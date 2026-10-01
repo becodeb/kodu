@@ -2682,6 +2682,23 @@ export function plegarKit(html: string): string {
   return html.slice(0, bloque.desde) + marcadorPlegado(id) + html.slice(bloque.hasta);
 }
 
+/**
+ * odd/tasks/ahorro-tokens.md (T3a): el rango `[desde, hasta)` del bloque
+ * canónico del kit en el HTML REAL (sin plegar), o `null` si no hay bloque
+ * plegable. Lo usa `edits.ts` para rechazar un `find` de `edit_resource_code`
+ * que caiga dentro de esa zona: el modelo nunca vio ese texto (viaja plegado
+ * en el prompt, ver `plegarKit`/`buildCurrentResourceBlock`), así que un
+ * `find` que la toque sólo puede ser una alucinación o un intento de editar
+ * el marcador de una línea — nunca el contenido real del bloque.
+ */
+export function rangoBloqueKit(html: string): { desde: number; hasta: number; largoMarcador: number } | null {
+  const bloque = buscarBloque(html);
+  if (!bloque || !bloqueEsCanonico(bloque)) return null;
+  // `bloqueEsCanonico` ya validó `esTemaId(bloque.id)`.
+  const largoMarcador = marcadorPlegado(bloque.id as TemaId).length;
+  return { desde: bloque.desde, hasta: bloque.hasta, largoMarcador };
+}
+
 // ─────────────────────────────────────────────────────────────
 // T11: red de seguridad — tema por defecto si el modelo se olvidó del meta
 // ─────────────────────────────────────────────────────────────

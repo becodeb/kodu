@@ -27,7 +27,9 @@ import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
-import { UPDATE_RESOURCE_CODE, parseUpdateResourceArgs } from '../../../lib/ai/tools.ts';
+import { UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE, parseUpdateResourceArgs, parseEditResourceArgs } from '../../../lib/ai/tools.ts';
+import { applyResourceEdits } from '../../../lib/ai/edits.ts';
+import { MAX_HTML_CHARS } from '../../../lib/ai/prompt.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 
 /**
@@ -194,6 +196,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const temaProyecto = temaDe(project.currentHtml);
   const htmlPreCorreccion = project.currentHtml;
+  // odd/tasks/ahorro-tokens.md (T3a): una autocorrección es, por naturaleza,
+  // siempre sobre un recurso que YA existe — nunca hace falta el chequeo de
+  // "recurso inicial" que sí aplica en /api/chat/stream.
+  const editsEnabled = settings.fragmentEditsEnabled;
 
   const [globalRules, userRules, assets] = await Promise.all([
     prisma.customRule.findMany({
@@ -254,7 +260,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     { role: 'system', content: systemPrompt },
     {
       role: 'user',
-      content: `${buildCurrentResourceBlock(htmlPreCorreccion, project.title, false)}\n\n${mensajeCorreccion}`,
+      content: `${buildCurrentResourceBlock(htmlPreCorreccion, project.title, false, editsEnabled)}\n\n${mensajeCorreccion}`,
     },
   ];
 
@@ -297,9 +303,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
           signal: request.signal,
           forzarHerramienta: true,
           razonamientoOverride: razonamientoCorreccion(provider),
+          editsEnabled,
         });
 
         let htmlFinal: string | null = null;
+        let editModeAplicado: 'full' | 'fragments' | null = null;
         const totales: { usage: MotorTokenUsage | null } = { usage: null };
 
         for await (const event of readCompletionStream(respuesta, provider.apiFormat)) {
@@ -309,7 +317,27 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }
           if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
             const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
-            if (resultado.ok) htmlFinal = aplicarKitAlTurno(resultado.html, temaProyecto);
+            if (resultado.ok) {
+              htmlFinal = aplicarKitAlTurno(resultado.html, temaProyecto);
+              editModeAplicado = 'full';
+            }
+          }
+          // odd/tasks/ahorro-tokens.md (T3a): sin reintento acá — este
+          // endpoint ya corría de una sola pasada antes de T3a (una
+          // autocorrección fallida simplemente no aplica nada, igual que un
+          // `update_resource_code` inválido arriba); una edición que no
+          // matchea sigue ese mismo criterio.
+          if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
+            const parsed = parseEditResourceArgs(event.arguments, event.truncated);
+            if (parsed.ok) {
+              const aplicado = applyResourceEdits(htmlPreCorreccion, parsed.edits, MAX_HTML_CHARS);
+              if (aplicado.ok) {
+                htmlFinal = aplicarKitAlTurno(aplicado.html, temaProyecto);
+                editModeAplicado = 'fragments';
+              } else {
+                console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code no se pudo aplicar (${aplicado.reason}).`);
+              }
+            }
           }
         }
 
@@ -327,6 +355,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             precios: provider.precios,
             schedule: provider.schedule,
             purpose: 'CORRECTION',
+            editMode: editModeAplicado,
           }).catch((error) =>
             console.error(`[chat/autocorreccion] ronda ${ronda}: no se pudo registrar el consumo:`, error),
           );
