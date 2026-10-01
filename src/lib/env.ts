@@ -168,6 +168,17 @@ const envSchema = z.object({
    * si alguien la carga por error.
    */
   BILLING_FAKE_NOW: z.string().default(''),
+
+  /**
+   * odd/tasks/planes-y-cobros.md (T4b): secreto que protege
+   * `/api/internal/recordatorios-renovacion` — el disparo PEREZOSO de los
+   * avisos de renovación (`src/lib/billing/recordatorios.ts`) ya corre solo
+   * con cada carga de `/admin/**`, pero este endpoint deja que un cron
+   * externo lo dispare también (p.ej. de madrugada, sin esperar a que alguien
+   * entre al superadmin). Vacío = el endpoint se niega siempre (fail-closed:
+   * nunca queda abierto sin secreto).
+   */
+  INTERNAL_CRON_SECRET: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -219,6 +230,7 @@ export function getEnv(): Env {
     MP_ACCESS_TOKEN: read('MP_ACCESS_TOKEN'),
     MP_WEBHOOK_SECRET: read('MP_WEBHOOK_SECRET'),
     BILLING_FAKE_NOW: read('BILLING_FAKE_NOW'),
+    INTERNAL_CRON_SECRET: read('INTERNAL_CRON_SECRET'),
   });
 
   if (!parsed.success) {

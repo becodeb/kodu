@@ -1,7 +1,9 @@
 ---
 import BaseLayout from './BaseLayout.astro';
-import { hasResendApiKey } from '../lib/env.ts';
+import { hasResendApiKey, billingNow } from '../lib/env.ts';
 import { colaDeRevision } from '../lib/billing/revision.ts';
+import { resumenMonotributo } from '../lib/billing/monotributo.ts';
+import { enviarRecordatoriosDeRenovacion } from '../lib/billing/recordatorios.ts';
 
 /**
  * Cascarón de /admin: encabezado fijo + fila de pestañas horizontal.
@@ -34,6 +36,20 @@ const resendApagado = !hasResendApiKey();
 // lista con link; la pantalla para confirmar dominios/matrícula es T7.
 const cola = await colaDeRevision();
 
+// odd/tasks/planes-y-cobros.md (T4b): disparo perezoso de los avisos de
+// renovación (30/7 días) en TODA página de /admin — mismo criterio que la
+// cola de revisión y el aviso de Resend de arriba; idempotente por el único
+// de `RenewalReminder`, así que entrar varias veces por día no manda mails
+// de más. También hay un endpoint interno para un cron (ver ese archivo).
+await enviarRecordatoriosDeRenovacion(billingNow());
+
+// odd/tasks/planes-y-cobros.md (T7): aviso del tope del monotributo, en TODA
+// página de /admin por encima del 90% (el dueño lo pidió "en el superadmin",
+// no sólo en /admin/facturacion) — dismissible por sesión del navegador
+// (localStorage, ver el script al final de este layout).
+const monotributo = await resumenMonotributo(billingNow());
+const monotributoCritico = monotributo.porcentaje !== null && monotributo.porcentaje >= 0.9;
+
 const PESTAÑAS = [
   { href: '/admin/usuarios', etiqueta: 'Docentes' },
   // odd/tasks/organizaciones.md (T6): reemplaza a "Dominios" (la quitó T2,
@@ -51,6 +67,11 @@ const PESTAÑAS = [
   { href: '/admin/motores', etiqueta: 'Motores' },
   { href: '/admin/generacion', etiqueta: 'Generación' },
   { href: '/admin/demo', etiqueta: 'Demo' },
+  // odd/tasks/planes-y-cobros.md (T7): precios/revisión/facturación, al
+  // final de la tira — pantallas de cobro, no de la plataforma de recursos.
+  { href: '/admin/precios', etiqueta: 'Precios' },
+  { href: '/admin/altas', etiqueta: cola.length > 0 ? `Altas (${cola.length})` : 'Altas' },
+  { href: '/admin/facturacion', etiqueta: 'Facturación' },
 ];
 ---
 
@@ -65,6 +86,26 @@ const PESTAÑAS = [
       <div class="mb-6 max-w-2xl rounded-lg border border-brand-300 bg-brand-50 px-4 py-3 text-sm text-brand-700">
         La verificación de email está apagada: falta <code class="font-mono">RESEND_API_KEY</code>. Toda
         cuenta nueva se toma como verificada.
+      </div>
+    )
+  }
+
+  {
+    monotributoCritico && (
+      <div
+        id="aviso-monotributo"
+        class="mb-6 max-w-2xl rounded-lg border border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+        data-porcentaje={Math.round(monotributo.porcentaje! * 100)}
+      >
+        <div class="flex items-start justify-between gap-3">
+          <p>
+            Te estás acercando al tope del monotributo: facturaste el {Math.round(monotributo.porcentaje! * 100)}%
+            de los últimos 12 meses. Mirá el detalle en <a href="/admin/facturacion" class="underline">Facturación</a>.
+          </p>
+          <button type="button" id="cerrar-aviso-monotributo" class="shrink-0 text-amber-700 hover:text-amber-900" aria-label="Cerrar">
+            ✕
+          </button>
+        </div>
       </div>
     )
   }
@@ -124,3 +165,30 @@ const PESTAÑAS = [
 
   <slot />
 </BaseLayout>
+
+<script>
+  // T7: el aviso del monotributo se puede cerrar por el resto de la sesión
+  // del navegador — `localStorage`, per-viewer, nunca estado compartido (el
+  // dueño lo vuelve a ver en la próxima sesión, o si el porcentaje cambió).
+  const CLAVE = 'kodu-aviso-monotributo-cerrado-para';
+  const aviso = document.getElementById('aviso-monotributo');
+  if (aviso) {
+    const porcentaje = aviso.dataset.porcentaje ?? '';
+    try {
+      if (localStorage.getItem(CLAVE) === porcentaje) aviso.remove();
+    } catch {
+      // localStorage puede fallar (ventana privada, storage bloqueado) — el
+      // aviso simplemente no se puede cerrar en ese caso, nunca rompe la
+      // página.
+    }
+    document.getElementById('cerrar-aviso-monotributo')?.addEventListener('click', () => {
+      try {
+        localStorage.setItem(CLAVE, porcentaje);
+      } catch {
+        // ídem arriba.
+      }
+      aviso.remove();
+    });
+  }
+</script>
+
