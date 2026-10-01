@@ -114,8 +114,11 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - [ ] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
   Confirmar dos supuestos no verificados: que `PUT /preapproval` cambia el monto, y que cada cobro recurrente trae el
   mismo `external_reference` (de eso depende distinguir primer cobro de renovación en `aplicar.ts`).
-- [ ] **T10 — Créditos al pasarse a Individual.** Hoy el pago completa la asignación del mes hasta 1.000 contando los 50
-  gratis ya dados: quien gastó sus 50 y paga recibe 950. Propuesta: dar 1.000 nuevos al pagar. Pendiente de decisión.
+- [x] **T10 — Créditos al pasarse a Individual.** Decisión del dueño: al pagar se dan los créditos completos de nuevo.
+  Nuevos valores del dueño: 1 crédito = USD 0,001; Gratis 100 de bienvenida + 50/mes; Individual 2.500/mes.
+- [x] **T11 — Prueba como interruptor y precios reales.** Decisión del dueño: la prueba de 30 días es un interruptor del
+  superadmin, apagado por defecto (aún no hay clientes). Precios de lanzamiento: Pequeña $95.000/mes ($950.000 el
+  ciclo), Mediana $155.000 ($1.550.000), Grande $280.000 ($2.800.000), Individual $7.900/mes ($79.000/año).
 - [ ] **T8b — Umbral de identificación del consumidor final.** No se pudo confirmar en fuente oficial el monto desde el
   cual una Factura C a consumidor final exige DNI/CUIT. Hoy todo pago individual sale como consumidor final. Confirmar
   antes de facturar de verdad con ARCA.
@@ -185,8 +188,20 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - **Verificación independiente del orquestador (2026-10-01):** `npm run test:cobros` 11/11 verde en 332,8 s;
   `migrate deploy` en base vacía + `migrate diff --exit-code` sin diferencias; con el servidor en 3200: `org-acceso`,
   `consumo-proposito`, `org-invitaciones`, `admin-organizaciones`, `admin-metricas` verdes.
+- T10 `ebbcd4f` y T11 `bb5e67e` (delegadas, un escritor). `activarCreditosIndividual` vence lo gratis del mes y da los
+  2.500 completos, idempotente. Textos de "≈ N créditos" calculados desde el valor vivo del crédito. Estado nuevo
+  `PENDING_PAYMENT` para altas sin prueba ("Contratá para empezar"). Se arregló el e2e del Taller que la rama había roto
+  (la otra sesión lo detectó): `chequearAccesoTaller` usa `resolverAccesoIa`. Migraciones `20261017000000` y
+  `20261018000000` solo pisan valores que siguen en el placeholder viejo. Chequeos según el escritor: check, build,
+  `test:cobros` 11/11, `taller-de-ideas` verde, migraciones en base vacía; el orquestador re-corrió `unidad-creditos`,
+  `unidad-planes` y `check`.
+- **Defecto encontrado leyendo la otra sesión:** producción solo corre `migrate deploy`, nunca el seed, así que las
+  bandas y los planes individuales quedaban vacíos en un deploy nuevo. `20261019000000_catalogo_inicial` los inserta con
+  los precios de lanzamiento (`ON CONFLICT DO NOTHING`). Probado en base vacía: 3 bandas, 2 planes, crédito 0,001,
+  prueba apagada.
 
 ## Próximo paso
 
 Que el dueño pruebe en local con `docs/probar-cobros.md`. Pendientes antes de producción: T4c (sandbox de Mercado
-Pago), T8b (umbral de identificación), T8c (ARCA homologación), precios reales en `/admin/precios`, y decidir T10.
+Pago), T8b (umbral de identificación), T8c (ARCA homologación). Integrar con `feat/ahorro-tokens` (montada sobre esta
+rama; también cambió el valor del crédito en `20261021000000_valor_de_credito_y_plan_individual`) y mergear a `main`.
