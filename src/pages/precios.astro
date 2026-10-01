@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { prisma } from '../lib/db.ts';
+import { creditosAproximados, COSTO_REFERENCIA_RECURSO_NUEVO_USD, COSTO_REFERENCIA_AJUSTE_USD } from '../lib/billing/creditos.ts';
 
 /**
  * odd/tasks/planes-y-cobros.md (T6): página pública de precios. Todos los
@@ -43,6 +44,14 @@ const datosParaElCliente = {
 
 const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
+// T10 (decisión del dueño): la copia de "cuántos créditos cuesta" se
+// CALCULA con el `creditUsdValue` vigente, no queda hardcodeada — si el
+// superadmin lo edita en /admin/precios, este número cambia solo.
+const creditUsdValue = settings.creditUsdValue.toNumber();
+const creditosRecursoNuevo = creditosAproximados(COSTO_REFERENCIA_RECURSO_NUEVO_USD, creditUsdValue);
+const creditosAjusteMin = creditosAproximados(COSTO_REFERENCIA_AJUSTE_USD.min, creditUsdValue);
+const creditosAjusteMax = creditosAproximados(COSTO_REFERENCIA_AJUSTE_USD.max, creditUsdValue);
+
 const bulletsInstitucion = [
   'Docentes ilimitados',
   'Prueba de 30 días sin tarjeta',
@@ -55,12 +64,12 @@ const faqs = [
   {
     pregunta: '¿Qué es un crédito?',
     respuesta:
-      'Es la unidad con la que medimos el costo real de usar la IA. Un recurso nuevo gasta aproximadamente 10 créditos; un ajuste sobre algo que ya existe, entre 2 y 4.',
+      `Es la unidad con la que medimos el costo real de usar la IA. Un recurso nuevo gasta aproximadamente ${creditosRecursoNuevo} créditos; un ajuste sobre algo que ya existe, entre ${creditosAjusteMin} y ${creditosAjusteMax}.`,
   },
   {
     pregunta: '¿Qué pasa si me quedo sin créditos?',
     respuesta:
-      'Dejás de poder generar hasta que se renueven (el plan Gratis suma 50 por mes) o te pasás al plan Individual, que te da 1.000 por mes.',
+      `Dejás de poder generar hasta que se renueven (el plan Gratis suma ${free?.monthlyCredits ?? 0} por mes) o te pasás al plan Individual, que te da ${individual?.monthlyCredits ?? 0} por mes.`,
   },
   {
     pregunta: '¿Cómo cuentan los alumnos de mi institución?',
@@ -281,8 +290,8 @@ const faqs = [
     </div>
 
     <p class="mx-auto mt-6 max-w-xl text-center text-sm text-ink-500">
-      1 recurso nuevo ≈ 10 créditos, un ajuste ≈ 2 a 4. Si tu colegio usa Kodu, no necesitás créditos: entrás con el
-      mail de tu institución.
+      1 recurso nuevo ≈ {creditosRecursoNuevo} créditos, un ajuste ≈ {creditosAjusteMin} a {creditosAjusteMax}. Si tu
+      colegio usa Kodu, no necesitás créditos: entrás con el mail de tu institución.
     </p>
   </section>
 

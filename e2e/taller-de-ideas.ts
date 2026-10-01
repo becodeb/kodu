@@ -57,6 +57,11 @@ async function contexto(email: string, password: string): Promise<APIRequestCont
   return ctx;
 }
 
+async function balanceDe(userId: string): Promise<number> {
+  const total = await prisma.creditLedgerEntry.aggregate({ where: { userId }, _sum: { delta: true } });
+  return total._sum.delta ?? 0;
+}
+
 async function asegurarUsuario(email: string, nombre: string, aiAccessOverride: boolean | null): Promise<string> {
   const fila = await prisma.user.upsert({
     where: { email },
@@ -145,10 +150,14 @@ const mockUrl = `http://localhost:${PUERTO_POR_DEFECTO}`;
 
 const docenteId = await asegurarUsuario(DOCENTE_EMAIL, 'Docente Taller E2E', true);
 await asegurarUsuario(OTRO_EMAIL, 'Otra Docente E2E', true);
-await asegurarUsuario(PERSONAL_EMAIL, 'Cuenta Personal E2E', null);
+const personalId = await asegurarUsuario(PERSONAL_EMAIL, 'Cuenta Personal E2E', null);
 await prisma.ideaSession.deleteMany({ where: { user: { email: { in: [DOCENTE_EMAIL, OTRO_EMAIL] } } } });
 await prisma.project.deleteMany({ where: { user: { email: DOCENTE_EMAIL } } });
 await prisma.tokenUsage.deleteMany({ where: { userId: docenteId } });
+// odd/tasks/planes-y-cobros.md (T10): correr este script más de una vez no
+// debe arrastrar el saldo de créditos de la cuenta personal de una corrida
+// anterior — se arranca siempre desde cero, sin ningún movimiento.
+await prisma.creditLedgerEntry.deleteMany({ where: { userId: personalId } });
 
 const admin = await contexto(ADMIN_EMAIL, ADMIN_PASSWORD);
 const motorId = await asegurarMotorMockPorDefecto(admin, mockUrl);
@@ -160,9 +169,29 @@ let sesionId = '';
 let projectId = '';
 let urlImagen = '';
 
-await prueba('una cuenta personal (sin IA) no puede abrir el Taller', async () => {
+await prueba('una cuenta personal CON créditos puede abrir el Taller', async () => {
+  // odd/tasks/planes-y-cobros.md (T10, defecto encontrado por la otra
+  // sesión): una cuenta personal sin organización ya no está bloqueada sin
+  // más — tiene créditos (bienvenida + mensual del plan Gratis), y la regla
+  // de acceso a la IA (`resolverAccesoIa`) la deja pasar mientras tenga
+  // saldo. El Taller tiene que seguir EXACTAMENTE esa misma regla.
+  const respuesta = await personal.post('/api/taller', { data: { mode: 'TOPIC' } });
+  assert.equal(respuesta.status(), 200, await respuesta.text());
+  const pagina = await personal.get('/app/taller', { maxRedirects: 0 });
+  assert.equal(pagina.status(), 200);
+});
+
+await prueba('una cuenta personal SIN créditos no puede abrir el Taller', async () => {
+  const saldoActual = await balanceDe(personalId);
+  await prisma.creditLedgerEntry.create({ data: { userId: personalId, delta: -saldoActual, kind: 'ADJUSTMENT' } });
+  assert.equal(await balanceDe(personalId), 0);
+
   const respuesta = await personal.post('/api/taller', { data: { mode: 'TOPIC' } });
   assert.equal(respuesta.status(), 403);
+  const cuerpo = (await respuesta.json()) as { reason?: string; error?: string };
+  assert.equal(cuerpo.reason, 'no_credits', 'la razón máquina debe ser no_credits, igual que el resto de la app');
+  assert.ok(cuerpo.error?.includes('sin créditos'), 'el mensaje debe ser el real de "sin créditos", no el genérico viejo');
+
   const pagina = await personal.get('/app/taller', { maxRedirects: 0 });
   assert.equal(pagina.status(), 302);
 });

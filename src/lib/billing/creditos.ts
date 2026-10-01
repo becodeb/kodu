@@ -4,8 +4,10 @@
  * reales del libro (`CreditLedgerEntry`) usando estas funciones.
  *
  * Semántica elegida para "el otorgamiento mensual no se acumula" (decisión
- * del dueño: "50 por mes (no se acumulan)" en FREE, "1.000 créditos por mes"
- * en Individual) — la RECOMENDADA en el documento de la feature:
+ * del dueño: "50 por mes (no se acumulan)" en FREE, "N créditos por mes" en
+ * Individual — el número vigente vive en `IndividualPlan.monthlyCredits`,
+ * editable desde /admin/precios, ver T10) — la RECOMENDADA en el documento
+ * de la feature:
  *
  *   En cada mes calendario (hora de Argentina) nuevo, el saldo del
  *   otorgamiento mensual se REPONE a `monthlyCredits`, no se le suma otra
@@ -38,6 +40,28 @@ export function creditsForCost(costUsd: number, creditUsdValue: number): number 
   // gratis del motor (costo 0) no debe debitar créditos, pero un turno que
   // costó lo mínimo posible siempre debita al menos 1.
   return Math.max(1, Math.ceil(costUsd / creditUsdValue));
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T10, decisión del dueño): costos de
+ * REFERENCIA en USD, en un solo lugar — la copia pública ("un recurso nuevo
+ * ≈ N créditos") los usa con `creditosAproximados` para no quedar
+ * hardcodeada: si el superadmin edita `BillingSettings.creditUsdValue`, el
+ * número que ve el docente se recalcula solo. NO son el costo real de ningún
+ * turno (eso lo decide `TokenUsage.costUsd`, motor por motor) — son una
+ * aproximación para la copia de precios.
+ */
+export const COSTO_REFERENCIA_RECURSO_NUEVO_USD = 0.02;
+export const COSTO_REFERENCIA_AJUSTE_USD = { min: 0.003, max: 0.006 };
+
+/**
+ * Créditos aproximados que cuesta un costo de referencia en USD, con el
+ * `creditUsdValue` VIGENTE (`BillingSettings`) — misma cuenta que
+ * `creditsForCost` (T1), pensada para copia ("≈ N créditos"), no para
+ * debitar de verdad.
+ */
+export function creditosAproximados(costoReferenciaUsd: number, creditUsdValue: number): number {
+  return creditsForCost(costoReferenciaUsd, creditUsdValue);
 }
 
 /** "YYYY-MM" del mes calendario en hora de Argentina (offset fijo -03:00,

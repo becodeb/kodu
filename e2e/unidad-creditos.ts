@@ -2,7 +2,7 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/lib/db.ts';
-import { ensureGrants, balance, debitUsage } from '../src/lib/billing/creditos-servicio.ts';
+import { ensureGrants, balance, debitUsage, activarCreditosIndividual } from '../src/lib/billing/creditos-servicio.ts';
 import { monthlyGrantPeriodKey } from '../src/lib/billing/creditos.ts';
 
 /**
@@ -167,6 +167,106 @@ async function main(): Promise<void> {
       assert.ok(grant, 'tiene que otorgar PLAN_GRANT, no MONTHLY_GRANT');
       assert.equal(grant!.delta, individual.monthlyCredits);
       assert.ok(!filas.some((f) => f.kind === 'MONTHLY_GRANT'), 'no debe otorgar también el de FREE');
+    });
+
+    await prueba('activarCreditosIndividual: tras gastar el FREE del mes, otorga Individual completo + welcome leftover', async () => {
+      const userId = await crearUsuario(`creditos-i-${SUFIJO}@e2e.test`);
+      const ahora = new Date();
+      await ensureGrants(userId, ahora); // welcome + MONTHLY_GRANT (FREE) de este mes
+
+      // Gasta ENTERO el otorgamiento FREE del mes (nada para vencer), deja
+      // sólo la bienvenida de pie.
+      await prisma.creditLedgerEntry.create({
+        data: { userId, delta: -free.monthlyCredits, kind: 'USAGE' },
+      });
+      const saldoTrasGastar = await balance(userId);
+      assert.equal(saldoTrasGastar, free.welcomeCredits, 'sólo queda la bienvenida de pie');
+
+      await activarCreditosIndividual(userId, ahora);
+
+      const saldo = await balance(userId);
+      assert.equal(
+        saldo,
+        free.welcomeCredits + individual.monthlyCredits,
+        'T10: Individual completo y fresco + lo que quedaba de bienvenida (nunca se toca la bienvenida)',
+      );
+
+      const filas = await prisma.creditLedgerEntry.findMany({ where: { userId } });
+      assert.ok(!filas.some((f) => f.kind === 'EXPIRY'), 'el FREE ya estaba gastado del todo — no hay nada que vencer');
+      const planGrant = filas.find((f) => f.kind === 'PLAN_GRANT');
+      assert.ok(planGrant, 'tiene que haber un PLAN_GRANT');
+      assert.equal(planGrant!.delta, individual.monthlyCredits, 'el PLAN_GRANT es el monto COMPLETO, no un top-up parcial');
+    });
+
+    await prueba('activarCreditosIndividual: con FREE sin gastar, vence el leftover y otorga Individual completo', async () => {
+      const userId = await crearUsuario(`creditos-j-${SUFIJO}@e2e.test`);
+      const ahora = new Date();
+      await ensureGrants(userId, ahora); // welcome + MONTHLY_GRANT (FREE) de este mes, sin gastar nada
+
+      await activarCreditosIndividual(userId, ahora);
+
+      const filas = await prisma.creditLedgerEntry.findMany({ where: { userId } });
+      const expiry = filas.find((f) => f.kind === 'EXPIRY');
+      assert.ok(expiry, 'el FREE sin gastar de este mes tiene que vencer');
+      assert.equal(expiry!.delta, -free.monthlyCredits, 'vence EXACTAMENTE el FREE del mes, no la bienvenida');
+
+      const saldo = await balance(userId);
+      assert.equal(
+        saldo,
+        free.welcomeCredits + individual.monthlyCredits,
+        'welcome intacta + Individual completo y fresco (el FREE del mes se vence, no se suma)',
+      );
+    });
+
+    await prueba('activarCreditosIndividual: replay (webhook duplicado) no otorga el PLAN_GRANT dos veces', async () => {
+      const userId = await crearUsuario(`creditos-k-${SUFIJO}@e2e.test`);
+      const ahora = new Date();
+      await ensureGrants(userId, ahora);
+
+      await activarCreditosIndividual(userId, ahora);
+      const saldoTrasPrimeraActivacion = await balance(userId);
+
+      // Replay: mismo período, llamado de nuevo (webhook reintentado, o
+      // `aplicarRenovacionIndividualAnual` llamado dos veces por error).
+      await activarCreditosIndividual(userId, ahora);
+      await activarCreditosIndividual(userId, ahora);
+
+      const saldoFinal = await balance(userId);
+      assert.equal(saldoFinal, saldoTrasPrimeraActivacion, 'tres llamadas seguidas no deben otorgar el PLAN_GRANT de nuevo');
+
+      const planGrants = await prisma.creditLedgerEntry.findMany({ where: { userId, kind: 'PLAN_GRANT' } });
+      assert.equal(planGrants.length, 1, 'un solo PLAN_GRANT para este período, pase lo que pase');
+    });
+
+    await prueba('activarCreditosIndividual: al mes siguiente, ensureGrants vence el PLAN_GRANT y otorga uno fresco', async () => {
+      const userId = await crearUsuario(`creditos-l-${SUFIJO}@e2e.test`);
+      const mesPasado = new Date('2026-03-15T12:00:00Z');
+      await ensureGrants(userId, mesPasado);
+      await activarCreditosIndividual(userId, mesPasado);
+      const saldoActivacion = await balance(userId);
+      assert.equal(saldoActivacion, free.welcomeCredits + individual.monthlyCredits);
+
+      // Gasta parte del Individual de marzo, para probar que el vencimiento
+      // de abril es sobre lo que QUEDÓ, igual que el rollover normal de FREE.
+      await prisma.creditLedgerEntry.create({ data: { userId, delta: -20, kind: 'USAGE' } });
+
+      const mesSiguiente = new Date('2026-04-15T12:00:00Z');
+      // Sin suscripción activa (no se creó IndividualSubscription en esta
+      // prueba): cae de nuevo al otorgamiento FREE del mes — es exactamente
+      // "las renovaciones de meses siguientes siguen el otorgamiento mensual
+      // normal" (T10), no `activarCreditosIndividual`.
+      await ensureGrants(userId, mesSiguiente);
+
+      const filas = await prisma.creditLedgerEntry.findMany({ where: { userId } });
+      const expiryAbril = filas.find((f) => f.kind === 'EXPIRY' && f.delta === -(individual.monthlyCredits - 20));
+      assert.ok(expiryAbril, `el PLAN_GRANT de marzo (menos lo gastado) tiene que vencer en abril (filas: ${JSON.stringify(filas)})`);
+
+      const saldoFinal = await balance(userId);
+      assert.equal(
+        saldoFinal,
+        free.welcomeCredits + free.monthlyCredits,
+        'abril: bienvenida intacta + el otorgamiento mensual normal (FREE, sin suscripción activa)',
+      );
     });
 
     await prueba('debitUsage: redondea hacia arriba con creditUsdValue real y descuenta del saldo', async () => {

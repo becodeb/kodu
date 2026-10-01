@@ -3,7 +3,7 @@ import { billingNow, getEnv } from '../env.ts';
 import { bandForStudents } from './bandas.ts';
 import { firstCharge, renewalChargeIndividualAnnual, renewalChargeOrgCycle, type IntervaloCobro } from './ciclo.ts';
 import { esCuitValido, formatearCuit } from './cuit.ts';
-import { otorgarTopeIndividual } from './creditos-servicio.ts';
+import { activarCreditosIndividual, ensureGrants } from './creditos-servicio.ts';
 import { resolverGatewayDePago } from './pasarela/index.ts';
 import type { NotificacionRecibida, PagoObtenido, PaymentGateway } from './pasarela/tipos.ts';
 import { intentarEmitirFactura } from './facturacion-superadmin.ts';
@@ -744,7 +744,9 @@ async function aplicarPrimerCobroIndividual(checkout: FilaPayment): Promise<void
     },
   });
   await prisma.payment.update({ where: { id: checkout.id }, data: { individualSubscriptionId: sub.id } });
-  await otorgarTopeIndividual(checkout.userId!, billingNow());
+  // T10: alta nueva = activación — crédito Individual completo y fresco este
+  // mes, sin importar el otorgamiento FREE que ya se haya dado/gastado.
+  await activarCreditosIndividual(checkout.userId!, billingNow());
 }
 
 async function aplicarRenovacionIndividualAnual(checkout: FilaPayment): Promise<void> {
@@ -757,7 +759,10 @@ async function aplicarRenovacionIndividualAnual(checkout: FilaPayment): Promise<
       cancelAtPeriodEnd: false,
     },
   });
-  await otorgarTopeIndividual(checkout.userId!, billingNow());
+  // T10: la renovación ANUAL llega como un checkout nuevo (T4b, Mercado Pago
+  // no confirma `frequency: 12`), equivalente a una reactivación — mismo
+  // criterio de "activación" que el alta nueva de arriba.
+  await activarCreditosIndividual(checkout.userId!, billingNow());
 }
 
 async function aplicarRenovacion(checkoutRaiz: FilaPayment, pago: PagoObtenido): Promise<ResultadoNotificacion> {
@@ -847,7 +852,15 @@ async function aplicarRenovacion(checkoutRaiz: FilaPayment, pago: PagoObtenido):
         where: { id: sub.id },
         data: { status: 'ACTIVE', currentPeriodStart: periodStart, currentPeriodEnd: periodEnd },
       });
-      await otorgarTopeIndividual(sub.userId, billingNow());
+      // T10 (decisión del dueño): "renewals in later months follow the
+      // normal monthly grant" — ÉSTA es la renovación recurrente de una
+      // suscripción MONTHLY ya activa, no la activación (ver
+      // `activarCreditosIndividual` en `aplicarPrimerCobroIndividual` /
+      // `aplicarRenovacionIndividualAnual`). `ensureGrants` ya otorga
+      // `PLAN_GRANT` normal para el período nuevo porque la suscripción sigue
+      // ACTIVE arriba — no hace falta el "fresco con vencimiento" de la
+      // activación.
+      await ensureGrants(sub.userId, billingNow());
     } else {
       await prisma.individualSubscription.update({ where: { id: sub.id }, data: { status: 'PAST_DUE' } });
     }

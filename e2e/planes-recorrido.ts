@@ -207,7 +207,7 @@ async function recorridoIndividual(modelId: string, mock: Awaited<ReturnType<typ
     assert.ok(texto?.includes('Te quedaste sin créditos'), 'la página del recurso debe mostrar el aviso de sin créditos');
   });
 
-  await prueba('individual: /app/plan → "Pasate a Individual" → pago simulado aprobado → Plan Individual + 1.000 créditos + factura', async () => {
+  await prueba('individual: /app/plan → "Pasate a Individual" → pago simulado aprobado → Plan Individual + créditos frescos + factura', async () => {
     await page.goto(`${BASE_URL}/app/plan`);
     const texto1 = await page.textContent('body');
     assert.ok(texto1?.includes('Plan Gratis'), 'antes de pagar debe mostrar "Plan Gratis"');
@@ -226,25 +226,25 @@ async function recorridoIndividual(modelId: string, mock: Awaited<ReturnType<typ
     const sub = await prisma.individualSubscription.findUniqueOrThrow({ where: { userId: user.id } });
     assert.equal(sub.status, 'ACTIVE');
 
-    // `otorgarTopeIndividual` (creditos-servicio.ts) completa el otorgamiento
-    // de ESTE período hasta `monthlyCredits` de Individual — un "top-up" de
-    // `monthlyCredits - otorgamientoOriginal`, no "sumale 1.000 al saldo
-    // total". Como el paso anterior de este mismo recorrido vació el saldo a
-    // mano (un `ADJUSTMENT` plano, no el vencimiento normal del mes), el
-    // saldo final queda en `monthlyCredits(Individual) - monthlyCredits(Gratis)`,
-    // no en 1.000 — se verifica contra el catálogo real en vez de un número
-    // fijo, para no inventar un invariante que el código no promete.
-    const [planFree, planIndividual] = await Promise.all([
-      prisma.individualPlan.findUniqueOrThrow({ where: { key: 'FREE' }, select: { monthlyCredits: true } }),
-      prisma.individualPlan.findUniqueOrThrow({ where: { key: 'INDIVIDUAL' }, select: { monthlyCredits: true } }),
-    ]);
+    // `activarCreditosIndividual` (creditos-servicio.ts, T10) otorga el
+    // monto COMPLETO de Individual FRESCO para este período, sin sumarlo a
+    // lo ya otorgado — reemplaza al "top-up" viejo que completaba hasta
+    // `monthlyCredits` contando el otorgamiento FREE ya dado. El paso
+    // anterior de este mismo recorrido vació el saldo a mano a 0 (un
+    // `ADJUSTMENT` plano que ya cubre de sobra el otorgamiento FREE del
+    // mes), así que el saldo final tiene que ser EXACTAMENTE
+    // `monthlyCredits` de Individual — se verifica contra el catálogo real
+    // en vez de un número fijo, para no inventar un invariante que el
+    // código no promete.
+    const planIndividual = await prisma.individualPlan.findUniqueOrThrow({
+      where: { key: 'INDIVIDUAL' },
+      select: { monthlyCredits: true },
+    });
     const saldo = await balanceDe(user.id);
-    const esperado = planIndividual.monthlyCredits - planFree.monthlyCredits;
     assert.equal(
       saldo,
-      esperado,
-      `el nivel de créditos debe reflejar el plan Individual (catálogo: Individual=${planIndividual.monthlyCredits}, ` +
-        `Gratis=${planFree.monthlyCredits}, esperado=${esperado}, dio ${saldo})`,
+      planIndividual.monthlyCredits,
+      `la activación debe dejar el crédito Individual completo y fresco (catálogo: Individual=${planIndividual.monthlyCredits}, dio ${saldo})`,
     );
   });
 

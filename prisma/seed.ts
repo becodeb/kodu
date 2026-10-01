@@ -122,7 +122,9 @@ async function main(): Promise<void> {
  * `/admin` (T7) apenas defina precios reales; sólo importa que el catálogo
  * exista con una fila por banda/plan. `upsert` por `key` (única): correr el
  * seed de nuevo nunca pisa un precio que el superadmin ya haya cambiado a
- * mano — el `update: {}` no toca ninguna columna en una fila existente.
+ * mano — el `update: {}` no toca ninguna columna en una fila existente,
+ * salvo los casos puntuales de abajo (T10: subir un valor VIEJO placeholder
+ * exacto al nuevo default).
  */
 async function seedCatalogoDePrecios(): Promise<void> {
   const bandas: Array<{
@@ -169,13 +171,27 @@ async function seedCatalogoDePrecios(): Promise<void> {
     sortOrder: number;
   }> = [
     { key: 'FREE', name: 'Gratis', monthlyPriceArs: 0, annualPriceArs: null, monthlyCredits: 50, welcomeCredits: 100, sortOrder: 0 },
-    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 1_000, welcomeCredits: 0, sortOrder: 1 },
+    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 2_500, welcomeCredits: 0, sortOrder: 1 },
   ];
 
+  // T10 (decisión del dueño): el valor VIEJO placeholder de `monthlyCredits`
+  // de INDIVIDUAL era 1.000 (antes de esta migración/seed). El `upsert` de
+  // abajo nunca pisa una fila existente (`update: {}`, como siempre) salvo
+  // en ESTE caso puntual: si la fila sigue en el valor viejo exacto, se la
+  // sube al nuevo default — si el superadmin ya la editó desde
+  // /admin/precios a OTRO número (incluido 1.000 a propósito), no se toca.
+  const VALOR_VIEJO_MONTHLY_CREDITS_INDIVIDUAL = 1_000;
+
   for (const plan of planes) {
+    const existente = await prisma.individualPlan.findUnique({ where: { key: plan.key }, select: { monthlyCredits: true } });
+    const update =
+      plan.key === 'INDIVIDUAL' && existente && existente.monthlyCredits === VALOR_VIEJO_MONTHLY_CREDITS_INDIVIDUAL
+        ? { monthlyCredits: plan.monthlyCredits }
+        : {};
+
     await prisma.individualPlan.upsert({
       where: { key: plan.key },
-      update: {},
+      update,
       create: {
         key: plan.key,
         name: plan.name,
@@ -189,15 +205,26 @@ async function seedCatalogoDePrecios(): Promise<void> {
   }
   console.log(`✔ ${planes.length} plan(es) individual(es) sembrado(s) (precios PLACEHOLDER, editables en /admin)`);
 
+  // T10: mismo criterio que arriba para `creditUsdValue` — el valor VIEJO
+  // placeholder era 0,0025 (antes de esta migración/seed); si el superadmin
+  // ya lo cambió desde /admin/precios, no se toca.
+  const VALOR_VIEJO_CREDIT_USD_VALUE = 0.0025;
+  const NUEVO_CREDIT_USD_VALUE = 0.001;
+  const settingsExistente = await prisma.billingSettings.findUnique({ where: { id: 1 }, select: { creditUsdValue: true } });
+  const updateSettings =
+    settingsExistente && settingsExistente.creditUsdValue.toNumber() === VALOR_VIEJO_CREDIT_USD_VALUE
+      ? { creditUsdValue: NUEVO_CREDIT_USD_VALUE }
+      : {};
+
   // La migración 20261012000000_planes_y_cobros ya inserta esta fila (mismo
   // criterio que AppSettings): acá sólo se asegura que exista, sin pisar
-  // nada que el superadmin ya haya cambiado.
+  // nada que el superadmin ya haya cambiado (salvo el caso puntual de arriba).
   await prisma.billingSettings.upsert({
     where: { id: 1 },
-    update: {},
+    update: updateSettings,
     create: {
       id: 1,
-      creditUsdValue: 0.0025,
+      creditUsdValue: NUEVO_CREDIT_USD_VALUE,
       trialDays: 30,
       graceDays: 7,
       monotributoAnnualCapArs: null,

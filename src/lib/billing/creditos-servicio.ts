@@ -145,22 +145,32 @@ export async function ensureGrants(userId: string, now: Date): Promise<void> {
 }
 
 /**
- * odd/tasks/planes-y-cobros.md (T4): al aprobarse el primer pago del plan
- * Individual, subir el otorgamiento de ESTE mes al nivel de Individual
- * (1.000) aunque el docente ya se haya llevado el otorgamiento FREE del mes
- * (50) — decisión de diseño: "topping up... así el docente no pierde
- * créditos FREE injustamente" (no se le resta nada de lo ya otorgado, sólo
- * se completa la diferencia con un `ADJUSTMENT` positivo).
+ * odd/tasks/planes-y-cobros.md (T10, decisión del dueño): al activarse la
+ * suscripción Individual (se aprueba el PRIMER pago — alta nueva o
+ * reactivación anual, ver `aplicar.ts`), el docente recibe el otorgamiento
+ * COMPLETO de Individual (`monthlyCredits`) FRESCO para el mes en curso, sin
+ * importar cuánto otorgamiento FREE ya se le haya dado o gastado ese mismo
+ * mes — reemplaza al "top-up" viejo (completar hasta `monthlyCredits`
+ * contando lo ya otorgado), que dejaba a quien gastó sus créditos FREE antes
+ * de pagar con menos de `monthlyCredits` en el bolsillo.
+ *
+ * Mecánica (dentro de una transacción, igual que el rollover de mes de
+ * `ensureGrants`): si el otorgamiento de ESTE período todavía es el
+ * `MONTHLY_GRANT` de FREE, se vence lo que haya quedado SIN USAR (una
+ * `EXPIRY`, nunca más de lo que quedaba) y recién después se inserta el
+ * `PLAN_GRANT` fresco por el monto COMPLETO de Individual — no se sigue
+ * sumando a lo ya otorgado. La bienvenida (`WELCOME`) nunca se toca.
  *
  * Llama primero a `ensureGrants` (asegura que exista ALGÚN otorgamiento de
- * este período — normalmente ya existe, del alta de la cuenta). Si el
- * otorgamiento de este período ya es `PLAN_GRANT`, no hace nada (ya está al
- * nivel Individual). Pensada para llamarse UNA sola vez, cuando
- * `src/lib/billing/aplicar.ts` aplica el pago aprobado — la idempotencia de
- * ESA llamada (por `providerPaymentId`) es lo que evita un tope doble, no
- * esta función por sí sola.
+ * este período — normalmente ya existe, del alta de la cuenta, o de un uso
+ * anterior). Si el otorgamiento de este período ya es `PLAN_GRANT`, es un
+ * no-op: ya se activó este período (idempotencia ante un reintento del
+ * webhook o una replay del checkout, además del índice único del `PLAN_GRANT`
+ * en sí). Pensada para llamarse en la activación (alta o reactivación), NO en
+ * cada renovación mensual normal de una suscripción ya activa — ésas siguen
+ * el otorgamiento mensual de siempre (`ensureGrants`, sin este "fresco").
  */
-export async function otorgarTopeIndividual(userId: string, now: Date): Promise<void> {
+export async function activarCreditosIndividual(userId: string, now: Date): Promise<void> {
   await ensureGrants(userId, now);
 
   const periodKey = monthlyGrantPeriodKey(now);
@@ -169,16 +179,47 @@ export async function otorgarTopeIndividual(userId: string, now: Date): Promise<
     select: { monthlyCredits: true },
   });
 
-  const otorgamiento = await prisma.creditLedgerEntry.findFirst({
-    where: { userId, periodKey, kind: { in: ['MONTHLY_GRANT', 'PLAN_GRANT'] } },
+  const yaActivado = await prisma.creditLedgerEntry.findFirst({
+    where: { userId, periodKey, kind: 'PLAN_GRANT' },
+    select: { id: true },
   });
-  if (!otorgamiento || otorgamiento.kind === 'PLAN_GRANT') return;
-  if (otorgamiento.delta >= plan.monthlyCredits) return;
+  if (yaActivado) return;
 
-  const diferencia = plan.monthlyCredits - otorgamiento.delta;
-  await prisma.creditLedgerEntry.create({
-    data: { userId, delta: diferencia, kind: 'ADJUSTMENT', periodKey: null },
-  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      const otorgamientoFreeDeEstePeriodo = await tx.creditLedgerEntry.findFirst({
+        where: { userId, periodKey, kind: 'MONTHLY_GRANT' },
+      });
+
+      if (otorgamientoFreeDeEstePeriodo) {
+        const gastadoDespues = await tx.creditLedgerEntry.aggregate({
+          where: { userId, createdAt: { gt: otorgamientoFreeDeEstePeriodo.createdAt }, delta: { lt: 0 } },
+          _sum: { delta: true },
+        });
+        const gastado = Math.abs(gastadoDespues._sum.delta ?? 0);
+        const leftover = Math.max(0, otorgamientoFreeDeEstePeriodo.delta - gastado);
+
+        // Mismo tope defensivo que el rollover de mes de `ensureGrants`:
+        // nunca vencer más allá de lo que hay en el saldo total.
+        const saldo = await saldoEnTx(tx, userId);
+        const aVencer = Math.max(0, Math.min(leftover, saldo));
+        if (aVencer > 0) {
+          await tx.creditLedgerEntry.create({
+            data: { userId, delta: -aVencer, kind: 'EXPIRY', periodKey: null },
+          });
+        }
+      }
+
+      await tx.creditLedgerEntry.create({
+        data: { userId, delta: plan.monthlyCredits, kind: 'PLAN_GRANT', periodKey },
+      });
+    });
+  } catch (error) {
+    // Reintento concurrente (webhook duplicado, replay del checkout): el
+    // índice único `[userId, 'PLAN_GRANT', periodKey]` ya lo atrapó, la
+    // transacción (con su EXPIRY) se revirtió entera. No-op.
+    if (!esViolacionDeUnico(error)) throw error;
+  }
 }
 
 function esViolacionDeUnico(error: unknown): boolean {

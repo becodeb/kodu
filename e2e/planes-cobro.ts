@@ -255,7 +255,7 @@ async function main(): Promise<void> {
     // ───────────────────────────────────────────────────────
     // 4. Individual: suscribirse, créditos, cancelar, arrepentimiento.
     // ───────────────────────────────────────────────────────
-    await prueba('individual checkout MONTHLY: aprobar sube los créditos al nivel Individual (1.000)', async () => {
+    await prueba('individual checkout MONTHLY: aprobar activa el crédito Individual completo y fresco (T10)', async () => {
       const { page, body } = await registrar(`individual-sub-${SUFIJO}@afuera-cobro-e2e.com`);
       const respuesta = await page.request.post(`${BASE_URL}/api/billing/individual/checkout`, { data: { interval: 'MONTHLY' } });
       assert.equal(respuesta.status(), 200, await respuesta.text());
@@ -268,12 +268,23 @@ async function main(): Promise<void> {
       assert.equal(sub.status, 'ACTIVE');
       assert.equal(sub.interval, 'MONTHLY');
 
+      // T10 (decisión del dueño): "activarCreditosIndividual" otorga el
+      // monto COMPLETO de Individual, del catálogo real — nunca un número
+      // fijo (nada de "al menos 1.000"), y lo sigue teniendo encima de
+      // cualquier bienvenida que ya le hayan dado.
+      const individual = await prisma.individualPlan.findUniqueOrThrow({ where: { key: 'INDIVIDUAL' }, select: { monthlyCredits: true } });
+      const free = await prisma.individualPlan.findUniqueOrThrow({ where: { key: 'FREE' }, select: { welcomeCredits: true } });
+
       const saldo = await prisma.creditLedgerEntry.aggregate({ where: { userId: body.user.id }, _sum: { delta: true } });
-      assert.ok((saldo._sum.delta ?? 0) >= 1000, `el saldo debe reflejar el nivel Individual (dio ${saldo._sum.delta})`);
+      assert.equal(
+        saldo._sum.delta ?? 0,
+        individual.monthlyCredits + free.welcomeCredits,
+        `el saldo tiene que ser Individual completo + la bienvenida (catálogo: Individual=${individual.monthlyCredits}, bienvenida=${free.welcomeCredits})`,
+      );
 
       const planGrant = await prisma.creditLedgerEntry.findFirst({ where: { userId: body.user.id, kind: 'PLAN_GRANT' } });
-      assert.ok(planGrant, 'debe existir un movimiento PLAN_GRANT de 1.000');
-      assert.equal(planGrant!.delta, 1000);
+      assert.ok(planGrant, 'debe existir un movimiento PLAN_GRANT del monto completo');
+      assert.equal(planGrant!.delta, individual.monthlyCredits);
     });
 
     await prueba('individual cancel: mantiene acceso (ACTIVE) hasta el fin del período', async () => {

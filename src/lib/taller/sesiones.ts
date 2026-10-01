@@ -4,7 +4,7 @@
  */
 
 import { prisma } from '../db.ts';
-import { puedeUsarLaIa } from '../orgs/acceso.ts';
+import { resolverAccesoIa, mensajeAccesoIa } from '../orgs/acceso.ts';
 import { leerAppSettings } from '../settings.ts';
 import { consumoDeLaDemo } from '../demo.ts';
 import { consumedTokens } from '../ai/usage.ts';
@@ -17,13 +17,22 @@ import type { MensajeTaller, SesionTaller } from './tipos.ts';
 
 /**
  * ¿Puede esta cuenta usar el Taller? Es la MISMA regla que el editor
- * (`puedeUsarLaIa` + el interruptor de la demo): el Taller gasta IA igual que
- * crear un recurso. `null` = puede; si no, la respuesta de error lista para
- * devolver.
+ * (`resolverAccesoIa` + el interruptor de la demo): el Taller gasta IA igual
+ * que crear un recurso. `null` = puede; si no, la respuesta de error lista
+ * para devolver.
+ *
+ * odd/tasks/planes-y-cobros.md (T10, defecto encontrado): antes usaba el
+ * `puedeUsarLaIa` booleano con un mensaje genérico fijo — una cuenta
+ * personal sin créditos veía "no tenés habilitado el uso de la IA" en vez
+ * del mensaje real ("Te quedaste sin créditos..."), y el cuerpo no traía
+ * `reason`. Ahora usa `resolverAccesoIa` + `mensajeAccesoIa`, igual que
+ * `chat/stream.ts`, `verificar.ts` y `autocorreccion.ts` — un solo criterio
+ * de acceso a la IA en toda la app.
  */
 export async function chequearAccesoTaller(user: SessionUser): Promise<Response | null> {
-  if (!(await puedeUsarLaIa(user))) {
-    return fail('Tu cuenta todavía no tiene habilitado el uso de la IA. Escribinos y lo vemos.', 403);
+  const acceso = await resolverAccesoIa(user);
+  if (!acceso.allowed) {
+    return fail(mensajeAccesoIa(acceso), 403, { reason: acceso.reason });
   }
 
   if (user.isDemo) {
