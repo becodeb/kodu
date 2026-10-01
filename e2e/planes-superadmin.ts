@@ -460,8 +460,24 @@ async function main(): Promise<void> {
       assert.equal(pago.status, 'APPROVED');
       assert.equal(pago.amountArs.toNumber(), 500000);
 
+      // Esta activación manual no carga razón social/CUIT: con un facturador
+      // CONFIGURADO (INVOICE_PROVIDER=simulado/arca — el caso de
+      // `npm run test:cobros`, que también necesita INVOICE_PROVIDER=simulado
+      // para planes-facturacion.ts/planes-recorrido.ts), `activarLicenciaManual
+      // PorTransferencia` igual intenta emitir después de la transacción
+      // (aplicar.ts) y esa emisión falla por falta de esos datos — nunca
+      // bloquea la activación de la licencia, pero la factura queda FAILED en
+      // vez de PENDING. Sin ningún facturador configurado (INVOICE_PROVIDER
+      // vacío/"none"), `resolverFacturador()` da null y ni siquiera lo intenta:
+      // ahí sí queda PENDING.
       const invoice = await prisma.invoice.findUniqueOrThrow({ where: { paymentId } });
-      assert.equal(invoice.status, 'PENDING');
+      const hayFacturador = !!process.env.INVOICE_PROVIDER && process.env.INVOICE_PROVIDER !== 'none';
+      if (hayFacturador) {
+        assert.equal(invoice.status, 'FAILED', `sin razón social/CUIT cargados, la emisión automática debe fallar (dio ${invoice.status})`);
+        assert.ok(invoice.lastError, 'debe guardar el motivo del fallo');
+      } else {
+        assert.equal(invoice.status, 'PENDING');
+      }
     });
 
     await prueba('activación manual: período inválido (fin <= inicio) se rechaza', async () => {
