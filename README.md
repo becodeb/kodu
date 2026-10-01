@@ -147,3 +147,10 @@ SQL puro (producción corre `prisma migrate deploy`, sin `tsx`):
 * **Motor y consumo:** el motor predeterminado del catálogo, con su respaldo. Cada respuesta se registra como `IDEATION` (sin recurso) y aparece como "Taller de ideas" en `/admin/metricas`.
 * **Migración:** `20261011000000_taller_de_ideas` — tablas `IdeaSession`, `IdeaMessage`, `IdeaAsset` y el valor `IDEATION` en `UsagePurpose`.
 * **Pruebas:** `npx tsx e2e/unidad-taller.ts` (sin base) y `npx tsx e2e/taller-de-ideas.ts` (con la pila de desarrollo y el proveedor simulado).
+
+---
+
+### 13. Planes, precios y cobros
+
+* **Para qué:** que Kodu se pueda contratar y pagar desde la app — licencia institucional por matrícula o plan de créditos individual, cobro con Mercado Pago (adaptador `simulado` para local/e2e) y Factura C (adaptador `simulado`/`arca`). Detalle completo en `odd/tasks/planes-y-cobros.md`.
+* **Probarlo en local:** `npm run test:cobros` corre todo de punta a punta (unitarios + e2e + el recorrido completo de un docente individual y de una institución). Paso a paso manual, viaje en el tiempo con SQL y la checklist de "antes de salir a producción": [`docs/probar-cobros.md`](docs/probar-cobros.md).
