@@ -122,7 +122,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - [ ] **T8b — Umbral de identificación del consumidor final.** No se pudo confirmar en fuente oficial el monto desde el
   cual una Factura C a consumidor final exige DNI/CUIT. Hoy todo pago individual sale como consumidor final. Confirmar
   antes de facturar de verdad con ARCA.
-- [ ] **T8c — Probar ARCA en homologación** con el certificado del dueño (nunca se ejecutó contra ARCA real).
+- [x] **T8c — Probar ARCA en homologación** con el certificado del dueño (nunca se ejecutó contra ARCA real).
 - [x] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
   (individual e institución).
 
@@ -206,6 +206,16 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   migraciones sin error, licencia `MANUAL` para Reditinere, backfill de `TokenUsage` limpio), `test:cobros` 11/11, las 19
   `unidad-*`, `edicion-por-fragmentos`, `taller-de-ideas`, `m4-costos`, `org-acceso`, `consumo-proposito` verdes. El
   orquestador re-corrió `check` y `unidad-planes`.
+- 2026-10-01: push a `main` (`aaecfce`) tras el backup de producción del dueño (911 KB, `~/kodu-antes-de-ahorro-2026-10-01.dump`
+  en la VPS). Deploy de Coolify terminado; `/precios` muestra los precios reales y no ofrece prueba.
+- ARCA: el dueño creó `koduhomo` (WSASS, autorizado a wsfe) y `koduprod` (producción, relación "Facturación Electrónica"
+  BL1318141944388) y el punto de venta **00002** "Factura Electrónica - Monotributo - Web Services", actividad 620100.
+  Claves en `~/.credentials/arca/kodu/` (fuera del repo).
+- T8c (delegada) `b3c0bc6`: la prueba real contra homologación encontró 3 defectos invisibles offline: el acceso de WSAA
+  solo en memoria (ARCA niega otro login mientras haya uno vigente → tras cada deploy no se podía facturar hasta ~12 h;
+  ahora tabla `ArcaAccessTicket` con advisory lock), elementos SOAP sin el namespace `ar:` y `SOAPAction` vacío; además el
+  orden `ImpTrib`/`ImpIVA` estaba invertido. Facturas C reales de homologación con CAE (consumidor final y CUIT exento),
+  la segunda desde otro proceso reusando el acceso guardado. `unidad-facturador` 23/23 (re-corrido por el orquestador).
 
 ## Próximo paso
 
