@@ -199,9 +199,16 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   bandas y los planes individuales quedaban vacíos en un deploy nuevo. `20261024000000_catalogo_inicial` los inserta con
   los precios de lanzamiento (`ON CONFLICT DO NOTHING`). Probado en base vacía: 3 bandas, 2 planes, crédito 0,001,
   prueba apagada.
+- Integración: `e54f355` renombra las migraciones de T10/T11/catálogo a `20261022…`–`20261024…` (chocaban en fecha con
+  las de `feat/ahorro-tokens` y deben correr después de su `20261021…`); `bfc71bf` mergea `feat/ahorro-tokens` (8
+  conflictos, ganan los valores del dueño de esta rama). Chequeos según el integrador: check, build, base vacía con valores
+  finales correctos, simulación de producción (copia de `koduedu` llevada a `origin/main` y después a esta rama: 16
+  migraciones sin error, licencia `MANUAL` para Reditinere, backfill de `TokenUsage` limpio), `test:cobros` 11/11, las 19
+  `unidad-*`, `edicion-por-fragmentos`, `taller-de-ideas`, `m4-costos`, `org-acceso`, `consumo-proposito` verdes. El
+  orquestador re-corrió `check` y `unidad-planes`.
 
 ## Próximo paso
 
 Que el dueño pruebe en local con `docs/probar-cobros.md`. Pendientes antes de producción: T4c (sandbox de Mercado
-Pago), T8b (umbral de identificación), T8c (ARCA homologación). Integrar con `feat/ahorro-tokens` (montada sobre esta
-rama; también cambió el valor del crédito en `20261021000000_valor_de_credito_y_plan_individual`) y mergear a `main`.
+Pago), T8b (umbral de identificación), T8c (ARCA homologación). Push a `main` cuando el dueño confirme el backup de la
+base de producción (no hay backups programados).
