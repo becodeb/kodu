@@ -5,6 +5,7 @@ import { fail, readBody } from '../../../../lib/http.ts';
 import { cadenaDeMotores, motorPorDefecto } from '../../../../lib/ai/catalogo.ts';
 import {
   ProviderError,
+  razonamientoNulo,
   readCompletionStream,
   requestCompletionStream,
   supportsVision,
@@ -12,6 +13,7 @@ import {
   type TokenUsage,
 } from '../../../../lib/ai/provider.ts';
 import { recordUsage } from '../../../../lib/ai/usage.ts';
+import { debeTallerDesactivarRazonamiento } from '../../../../lib/taller/razonamiento.ts';
 import { readImageAsDataUrl } from '../../../../lib/uploads.ts';
 import {
   fusionarFicha,
@@ -93,6 +95,10 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
   if (message.length > motor.maxInputChars) {
     return fail('Tu mensaje es demasiado largo. Probá contármelo en partes.', 413);
   }
+
+  // odd/tasks/ahorro-tokens.md (T2): una cuenta personal en el plan FREE no
+  // paga razonamiento en el Taller — ni paga ni organización lo pierden.
+  const sinRazonamiento = await debeTallerDesactivarRazonamiento(user);
 
   if (!reclamarTurno(sesion.id)) {
     return fail('Todavía estoy contestando tu mensaje anterior. Esperá un momento.', 409);
@@ -180,7 +186,13 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
         }, HEARTBEAT_MS);
 
         try {
-          const { acumulado, usado, usage } = await pedirRespuesta(mensajes, motor, abortador.signal, enviar);
+          const { acumulado, usado, usage } = await pedirRespuesta(
+            mensajes,
+            motor,
+            abortador.signal,
+            enviar,
+            sinRazonamiento,
+          );
 
           if (usage) {
             await recordUsage({
@@ -314,6 +326,7 @@ async function pedirRespuesta(
   motor: ProviderConfig,
   signal: AbortSignal,
   enviar: (evento: EventoTaller) => void,
+  sinRazonamiento: boolean,
 ): Promise<{ acumulado: string; usado: ProviderConfig; usage: TokenUsage | null }> {
   const cadena = await cadenaDeMotores(motor.id);
   let ultimaFalla: unknown = null;
@@ -329,6 +342,10 @@ async function pedirRespuesta(
         // final (ver `lib/taller/ficha.ts`, "Por qué un bloque").
         sinHerramientas: true,
         maxTokensOverride: Math.min(MAX_TOKENS_TURNO, candidato.maxTokens),
+        // odd/tasks/ahorro-tokens.md (T2): cuenta personal en FREE → "none"
+        // fijo, sin importar el nivel configurado en el motor. Paga u
+        // organización: `undefined`, el nivel configurado de siempre.
+        razonamientoOverride: sinRazonamiento ? razonamientoNulo(candidato) : undefined,
         onReintento: () => enviar({ type: 'notice', message: 'Hay mucha gente usando Kodu ahora. Sigo intentando…' }),
       });
     } catch (error) {
