@@ -1,0 +1,1 @@
+El botón de reiniciar me gustaría que diga "Empezar de nuevo" en vez de lo que dice ahora, y que el título se vea más grande.

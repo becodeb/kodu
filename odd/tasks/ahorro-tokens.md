@@ -25,7 +25,7 @@ Branch `feat/ahorro-tokens` (worktree `~/projects/kodu-wt/ahorro`), cut from `fe
 - [x] T1 Time-of-day pricing: an AiModel can declare a peak schedule and an off-peak price factor; the cost of a turn is computed with the price that applied at the moment of the call. DeepSeek models get the official schedule. Existing DeepSeek TokenUsage rows that fall off-peak are recomputed (cost and the credits already debited stay consistent). Editable from `/admin/motores`. Route: delegated (2+ non-trivial files). Commit `f7caa9e`.
 - [x] T2 Taller de ideas without reasoning for free-plan users (personal accounts on the FREE plan). Route: delegated, together with T1 (same writer). Commit `b4cdc6a`.
 - [x] T3a Fragment editing (`edit_resource_code`): adjustments/corrections can edit only the changed fragments instead of rewriting the full HTML. Route: delegated (single writer, same isolated worktree/DB/PORT). Commits: see below.
-- [ ] T3b Measure real cost/quality of T3a against DeepSeek with real money, on a tight budget (~USD 0.30). Pending.
+- [x] T3b Measure real cost of T3a against DeepSeek with real money, on a tight budget (~USD 0.30 cap; actual spend USD 0.14 for the clean 12-call run). Quality is NOT judged here — a blind evaluation package was produced for the owner/a separate evaluator. Route: delegated (same writer/worktree/DB/PORT). Pending the owner's decision on the two open items noted in the T3b section (blind-eval verdict, and whether to turn the switch on).
 
 ## Levers (analysis, 2026-10-01)
 
@@ -96,4 +96,44 @@ Both T1 and T2 implemented, verified and committed on `feat/ahorro-tokens`. Rout
 - `npx tsx e2e/unidad-edicion-fragmentos.ts`: 22/22 OK.
 - All pre-existing `e2e/unidad*.ts` suites: no regressions (same pass/fail pattern as before T3a, including the known `unidad-creditos.ts` unique-constraint retry log that was already there and still ends green).
 - `npx tsx e2e/edicion-por-fragmentos.ts` (new): all 3 scenarios OK.
-- `npm run test:cobros` (PORT=3300): see the commit/report for the result (ran after this note was written).
+- `npm run test:cobros` (PORT=3300): 11/11 scripts green, same baseline as T1/T2.
+- Commit `7aa5bac`.
+
+### T3b — real-money measurement against DeepSeek (2026-10-01)
+
+Route: delegated (single writer, same isolated worktree/DB/PORT 3300), using the `DEEPSEEK_TEST_API_KEY` test key only (never OpenCode Go, never printed, never committed).
+
+- Balance before: **USD 2.42**. One cheap proof call first (small HTML, `fragmentEditsEnabled` off): confirmed the real tool path works (`editMode: FULL`, cost ~USD 0.00014) before spending on the full corpus — no auxiliary call used tools unexpectedly.
+- Provider/model: `AiProvider` kind `deepseek-experimento-t3b` → `https://api.deepseek.com`, `AiModel` `deepseek-flash`, `reasoningEffort: 'low'`, `reasoningParam: 'reasoning_effort'`, real production prices (input 0.15 / output 0.6 / cached-input 0.003 USD per M tokens, off-peak factor 0.5), created directly via Prisma with the key encrypted through the same `cifrar()` the admin API uses.
+- **Bug found and fixed mid-run**: the first attempt toggled `AppSettings.fragmentEditsEnabled` with a direct `prisma.appSettings.update()` from the runner's own Node process. `leerAppSettings()`'s 10s cache lives in the *dev server's* process, so that write never invalidated it — the toggle got stuck "on" after the first flip, and 4 of the first 6 calls silently ran in the wrong mode (confirmed in the dev-server log: `editMode` didn't match the intended `modo`). Fixed by toggling through the same `PATCH /api/admin/settings` the admin UI uses (same process as `leerAppSettings`, calls `invalidarAppSettings()`), plus a DB read-back assertion before every call. The 6 mislabeled calls (~USD 0.022) were discarded; the full 12-call run below is from the corrected runner, cut cleanly.
+- Corpus: 3 resources from `/home/opencode/projects/kodu-medicion/experimentos/razonamiento/resultados/gen-mimo-pro/` (read-only, not modified) — "Vecinos de 1810" (history debate, 95.8K chars), "Media, mediana y moda" (statistics, 95.3K chars), "Tiro al blanco" (projectile physics, 84.2K chars). 2 teacher-style requests each (one visual/text, one logic/behavior) in `experimentos/fragmentos/casos.json`. Driven through the real `/api/chat/stream` as a seeded teacher account, full vs fragments mode toggled per call — 12 real calls total.
+- **Result: 0 failures, 0 fallbacks.** Every call resolved in its intended mode (`editMode` always matched); the recovery-retry path (`FRAGMENTS_FALLBACK`) was never exercised by the real model — it's only been exercised by the scripted mock e2e so far.
+- **Another real finding**: DeepSeek rejects `tool_choice: 'required'` (the value `provider.ts` sends when both tools are offered and the turn is forced). `requestCompletionStream`'s existing `ToolChoiceNoSoportado` fallback caught it and silently retried with `'auto'` on every fragments-enabled forced call — it still worked, but adds one extra round-trip of latency per such call (visible in the dev-server log: `"no acepta forzar la herramienta; se repite el pedido con tool_choice 'auto'"`). Not a correctness bug, but worth the owner knowing: forcing isn't free when fragments are enabled.
+
+**Token/cost table** (full 12 calls; cost from `TokenUsage.costUsd`, DeepSeek real prices):
+
+| case | request | mode | prompt | cached | completion | cost USD | duration | editMode |
+|---|---|---|---:|---:|---:|---:|---:|---|
+| vecinos-1810 | visual | full | 34450 | 34304 | 30018 | 0.009068 | 76.1s | FULL |
+| vecinos-1810 | visual | fragments | 34964 | 34816 | 475 | 0.000206 | 3.6s | FRAGMENTS |
+| vecinos-1810 | logica | full | 34460 | 4736 | 31058 | 0.011554 | 80.3s | FULL |
+| vecinos-1810 | logica | fragments | 34974 | 34816 | 4838 | 0.001515 | 22.2s | FRAGMENTS |
+| media-mediana-moda | visual | full | 34676 | 4736 | 30069 | 0.011273 | 76.5s | FULL |
+| media-mediana-moda | visual | fragments | 35190 | 34944 | 391 | 0.000188 | 3.5s | FRAGMENTS |
+| media-mediana-moda | logica | full | 34682 | 4736 | 44456 | 0.015590 | 139.4s | FULL |
+| media-mediana-moda | logica | fragments | 35196 | 4864 | 20317 | 0.008377 | 92.5s | FRAGMENTS |
+| tiro-al-blanco | visual | full | 30881 | 4736 | 26771 | 0.009999 | 70.6s | FULL |
+| tiro-al-blanco | visual | fragments | 31395 | 4864 | 424 | 0.002124 | 4.2s | FRAGMENTS |
+| tiro-al-blanco | logica | full | 30888 | 4736 | 27482 | 0.010213 | 72.8s | FULL |
+| tiro-al-blanco | logica | fragments | 31402 | 4864 | 2206 | 0.002659 | 9.7s | FRAGMENTS |
+
+**Averages (6 calls each):** full — completion 31,642 tok, cost USD 0.011283, duration 86.0s. fragments — completion 4,775 tok, cost USD 0.002512, duration 22.6s (skewed by one 92.5s outlier; median ≈ 6.9s). That's an **85% cut in completion tokens** and **78% cut in cost** on average, with one case (`media-mediana-moda/logica`, a non-trivial DOM+highlight behavior change) only getting a 46% token cut — the lever works best on localized changes and still helps, less dramatically, on changes that genuinely touch more of the document.
+
+- Balance after: **USD 2.23** (not the cheap proof call's balance read, which still showed 2.42 at 2-decimal display). Total real spend across both runs (buggy + corrected): **USD 0.19** (well under the USD 0.30 cap); the corrected 12-call run alone spent **USD 0.14**.
+- Outputs: per-call final HTML in `experimentos/fragmentos/resultados/<caso>__<pedido>__<modo>.html`; machine-readable table in `experimentos/fragmentos/resumen.json`; blind evaluation package (base HTML + request + A/B HTML with the A/B key in a separate file, NOT evaluated by this writer) in `experimentos/fragmentos/ciego/` — 6 cases × (`base.html`, `pedido.txt`, `A.html`, `B.html`, `clave.json`).
+
+#### For the owner to decide
+
+- Quality was not judged here on purpose (the task reserves that for blind evaluators) — only `experimentos/fragmentos/ciego/` exists; nobody has looked at whether the A/B pairs are equivalent in quality.
+- The one real compatibility wrinkle (`tool_choice: 'required'` rejected by DeepSeek, falls back to `'auto'` automatically) costs one extra round trip per forced+fragments call; harmless today but worth knowing if DeepSeek's dialect is ever tightened elsewhere.
+- `fragmentEditsEnabled` is still `false` on every existing database (by migration design) — turning it on for real teachers is a separate, explicit step once the blind evaluation confirms quality holds.

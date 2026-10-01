@@ -1,0 +1,1 @@
+Cambiá el color de fondo del panel de controles para que combine mejor, y hacé el botón de disparar más grande.

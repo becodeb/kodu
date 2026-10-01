@@ -1,0 +1,1 @@
+Quiero que el contador de intentos se reinicie a cero cada vez que cambio el ángulo o la velocidad, no sólo cuando aprieto reiniciar.
