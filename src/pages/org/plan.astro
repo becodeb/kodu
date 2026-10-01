@@ -1,0 +1,170 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PlanOrgAcciones from '../../components/billing/PlanOrgAcciones.tsx';
+import { alcanceDeAdmin, requireOrgAdmin } from '../../lib/orgs/alcance.ts';
+import { prisma } from '../../lib/db.ts';
+import { billingNow } from '../../lib/env.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T6): plan y facturación de la institución —
+ * la licencia vive SIEMPRE en la organización RAÍZ (comentario de
+ * `OrganizationLicense` en schema.prisma), nunca en una sede. Un admin de la
+ * red (o de un colegio standalone) edita y paga; un admin de UNA sede nada
+ * más ve todo en modo lectura (mismo criterio de alcance que `/org`).
+ */
+const actor = Astro.locals.user!;
+const alcance = await alcanceDeAdmin(actor);
+
+if (!alcance.esSuperadmin && alcance.campusIds.size === 0 && alcance.redIds.size === 0) {
+  return Astro.redirect('/app', 302);
+}
+
+const sedeParam = Astro.url.searchParams.get('sede');
+let organizationId: string | null = null;
+
+if (sedeParam) {
+  const auth = await requireOrgAdmin(Astro.locals, sedeParam);
+  if (auth instanceof Response) return auth;
+  organizationId = sedeParam;
+} else {
+  const fila = await prisma.user.findUnique({ where: { id: actor.id }, select: { organizationId: true } });
+  organizationId = fila?.organizationId ?? null;
+}
+
+if (organizationId === null) {
+  return Astro.redirect('/org', 302);
+}
+
+const org = await prisma.organization.findUnique({ where: { id: organizationId }, select: { kind: true, parentId: true, name: true } });
+if (!org) return Astro.redirect('/org', 302);
+
+const rootId = org.parentId ?? organizationId;
+const rootOrg =
+  org.parentId === null ? org : await prisma.organization.findUniqueOrThrow({ where: { id: rootId }, select: { kind: true, parentId: true, name: true } });
+
+const esAdminDeRaiz = alcance.esSuperadmin || (rootOrg.kind === 'NETWORK' ? alcance.redIds.has(rootId) : alcance.campusIds.has(rootId));
+const soloLectura = !esAdminDeRaiz;
+
+const [license, pagos] = await Promise.all([
+  prisma.organizationLicense.findUnique({ where: { organizationId: rootId } }),
+  prisma.payment.findMany({
+    where: { organizationId: rootId },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+    select: { id: true, amountArs: true, status: true, createdAt: true, invoice: { select: { status: true, number: true } } },
+  }),
+]);
+
+const now = billingNow();
+const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+const ESTADO_PAGO: Record<string, string> = {
+  PENDING: 'Pendiente',
+  APPROVED: 'Aprobado',
+  REJECTED: 'Rechazado',
+  REFUNDED: 'Reintegrado',
+};
+const ETIQUETA_FACTURA: Record<string, string> = {
+  PENDING: 'Factura en proceso',
+  ISSUED: 'Emitida',
+  FAILED: 'Falló la emisión',
+};
+
+function etiquetaEstado(l: NonNullable<typeof license>): string {
+  switch (l.status) {
+    case 'MANUAL':
+      return 'Licencia manual';
+    case 'TRIAL': {
+      if (!l.trialEndsAt) return 'Prueba';
+      const dias = Math.max(0, Math.ceil((l.trialEndsAt.getTime() - now.getTime()) / 86_400_000));
+      return `Prueba: ${dias} día${dias === 1 ? '' : 's'} restante${dias === 1 ? '' : 's'}`;
+    }
+    case 'ACTIVE':
+      return l.cancelAtPeriodEnd && l.currentPeriodEnd
+        ? `Cancelada al fin del período (${formateadorFecha.format(l.currentPeriodEnd)})`
+        : `Activa${l.currentPeriodEnd ? ` hasta ${formateadorFecha.format(l.currentPeriodEnd)}` : ''}`;
+    case 'PAST_DUE':
+      return `En período de gracia${l.graceEndsAt ? ` hasta ${formateadorFecha.format(l.graceEndsAt)}` : ''}`;
+    case 'READ_ONLY':
+      return 'Solo lectura';
+    case 'CANCELED':
+      return 'Cancelada al fin del período';
+  }
+}
+---
+
+<BaseLayout title="Plan de mi institución">
+  <div class="mx-auto max-w-2xl space-y-6">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Plan de {rootOrg.name}</h1>
+      <p class="mt-1 text-sm text-ink-500">Licencia, matrícula, datos de facturación y pagos.</p>
+    </div>
+
+    {
+      !license ? (
+        <div class="kodu-card p-6 text-center">
+          <h2 class="font-display text-lg font-bold text-ink-900">No encontramos la licencia</h2>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">Escribinos y lo vemos.</p>
+        </div>
+      ) : (
+        <>
+          <section class="kodu-card p-4">
+            <h2 class="text-sm font-semibold text-ink-900">Estado</h2>
+            <p class="mt-2 text-lg text-ink-900">{etiquetaEstado(license)}</p>
+            {soloLectura && (
+              <p class="mt-2 text-xs text-ink-500">
+                Estás viendo esto como administrador de una sede. Sólo quien administra toda la institución puede
+                editar y pagar.
+              </p>
+            )}
+          </section>
+
+          <section class="kodu-card p-4">
+            <h2 class="mb-4 text-sm font-semibold text-ink-900">Matrícula y facturación</h2>
+            <PlanOrgAcciones
+              client:load
+              licenseStatus={license.status}
+              declaredStudents={license.declaredStudents}
+              legalName={license.legalName}
+              cuit={license.cuit}
+              cancelAtPeriodEnd={license.cancelAtPeriodEnd}
+              soloLectura={soloLectura}
+            />
+          </section>
+
+          <section class="kodu-card p-4">
+            <h2 class="mb-3 text-sm font-semibold text-ink-900">Pagos</h2>
+            {pagos.length === 0 ? (
+              <p class="text-sm text-ink-500">Todavía no hay pagos.</p>
+            ) : (
+              <ul class="divide-y divide-linea text-sm">
+                {pagos.map((p) => (
+                  <li class="flex items-center justify-between gap-3 py-2">
+                    <div>
+                      <p class="text-ink-900">{formateadorFecha.format(p.createdAt)}</p>
+                      <p class="text-xs text-ink-500">
+                        {ESTADO_PAGO[p.status] ?? p.status}
+                        {p.invoice && (
+                          <>
+                            {' · '}
+                            {p.invoice.status === 'ISSUED' && p.invoice.number
+                              ? `Factura N.º ${p.invoice.number}`
+                              : ETIQUETA_FACTURA[p.invoice.status] ?? p.invoice.status}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <span class="tabular-nums font-semibold text-ink-900">
+                      {formateador.format(Number(p.amountArs))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )
+    }
+  </div>
+</BaseLayout>

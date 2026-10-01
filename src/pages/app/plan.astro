@@ -1,0 +1,219 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import PlanIndividualAcciones from '../../components/billing/PlanIndividualAcciones.tsx';
+import { prisma } from '../../lib/db.ts';
+import { ensureGrants, balance } from '../../lib/billing/creditos-servicio.ts';
+import { proximaRenovacionEtiqueta } from '../../lib/billing/creditos.ts';
+import { billingNow } from '../../lib/env.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T6): "mi plan" para una cuenta PERSONAL —
+ * plan actual, saldo de créditos, movimientos recientes, pago/cancelación.
+ * Un miembro de una organización ve en cambio un cartel corto: su licencia
+ * la paga la institución, no tiene créditos propios. El middleware ya
+ * garantiza sesión en `/app/**`.
+ */
+const user = Astro.locals.user!;
+const fila = await prisma.user.findUniqueOrThrow({
+  where: { id: user.id },
+  select: { organizationId: true, email: true },
+});
+
+const esCuentaPersonal = fila.organizationId === null;
+const now = billingNow();
+
+const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
+
+const ETIQUETA_MOVIMIENTO: Record<string, string> = {
+  WELCOME: 'Bienvenida',
+  MONTHLY_GRANT: 'Crédito mensual (Gratis)',
+  PLAN_GRANT: 'Crédito mensual (Individual)',
+  USAGE: 'Uso',
+  ADJUSTMENT: 'Ajuste',
+  EXPIRY: 'Vencimiento',
+};
+
+const ETIQUETA_FACTURA: Record<string, string> = {
+  PENDING: 'Factura en proceso',
+  ISSUED: 'Emitida',
+  FAILED: 'Falló la emisión',
+};
+
+let saldo = 0;
+let suscripcion: Awaited<ReturnType<typeof prisma.individualSubscription.findUnique>> = null;
+let planFree: Awaited<ReturnType<typeof prisma.individualPlan.findFirst>> = null;
+let planIndividual: Awaited<ReturnType<typeof prisma.individualPlan.findFirst>> = null;
+let movimientos: Array<{ id: string; delta: number; kind: string; createdAt: Date }> = [];
+let pagos: Array<{
+  id: string;
+  amountArs: unknown;
+  status: string;
+  createdAt: Date;
+  invoice: { status: string; number: number | null } | null;
+}> = [];
+let puedeArrepentirse = false;
+
+if (esCuentaPersonal) {
+  await ensureGrants(user.id, now);
+  [saldo, suscripcion, planFree, planIndividual, movimientos, pagos] = await Promise.all([
+    balance(user.id),
+    prisma.individualSubscription.findUnique({ where: { userId: user.id } }),
+    prisma.individualPlan.findUnique({ where: { key: 'FREE' } }),
+    prisma.individualPlan.findUnique({ where: { key: 'INDIVIDUAL' } }),
+    prisma.creditLedgerEntry.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: { id: true, delta: true, kind: true, createdAt: true },
+    }),
+    prisma.payment.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+      select: { id: true, amountArs: true, status: true, createdAt: true, invoice: { select: { status: true, number: true } } },
+    }),
+  ]);
+
+  if (suscripcion?.status === 'ACTIVE') {
+    const primerPago = await prisma.payment.findFirst({
+      where: { individualSubscriptionId: suscripcion.id, status: 'APPROVED' },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true },
+    });
+    if (primerPago) {
+      const limite = primerPago.createdAt.getTime() + 10 * 24 * 60 * 60 * 1000;
+      puedeArrepentirse = now.getTime() <= limite;
+    }
+  }
+}
+
+const suscripcionActiva = suscripcion?.status === 'ACTIVE';
+const topeMensual = suscripcionActiva ? (planIndividual?.monthlyCredits ?? 0) : (planFree?.monthlyCredits ?? 0);
+const porcentajeBarra = topeMensual > 0 ? Math.max(0, Math.min(100, Math.round((saldo / topeMensual) * 100))) : 0;
+
+const ESTADO_PAGO: Record<string, string> = {
+  PENDING: 'Pendiente',
+  APPROVED: 'Aprobado',
+  REJECTED: 'Rechazado',
+  REFUNDED: 'Reintegrado',
+};
+---
+
+<BaseLayout title="Mi plan">
+  <div class="mx-auto max-w-2xl space-y-6">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Mi plan</h1>
+      <p class="mt-1 text-sm text-ink-500">Tu plan, tus créditos y tus pagos.</p>
+    </div>
+
+    {
+      !esCuentaPersonal ? (
+        <div class="kodu-card p-6 text-center">
+          <h2 class="font-display text-lg font-bold text-ink-900">Tu institución te cubre</h2>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Tu cuenta pertenece a una organización que ya tiene una licencia de Kodu: no necesitás créditos
+            propios. Si tenés dudas sobre la licencia de tu institución, hablalo con quien la administra.
+          </p>
+        </div>
+      ) : (
+        <>
+          <section class="kodu-card p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h2 class="text-sm font-semibold text-ink-900">
+                Plan {suscripcionActiva ? 'Individual' : 'Gratis'}
+              </h2>
+              {!suscripcionActiva && (
+                <span class="text-xs text-ink-500">Se renuevan el {proximaRenovacionEtiqueta(now)}</span>
+              )}
+            </div>
+
+            <p class="mt-3 text-3xl font-display text-ink-900 tabular-nums">
+              {saldo} <span class="text-sm font-sans font-normal text-ink-500">créditos</span>
+            </p>
+            <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-sutil">
+              <div
+                class="h-full rounded-full bg-brand-600"
+                style={`width: ${porcentajeBarra}%`}
+              />
+            </div>
+            <p class="mt-1 text-xs text-ink-500">
+              de {topeMensual} créditos de este mes · 1 recurso nuevo ≈ 10 créditos
+            </p>
+
+            {suscripcionActiva && suscripcion?.currentPeriodEnd && (
+              <p class="mt-3 text-sm text-ink-700">
+                {suscripcion.cancelAtPeriodEnd ? 'Tu suscripción termina' : 'Se renueva'} el{' '}
+                {formateadorFecha.format(suscripcion.currentPeriodEnd)}.
+              </p>
+            )}
+
+            <div class="mt-4">
+              <PlanIndividualAcciones
+                client:load
+                suscripcionActiva={suscripcionActiva}
+                cancelAtPeriodEnd={suscripcion?.cancelAtPeriodEnd ?? false}
+                puedeArrepentirse={puedeArrepentirse}
+                monthlyPriceArs={planIndividual?.monthlyPriceArs.toNumber() ?? 0}
+                annualPriceArs={planIndividual?.annualPriceArs?.toNumber() ?? null}
+              />
+            </div>
+          </section>
+
+          <section class="kodu-card p-4">
+            <h2 class="mb-3 text-sm font-semibold text-ink-900">Movimientos recientes</h2>
+            {movimientos.length === 0 ? (
+              <p class="text-sm text-ink-500">Todavía no hay movimientos.</p>
+            ) : (
+              <ul class="divide-y divide-linea text-sm">
+                {movimientos.map((m) => (
+                  <li class="flex items-center justify-between gap-3 py-2">
+                    <div>
+                      <p class="text-ink-900">{ETIQUETA_MOVIMIENTO[m.kind] ?? m.kind}</p>
+                      <p class="text-xs text-ink-500">{formateadorFecha.format(m.createdAt)}</p>
+                    </div>
+                    <span class={`tabular-nums font-semibold ${m.delta >= 0 ? 'text-brand-700' : 'text-ink-700'}`}>
+                      {m.delta >= 0 ? '+' : ''}
+                      {m.delta}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section class="kodu-card p-4">
+            <h2 class="mb-3 text-sm font-semibold text-ink-900">Pagos</h2>
+            {pagos.length === 0 ? (
+              <p class="text-sm text-ink-500">Todavía no hiciste ningún pago.</p>
+            ) : (
+              <ul class="divide-y divide-linea text-sm">
+                {pagos.map((p) => (
+                  <li class="flex items-center justify-between gap-3 py-2">
+                    <div>
+                      <p class="text-ink-900">{formateadorFecha.format(p.createdAt)}</p>
+                      <p class="text-xs text-ink-500">
+                        {ESTADO_PAGO[p.status] ?? p.status}
+                        {p.invoice && (
+                          <>
+                            {' · '}
+                            {p.invoice.status === 'ISSUED' && p.invoice.number
+                              ? `Factura N.º ${p.invoice.number}`
+                              : ETIQUETA_FACTURA[p.invoice.status] ?? p.invoice.status}
+                          </>
+                        )}
+                      </p>
+                    </div>
+                    <span class="tabular-nums font-semibold text-ink-900">
+                      {formateador.format(Number(p.amountArs))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )
+    }
+  </div>
+</BaseLayout>

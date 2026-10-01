@@ -144,12 +144,22 @@ function urlConSede(sede: string | null, mesParam?: string): string {
         </div>
       ) : (
         <>
-          <div>
+          <div class="flex flex-wrap items-center justify-between gap-2">
             <p class="flex flex-wrap items-center gap-2 text-sm text-ink-500">
               <span class="text-lg font-semibold text-ink-900">{detalle.name}</span>
               <span>· {esRed ? 'Red de colegios' : 'Colegio'}</span>
               {detalle.archivada && <span class="text-red-600">· Archivada</span>}
             </p>
+            {/* odd/tasks/planes-y-cobros.md (T6): licencia y pagos — vive en
+                la RAÍZ, por eso nunca lleva `?sede=` cuando ya estamos
+                parados en una sede propia (el admin de sede entra igual,
+                pero en modo lectura — ver /org/plan). */}
+            <a
+              href={organizationId ? `/org/plan?sede=${organizationId}` : '/org/plan'}
+              class="text-sm text-brand-600 hover:underline"
+            >
+              Plan y facturación →
+            </a>
           </div>
 
           {redDetalle && (
