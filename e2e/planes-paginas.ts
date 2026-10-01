@@ -262,6 +262,7 @@ async function main(): Promise<void> {
     await prueba('/org/plan: completa un pago simulado mensual y queda ACTIVA', async () => {
       await adminPage.fill('#org-razon-social', 'Escuela E2E SRL');
       await adminPage.fill('#org-cuit', CUIT_VALIDO);
+      await adminPage.selectOption('#org-iva', 'MONOTRIBUTO');
       await adminPage.getByRole('button', { name: 'Pagar mensual' }).click();
       await adminPage.waitForURL('**/pago-simulado/**', { timeout: 10_000 });
       await adminPage.getByRole('button', { name: 'Aprobar' }).click();
