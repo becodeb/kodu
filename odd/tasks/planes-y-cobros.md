@@ -98,7 +98,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   endpoints de checkout para institución e individual, cancelación y arrepentimiento. Chequeo: e2e con simulado.
 - [x] **T5 — Alta de instituciones.** Formulario (nombre, colegio o red, matrícula, dominios, sedes), bloqueo de
   dominios públicos, dominios extra pendientes, arranque de la prueba, aviso al superadmin. Chequeo: e2e.
-- [ ] **T6 — Páginas.** `/precios` pública con calculadora y tarjetas (mensual / ciclo lectivo), `/app/plan`,
+- [x] **T6 — Páginas.** `/precios` pública con calculadora y tarjetas (mensual / ciclo lectivo), `/app/plan`,
   `/org/plan`, preguntas frecuentes, en el design system de kodu. Chequeo: build + capturas.
 - [ ] **T7 — Superadmin.** Editor de precios, cola de revisión (confirmar dominios y matrícula), activación manual
   por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
@@ -149,7 +149,13 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   efecto en un checkout normal). Chequeos: check, build, `planes-alta` 11/11 + capturas claro/oscuro, `planes-acceso`
   8/8, `planes-cobro` 12/12, `org-acceso` 7/7, `org-invitaciones` 16/16 según el escritor; `unidad-planes` re-corrido
   por el orquestador.
+- T6 (delegada): `a81e980`, `3e4dce1`, `7633a43`, `211273d`. `/precios` (calculadora, bandas desde la base,
+  mensual/ciclo lectivo, docentes, tabla comparativa, 10 preguntas), `/app/plan`, `/org/plan` (vista previa de
+  `firstCharge` antes de pagar; admin de sede solo lectura), endpoints `org/preview` y `org/matricula`, link "Precios"
+  en la navegación (se arregló un desborde a 390 px). Chequeos según el escritor: check, build, `planes-paginas`,
+  `planes-acceso` 8/8, `planes-cobro` 12/12, `planes-alta` verdes; capturas 1280/390 claro/oscuro. El orquestador
+  revisó la captura de `/precios` a 1280 claro.
 
 ## Próximo paso
 
-T6 (páginas).
+T7 (superadmin).
