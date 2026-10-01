@@ -27,6 +27,21 @@ Branch `feat/ahorro-tokens` (worktree `~/projects/kodu-wt/ahorro`), cut from `fe
 - [x] T3a Fragment editing (`edit_resource_code`): adjustments/corrections can edit only the changed fragments instead of rewriting the full HTML. Route: delegated (single writer, same isolated worktree/DB/PORT). Commits: see below.
 - [x] T3b Measure real cost of T3a against DeepSeek with real money, on a tight budget (~USD 0.30 cap; actual spend USD 0.14 for the clean 12-call run). Quality is NOT judged here — a blind evaluation package was produced for the owner/a separate evaluator. Route: delegated (same writer/worktree/DB/PORT). Pending the owner's decision on the two open items noted in the T3b section (blind-eval verdict, and whether to turn the switch on).
 
+- [x] T3c Blind quality evaluation of the 12 T3b outputs (6 Claude evaluators, one per adjustment, A/B randomized; each diffed against base and exercised in headless Chromium). Route: delegated (parallel read-only evaluators). Unblinded with `experimentos/fragmentos/ciego/*__clave.json`:
+
+  | case | full | fragments | winner |
+  |---|---:|---:|---|
+  | media-mediana-moda / logic | 5 (did not fix the bug, added effects) | 9 (one-line CSS fix) | fragments |
+  | media-mediana-moda / visual | 10 | 10 (byte-identical) | tie |
+  | tiro-al-blanco / logic | 3 (counter stuck at 1, broke internal test c1) | 9 | fragments |
+  | tiro-al-blanco / visual | 8.5 | 9 | fragments |
+  | vecinos-1810 / logic | 9 | 9 | tie |
+  | vecinos-1810 / visual | 10 | 10 | tie |
+
+  Averages: full 7.6, fragments 9.3. Fragments never lost: 3 wins, 3 ties. Full rewrites caused the only regressions, because they re-emit untouched code. Sample: 6 cases, one sample each. Recommendation: turn `fragmentEditsEnabled` on for every plan, not only FREE.
+- [ ] T4 Per-turn trace and anonymized admin export (JSON/CSV; teachers pseudonymized, no emails or names; includes the request text).
+- [ ] T5 Optional teacher feedback: a face on each AI reply, an occasional one-tap question, and implicit signals (a follow-up "no funciona", undo, manual code edit).
+
 ## Levers (analysis, 2026-10-01)
 
 - Every adjustment rewrites the full HTML through `update_resource_code`, and each teacher message can trigger up to 3 full rewrites automatically: the turn plus 2 self-correction rounds.
