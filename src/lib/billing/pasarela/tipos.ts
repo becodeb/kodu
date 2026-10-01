@@ -64,6 +64,32 @@ export interface CheckoutUnicoInput {
   payerEmail: string;
 }
 
+/**
+ * T4c (fase 4): checkout de suscripción SIN `payer_email` — confirmado
+ * contra el sandbox real que `POST /preapproval` con `preapproval_plan_id`
+ * exige `card_token_id` (tokenizar la tarjeta nosotros, fuera de alcance),
+ * pero el `init_point` que devuelve `POST /preapproval_plan` DIRECTAMENTE sí
+ * deja que quien paga elija cualquier cuenta de Mercado Pago propia — el
+ * dueño lo probó y pagó con un comprador de prueba sin que nosotros
+ * mandáramos ningún email. La contrapartida: Mercado Pago no expone
+ * `external_reference` en el `preapproval` resultante (el plan no lo tiene
+ * y nosotros no creamos ese `preapproval`) — `aplicar.ts` resuelve el
+ * checkout por `preapproval_plan_id` en su lugar (ver `ResultadoCheckoutPlan`
+ * y los comentarios de `externalPlanId`/`pendingPlanId` en schema.prisma).
+ * `externalReference` queda en el input igual que en los otros checkouts:
+ * el adaptador real lo ignora (Mercado Pago no lo acepta acá), pero el
+ * simulado lo sigue usando tal cual lo hacía antes (no cambia su
+ * comportamiento ni rompe sus e2e).
+ */
+export interface CheckoutPlanInput {
+  externalReference: string;
+  reason: string;
+  amountArs: number;
+  frequency: 1;
+  frequencyType: 'months';
+  backUrl: string;
+}
+
 export interface ResultadoCheckout {
   /** El id de la suscripción/pago del lado del proveedor (preapproval id en
    *  Mercado Pago) — se guarda en `externalSubscriptionId` de la licencia o
@@ -73,18 +99,38 @@ export interface ResultadoCheckout {
   initPoint: string;
 }
 
+export interface ResultadoCheckoutPlan {
+  /** `preapproval_plan_id` — se guarda en `externalPlanId`/`pendingPlanId`
+   *  (ver schema.prisma) HASTA que se conoce el `preapproval` real. */
+  planId: string;
+  initPoint: string;
+}
+
 export interface PagoObtenido {
   providerPaymentId: string;
   status: EstadoPagoProveedor;
   amountArs: number;
   /** `null` si el proveedor no lo devolvió — nunca se inventa. */
   externalReference: string | null;
+  /**
+   * T4c (fase 4): el id de la `preapproval` (suscripción) que originó este
+   * cobro, cuando se conoce — SÓLO lo completa `fetchAuthorizedPayment`
+   * (viene directo en `GET /authorized_payments/{id}`); `fetchPayment`
+   * siempre da `null` (un pago suelto de Checkout Pro no pertenece a
+   * ninguna suscripción). `aplicar.ts` lo usa para resolver el checkout
+   * cuando `externalReference` es `null` (preapproval creada desde un plan).
+   */
+  providerSubscriptionId: string | null;
 }
 
 export interface SuscripcionObtenida {
   providerSubscriptionId: string;
   status: EstadoSuscripcionProveedor;
   externalReference: string | null;
+  /** `preapproval_plan_id` de Mercado Pago cuando esta suscripción se creó
+   *  desde un `preapproval_plan` (T4c fase 4); `null` si se creó con el
+   *  flujo viejo (`POST /preapproval` directo, con `payer_email`). */
+  planId: string | null;
 }
 
 export type NotificacionRecibida =
@@ -94,7 +140,21 @@ export type NotificacionRecibida =
   | { kind: 'unknown'; id: string | null };
 
 export interface PaymentGateway {
+  /** @deprecated T4c fase 4: ya no se llama desde los checkouts MONTHLY
+   *  (individual/org) — reemplazado por `createSubscriptionPlanCheckout`
+   *  porque exigía `payer_email` igual a una cuenta real de Mercado Pago.
+   *  Se mantiene en la interfaz porque una `preapproval` creada ASÍ antes de
+   *  este cambio sigue viva y se sigue resolviendo por `external_reference`
+   *  (`cancelSubscription`/`fetchSubscription` no distinguen cómo nació una
+   *  `preapproval`). */
   createSubscriptionCheckout(input: CheckoutSuscripcionInput): Promise<ResultadoCheckout>;
+  /**
+   * T4c (fase 4): reemplaza a `createSubscriptionCheckout` para los
+   * checkouts MONTHLY — crea un `preapproval_plan` (sin `payer_email`) y
+   * devuelve su `init_point` genérico. Ver el comentario de
+   * `CheckoutPlanInput`.
+   */
+  createSubscriptionPlanCheckout(input: CheckoutPlanInput): Promise<ResultadoCheckoutPlan>;
   createOneTimeCheckout(input: CheckoutUnicoInput): Promise<ResultadoCheckout>;
   cancelSubscription(providerSubscriptionId: string): Promise<void>;
   fetchPayment(providerPaymentId: string): Promise<PagoObtenido>;

@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   ErrorProveedorPago,
+  type CheckoutPlanInput,
   type CheckoutSuscripcionInput,
   type CheckoutUnicoInput,
   type EstadoPagoProveedor,
@@ -8,6 +9,7 @@ import {
   type PagoObtenido,
   type PaymentGateway,
   type ResultadoCheckout,
+  type ResultadoCheckoutPlan,
   type SuscripcionObtenida,
 } from './tipos.ts';
 
@@ -148,6 +150,33 @@ export class GatewayMercadoPago implements PaymentGateway {
     return { providerCheckoutId: respuesta.id, initPoint: respuesta.init_point };
   }
 
+  /**
+   * T4c (fase 4): `POST /preapproval_plan` — sin `payer_email` ni
+   * `external_reference` (ese endpoint no los acepta). Confirmado contra el
+   * sandbox real: el dueño pagó el `init_point` que esto devuelve con un
+   * comprador de prueba cualquiera, sin que nosotros mandáramos ningún
+   * email — es el reemplazo de `createSubscriptionCheckout` para los
+   * checkouts MONTHLY. `aplicar.ts` resuelve el checkout del `preapproval`
+   * resultante por `preapproval_plan_id` (ver `ResultadoCheckoutPlan`).
+   */
+  async createSubscriptionPlanCheckout(input: CheckoutPlanInput): Promise<ResultadoCheckoutPlan> {
+    const body = {
+      reason: input.reason,
+      back_url: input.backUrl,
+      auto_recurring: {
+        frequency: input.frequency,
+        frequency_type: input.frequencyType,
+        transaction_amount: input.amountArs,
+        currency_id: 'ARS',
+      },
+    };
+    const respuesta = await this.request<{ id: string; init_point: string }>('/preapproval_plan', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return { planId: respuesta.id, initPoint: respuesta.init_point };
+  }
+
   async createOneTimeCheckout(input: CheckoutUnicoInput): Promise<ResultadoCheckout> {
     const body = {
       items: [{ title: input.concept, quantity: 1, unit_price: input.amountArs, currency_id: 'ARS' }],
@@ -183,6 +212,8 @@ export class GatewayMercadoPago implements PaymentGateway {
       status: mapearEstadoPago(respuesta.status),
       amountArs: respuesta.transaction_amount,
       externalReference: respuesta.external_reference,
+      // Un pago suelto de Checkout Pro nunca pertenece a una suscripción.
+      providerSubscriptionId: null,
     };
   }
 
@@ -200,8 +231,15 @@ export class GatewayMercadoPago implements PaymentGateway {
       status: string;
       transaction_amount: number;
       external_reference: string | null;
+      preapproval_id?: string | null;
       payment?: { id: number | string; status: string } | null;
     }>(`/authorized_payments/${providerAuthorizedPaymentId}`, { method: 'GET' });
+
+    // T4c (fase 4): `preapproval_id` es la suscripción que originó este
+    // cobro — `aplicar.ts` lo usa para resolver el checkout cuando
+    // `external_reference` es `null` (preapproval creada desde un plan, sin
+    // referencia propia).
+    const providerSubscriptionId = respuesta.preapproval_id ?? null;
 
     // El `payment` anidado es el pago real (mismo id/estado que devolvería
     // `GET /v1/payments/{id}`) — se usa ese id para `providerPaymentId` así
@@ -215,6 +253,7 @@ export class GatewayMercadoPago implements PaymentGateway {
         status: mapearEstadoPago(respuesta.payment.status),
         amountArs: respuesta.transaction_amount,
         externalReference: respuesta.external_reference,
+        providerSubscriptionId,
       };
     }
     return {
@@ -222,14 +261,17 @@ export class GatewayMercadoPago implements PaymentGateway {
       status: respuesta.status === 'cancelled' ? 'cancelled' : 'pending',
       amountArs: respuesta.transaction_amount,
       externalReference: respuesta.external_reference,
+      providerSubscriptionId,
     };
   }
 
   async fetchSubscription(providerSubscriptionId: string): Promise<SuscripcionObtenida> {
-    const respuesta = await this.request<{ id: string; status: string; external_reference: string | null }>(
-      `/preapproval/${providerSubscriptionId}`,
-      { method: 'GET' },
-    );
+    const respuesta = await this.request<{
+      id: string;
+      status: string;
+      external_reference: string | null;
+      preapproval_plan_id?: string | null;
+    }>(`/preapproval/${providerSubscriptionId}`, { method: 'GET' });
     return {
       providerSubscriptionId: respuesta.id,
       status:
@@ -237,6 +279,7 @@ export class GatewayMercadoPago implements PaymentGateway {
           ? respuesta.status
           : 'pending',
       externalReference: respuesta.external_reference,
+      planId: respuesta.preapproval_plan_id ?? null,
     };
   }
 

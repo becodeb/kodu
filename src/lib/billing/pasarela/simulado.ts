@@ -1,11 +1,13 @@
 import { prisma } from '../../db.ts';
 import type {
+  CheckoutPlanInput,
   CheckoutSuscripcionInput,
   CheckoutUnicoInput,
   NotificacionRecibida,
   PagoObtenido,
   PaymentGateway,
   ResultadoCheckout,
+  ResultadoCheckoutPlan,
   SuscripcionObtenida,
 } from './tipos.ts';
 
@@ -43,6 +45,34 @@ export class GatewaySimulado implements PaymentGateway {
     return { providerCheckoutId: fila.id, initPoint: `/pago-simulado/${fila.id}` };
   }
 
+  /**
+   * T4c (fase 4): equivalente simulado de `createSubscriptionPlanCheckout` —
+   * el simulado no distingue "plan" de "checkout" (no hay nada parecido a
+   * `preapproval_plan` en Mercado Pago real que imitar acá con sentido), así
+   * que arma la MISMA fila `PagoSimulado` que `createSubscriptionCheckout`,
+   * con `externalReference` ya cargado desde el arranque — `aplicar.ts`
+   * sigue resolviendo este checkout por `external_reference` como siempre
+   * (el camino nuevo "resolver por plan id" es exclusivo de Mercado Pago
+   * real, donde un `preapproval` creado desde un plan NO trae
+   * `external_reference`; en el simulado siempre lo trae, así que ese
+   * camino nunca se ejercita acá — no cambia ningún e2e existente).
+   * `payerEmail` queda vacío: el simulado no usa este campo para nada real y
+   * el flujo de plan no tiene noción de "a quién se le manda el checkout".
+   */
+  async createSubscriptionPlanCheckout(input: CheckoutPlanInput): Promise<ResultadoCheckoutPlan> {
+    const fila = await prisma.pagoSimulado.create({
+      data: {
+        kind: 'SUBSCRIPTION',
+        externalReference: input.externalReference,
+        concept: input.reason,
+        amountArs: input.amountArs,
+        payerEmail: '',
+        backUrl: input.backUrl,
+      },
+    });
+    return { planId: fila.id, initPoint: `/pago-simulado/${fila.id}` };
+  }
+
   async createOneTimeCheckout(input: CheckoutUnicoInput): Promise<ResultadoCheckout> {
     const fila = await prisma.pagoSimulado.create({
       data: {
@@ -71,6 +101,10 @@ export class GatewaySimulado implements PaymentGateway {
       status: estadoPagoSimulado(fila.status),
       amountArs: fila.amountArs.toNumber(),
       externalReference: fila.externalReference,
+      // El simulado siempre resuelve por `externalReference` (ver el
+      // comentario de `createSubscriptionPlanCheckout`) — el camino por
+      // `providerSubscriptionId` es exclusivo del adaptador real.
+      providerSubscriptionId: null,
     };
   }
 
@@ -87,6 +121,8 @@ export class GatewaySimulado implements PaymentGateway {
       providerSubscriptionId: fila.id,
       status: fila.status === 'CANCELLED' ? 'cancelled' : fila.status === 'APPROVED' ? 'authorized' : 'pending',
       externalReference: fila.externalReference,
+      // El simulado no tiene noción de "plan" distinta del checkout mismo.
+      planId: null,
     };
   }
 

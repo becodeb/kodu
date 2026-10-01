@@ -5,7 +5,18 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/lib/db.ts';
 import { esCuitValido, formatearCuit } from '../src/lib/billing/cuit.ts';
 import { GatewayMercadoPago } from '../src/lib/billing/pasarela/mercadopago.ts';
-import { ErrorProveedorPago } from '../src/lib/billing/pasarela/tipos.ts';
+import {
+  ErrorProveedorPago,
+  type CheckoutPlanInput,
+  type CheckoutSuscripcionInput,
+  type CheckoutUnicoInput,
+  type NotificacionRecibida,
+  type PagoObtenido,
+  type PaymentGateway,
+  type ResultadoCheckout,
+  type ResultadoCheckoutPlan,
+  type SuscripcionObtenida,
+} from '../src/lib/billing/pasarela/tipos.ts';
 import { GatewaySimulado } from '../src/lib/billing/pasarela/simulado.ts';
 import { procesarNotificacion } from '../src/lib/billing/aplicar.ts';
 import { estimarCostoConservador } from '../src/lib/ai/usage.ts';
@@ -362,6 +373,65 @@ async function limpiar(): Promise<void> {
   }
 }
 
+/**
+ * T4c (fase 4): doble de prueba de `PaymentGateway` para ejercitar la
+ * resolución por `preapproval_plan_id` sin pegarle a Mercado Pago real —
+ * sólo implementa `fetchSubscription`/`fetchAuthorizedPayment`/
+ * `fetchPayment`/`cancelSubscription` con respuestas fijadas a mano; el
+ * resto de los métodos lanzan si se llaman (no deberían, en estos tests).
+ */
+class GatewayDePrueba implements PaymentGateway {
+  canceladas: string[] = [];
+
+  constructor(
+    private readonly suscripciones: Record<string, SuscripcionObtenida>,
+    private readonly cobrosAutorizados: Record<string, PagoObtenido> = {},
+    private readonly pagos: Record<string, PagoObtenido> = {},
+  ) {}
+
+  async fetchSubscription(providerSubscriptionId: string): Promise<SuscripcionObtenida> {
+    const sub = this.suscripciones[providerSubscriptionId];
+    if (!sub) throw new Error(`GatewayDePrueba: suscripción ${providerSubscriptionId} no configurada`);
+    return sub;
+  }
+
+  async fetchAuthorizedPayment(id: string): Promise<PagoObtenido> {
+    const pago = this.cobrosAutorizados[id];
+    if (!pago) throw new Error(`GatewayDePrueba: authorized_payment ${id} no configurado`);
+    return pago;
+  }
+
+  async fetchPayment(id: string): Promise<PagoObtenido> {
+    const pago = this.pagos[id];
+    if (!pago) throw new Error(`GatewayDePrueba: payment ${id} no configurado`);
+    return pago;
+  }
+
+  async cancelSubscription(providerSubscriptionId: string): Promise<void> {
+    this.canceladas.push(providerSubscriptionId);
+  }
+
+  async createSubscriptionCheckout(_input: CheckoutSuscripcionInput): Promise<ResultadoCheckout> {
+    throw new Error('GatewayDePrueba: no usado en estos tests');
+  }
+
+  async createSubscriptionPlanCheckout(_input: CheckoutPlanInput): Promise<ResultadoCheckoutPlan> {
+    throw new Error('GatewayDePrueba: no usado en estos tests');
+  }
+
+  async createOneTimeCheckout(_input: CheckoutUnicoInput): Promise<ResultadoCheckout> {
+    throw new Error('GatewayDePrueba: no usado en estos tests');
+  }
+
+  verifyNotification(): boolean {
+    return true;
+  }
+
+  parseNotification(): NotificacionRecibida {
+    throw new Error('GatewayDePrueba: no usado en estos tests');
+  }
+}
+
 try {
   const gateway = new GatewaySimulado();
 
@@ -446,6 +516,135 @@ try {
 
     const pagos = await prisma.payment.findMany({ where: { organizationId: orgId } });
     assert.equal(pagos.length, 1, 'el replay no debe crear un segundo Payment');
+  });
+
+  // ───────────────────────────────────────────────────────────
+  // T4c (fase 4): resolución por `preapproval_plan_id` cuando el webhook no
+  // trae `external_reference` (preapproval creada desde un `preapproval_plan`
+  // — ver tipos.ts/mercadopago.ts/aplicar.ts).
+  // ───────────────────────────────────────────────────────────
+
+  await prueba('plan: subscription_preapproval sin external_reference reclama el checkout por planId', async () => {
+    const { orgId, licenseId } = await crearOrgConLicenciaTrial(450);
+    await prisma.organizationLicense.update({ where: { id: licenseId }, data: { externalPlanId: 'plan-org-1', status: 'PENDING_PAYMENT' } });
+    const checkout = await prisma.payment.create({
+      data: {
+        organizationId: orgId,
+        organizationLicenseId: licenseId,
+        amountArs: 155_000,
+        status: 'PENDING',
+        provider: 'MERCADOPAGO',
+        periodStart: new Date(),
+        periodEnd: new Date(Date.now() + 30 * 86_400_000),
+        intervalSnapshot: 'MONTHLY',
+      },
+    });
+
+    const gatewayPlan = new GatewayDePrueba({
+      'preapproval-A': { providerSubscriptionId: 'preapproval-A', status: 'authorized', externalReference: null, planId: 'plan-org-1' },
+    });
+
+    const reclamo = await procesarNotificacion(gatewayPlan, { kind: 'subscription_preapproval', id: 'preapproval-A' });
+    assert.equal(reclamo.applied, true);
+    assert.equal(reclamo.reason, 'plan_reclamado_org');
+
+    const licenciaReclamada = await prisma.organizationLicense.findUniqueOrThrow({ where: { id: licenseId } });
+    assert.equal(licenciaReclamada.externalSubscriptionId, 'preapproval-A', 'la preapproval real queda guardada tras reclamar el plan');
+    assert.equal(licenciaReclamada.status, 'PENDING_PAYMENT', 'reclamar el plan NO activa la licencia por sí solo — falta el primer cobro');
+
+    // Primer cobro de ESA preapproval — llega sin external_reference también.
+    const gatewayCobro = new GatewayDePrueba(
+      { 'preapproval-A': { providerSubscriptionId: 'preapproval-A', status: 'authorized', externalReference: null, planId: 'plan-org-1' } },
+      {
+        'auth-1': {
+          providerPaymentId: 'pay-plan-1',
+          status: 'approved',
+          amountArs: 155_000,
+          externalReference: null,
+          providerSubscriptionId: 'preapproval-A',
+        },
+      },
+    );
+    const cobro = await procesarNotificacion(gatewayCobro, { kind: 'subscription_authorized_payment', id: 'auth-1' });
+    assert.equal(cobro.applied, true);
+    assert.equal(cobro.reason, 'primer_cobro_aprobado');
+
+    const licenciaActiva = await prisma.organizationLicense.findUniqueOrThrow({ where: { id: licenseId } });
+    assert.equal(licenciaActiva.status, 'ACTIVE', 'el primer cobro de la preapproval reclamada activa la licencia');
+  });
+
+  await prueba('plan: una SEGUNDA preapproval sobre el mismo plan se cancela y NO pisa al dueño ya reclamado', async () => {
+    const { orgId, licenseId } = await crearOrgConLicenciaTrial(450);
+    await prisma.organizationLicense.update({
+      where: { id: licenseId },
+      data: { externalPlanId: 'plan-org-2', externalSubscriptionId: 'preapproval-original', status: 'PENDING_PAYMENT' },
+    });
+    await prisma.payment.create({
+      data: {
+        organizationId: orgId,
+        organizationLicenseId: licenseId,
+        amountArs: 155_000,
+        status: 'PENDING',
+        provider: 'MERCADOPAGO',
+        periodStart: new Date(),
+        periodEnd: new Date(Date.now() + 30 * 86_400_000),
+        intervalSnapshot: 'MONTHLY',
+      },
+    });
+
+    const gatewayPlan = new GatewayDePrueba({
+      'preapproval-intrusa': { providerSubscriptionId: 'preapproval-intrusa', status: 'authorized', externalReference: null, planId: 'plan-org-2' },
+    });
+
+    const resultado = await procesarNotificacion(gatewayPlan, { kind: 'subscription_preapproval', id: 'preapproval-intrusa' });
+    assert.equal(resultado.applied, false);
+    assert.equal(resultado.reason, 'plan_ya_asignado_cancelada');
+    assert.deepEqual(gatewayPlan.canceladas, ['preapproval-intrusa'], 'se cancela la preapproval intrusa, nunca la original');
+
+    const licenciaSinCambios = await prisma.organizationLicense.findUniqueOrThrow({ where: { id: licenseId } });
+    assert.equal(licenciaSinCambios.externalSubscriptionId, 'preapproval-original', 'el dueño original del plan no cambia');
+  });
+
+  await prueba('plan: external_reference sigue resolviendo directo (flujo viejo) — nunca llama fetchSubscription', async () => {
+    const { orgId, licenseId } = await crearOrgConLicenciaTrial(100);
+    const checkout = await prisma.payment.create({
+      data: {
+        organizationId: orgId,
+        organizationLicenseId: licenseId,
+        amountArs: 98_000,
+        status: 'PENDING',
+        provider: 'MERCADOPAGO',
+        periodStart: new Date(),
+        periodEnd: new Date(Date.now() + 30 * 86_400_000),
+        intervalSnapshot: 'MONTHLY',
+      },
+    });
+
+    // `external_reference` presente (preapproval del flujo viejo, con
+    // payer_email) Y `providerSubscriptionId` presente — si el código
+    // llamara a `fetchSubscription` acá, `GatewayDePrueba` tira porque no
+    // configuramos ninguna suscripción: la prueba falla si el camino viejo
+    // deja de tener prioridad.
+    const gateway = new GatewayDePrueba(
+      {},
+      {
+        'auth-legacy-1': {
+          providerPaymentId: 'pay-legacy-1',
+          status: 'approved',
+          amountArs: 98_000,
+          externalReference: checkout.id,
+          providerSubscriptionId: 'preapproval-vieja-cualquiera',
+        },
+      },
+    );
+
+    const resultado = await procesarNotificacion(gateway, { kind: 'subscription_authorized_payment', id: 'auth-legacy-1' });
+    assert.equal(resultado.applied, true);
+    assert.equal(resultado.reason, 'primer_cobro_aprobado');
+    assert.deepEqual(gateway.canceladas, [], 'el camino por external_reference no debe cancelar nada');
+
+    const licenciaActiva = await prisma.organizationLicense.findUniqueOrThrow({ where: { id: licenseId } });
+    assert.equal(licenciaActiva.status, 'ACTIVE');
   });
 } finally {
   await limpiar();

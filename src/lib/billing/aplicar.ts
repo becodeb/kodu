@@ -5,7 +5,13 @@ import { firstCharge, renewalChargeIndividualAnnual, renewalChargeOrgCycle, type
 import { esCuitValido, formatearCuit } from './cuit.ts';
 import { activarCreditosIndividual, ensureGrants } from './creditos-servicio.ts';
 import { resolverGatewayDePago } from './pasarela/index.ts';
-import { ErrorProveedorPago, type NotificacionRecibida, type PagoObtenido, type PaymentGateway, type ResultadoCheckout } from './pasarela/tipos.ts';
+import {
+  ErrorProveedorPago,
+  type NotificacionRecibida,
+  type PagoObtenido,
+  type PaymentGateway,
+  type SuscripcionObtenida,
+} from './pasarela/tipos.ts';
 import { intentarEmitirFactura } from './facturacion-superadmin.ts';
 import type { IndividualInterval, OrgBillingInterval, OrgIvaCondition } from '../../generated/prisma/client.ts';
 
@@ -59,9 +65,7 @@ function gatewayORefuse(): PaymentGateway | { refuse: ResultadoAccion<never> } {
  * llamada al gateway y traduce `ErrorProveedorPago` a un 502 con el mensaje
  * de Mercado Pago — cualquier otro error (red, 5xx) sigue bubbleando.
  */
-async function intentarCheckout(
-  crear: () => Promise<ResultadoCheckout>,
-): Promise<{ ok: true; data: ResultadoCheckout } | ResultadoAccion<never>> {
+async function intentarCheckout<T>(crear: () => Promise<T>): Promise<{ ok: true; data: T } | ResultadoAccion<never>> {
   try {
     return { ok: true, data: await crear() };
   } catch (error) {
@@ -159,22 +163,28 @@ export async function crearCheckoutOrg(
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
 
   if (input.interval === 'MONTHLY') {
+    // T4c (fase 4): `createSubscriptionPlanCheckout` en vez de
+    // `createSubscriptionCheckout` — ya no manda `payer_email` (confirmado
+    // contra el sandbox real que exigir una cuenta de Mercado Pago igual al
+    // email de login de Kodu rechazaba la institución casi siempre). Lo
+    // único que se conoce AHORA es el `preapproval_plan_id`; el
+    // `preapproval` real recién se sabe cuando Mercado Pago avisa que
+    // alguien se suscribió (`procesarNotificacion` lo resuelve por ese id —
+    // ver `resolverCheckoutPorPlan`).
     const intento = await intentarCheckout(() =>
-      gateway.createSubscriptionCheckout({
+      gateway.createSubscriptionPlanCheckout({
         externalReference: checkout.id,
         reason: 'Kodu — licencia institucional mensual',
         amountArs: primerCobro.amountArs,
         frequency: 1,
         frequencyType: 'months',
-        startDate: now,
         backUrl,
-        payerEmail: actor.email,
       }),
     );
     if (!intento.ok) return intento;
     await prisma.organizationLicense.update({
       where: { id: license.id },
-      data: { externalSubscriptionId: intento.data.providerCheckoutId },
+      data: { externalPlanId: intento.data.planId },
     });
     return { ok: true, data: { url: intento.data.initPoint } };
   }
@@ -484,22 +494,21 @@ export async function crearCheckoutIndividual(
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
 
   if (input.interval === 'MONTHLY') {
+    // T4c (fase 4): ver el comentario equivalente en `crearCheckoutOrg`.
     const intento = await intentarCheckout(() =>
-      gateway.createSubscriptionCheckout({
+      gateway.createSubscriptionPlanCheckout({
         externalReference: checkout.id,
         reason: 'Kodu — plan Individual mensual',
         amountArs,
         frequency: 1,
         frequencyType: 'months',
-        startDate: now,
         backUrl,
-        payerEmail: actor.email,
       }),
     );
     if (!intento.ok) return intento;
     await prisma.payment.update({
       where: { id: checkout.id },
-      data: { pendingExternalSubscriptionId: intento.data.providerCheckoutId },
+      data: { pendingPlanId: intento.data.planId },
     });
     return { ok: true, data: { url: intento.data.initPoint } };
   }
@@ -671,29 +680,106 @@ export async function procesarNotificacion(
     return { applied: false, reason: 'fetch_fallido' };
   }
 
-  return aplicarPago(pago);
+  return aplicarPago(gateway, pago);
 }
 
 async function procesarCambioDeSuscripcion(gateway: PaymentGateway, providerSubscriptionId: string): Promise<ResultadoNotificacion> {
   const sub = await gateway.fetchSubscription(providerSubscriptionId);
-  if (sub.status !== 'cancelled') return { applied: false, reason: 'sin_cambio_relevante' };
 
-  const license = await prisma.organizationLicense.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } });
-  if (license) {
-    await prisma.organizationLicense.update({ where: { id: license.id }, data: { cancelAtPeriodEnd: true } });
-    return { applied: true, reason: 'org_cancelada_en_proveedor' };
+  if (sub.status === 'cancelled') {
+    const license = await prisma.organizationLicense.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } });
+    if (license) {
+      await prisma.organizationLicense.update({ where: { id: license.id }, data: { cancelAtPeriodEnd: true } });
+      return { applied: true, reason: 'org_cancelada_en_proveedor' };
+    }
+
+    const indiv = await prisma.individualSubscription.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } });
+    if (indiv) {
+      await prisma.individualSubscription.update({ where: { id: indiv.id }, data: { cancelAtPeriodEnd: true } });
+      return { applied: true, reason: 'individual_cancelada_en_proveedor' };
+    }
+
+    return { applied: false, reason: 'referencia_desconocida' };
   }
 
-  const indiv = await prisma.individualSubscription.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } });
-  if (indiv) {
-    await prisma.individualSubscription.update({ where: { id: indiv.id }, data: { cancelAtPeriodEnd: true } });
-    return { applied: true, reason: 'individual_cancelada_en_proveedor' };
+  // T4c (fase 4): una `preapproval` creada desde un `preapproval_plan` NUNCA
+  // trae `external_reference` — en cuanto deja de estar `pending` (alguien
+  // la autorizó) hay que "reclamarla" para el checkout pendiente de ESE
+  // plan. Una `preapproval` del flujo viejo (con `external_reference`) no
+  // necesita nada acá: se activa sola cuando llega su primer pago.
+  if (!sub.externalReference && sub.planId) {
+    return reclamarPreapprovalDePlan(gateway, providerSubscriptionId, sub.planId);
   }
 
-  return { applied: false, reason: 'referencia_desconocida' };
+  return { applied: false, reason: 'sin_cambio_relevante' };
 }
 
-async function aplicarPago(pago: PagoObtenido): Promise<ResultadoNotificacion> {
+/**
+ * T4c (fase 4): "una `preapproval_plan` pertenece a un único dueño" — la
+ * primera `preapproval` que se ve para un plan se queda con el checkout
+ * pendiente de ese plan (`pendingExternalSubscriptionId`/
+ * `externalSubscriptionId`, los MISMOS campos que ya usaba el flujo viejo
+ * para identificar una suscripción, sólo que ahora se completan tarde en
+ * vez de al crear el checkout). Cualquier SEGUNDA `preapproval` que
+ * reutilice el mismo link de pago (alguien compartió la URL, o el dueño
+ * probó el link dos veces) se cancela y se ignora — nunca activa un segundo
+ * titular ni pisa el período del primero.
+ */
+async function reclamarPreapprovalDePlan(
+  gateway: PaymentGateway,
+  providerSubscriptionId: string,
+  planId: string,
+): Promise<ResultadoNotificacion> {
+  const yaReclamadaPorEsteId =
+    (await prisma.payment.findFirst({ where: { pendingExternalSubscriptionId: providerSubscriptionId } })) ||
+    (await prisma.organizationLicense.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } }));
+  if (yaReclamadaPorEsteId) return { applied: false, reason: 'ya_reclamada' };
+
+  const paymentPendiente = await prisma.payment.findFirst({
+    where: { pendingPlanId: planId, pendingExternalSubscriptionId: null },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (paymentPendiente) {
+    await prisma.payment.update({
+      where: { id: paymentPendiente.id },
+      data: { pendingExternalSubscriptionId: providerSubscriptionId },
+    });
+    return { applied: true, reason: 'plan_reclamado_individual' };
+  }
+
+  const licenciaPendiente = await prisma.organizationLicense.findFirst({
+    where: { externalPlanId: planId, externalSubscriptionId: null },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (licenciaPendiente) {
+    await prisma.organizationLicense.update({
+      where: { id: licenciaPendiente.id },
+      data: { externalSubscriptionId: providerSubscriptionId },
+    });
+    return { applied: true, reason: 'plan_reclamado_org' };
+  }
+
+  const planYaTieneDueno =
+    (await prisma.payment.findFirst({ where: { pendingPlanId: planId } })) ||
+    (await prisma.organizationLicense.findFirst({ where: { externalPlanId: planId } }));
+  if (planYaTieneDueno) {
+    console.warn(
+      `[billing] segunda preapproval (${providerSubscriptionId}) sobre el plan ${planId} — ya tiene dueño, se cancela para no activar un segundo titular.`,
+    );
+    await gateway.cancelSubscription(providerSubscriptionId).catch((error) => {
+      console.warn(`[billing] no se pudo cancelar la preapproval duplicada ${providerSubscriptionId}:`, error);
+    });
+    return { applied: false, reason: 'plan_ya_asignado_cancelada' };
+  }
+
+  // Plan que no corresponde a ningún checkout nuestro (p.ej. uno creado a
+  // mano para probar, fuera de la app) — no hay nada que reclamar ni nadie
+  // a quien avisarle; se ignora sin tocar nada.
+  console.warn(`[billing] preapproval ${providerSubscriptionId} de un plan (${planId}) ajeno a cualquier checkout — se ignora.`);
+  return { applied: false, reason: 'plan_desconocido' };
+}
+
+async function aplicarPago(gateway: PaymentGateway, pago: PagoObtenido): Promise<ResultadoNotificacion> {
   // Idempotencia: un pago que ya conocemos (por su id del proveedor) nunca
   // se vuelve a aplicar — mismo criterio "nunca se confía en el cuerpo del
   // webhook" (design.md): esto vale también para el reintento legítimo de
@@ -701,11 +787,18 @@ async function aplicarPago(pago: PagoObtenido): Promise<ResultadoNotificacion> {
   const yaAplicado = await prisma.payment.findUnique({ where: { providerPaymentId: pago.providerPaymentId } });
   if (yaAplicado) return { applied: false, reason: 'ya_aplicado' };
 
-  if (!pago.externalReference) return { applied: false, reason: 'sin_referencia' };
+  let checkoutRaiz = pago.externalReference ? await prisma.payment.findUnique({ where: { id: pago.externalReference } }) : null;
 
-  const checkoutRaiz = await prisma.payment.findUnique({ where: { id: pago.externalReference } });
+  if (!checkoutRaiz && pago.providerSubscriptionId) {
+    // T4c (fase 4): preapproval sin `external_reference` (creada desde un
+    // plan) — resolver por el `preapproval_plan_id` de la suscripción.
+    checkoutRaiz = await resolverCheckoutPorSuscripcion(gateway, pago.providerSubscriptionId);
+  }
+
   if (!checkoutRaiz) {
-    console.warn(`[billing] webhook con external_reference desconocida: ${pago.externalReference}`);
+    console.warn(
+      `[billing] webhook sin checkout resoluble (external_reference=${pago.externalReference ?? 'null'}, providerSubscriptionId=${pago.providerSubscriptionId ?? 'null'})`,
+    );
     return { applied: false, reason: 'referencia_desconocida' };
   }
 
@@ -716,6 +809,41 @@ async function aplicarPago(pago: PagoObtenido): Promise<ResultadoNotificacion> {
 }
 
 type FilaPayment = Awaited<ReturnType<typeof prisma.payment.findUniqueOrThrow>>;
+
+/**
+ * T4c (fase 4): resuelve el checkout (`Payment`) dueño de una `preapproval`
+ * cuando el pago que la originó no trae `external_reference`. Camino feliz:
+ * `subscription_preapproval` ya la reclamó (`reclamarPreapprovalDePlan`) y
+ * acá sólo hace falta encontrar esa fila. Defensivo: si el cobro llegó
+ * ANTES que esa notificación (Mercado Pago no garantiza el orden de entrega
+ * de sus webhooks), se reclama acá mismo con la MISMA lógica (incluida la
+ * protección contra una segunda preapproval reutilizando el plan).
+ */
+async function resolverCheckoutPorSuscripcion(gateway: PaymentGateway, providerSubscriptionId: string): Promise<FilaPayment | null> {
+  const buscarYaReclamado = async (): Promise<FilaPayment | null> => {
+    const paymentClaimed = await prisma.payment.findFirst({ where: { pendingExternalSubscriptionId: providerSubscriptionId } });
+    if (paymentClaimed) return paymentClaimed;
+
+    const licenseClaimed = await prisma.organizationLicense.findFirst({ where: { externalSubscriptionId: providerSubscriptionId } });
+    if (licenseClaimed) {
+      return prisma.payment.findFirst({
+        where: { organizationLicenseId: licenseClaimed.id, providerPaymentId: null },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    return null;
+  };
+
+  const yaReclamado = await buscarYaReclamado();
+  if (yaReclamado) return yaReclamado;
+
+  const sub: SuscripcionObtenida = await gateway.fetchSubscription(providerSubscriptionId);
+  if (sub.externalReference || !sub.planId) return null;
+
+  const resultado = await reclamarPreapprovalDePlan(gateway, providerSubscriptionId, sub.planId);
+  if (!resultado.applied) return null;
+  return buscarYaReclamado();
+}
 
 const ESTADO_A_PAYMENT_STATUS = {
   approved: 'APPROVED',
@@ -788,6 +916,10 @@ async function aplicarPrimerCobroIndividual(checkout: FilaPayment): Promise<void
       currentPeriodStart: checkout.periodStart,
       currentPeriodEnd: checkout.periodEnd,
       externalSubscriptionId: checkout.pendingExternalSubscriptionId,
+      // T4c (fase 4): copiado igual que `externalSubscriptionId` — ya
+      // cumplió su propósito (encontrar este checkout antes de que existiera
+      // la suscripción) pero se conserva para diagnóstico.
+      externalPlanId: checkout.pendingPlanId,
     },
   });
   await prisma.payment.update({ where: { id: checkout.id }, data: { individualSubscriptionId: sub.id } });

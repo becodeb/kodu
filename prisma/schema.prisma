@@ -393,6 +393,14 @@ model OrganizationLicense {
   /// mientras la licencia es `MANUAL`.
   externalSubscriptionId String?
   externalCustomerId     String?
+  /// T4c (fase 4): id del `preapproval_plan` de Mercado Pago creado para el
+  /// checkout MONTHLY de esta licencia — se conoce ANTES que
+  /// `externalSubscriptionId` (que recién se completa cuando Mercado Pago
+  /// avisa que alguien de verdad se suscribió a ese plan). `aplicar.ts` lo
+  /// usa para encontrar esta licencia cuando el webhook no trae
+  /// `external_reference` (un `preapproval` creado desde un plan nunca lo
+  /// trae). Único: un plan sólo puede pertenecer a una licencia.
+  externalPlanId         String?            @unique
   createdVia             LicenseCreatedVia  @default(SELF_SERVE)
   /// Cuándo el superadmin confirmó los dominios/matrícula de un alta propia
   /// (T5/T7). `null` = todavía sin revisar (la prueba de 30 días NUNCA se
@@ -434,6 +442,12 @@ model IndividualSubscription {
   cancelAtPeriodEnd      Boolean             @default(false)
   externalSubscriptionId String?
   externalCustomerId     String?
+  /// Ver el comentario de `OrganizationLicense.externalPlanId` — mismo
+  /// criterio para el plan Individual MONTHLY (esta fila recién existe
+  /// cuando se aprueba el primer cobro, así que en la práctica llega
+  /// COPIADO desde `Payment.pendingPlanId`, no se usa para resolver ANTES
+  /// de que la suscripción exista).
+  externalPlanId         String?             @unique
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
 
@@ -504,6 +518,13 @@ model Payment {
   /// a `IndividualSubscription.externalSubscriptionId` y esta columna deja
   /// de usarse. `null` en cualquier otro Payment.
   pendingExternalSubscriptionId String?
+  /// T4c (fase 4): id del `preapproval_plan` de Mercado Pago creado para
+  /// ESTE checkout MONTHLY (individual u org) ANTES de que exista una
+  /// `preapproval` real — un `preapproval` creado desde un plan nunca trae
+  /// `external_reference`, así que `aplicar.ts` resuelve por este id cuando
+  /// el webhook no trae ninguna referencia. Mismo criterio de "sólo en el
+  /// checkout ROW original" que `pendingExternalSubscriptionId`.
+  pendingPlanId                 String?                 @unique
   /// T4, arrepentimiento (10 días): marcado cuando hace falta que el
   /// superadmin (T7) devuelva este pago a mano — el puerto `PaymentGateway`
   /// de este cambio no expone un método de reintegro automático.
@@ -765,15 +786,15 @@ model User {
 /// y en pocos lugares por request — ver la justificacion completa en
 /// design.md.
 model AppSettings {
-  id                   Int      @id @default(1) // CHECK (id = 1) en la migracion: jamas una segunda fila.
-  demoEnabled          Boolean  @default(false)
-  demoTokenLimit       Int      @default(200000)
-  demoCycleStartedAt   DateTime @default(now())
+  id                 Int      @id @default(1) // CHECK (id = 1) en la migracion: jamas una segunda fila.
+  demoEnabled        Boolean  @default(false)
+  demoTokenLimit     Int      @default(200000)
+  demoCycleStartedAt DateTime @default(now())
   /// odd/tasks/generacion-simple-y-reanudable.md: el único interruptor de
   /// "capa 1" que sobrevivió a la baja de modo prime — ver
   /// `src/lib/ai/capacidades.ts`.
-  versionsForAll       Boolean  @default(false)
-  updatedAt            DateTime @updatedAt
+  versionsForAll     Boolean  @default(false)
+  updatedAt          DateTime @updatedAt
 }
 
 /// odd/tasks/organizaciones.md (T1): enum `UsagePurpose` — para qué fue cada
