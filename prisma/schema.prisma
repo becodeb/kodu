@@ -86,13 +86,17 @@ model OrganizationDomain {
   pattern        String                   @unique
   note           String?
   createdAt      DateTime                 @default(now())
-  /// odd/tasks/planes-y-cobros.md (T1): el dominio del creador de la
-  /// organización queda `VERIFIED` al instante (ya verificó su mail); un
-  /// dominio extra que agrega después queda `PENDING` hasta que el
-  /// superadmin lo confirme (T5/T7). Todas las filas que ya existían antes de
-  /// esta columna pasan a `VERIFIED` en la migración: no eran parte de un
-  /// alta propia, las cargó el superadmin a mano.
-  status         DomainVerificationStatus @default(PENDING)
+  /// odd/tasks/planes-y-cobros.md (T1/T5): el dominio del creador de una
+  /// institución por cuenta propia queda `VERIFIED` al instante (ya verificó
+  /// su mail); un dominio EXTRA que agrega en ese mismo alta queda `PENDING`
+  /// hasta que el superadmin lo confirme (T7) — las dos filas de
+  /// `src/lib/billing/alta.ts` pasan `status` EXPLÍCITO, nunca dependen de
+  /// este default. El default es `VERIFIED` porque todo el resto de los
+  /// llamadores (`gestion.ts#agregarDominio`, el alta a mano del superadmin,
+  /// y los fixtures de los e2e preexistentes) nunca pasan `status`: ahí la
+  /// confirmación YA la hizo una persona (el superadmin) al cargarlo, así que
+  /// "sin especificar" tiene que significar "confiale" — no "pendiente".
+  status         DomainVerificationStatus @default(VERIFIED)
 
   @@index([organizationId])
 }
