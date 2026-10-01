@@ -102,7 +102,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   `/org/plan`, preguntas frecuentes, en el design system de kodu. Chequeo: build + capturas.
 - [x] **T7 — Superadmin.** Editor de precios, cola de revisión (confirmar dominios y matrícula), activación manual
   por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
-- [ ] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
+- [x] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
   pago, CAE guardado, reintento si ARCA falla. Chequeo: unidad + e2e con simulado.
 - [x] **T2b — Débito sin precio.** Si el motor no tiene precio cargado, `costUsd` queda nulo y a una cuenta personal
   no se le descuenta nada. Descontar con una estimación conservadora por tokens (o el precio del motor por defecto) y
@@ -114,6 +114,10 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - [ ] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
   Confirmar dos supuestos no verificados: que `PUT /preapproval` cambia el monto, y que cada cobro recurrente trae el
   mismo `external_reference` (de eso depende distinguir primer cobro de renovación en `aplicar.ts`).
+- [ ] **T8b — Umbral de identificación del consumidor final.** No se pudo confirmar en fuente oficial el monto desde el
+  cual una Factura C a consumidor final exige DNI/CUIT. Hoy todo pago individual sale como consumidor final. Confirmar
+  antes de facturar de verdad con ARCA.
+- [ ] **T8c — Probar ARCA en homologación** con el certificado del dueño (nunca se ejecutó contra ARCA real).
 - [ ] **T9 — Prueba local.** `docs/probar-cobros.md` con el paso a paso manual y un e2e del recorrido completo
   (individual e institución).
 
@@ -166,7 +170,13 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   se ordenaba ANTES de `20261012000000_planes_y_cobros`, cuyas tablas modifica: un `migrate deploy` desde cero (producción)
   fallaba. Renombrada a `20261014000000_admin_billing_t7_t4b` en `4436730`; probado `migrate deploy` en una base vacía y
   `migrate diff` contra el schema sin diferencias. Regla: las migraciones de esta rama van de `20261012…` en adelante.
+- T8 (delegada): `4d6041c`, `cf67af0`, `fe283f8`. Puerto `Invoicer` con adaptadores `simulado` y `arca` (WSAA con
+  `openssl cms`, WSFEv1 por SOAP, Factura C tipo 11, Concepto 2 con fechas del período, `CondicionIVAReceptorId`
+  obligatorio desde RG 5616). Nueva condición frente al IVA en la licencia, pedida en `/org/plan`. La emisión corre fuera
+  de la transacción del webhook; el bloqueo `PENDING|FAILED → ISSUING` evita emitir dos veces. Sin `INVOICE_PROVIDER` en
+  producción las facturas quedan pendientes con aviso. Chequeos según el escritor: check, build, `unidad-facturador`
+  13/13 (incluye firma real con openssl), `planes-facturacion` 7/7, regresiones verdes.
 
 ## Próximo paso
 
-T8 (facturación).
+T9 (guía de prueba local y corrida completa).
