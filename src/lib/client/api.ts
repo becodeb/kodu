@@ -106,6 +106,9 @@ export type StreamEvent =
       userMessageId: string;
       codeUpdated: boolean;
       content: string;
+      /** odd/tasks/ahorro-tokens.md (T5): la pregunta inline decidida para
+       *  este turno, cuando correspondía una. */
+      feedbackPrompt?: 'FUNCIONA' | 'VISUAL';
     }
   /** `fallbackModel` (el `id` de un `AiModel`) llega cuando el motor elegido
    *  falló pero otro de la cadena tiene lugar para el pedido.

@@ -7,6 +7,7 @@ import SelectorDeMotor from './SelectorDeMotor.tsx';
 import { STARTERS, type Starter } from './starters.ts';
 import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
 import { mensajeParaVersiones } from '../../lib/client/versiones.ts';
+import { FeedbackTurno, PreguntaFeedback, type FaceRating, type RespuestaPregunta } from './FeedbackTurno.tsx';
 import {
   debeMostrarSelectorDeMotor,
   type AiPhase,
@@ -63,6 +64,11 @@ interface ChatPanelProps {
   versionesEnCurso: VersionEnCurso[] | null;
   /** T9: elige la versión `index` del mensaje `messageId`. */
   onElegirVersion: (messageId: string, index: number) => void;
+  /** odd/tasks/ahorro-tokens.md (T5): carita + pregunta inline. */
+  onFaceRating: (messageId: string, rating: FaceRating) => void;
+  onFaceComment: (messageId: string, comment: string) => void;
+  onPreguntaFeedback: (messageId: string, respuesta: RespuestaPregunta) => void;
+  onNoPreguntarMasFeedback: () => void;
 }
 
 /**
@@ -402,6 +408,25 @@ export default function ChatPanel(props: ChatPanelProps) {
                   variantes={message.variants.map((variante) => ({ index: variante.index, ready: true }))}
                   activa={message.chosenVariant ?? 1}
                   onElegir={(index) => props.onElegirVersion(message.id, index)}
+                />
+              )}
+
+              {/* odd/tasks/ahorro-tokens.md (T5): sólo en un turno
+                  "assistant" vigente que de verdad cambió el recurso — un
+                  turno de sólo texto, o uno deshecho, no ofrece nada acá. */}
+              {message.role !== 'user' && message.canGiveFeedback && !deshecho && (
+                <FeedbackTurno
+                  faceRating={message.faceRating}
+                  onRate={(rating) => props.onFaceRating(message.id, rating)}
+                  onComment={(comment) => props.onFaceComment(message.id, comment)}
+                />
+              )}
+
+              {message.feedbackPrompt && (
+                <PreguntaFeedback
+                  tipo={message.feedbackPrompt}
+                  onResponder={(respuesta) => props.onPreguntaFeedback(message.id, respuesta)}
+                  onNoPreguntarMas={props.onNoPreguntarMasFeedback}
                 />
               )}
             </div>

@@ -93,6 +93,9 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
         // viaja al elegir, por POST /api/projects/[id]/variant).
         chosenVariantIndex: true,
         variants: { select: { index: true }, orderBy: { index: 'asc' } },
+        // odd/tasks/ahorro-tokens.md (T5): mismo criterio que project/[id].astro.
+        resultHtmlFingerprint: true,
+        aiTrace: { select: { faceRating: true, inlineQuestionKind: true, inlineQuestionAnswer: true } },
       },
     }),
     checklistActual(project.id),
@@ -130,6 +133,11 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
             variants: message.variants.map((variant) => ({ index: variant.index })),
             chosenVariant: message.chosenVariantIndex ?? 1,
           }
+        : {}),
+      canGiveFeedback: message.resultHtmlFingerprint !== null,
+      faceRating: message.aiTrace?.faceRating ?? null,
+      ...(message.aiTrace?.inlineQuestionKind && !message.aiTrace?.inlineQuestionAnswer
+        ? { feedbackPrompt: message.aiTrace.inlineQuestionKind as 'FUNCIONA' | 'VISUAL' }
         : {}),
     })),
   });

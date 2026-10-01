@@ -789,6 +789,11 @@ export default function Workspace(props: WorkspaceProps) {
               ...(variantesListas && variantesListas.length > 0
                 ? { variants: variantesListas, chosenVariant: 1 }
                 : {}),
+              // odd/tasks/ahorro-tokens.md (T5): mismo criterio que expone
+              // threads.ts tras recargar.
+              canGiveFeedback: cambioElHtml,
+              faceRating: null,
+              ...(event.feedbackPrompt ? { feedbackPrompt: event.feedbackPrompt } : {}),
             },
           ]);
           if (event.codeUpdated) flashNotice('Recurso actualizado');
@@ -1199,6 +1204,42 @@ export default function Workspace(props: WorkspaceProps) {
     );
   }
 
+  /**
+   * odd/tasks/ahorro-tokens.md (T5): carita de feedback. Optimista —
+   * actualiza el estado local de una, y manda el tap al servidor sin
+   * esperarlo (es feedback opcional, nunca algo que valga la pena bloquear
+   * el chat por una red lenta). Un segundo tap sobre la misma carita la
+   * borra (mismo criterio que decide el servidor en `feedback.ts`).
+   */
+  function handleFaceRating(messageId: string, rating: 'GOOD' | 'NEUTRAL' | 'BAD') {
+    setMessages((current) =>
+      current.map((existente) =>
+        existente.id === messageId
+          ? { ...existente, faceRating: existente.faceRating === rating ? null : rating }
+          : existente,
+      ),
+    );
+    void apiRequest(`/api/projects/${projectId}/feedback`, 'POST', { messageId, faceRating: rating });
+  }
+
+  function handleFaceComment(messageId: string, comment: string) {
+    void apiRequest(`/api/projects/${projectId}/feedback`, 'POST', { messageId, comment });
+  }
+
+  /** La pregunta inline se contesta o se descarta — en los dos casos
+   *  desaparece de la vista de una, sin esperar al servidor. */
+  function handlePreguntaFeedback(messageId: string, respuesta: 'SI' | 'MAS_O_MENOS' | 'NO') {
+    setMessages((current) =>
+      current.map((existente) => (existente.id === messageId ? { ...existente, feedbackPrompt: null } : existente)),
+    );
+    void apiRequest(`/api/projects/${projectId}/feedback`, 'POST', { messageId, questionAnswer: respuesta });
+  }
+
+  function handleNoPreguntarMasFeedback() {
+    setMessages((current) => current.map((existente) => ({ ...existente, feedbackPrompt: null })));
+    void apiRequest(`/api/projects/${projectId}/feedback`, 'POST', { disablePrompts: true });
+  }
+
   async function handleNewThread() {
     const result = await apiRequest<{ thread: WorkspaceThread }>(
       `/api/projects/${projectId}/threads`,
@@ -1402,6 +1443,10 @@ export default function Workspace(props: WorkspaceProps) {
         onVersionesChange={handleVersionesChange}
         versionesEnCurso={versionesEnCurso}
         onElegirVersion={(messageId, index) => void handleElegirVersion(messageId, index)}
+        onFaceRating={handleFaceRating}
+        onFaceComment={handleFaceComment}
+        onPreguntaFeedback={handlePreguntaFeedback}
+        onNoPreguntarMasFeedback={handleNoPreguntarMasFeedback}
       />
       </div>
 
