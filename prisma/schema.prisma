@@ -432,6 +432,10 @@ enum PaymentStatus {
 enum PaymentProvider {
   SIMULADO
   MERCADOPAGO
+  /// odd/tasks/planes-y-cobros.md (T7): "Activar licencia manual por
+  /// transferencia" — un cobro cargado a mano por el superadmin, nunca
+  /// pasa por un `PaymentGateway`.
+  MANUAL
 }
 
 /// Un cobro, institucional o individual. Exactamente uno de
@@ -483,6 +487,10 @@ model Payment {
   /// superadmin (T7) devuelva este pago a mano — el puerto `PaymentGateway`
   /// de este cambio no expone un método de reintegro automático.
   refundRequested          Boolean                 @default(false)
+  /// odd/tasks/planes-y-cobros.md (T7): cuándo el superadmin marcó hecho el
+  /// reintegro manual pedido por `refundRequested`. `null` = todavía
+  /// pendiente (sólo tiene sentido si `refundRequested` es `true`).
+  refundedAt               DateTime?
   createdAt                DateTime                @default(now())
   updatedAt                DateTime                @updatedAt
 
@@ -1250,7 +1258,64 @@ model InstitutionLead {
   declaredStudents Int?
   message          String?
   createdAt        DateTime  @default(now())
+  /// odd/tasks/planes-y-cobros.md (T7): "contactado" no saca al lead de la
+  /// cola (`reviewedAt` sigue null) — sólo lo anota; "cerrado" sí la saca
+  /// (pone `reviewedAt`), con el mismo criterio que ya usaba T5/revision.ts.
+  status           LeadStatus @default(OPEN)
+  /// Nota libre del superadmin (T7): qué se habló, por qué se cerró, etc.
+  note             String?
   reviewedAt       DateTime?
 
   @@index([reviewedAt])
+}
+
+enum LeadStatus {
+  OPEN
+  CONTACTED
+  CLOSED
+}
+
+/// odd/tasks/planes-y-cobros.md (T7): bitácora de auditoría de cambios de
+/// precio desde el superadmin ("Audit: store who/when changed"). No hay
+/// ningún patrón de audit-log genérico en el esquema todavía — se agrega acá,
+/// acotado a precios/configuración de cobro (lo único que T7 pide auditar).
+model BillingAuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  actorEmail String
+  /// 'InstitutionalBand' | 'IndividualPlan' | 'BillingSettings'.
+  entityType String
+  entityId   String
+  /// Resumen legible de qué cambió (campo: antes → después), no un diff
+  /// JSON — este log es para que el dueño entienda qué pasó, no para
+  /// reconstruir estado.
+  summary    String
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+/// odd/tasks/planes-y-cobros.md (T4b): registro de qué aviso de renovación
+/// (30 o 7 días antes del fin del período) ya se mandó por mail, para que el
+/// disparo perezoso (una página cargada, o el endpoint de cron) sea
+/// idempotente — nunca manda el mismo aviso dos veces para el mismo período.
+model RenewalReminder {
+  id         String                 @id @default(uuid())
+  subject    RenewalReminderSubject
+  /// `OrganizationLicense.id` o `IndividualSubscription.id`, según `subject`.
+  subjectId  String
+  /// El `currentPeriodEnd` que este aviso avisa que se termina — forma parte
+  /// de la llave única porque una renovación mueve `currentPeriodEnd` y el
+  /// aviso del ciclo siguiente tiene que poder mandarse de nuevo.
+  periodEnd  DateTime
+  daysBefore Int
+  sentAt     DateTime               @default(now())
+
+  @@unique([subject, subjectId, periodEnd, daysBefore])
+}
+
+enum RenewalReminderSubject {
+  ORG_LICENSE
+  INDIVIDUAL_SUB
 }
