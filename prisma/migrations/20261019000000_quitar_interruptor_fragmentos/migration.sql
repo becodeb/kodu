@@ -1,0 +1,16 @@
+-- odd/tasks/ahorro-tokens.md (T6): the blind evaluation (T3c) showed
+-- fragment edits never lose on quality (3 wins, 3 ties out of 6 cases,
+-- average 9.3 vs 7.6) and cut cost by ~78% on average. The owner decided to
+-- make fragment editing the only edit path for adjustments, so the
+-- `AppSettings.fragmentEditsEnabled` on/off switch added in T3a
+-- (20261017000000_edicion_por_fragmentos) no longer has a reason to exist:
+-- the app code now always offers `edit_resource_code` first on an
+-- adjustment turn, with `update_resource_code` kept only for a brand-new
+-- resource or the single same-turn recovery after a failed edit.
+--
+-- `TokenUsage.editMode` (same migration, `EditMode` enum) is NOT touched
+-- here: it keeps recording full / fragments / fragments_fallback, which is
+-- still meaningful (a recovery can still fall back to a full rewrite).
+--
+-- Idempotent: guarded so re-running this file changes nothing the second time.
+ALTER TABLE "AppSettings" DROP COLUMN IF EXISTS "fragmentEditsEnabled";

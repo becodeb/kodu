@@ -29,7 +29,7 @@ import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE, parseUpdateResourceArgs, parseEditResourceArgs } from '../../../lib/ai/tools.ts';
-import { applyResourceEdits } from '../../../lib/ai/edits.ts';
+import { applyResourceEdits, EDIT_FAILURE_MESSAGES } from '../../../lib/ai/edits.ts';
 import { MAX_HTML_CHARS } from '../../../lib/ai/prompt.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 
@@ -197,10 +197,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const temaProyecto = temaDe(project.currentHtml);
   const htmlPreCorreccion = project.currentHtml;
-  // odd/tasks/ahorro-tokens.md (T3a): una autocorrección es, por naturaleza,
-  // siempre sobre un recurso que YA existe — nunca hace falta el chequeo de
-  // "recurso inicial" que sí aplica en /api/chat/stream.
-  const editsEnabled = settings.fragmentEditsEnabled;
+  // odd/tasks/ahorro-tokens.md (T3a/T6): una autocorrección es, por
+  // naturaleza, siempre sobre un recurso que YA existe — nunca hace falta el
+  // chequeo de "recurso inicial" que sí aplica en /api/chat/stream. T3a lo
+  // tenía detrás de un interruptor global (`AppSettings.fragmentEditsEnabled`);
+  // T6 lo sacó — fragmentos es ahora el único camino de edición, siempre
+  // prendido.
+  const editsEnabled = true;
 
   const [globalRules, userRules, assets] = await Promise.all([
     prisma.customRule.findMany({
@@ -296,51 +299,118 @@ export const POST: APIRoute = async ({ request, locals }) => {
       const arranque = Date.now();
 
       try {
-        // Una sola llamada al MISMO motor, forzada: ya se sabe que hay algo
-        // roto que corregir, no hay "el modelo puede decidir que no hace
-        // falta nada". Razonamiento "low" (T12: `razonamientoCorreccion`).
-        const respuesta = await requestCompletionStream({
+        // odd/tasks/ahorro-tokens.md (T6): el primer intento ofrece
+        // ÚNICAMENTE edit_resource_code (`soloEdicion: true`) — mismo
+        // criterio que /api/chat/stream.ts. `update_resource_code` sólo
+        // reaparece en la recuperación de más abajo, tras una edición
+        // fallida.
+        let respuesta = await requestCompletionStream({
           messages,
           provider,
           signal: request.signal,
           forzarHerramienta: true,
           razonamientoOverride: razonamientoCorreccion(provider),
           editsEnabled,
+          soloEdicion: true,
         });
 
-        let htmlFinal: string | null = null;
-        let editModeAplicado: 'full' | 'fragments' | null = null;
         const totales: { usage: MotorTokenUsage | null } = { usage: null };
+        // Todo en UN objeto mutable, y no en `let`s sueltos: `consumir` es una
+        // función anidada, y con variables sueltas el análisis de flujo de
+        // TypeScript las da por su valor inicial para siempre fuera de la
+        // función (mismo motivo que `estadoEdicion`/`totales` en stream.ts).
+        const resultado: {
+          htmlFinal: string | null;
+          editModeAplicado: 'full' | 'fragments' | 'fragments_fallback' | null;
+          ultimoFallo: { find: string; detalle: string } | null;
+          huboFalloDeEdicion: boolean;
+        } = { htmlFinal: null, editModeAplicado: null, ultimoFallo: null, huboFalloDeEdicion: false };
+        // Mismo motivo: capturado ANTES de `consumir` para que la cerradura
+        // no le haga perder a TypeScript el chequeo de null de `provider` de
+        // más arriba.
+        const apiFormat = provider.apiFormat;
 
-        for await (const event of readCompletionStream(respuesta, provider.apiFormat)) {
-          if (event.type === 'usage') {
-            totales.usage = event.usage;
-            continue;
-          }
-          if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
-            const resultado = parseUpdateResourceArgs(event.arguments, event.truncated);
-            if (resultado.ok) {
-              htmlFinal = aplicarKitAlTurno(resultado.html, temaProyecto);
-              editModeAplicado = 'full';
+        async function consumir(stream: Response): Promise<void> {
+          for await (const event of readCompletionStream(stream, apiFormat)) {
+            if (event.type === 'usage') {
+              totales.usage = event.usage;
+              continue;
             }
-          }
-          // odd/tasks/ahorro-tokens.md (T3a): sin reintento acá — este
-          // endpoint ya corría de una sola pasada antes de T3a (una
-          // autocorrección fallida simplemente no aplica nada, igual que un
-          // `update_resource_code` inválido arriba); una edición que no
-          // matchea sigue ese mismo criterio.
-          if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
-            const parsed = parseEditResourceArgs(event.arguments, event.truncated);
-            if (parsed.ok) {
+            if (event.type === 'tool' && event.name === UPDATE_RESOURCE_CODE) {
+              const parseado = parseUpdateResourceArgs(event.arguments, event.truncated);
+              if (parseado.ok) {
+                resultado.htmlFinal = aplicarKitAlTurno(parseado.html, temaProyecto);
+                resultado.editModeAplicado = resultado.huboFalloDeEdicion ? 'fragments_fallback' : 'full';
+                resultado.ultimoFallo = null;
+              }
+            }
+            if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
+              const parsed = parseEditResourceArgs(event.arguments, event.truncated);
+              if (!parsed.ok) {
+                console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code inválido (${parsed.reason}).`);
+                resultado.ultimoFallo = {
+                  find: '',
+                  detalle:
+                    parsed.reason === 'truncated'
+                      ? 'la llamada quedó cortada antes de terminar'
+                      : parsed.reason === 'empty'
+                        ? 'no mandó ninguna edición'
+                        : 'el JSON de la llamada no se pudo leer',
+                };
+                resultado.huboFalloDeEdicion = true;
+                continue;
+              }
               const aplicado = applyResourceEdits(htmlPreCorreccion, parsed.edits, MAX_HTML_CHARS);
               if (aplicado.ok) {
-                htmlFinal = aplicarKitAlTurno(aplicado.html, temaProyecto);
-                editModeAplicado = 'fragments';
+                resultado.htmlFinal = aplicarKitAlTurno(aplicado.html, temaProyecto);
+                resultado.editModeAplicado = 'fragments';
+                resultado.ultimoFallo = null;
               } else {
                 console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code no se pudo aplicar (${aplicado.reason}).`);
+                resultado.ultimoFallo = { find: aplicado.find, detalle: EDIT_FAILURE_MESSAGES[aplicado.reason] };
+                resultado.huboFalloDeEdicion = true;
               }
             }
           }
+        }
+
+        await consumir(respuesta);
+
+        /**
+         * odd/tasks/ahorro-tokens.md (T6): `edit_resource_code` falló (0 o
+         * 2+ matches, JSON inválido o recortado, o cayó en zona plegada/
+         * truncada). Se le da UNA sola oportunidad en el mismo turno,
+         * ofreciendo esta vez las DOS herramientas (`soloEdicion: false`) —
+         * mismo mecanismo que /api/chat/stream.ts, adaptado a esta llamada
+         * única (sin la cadena de reintentos de saturación: ya hay un error
+         * real que corregir, no una falla de proveedor).
+         */
+        if (resultado.ultimoFallo && !resultado.htmlFinal) {
+          console.warn(
+            `[chat/autocorreccion] ronda ${ronda}: edit_resource_code falló (${resultado.ultimoFallo.detalle}); se da una oportunidad de corregirlo.`,
+          );
+          const pistaFind = resultado.ultimoFallo.find
+            ? ` El "find" que falló fue: ${JSON.stringify(resultado.ultimoFallo.find.slice(0, 300))}.`
+            : '';
+
+          respuesta = await requestCompletionStream({
+            messages: [
+              ...messages,
+              {
+                role: 'user',
+                content:
+                  `No pude aplicar esa edición: ${resultado.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
+              },
+            ],
+            provider,
+            signal: request.signal,
+            forzarHerramienta: true,
+            razonamientoOverride: razonamientoCorreccion(provider),
+            editsEnabled: true,
+            soloEdicion: false,
+          });
+
+          await consumir(respuesta);
         }
 
         if (totales.usage) {
@@ -357,7 +427,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             precios: provider.precios,
             schedule: provider.schedule,
             purpose: 'CORRECTION',
-            editMode: editModeAplicado,
+            editMode: resultado.editModeAplicado,
           }).catch((error) => {
             console.error(`[chat/autocorreccion] ronda ${ronda}: no se pudo registrar el consumo:`, error);
             return null;
@@ -369,7 +439,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           // `selfTestPassed` sale de `pruebas` (el checklist T17, si vino);
           // `selfTestFailed` es `errores.length`, la misma cuenta que ya
           // loguea la línea de arriba.
-          const editOutcomeTrace: EditOutcomeLlamador = editModeAplicado ?? (htmlFinal ? null : 'failed');
+          const editOutcomeTrace: EditOutcomeLlamador = resultado.editModeAplicado ?? (resultado.htmlFinal ? null : 'failed');
           await recordAiTrace({
             userId: user.id,
             projectId: project.id,
@@ -380,7 +450,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             requestText: `Autocorrección automática (ronda ${ronda}): ${errores.length} error(es) detectado(s) por la autoprueba.`,
             editOutcome: editOutcomeTrace,
             htmlCharsBefore: htmlPreCorreccion.length,
-            htmlCharsAfter: htmlFinal ? htmlFinal.length : null,
+            htmlCharsAfter: resultado.htmlFinal ? resultado.htmlFinal.length : null,
             durationMs: Date.now() - arranque,
             selfTestFailed: errores.length,
             selfTestPassed: pruebas ? pruebas.filter((p) => p.ok).length : null,
@@ -388,10 +458,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
           });
         }
 
-        if (htmlFinal) {
-          await prisma.project.update({ where: { id: project.id }, data: { currentHtml: htmlFinal } });
+        if (resultado.htmlFinal) {
+          await prisma.project.update({ where: { id: project.id }, data: { currentHtml: resultado.htmlFinal } });
           codeUpdated = true;
-          send({ type: 'code', html: htmlFinal });
+          send({ type: 'code', html: resultado.htmlFinal });
         }
 
         // Una línea por ronda, sin contenido de HTML (proyecto, ronda,

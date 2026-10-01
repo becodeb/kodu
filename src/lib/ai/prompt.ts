@@ -314,22 +314,28 @@ function renderAssets(assets: AssetContext[], canSeeImages: boolean): string {
  * cachea solo.
  */
 /**
- * odd/tasks/ahorro-tokens.md (T3a): guía de cuándo preferir
- * `edit_resource_code` sobre `update_resource_code`. Va PEGADA a este
- * bloque (que ya cambia en cada turno) y NUNCA en `BASE_PROMPT`: ese system
- * prompt tiene que quedar byte a byte igual turno a turno para que el
- * proveedor siga cacheando el prefijo (ver el comentario grande sobre el
- * cache más abajo). Como esto depende de si el turno ofrece o no la segunda
- * herramienta (ajuste con el interruptor prendido, nunca un recurso nuevo),
+ * odd/tasks/ahorro-tokens.md (T3a/T6): guía de uso de `edit_resource_code`.
+ * Va PEGADA a este bloque (que ya cambia en cada turno) y NUNCA en
+ * `BASE_PROMPT`: ese system prompt tiene que quedar byte a byte igual turno
+ * a turno para que el proveedor siga cacheando el prefijo (ver el
+ * comentario grande sobre el cache más abajo). Como esto depende de si el
+ * turno ofrece o no esta herramienta (ajuste, nunca un recurso nuevo),
  * ponerlo en el system prompt partiría ese cache cada vez que cambiara.
+ *
+ * T6: la evaluación ciega (T3c) mostró que fragmentos nunca pierde en
+ * calidad y corta el costo ~78%, así que dejó de ser una opción entre dos
+ * herramientas — ahora es la ÚNICA ofrecida en el primer intento de un
+ * ajuste. La guía ya no compara "cuándo usar una u otra": explica cómo
+ * resolver CUALQUIER cambio, chico o grande, con `edit_resource_code`.
  */
 const GUIA_EDICION_POR_FRAGMENTOS = `
 
-## Dos formas de aplicar el cambio
-Tenés DOS herramientas disponibles: \`edit_resource_code\` (edita puntualmente, con una lista de reemplazos de texto) y \`update_resource_code\` (reescribe el documento entero).
+## Cómo aplicar este cambio
+Para este ajuste tenés UNA sola herramienta disponible: \`edit_resource_code\`, una lista de reemplazos de texto puntuales. No tenés \`update_resource_code\` en este turno.
 
-- Usá \`edit_resource_code\` para un cambio LOCALIZADO: un texto, un color, una función, un botón. Cada \`find\` tiene que ser una copia EXACTA de un fragmento que aparece una sola vez en el HTML de arriba (mismos espacios y saltos de línea); si no matchea ni una vez o matchea más de una, la edición entera se rechaza y el recurso queda igual.
-- Usá \`update_resource_code\` cuando el pedido reestructura el recurso, le cambia la base, o el cambio toca más o menos un tercio del documento o más: ahí editar de a fragmentos es más trabajo y más frágil que reescribir.`;
+- Para un cambio LOCALIZADO (un texto, un color, una función, un botón), usá un \`find\`/\`replace\` acotado a esa parte.
+- Para un rediseño grande que toca buena parte del documento, igual resolvelo con \`edit_resource_code\`: armá uno o varios reemplazos GRANDES (por ejemplo, un \`find\` que abarque el \`<body>\` entero o una sección completa) en vez de muchos reemplazos chiquitos.
+- Cada \`find\` tiene que ser una copia EXACTA de un fragmento que aparece una sola vez en el HTML de arriba (mismos espacios y saltos de línea); si no matchea ni una vez o matchea más de una, la edición entera se rechaza y el recurso queda igual.`;
 
 export function buildCurrentResourceBlock(
   currentHtml: string,

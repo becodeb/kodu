@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../src/generated/prisma/client.ts';
@@ -27,6 +26,17 @@ import { createProject } from '../../src/lib/projects.ts';
  * Corre con: npx tsx experimentos/fragmentos/runner.ts
  * Requiere: DEEPSEEK_TEST_API_KEY cargada en el entorno (nunca hardcodeada
  * acá), y el server de desarrollo levantado en KODU_BASE_URL (PORT 3300).
+ *
+ * HISTORICAL ARTIFACT (odd/tasks/ahorro-tokens.md, T6): after the T3c blind
+ * evaluation (fragments never lost: 3 wins, 3 ties, 9.3 vs 7.6 average), the
+ * owner made fragment editing the only edit path — T6 removed
+ * `AppSettings.fragmentEditsEnabled` entirely. `fijarInterruptor` below can
+ * no longer toggle "full" mode (there is nothing left to toggle; the first
+ * attempt of an adjustment now ALWAYS offers only `edit_resource_code`), so
+ * this file is kept only as a record of how the T3b real-money measurement
+ * was run. `fijarInterruptor` was adapted to a no-op that documents this
+ * instead of being deleted, so the surrounding A/B loop stays readable; do
+ * not re-run as-is expecting a real "full" column.
  */
 
 const BASE_URL = process.env.KODU_BASE_URL ?? 'http://localhost:3300';
@@ -240,13 +250,12 @@ async function mandarTurnoReal(args: {
  * UI (`PATCH /api/admin/settings`), que llama `invalidarAppSettings()` en
  * el MISMO proceso que `leerAppSettings()`.
  */
-async function fijarInterruptor(cookieAdmin: string, valor: boolean): Promise<void> {
-  const resp = await fetch(`${BASE_URL}/api/admin/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Cookie: cookieAdmin },
-    body: JSON.stringify({ fragmentEditsEnabled: valor }),
-  });
-  if (!resp.ok) throw new Error(`PATCH /api/admin/settings: HTTP ${resp.status} ${await resp.text()}`);
+// T6: no-op — `AppSettings.fragmentEditsEnabled` no existe más (ver el
+// comentario HISTORICAL ARTIFACT de arriba). Se deja la firma para que el
+// resto del archivo (el loop de más abajo) siga siendo legible como registro
+// de cómo corrió T3b; no hay ningún interruptor que fijar hoy.
+async function fijarInterruptor(_cookieAdmin: string, _valor: boolean): Promise<void> {
+  return Promise.resolve();
 }
 
 async function main(): Promise<void> {
@@ -284,18 +293,9 @@ async function main(): Promise<void> {
         }
 
         await fijarInterruptor(cookieAdmin, modo === 'fragments');
-
-        // Chequeo de verdad contra la base, no contra lo que el PATCH
-        // devolvió (el PATCH ya invalida el caché de `leerAppSettings`, pero
-        // esto confirma que la fila de verdad quedó como se pidió antes de
-        // gastar una llamada real con el modo equivocado — lección de la
-        // corrida anterior de este mismo script).
-        const settingsAhora = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } });
-        assert.equal(
-          settingsAhora.fragmentEditsEnabled,
-          modo === 'fragments',
-          `fragmentEditsEnabled no quedó en ${modo === 'fragments'} tras el PATCH (caso ${caso.id}/${pedido.tipo}/${modo})`,
-        );
+        // T6: ya no hay ningún interruptor que leer de vuelta para
+        // confirmar — ver `fijarInterruptor` y el comentario HISTORICAL
+        // ARTIFACT de arriba.
 
         // Proyecto NUEVO por caso (seedeado con `htmlBase`, no generado):
         // así el ajuste parte SIEMPRE del mismo HTML base, sea cual sea el

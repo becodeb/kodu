@@ -36,23 +36,6 @@ export default function GeneracionPanel({ initial }: Props) {
     }
   }
 
-  async function guardarFragmentEditsEnabled(valor: boolean) {
-    setError(null);
-    setGuardando(true);
-    const anterior = resumen.fragmentEditsEnabled;
-    setResumen({ ...resumen, fragmentEditsEnabled: valor });
-
-    const result = await apiRequest<{ settings: { fragmentEditsEnabled: boolean } }>('/api/admin/settings', 'PATCH', {
-      fragmentEditsEnabled: valor,
-    });
-
-    setGuardando(false);
-    if (!result.ok) {
-      setResumen({ ...resumen, fragmentEditsEnabled: anterior });
-      setError(result.error);
-    }
-  }
-
   return (
     <div className="max-w-2xl space-y-8">
       {error && (
@@ -77,27 +60,6 @@ export default function GeneracionPanel({ initial }: Props) {
               disabled={guardando}
               onChange={(valor) => void guardarVersionesForAll(valor)}
               label="Varias versiones para todos"
-              srOnly
-            />
-          </div>
-        </div>
-
-        <div className="kodu-card divide-y divide-linea">
-          <div className="flex items-center justify-between gap-3 p-4">
-            <div>
-              <p className="font-medium text-ink-900">Edición por fragmentos en ajustes</p>
-              <p className="mt-0.5 text-sm text-ink-500">
-                En vez de reescribir el documento entero en cada ajuste o corrección, el motor edita
-                sólo lo que cambia. Reduce el costo de salida de un ajuste; medido en{' '}
-                odd/tasks/ahorro-tokens.md (T3b) antes de activarlo para todos.
-              </p>
-            </div>
-            <Interruptor
-              id="fragment-edits-toggle"
-              checked={resumen.fragmentEditsEnabled}
-              disabled={guardando}
-              onChange={(valor) => void guardarFragmentEditsEnabled(valor)}
-              label="Edición por fragmentos"
               srOnly
             />
           </div>

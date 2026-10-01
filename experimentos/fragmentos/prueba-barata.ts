@@ -13,6 +13,14 @@ import { createProject } from '../../src/lib/projects.ts';
  * un solo cambio) para gastar lo mínimo posible.
  *
  * Corre con: npx tsx experimentos/fragmentos/prueba-barata.ts
+ *
+ * HISTORICAL ARTIFACT (odd/tasks/ahorro-tokens.md, T6): after the T3c blind
+ * evaluation, T6 removed `AppSettings.fragmentEditsEnabled` entirely —
+ * fragment editing is now the only edit path for adjustments, always on,
+ * with no switch left to toggle. The original `prisma.appSettings.update`
+ * call that turned the switch off before this proof call was removed so
+ * this file still compiles; everything else is kept as a record of how
+ * T3b's real-money measurement was set up.
  */
 
 const BASE_URL = process.env.KODU_BASE_URL ?? 'http://localhost:3300';
@@ -82,10 +90,10 @@ async function main(): Promise<void> {
   const userId = await asegurarDocenteDePrueba();
   const modelId = await asegurarProveedorDeepSeekReal();
 
-  // Interruptor de fragmentos APAGADO para esta prueba: sólo se quiere
-  // confirmar que el camino de herramientas anda con el modelo real, sin
-  // meter la variable nueva todavía.
-  await prisma.appSettings.update({ where: { id: 1 }, data: { fragmentEditsEnabled: false } });
+  // T6: `AppSettings.fragmentEditsEnabled` ya no existe (ver el comentario
+  // HISTORICAL ARTIFACT más arriba) — esta prueba genera un recurso NUEVO,
+  // que nunca ofreció `edit_resource_code` ni con el interruptor viejo ni
+  // con el camino actual, así que no hace falta tocar ningún ajuste acá.
 
   const htmlChico =
     '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="kodu-tema" content="cuaderno"><title>Prueba</title></head>' +

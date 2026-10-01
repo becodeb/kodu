@@ -19,7 +19,6 @@ const schema = z
     demoEnabled: z.boolean().optional(),
     demoTokenLimit: z.coerce.number().int().positive().max(100_000_000).optional(),
     versionsForAll: z.boolean().optional(),
-    fragmentEditsEnabled: z.boolean().optional(),
   })
   .refine((datos) => Object.keys(datos).length > 0, { message: 'No hay nada para actualizar.' });
 

@@ -4,21 +4,23 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, iniciarSesion } from './harness.ts';
-import { iniciarMockProveedor, PUERTO_POR_DEFECTO, EDIT_RESOURCE_CODE } from './mock-proveedor.ts';
+import { iniciarMockProveedor, PUERTO_POR_DEFECTO, EDIT_RESOURCE_CODE, UPDATE_RESOURCE_CODE } from './mock-proveedor.ts';
 
 /**
- * odd/tasks/ahorro-tokens.md (T3a): chequeo de integración de
+ * odd/tasks/ahorro-tokens.md (T3a/T6): chequeo de integración de
  * `edit_resource_code` contra `src/pages/api/chat/stream.ts`, con
  * `e2e/mock-proveedor.ts` haciendo de motor. Cubre:
  *
- *   1. Un turno de ajuste con el interruptor prendido, donde el mock
- *      responde con `edit_resource_code` y el reemplazo se aplica contra el
- *      HTML real (no contra lo que viajó en el prompt).
+ *   1. Un turno de AJUSTE, donde el primer intento ofrece ÚNICAMENTE
+ *      `edit_resource_code` (T6: ya no hay un interruptor ni una segunda
+ *      herramienta en el primer intento) y el mock responde con una
+ *      edición que se aplica contra el HTML real (no contra lo que viajó en
+ *      el prompt).
  *   2. Una edición que falla (find sin match): el servidor da UNA
- *      oportunidad de recuperación en el mismo turno (reusa el mecanismo de
- *      reintento de `stream.ts`) — acá se scriptea que esa segunda vuelta
- *      caiga a `update_resource_code` con el documento completo, y se
- *      verifica que el turno igual termina con código aplicado y
+ *      oportunidad de recuperación en el mismo turno, ofreciendo recién ahí
+ *      las DOS herramientas — acá se scriptea que esa segunda vuelta caiga
+ *      a `update_resource_code` con el documento completo, y se verifica
+ *      que el turno igual termina con código aplicado y
  *      `editMode = FRAGMENTS_FALLBACK`.
  *
  * Protocolo crudo (fetch + SSE) desde `page.evaluate`, mismo patrón que
@@ -150,13 +152,8 @@ async function main(): Promise<void> {
 
     const { modelId } = await asegurarProveedorYMotorMock(adminPage, mock.url);
 
-    // El interruptor global, prendido para este chequeo (T3a: viene OFF por
-    // default en toda base existente — ver la migración).
-    const patch = await adminPage.request.patch(`${BASE_URL}/api/admin/settings`, {
-      data: { fragmentEditsEnabled: true },
-    });
-    assert.equal(patch.status(), 200, `prender fragmentEditsEnabled: ${patch.status()} ${await patch.text()}`);
-    console.log('✔ fragmentEditsEnabled = true');
+    // T6: no hay ningún interruptor que prender — la edición por fragmentos
+    // es el único camino de edición en un ajuste, siempre.
 
     const docenteContext = await browser.newContext();
     const page = await docenteContext.newPage();
@@ -228,9 +225,17 @@ async function main(): Promise<void> {
 
     const llamadaTurno2 = mock.llamadas[mock.llamadas.length - 1]!.body;
     const toolsTurno2 = (llamadaTurno2.tools as { function: { name: string } }[] | undefined) ?? [];
-    assert.ok(
-      toolsTurno2.some((t) => t.function.name === EDIT_RESOURCE_CODE),
-      'un turno de AJUSTE con el interruptor prendido tiene que ofrecer edit_resource_code',
+    // T6: el primer intento de un AJUSTE ofrece ÚNICAMENTE edit_resource_code
+    // (nunca las dos a la vez) y lo fuerza por nombre, no con 'required'.
+    assert.deepEqual(
+      toolsTurno2.map((t) => t.function.name),
+      [EDIT_RESOURCE_CODE],
+      'el primer intento de un AJUSTE tiene que ofrecer ÚNICAMENTE edit_resource_code',
+    );
+    assert.deepEqual(
+      llamadaTurno2.tool_choice,
+      { type: 'function', function: { name: EDIT_RESOURCE_CODE } },
+      'el primer intento tiene que forzar edit_resource_code por nombre',
     );
 
     const eventoCodeTurno2 = [...turno2.eventos].reverse().find((e) => e.type === 'code') as { html: string };
@@ -276,6 +281,7 @@ async function main(): Promise<void> {
     });
 
     const htmlAntesDelTurno3 = (await prisma.project.findUniqueOrThrow({ where: { id: project.id } })).currentHtml;
+    const llamadasAntesDelTurno3 = mock.llamadas.length;
 
     const turno3 = await mandarTurno(page, {
       projectId: project.id,
@@ -302,6 +308,25 @@ async function main(): Promise<void> {
       'el recurso SÍ tiene que cambiar al final (vía la recuperación), aunque la edición en sí haya fallado',
     );
     console.log('✔ turno 3 (edición fallida + recuperación): avisó, no perdió el turno, cayó a rewrite completo');
+
+    // T6: el primer intento del turno 3 ofrece ÚNICAMENTE edit_resource_code
+    // (igual que el turno 2); la recuperación, recién ahí, ofrece las DOS.
+    const llamadasTurno3 = mock.llamadas.slice(llamadasAntesDelTurno3);
+    assert.equal(llamadasTurno3.length, 2, `turno 3 tiene que disparar exactamente 2 pedidos (intento + recuperación): ${llamadasTurno3.length}`);
+    const toolsPrimerIntento = (llamadasTurno3[0]!.body.tools as { function: { name: string } }[] | undefined) ?? [];
+    assert.deepEqual(
+      toolsPrimerIntento.map((t) => t.function.name),
+      [EDIT_RESOURCE_CODE],
+      'el primer intento del turno 3 tiene que ofrecer ÚNICAMENTE edit_resource_code',
+    );
+    const toolsRecuperacion = (llamadasTurno3[1]!.body.tools as { function: { name: string } }[] | undefined) ?? [];
+    assert.deepEqual(
+      new Set(toolsRecuperacion.map((t) => t.function.name)),
+      new Set([UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE]),
+      'la recuperación tiene que ofrecer las DOS herramientas',
+    );
+    assert.equal(llamadasTurno3[1]!.body.tool_choice, 'required', 'la recuperación tiene que forzar "required", no un nombre fijo');
+    console.log('✔ turno 3: primer intento sólo edit_resource_code, recuperación con las dos y tool_choice "required"');
 
     const usageTurno3 = await prisma.tokenUsage.findFirst({
       where: { projectId: project.id, purpose: 'ADJUSTMENT' },

@@ -290,8 +290,10 @@ model IndividualPlan {
 /// fila). Editable desde el superadmin (T7).
 model BillingSettings {
   id                        Int      @id @default(1)
-  /// 1 crédito = este valor en USD de costo real (decisión de diseño: "1
-  /// crédito = USD 0,0025 de costo real"). Configurable.
+  /// 1 crédito = este valor en USD de costo real (decisión de diseño
+  /// original: "1 crédito = USD 0,0025"; odd/tasks/ahorro-tokens.md T8 lo
+  /// bajó a USD 0,001, subiendo monthlyCredits de INDIVIDUAL de 1.000 a
+  /// 2.500 para seguir cubriendo USD 2,50/mes). Configurable.
   creditUsdValue            Decimal  @db.Decimal(12, 6)
   /// Días de prueba sin tarjeta para una institución (decisión del dueño: 30).
   trialDays                 Int
@@ -759,12 +761,6 @@ model AppSettings {
   /// "capa 1" que sobrevivió a la baja de modo prime — ver
   /// `src/lib/ai/capacidades.ts`.
   versionsForAll       Boolean  @default(false)
-  /// odd/tasks/ahorro-tokens.md (T3a): interruptor global de edición por
-  /// fragmentos (`edit_resource_code`) en turnos de ajuste/autocorrección.
-  /// Default `true` en código (para una fila NUEVA), pero la migración que
-  /// agrega esta columna la deja en `false` en toda base existente — se
-  /// prende a mano desde `/admin/generacion` recién después de medir T3b.
-  fragmentEditsEnabled Boolean  @default(true)
   updatedAt            DateTime @updatedAt
 }
 
@@ -1246,6 +1242,20 @@ model AiModel {
   /// the hour or weekday — e.g. DeepSeek's Chinese public holidays. Only
   /// meaningful when `priceOffPeakFactor` is set.
   offPeakDatesUtc    Json?
+
+  /// odd/tasks/ahorro-tokens.md (T7): link to a typed preset defined in CODE
+  /// (`src/lib/ai/presets.ts`) — key into `PRESETS`, never validated against
+  /// a DB table. `null` ("Personalizado" en `/admin/motores`) = today's
+  /// behavior, every price/schedule column above is the source of truth.
+  /// When set, `catalogo.ts#construirConfig` reads pricing/schedule/holidays
+  /// from the preset at CALL TIME instead of from the three price columns
+  /// and the three schedule columns above (which still get filled in at
+  /// creation time for readability/history, but stop being read once a
+  /// preset is linked) — so a price change in code updates every linked
+  /// model at once, which is what the owner wants. An unknown/stale key
+  /// (preset removed from code later) falls back to the DB columns, same as
+  /// `null` — never a crash.
+  presetKey String?
 
   enabled             Boolean @default(true)
   /// Aparece en el selector del docente. DeepSeek va en false: es el respaldo.

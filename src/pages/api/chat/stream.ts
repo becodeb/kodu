@@ -799,10 +799,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // regla de colisión con la guía de preguntas tempranas.
   const forzar = pideCambio(message);
 
-  // odd/tasks/ahorro-tokens.md (T3a): sólo en un AJUSTE (nunca un recurso
-  // nuevo) y con el interruptor global prendido. `settings` ya se leyó una
-  // sola vez más arriba para `resolverCapacidades`.
-  const editsEnabled = forzar && !recursoInicial && settings.fragmentEditsEnabled;
+  // odd/tasks/ahorro-tokens.md (T3a/T6): sólo en un AJUSTE (nunca un recurso
+  // nuevo). T3a lo tenía detrás de un interruptor global
+  // (`AppSettings.fragmentEditsEnabled`); T6 lo sacó tras la evaluación
+  // ciega (T3c) — fragmentos es ahora el único camino de edición, no una
+  // opción medida. El primer intento ofrece ÚNICAMENTE `edit_resource_code`
+  // (`soloEdicion` en el `pedirA` de abajo); `update_resource_code` sólo
+  // reaparece en la recuperación de una edición fallida, más abajo.
+  const editsEnabled = forzar && !recursoInicial;
 
   const systemPrompt = buildSystemPrompt({
     globalRules,
@@ -1101,6 +1105,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
           signal: turnoAbort.signal,
           forzarHerramienta: forzar,
           editsEnabled,
+          // T6: el primer intento de un AJUSTE ofrece SÓLO edit_resource_code
+          // (nunca 'required' con las dos) — ver el comentario de
+          // `editsEnabled` más arriba.
+          soloEdicion: editsEnabled,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             // T3: un reintento arranca un pedido nuevo — cualquier parcial
@@ -1435,6 +1443,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
             signal: turnoAbort.signal,
             forzarHerramienta: true,
             editsEnabled: true,
+            // T6: la ÚNICA ocasión en la que esta recuperación vuelve a
+            // ofrecer update_resource_code — el modelo puede resolver con
+            // una edición corregida o caer a la reescritura completa.
+            soloEdicion: false,
           });
 
           recuperacionDeEdicionIntentada = true;

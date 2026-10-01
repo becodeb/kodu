@@ -165,10 +165,29 @@ let sesionId = '';
 let projectId = '';
 let urlImagen = '';
 
-await prueba('una cuenta personal (sin IA) no puede abrir el Taller', async () => {
+// odd/tasks/ahorro-tokens.md (T6): desde planes-y-cobros, una cuenta
+// personal arranca con créditos de bienvenida del plan FREE (`ensureGrants`
+// en resolverAccesoIa) — ya no es "sin IA" por default. La regla real es
+// `resolverAccesoIa`: balance > 0 abre el Taller; balance <= 0 lo cierra.
+await prueba('una cuenta personal CON créditos puede abrir el Taller', async () => {
   const respuesta = await personal.post('/api/taller', { data: { mode: 'TOPIC' } });
-  assert.equal(respuesta.status(), 403);
+  assert.equal(respuesta.status(), 200, await respuesta.text());
   const pagina = await personal.get('/app/taller', { maxRedirects: 0 });
+  assert.equal(pagina.status(), 200);
+});
+
+await prueba('una cuenta personal SIN créditos (saldo en 0) no puede abrir el Taller', async () => {
+  const sinCreditosId = await asegurarUsuario('personal-sin-creditos-e2e-taller@kodu.local', 'Personal Sin Créditos E2E', null);
+  const sinCreditos = await contexto('personal-sin-creditos-e2e-taller@kodu.local', PASSWORD);
+  // Dejar el saldo en 0 a mano (ADJUSTMENT: cualquier signo, no idempotente
+  // por período — ver el comentario de CreditLedgerEntry.kind en el schema),
+  // después de que el 200 de arriba ya probó que ensureGrants ya le otorgó
+  // la bienvenida del plan FREE a esta cuenta nueva.
+  await prisma.creditLedgerEntry.create({ data: { userId: sinCreditosId, delta: -1_000_000, kind: 'ADJUSTMENT' } });
+
+  const respuesta = await sinCreditos.post('/api/taller', { data: { mode: 'TOPIC' } });
+  assert.equal(respuesta.status(), 403, await respuesta.text());
+  const pagina = await sinCreditos.get('/app/taller', { maxRedirects: 0 });
   assert.equal(pagina.status(), 302);
 });
 

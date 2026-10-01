@@ -45,14 +45,18 @@ export const RESOURCE_TOOLS: AiTool[] = [
 ];
 
 /**
- * odd/tasks/ahorro-tokens.md (T3a): segunda herramienta, ofrecida sólo en
- * turnos de AJUSTE (nunca para un recurso nuevo) cuando el interruptor
- * global está prendido (ver `src/lib/settings.ts`,
- * `AppSettings.fragmentEditsEnabled`). En vez del documento completo, el
- * modelo manda una lista de reemplazos puntuales: cada `find` tiene que
- * aparecer EXACTAMENTE una vez en el HTML real guardado, y la aplicación es
- * todo-o-nada (`applyResourceEdits`, en `./edits.ts`) — si cualquiera falla,
- * el recurso no se toca.
+ * odd/tasks/ahorro-tokens.md (T3a/T6): segunda herramienta. T3a la ofrecía
+ * detrás de un interruptor global (`AppSettings.fragmentEditsEnabled`); T6
+ * lo sacó — la evaluación ciega (T3c) mostró que fragmentos nunca pierde en
+ * calidad y corta el costo ~78%, así que ahora es el ÚNICO camino de edición
+ * en un turno de AJUSTE (nunca para un recurso nuevo): el primer intento
+ * ofrece SOLO esta herramienta (`provider.ts`, `soloEdicion`), y
+ * `update_resource_code` sólo reaparece como la recuperación de UNA sola
+ * oportunidad tras una edición fallida en el mismo turno. En vez del
+ * documento completo, el modelo manda una lista de reemplazos puntuales:
+ * cada `find` tiene que aparecer EXACTAMENTE una vez en el HTML real
+ * guardado, y la aplicación es todo-o-nada (`applyResourceEdits`, en
+ * `./edits.ts`) — si cualquiera falla, el recurso no se toca.
  */
 export const EDIT_RESOURCE_CODE = 'edit_resource_code';
 

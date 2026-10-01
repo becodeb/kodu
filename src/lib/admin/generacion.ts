@@ -2,8 +2,6 @@ import { leerAppSettings } from '../settings.ts';
 
 export interface ResumenGeneracion {
   versionsForAll: boolean;
-  /** odd/tasks/ahorro-tokens.md (T3a). */
-  fragmentEditsEnabled: boolean;
 }
 
 /**
@@ -15,5 +13,5 @@ export interface ResumenGeneracion {
  */
 export async function resumenGeneracion(): Promise<ResumenGeneracion> {
   const settings = await leerAppSettings();
-  return { versionsForAll: settings.versionsForAll, fragmentEditsEnabled: settings.fragmentEditsEnabled };
+  return { versionsForAll: settings.versionsForAll };
 }

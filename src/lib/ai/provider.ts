@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.ts';
 import { getEnv } from '../env.ts';
-import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE, EDIT_RESOURCE_TOOL, type AiTool } from './tools.ts';
+import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE, EDIT_RESOURCE_TOOL, type AiTool } from './tools.ts';
 import type { PriceSchedule } from './pricing.ts';
 
 /**
@@ -212,17 +212,27 @@ export async function requestCompletionStream(options: {
    */
   sinHerramientas?: boolean;
   /**
-   * odd/tasks/ahorro-tokens.md (T3a): además de `update_resource_code`,
+   * odd/tasks/ahorro-tokens.md (T3a/T6): además de `update_resource_code`,
    * ofrece `edit_resource_code` (edición por fragmentos). Sólo tiene sentido
-   * en un turno de AJUSTE con el interruptor global prendido — nunca para un
-   * recurso nuevo (`stream.ts` decide eso antes de llamar acá). Con
-   * `forzarHerramienta: true` y `editsEnabled: true`, `tool_choice` pasa a
-   * `'required'` (cualquiera de las dos, no una en particular) en vez del
-   * `{type:'function', name: update_resource_code}` de siempre — forzar a
-   * un nombre fijo le sacaría al modelo la posibilidad de resolver con
-   * fragmentos. `undefined`/`false` = comportamiento de siempre.
+   * en un turno de AJUSTE — nunca para un recurso nuevo (`stream.ts`/
+   * `autocorreccion.ts` deciden eso antes de llamar acá). Con
+   * `forzarHerramienta: true` y `editsEnabled: true` (y `soloEdicion` en
+   * `false`), `tool_choice` pasa a `'required'` (cualquiera de las dos, no
+   * una en particular) — eso es SÓLO la recuperación de una edición fallida
+   * (ver `soloEdicion`). `undefined`/`false` = comportamiento de siempre.
    */
   editsEnabled?: boolean;
+  /**
+   * odd/tasks/ahorro-tokens.md (T6): el primer intento de un turno de
+   * AJUSTE ofrece ÚNICAMENTE `edit_resource_code` (`tools` trae una sola
+   * entrada y `tool_choice` la nombra por nombre, nunca `'required'`) — tras
+   * la evaluación ciega (T3c), fragmentos es el único camino de edición, y
+   * `update_resource_code` queda reservado para un recurso nuevo o para la
+   * única recuperación tras una edición fallida en el mismo turno (esa
+   * recuperación manda `editsEnabled: true, soloEdicion: false` para volver
+   * a ofrecer las dos). Sin efecto si `editsEnabled` es `false`.
+   */
+  soloEdicion?: boolean;
 }): Promise<Response> {
   const { provider } = options;
 
@@ -261,6 +271,7 @@ export async function requestCompletionStream(options: {
         maxTokensOverride: options.maxTokensOverride,
         sinHerramientas,
         editsEnabled: options.editsEnabled ?? false,
+        soloEdicion: options.soloEdicion ?? false,
       });
     } catch (error) {
       if (error instanceof ToolChoiceNoSoportado && forzar && !yaAflojo) {
@@ -474,22 +485,32 @@ function aResponsesInput(messages: ChatMessage[]): Array<Record<string, unknown>
  * de OpenAI).
  */
 /**
- * odd/tasks/ahorro-tokens.md (T3a): las herramientas de escritura del
- * recurso a ofrecer este pedido — `RESOURCE_TOOLS` siempre, más
- * `EDIT_RESOURCE_TOOL` si `editsEnabled`.
+ * odd/tasks/ahorro-tokens.md (T3a/T6): las herramientas de escritura del
+ * recurso a ofrecer este pedido. `soloEdicion` (T6) manda primero: el
+ * primer intento de un AJUSTE ofrece ÚNICAMENTE `EDIT_RESOURCE_TOOL`. Si
+ * no, `RESOURCE_TOOLS` siempre, más `EDIT_RESOURCE_TOOL` cuando
+ * `editsEnabled` (hoy sólo la recuperación de una edición fallida, ver el
+ * comentario de `soloEdicion` en `requestCompletionStream`).
  */
-function herramientasDeEscritura(editsEnabled: boolean): AiTool[] {
+function herramientasDeEscritura(editsEnabled: boolean, soloEdicion: boolean): AiTool[] {
+  if (soloEdicion) return [EDIT_RESOURCE_TOOL];
   return editsEnabled ? [...RESOURCE_TOOLS, EDIT_RESOURCE_TOOL] : RESOURCE_TOOLS;
 }
 
 /**
- * Forzar con dos herramientas ofrecidas usa `'required'` (cualquiera de las
- * dos, no un nombre fijo) — forzar `update_resource_code` por nombre le
- * sacaría al modelo la posibilidad de resolver con fragmentos (ver el
- * comentario de `editsEnabled` en `requestCompletionStream`). Sin forzar,
- * siempre `'auto'`.
+ * `soloEdicion` fuerza `edit_resource_code` por nombre — es la única
+ * herramienta ofrecida, así que nombrarla no le saca nada al modelo. Forzar
+ * con las DOS herramientas ofrecidas (`editsEnabled` sin `soloEdicion`) usa
+ * `'required'` (cualquiera de las dos, no un nombre fijo) — forzar
+ * `update_resource_code` por nombre ahí le sacaría al modelo la posibilidad
+ * de resolver con fragmentos. Sin ninguna de las dos, siempre
+ * `update_resource_code` por nombre (recurso nuevo).
  */
-function eleccionForzada(editsEnabled: boolean): 'required' | { type: 'function'; function: { name: string } } {
+function eleccionForzada(
+  editsEnabled: boolean,
+  soloEdicion: boolean,
+): 'required' | { type: 'function'; function: { name: string } } {
+  if (soloEdicion) return { type: 'function', function: { name: EDIT_RESOURCE_CODE } };
   return editsEnabled ? 'required' : { type: 'function', function: { name: UPDATE_RESOURCE_CODE } };
 }
 
@@ -499,6 +520,7 @@ function aResponsesBody(options: {
   forzarHerramienta: boolean;
   sinHerramientas: boolean;
   editsEnabled: boolean;
+  soloEdicion: boolean;
   razonamiento: Record<string, unknown>;
   maxTokens: number;
 }): Record<string, unknown> {
@@ -510,16 +532,18 @@ function aResponsesBody(options: {
   };
 
   if (!options.sinHerramientas) {
-    body.tools = herramientasDeEscritura(options.editsEnabled).map((tool) => ({
+    body.tools = herramientasDeEscritura(options.editsEnabled, options.soloEdicion).map((tool) => ({
       type: 'function' as const,
       name: tool.function.name,
       description: tool.function.description,
       parameters: tool.function.parameters,
     }));
     body.tool_choice = options.forzarHerramienta
-      ? options.editsEnabled
-        ? 'required'
-        : { type: 'function', name: UPDATE_RESOURCE_CODE }
+      ? options.soloEdicion
+        ? { type: 'function', name: EDIT_RESOURCE_CODE }
+        : options.editsEnabled
+          ? 'required'
+          : { type: 'function', name: UPDATE_RESOURCE_CODE }
       : 'auto';
   }
 
@@ -543,6 +567,7 @@ async function intentarUna(
     maxTokensOverride?: number | null;
     sinHerramientas?: boolean;
     editsEnabled?: boolean;
+    soloEdicion?: boolean;
   },
 ): Promise<Response> {
   const { provider } = options;
@@ -562,6 +587,7 @@ async function intentarUna(
           forzarHerramienta: options.forzarHerramienta ?? false,
           sinHerramientas: options.sinHerramientas ?? false,
           editsEnabled: options.editsEnabled ?? false,
+          soloEdicion: options.soloEdicion ?? false,
           razonamiento: options.razonamientoOverride ?? razonamiento(provider),
           maxTokens: options.maxTokensOverride ?? provider.maxTokens,
         })
@@ -573,11 +599,13 @@ async function intentarUna(
           // hace que `JSON.stringify` OMITA la clave entera, que es lo que
           // hizo falta contra DeepSeek (`tool_choice: 'none'` no alcanza: el
           // proveedor sigue viendo `tools` y puede llamarla igual).
-          tools: options.sinHerramientas ? undefined : herramientasDeEscritura(options.editsEnabled ?? false),
+          tools: options.sinHerramientas
+            ? undefined
+            : herramientasDeEscritura(options.editsEnabled ?? false, options.soloEdicion ?? false),
           tool_choice: options.sinHerramientas
             ? undefined
             : options.forzarHerramienta
-              ? eleccionForzada(options.editsEnabled ?? false)
+              ? eleccionForzada(options.editsEnabled ?? false, options.soloEdicion ?? false)
               : 'auto',
           // Sólo viaja si el motor lo tiene configurado. Los proveedores que no
           // conocen el parámetro contestan 400 si se les manda, así que el
