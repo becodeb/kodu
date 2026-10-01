@@ -1,13 +1,14 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type {
-  CheckoutSuscripcionInput,
-  CheckoutUnicoInput,
-  EstadoPagoProveedor,
-  NotificacionRecibida,
-  PagoObtenido,
-  PaymentGateway,
-  ResultadoCheckout,
-  SuscripcionObtenida,
+import {
+  ErrorProveedorPago,
+  type CheckoutSuscripcionInput,
+  type CheckoutUnicoInput,
+  type EstadoPagoProveedor,
+  type NotificacionRecibida,
+  type PagoObtenido,
+  type PaymentGateway,
+  type ResultadoCheckout,
+  type SuscripcionObtenida,
 } from './tipos.ts';
 
 /**
@@ -95,6 +96,21 @@ export class GatewayMercadoPago implements PaymentGateway {
     });
     if (!respuesta.ok) {
       const cuerpo = await respuesta.text().catch(() => '');
+      // Un 4xx de Mercado Pago (datos rechazados: payer_email inválido,
+      // monto bajo el mínimo, start_date en el pasado, etc.) tiene un
+      // mensaje legible que vale la pena mostrar en vez de un 500 genérico
+      // — ver `ErrorProveedorPago` en `tipos.ts`. Un 5xx es un problema del
+      // lado de Mercado Pago (transitorio): sigue como excepción genérica.
+      if (respuesta.status >= 400 && respuesta.status < 500) {
+        let mensaje = cuerpo;
+        try {
+          const parseado = JSON.parse(cuerpo) as { message?: string };
+          if (parseado.message) mensaje = parseado.message;
+        } catch {
+          // cuerpo no era JSON — se usa tal cual.
+        }
+        throw new ErrorProveedorPago(respuesta.status, mensaje);
+      }
       throw new Error(`Mercado Pago ${init.method ?? 'GET'} ${path} → ${respuesta.status}: ${cuerpo}`);
     }
     return (await respuesta.json()) as T;
@@ -165,6 +181,45 @@ export class GatewayMercadoPago implements PaymentGateway {
     return {
       providerPaymentId: String(respuesta.id),
       status: mapearEstadoPago(respuesta.status),
+      amountArs: respuesta.transaction_amount,
+      externalReference: respuesta.external_reference,
+    };
+  }
+
+  /**
+   * Ver el comentario de `fetchAuthorizedPayment` en `tipos.ts`: confirmado
+   * contra el sandbox real (T4c, fase 2) que `GET /v1/payments/{id}` con el
+   * id de un "authorized payment" da 404 — hay que leer
+   * `GET /authorized_payments/{id}`, que trae `external_reference` y
+   * `transaction_amount` propios y, si ya se efectivizó, un `payment`
+   * anidado con el id y el estado del pago real detrás del cobro.
+   */
+  async fetchAuthorizedPayment(providerAuthorizedPaymentId: string): Promise<PagoObtenido> {
+    const respuesta = await this.request<{
+      id: number | string;
+      status: string;
+      transaction_amount: number;
+      external_reference: string | null;
+      payment?: { id: number | string; status: string } | null;
+    }>(`/authorized_payments/${providerAuthorizedPaymentId}`, { method: 'GET' });
+
+    // El `payment` anidado es el pago real (mismo id/estado que devolvería
+    // `GET /v1/payments/{id}`) — se usa ese id para `providerPaymentId` así
+    // la idempotencia de `aplicar.ts` coincide con una eventual notificación
+    // del tópico `payment` sobre el MISMO cobro. Sin `payment` todavía (el
+    // débito está `scheduled`/`recycle`, no efectivizado) no hay pago real
+    // que aplicar: se informa `pending` con el id del authorized_payment.
+    if (respuesta.payment) {
+      return {
+        providerPaymentId: String(respuesta.payment.id),
+        status: mapearEstadoPago(respuesta.payment.status),
+        amountArs: respuesta.transaction_amount,
+        externalReference: respuesta.external_reference,
+      };
+    }
+    return {
+      providerPaymentId: String(respuesta.id),
+      status: respuesta.status === 'cancelled' ? 'cancelled' : 'pending',
       amountArs: respuesta.transaction_amount,
       externalReference: respuesta.external_reference,
     };

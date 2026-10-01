@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../src/lib/db.ts';
 import { esCuitValido, formatearCuit } from '../src/lib/billing/cuit.ts';
 import { GatewayMercadoPago } from '../src/lib/billing/pasarela/mercadopago.ts';
+import { ErrorProveedorPago } from '../src/lib/billing/pasarela/tipos.ts';
 import { GatewaySimulado } from '../src/lib/billing/pasarela/simulado.ts';
 import { procesarNotificacion } from '../src/lib/billing/aplicar.ts';
 import { estimarCostoConservador } from '../src/lib/ai/usage.ts';
@@ -143,6 +144,83 @@ await prueba(
     }
   },
 );
+
+await prueba(
+  'fetchAuthorizedPayment: lee /authorized_payments/{id} (NO /v1/payments/{id}) y usa el id del pago anidado',
+  async () => {
+    // Bug real encontrado en el sandbox (T4c fase 2): el `data.id` del
+    // tópico `subscription_authorized_payment` es el id de un "authorized
+    // payment" — `GET /v1/payments/{ese id}` da 404. Hay que leer
+    // `GET /authorized_payments/{id}` y usar el `payment.id`/`payment.status`
+    // anidado para la idempotencia (coincide con el que traería una
+    // eventual notificación del tópico `payment` sobre el MISMO cobro).
+    const fetchOriginal = globalThis.fetch;
+    let urlPedida = '';
+    globalThis.fetch = (async (url: string) => {
+      urlPedida = String(url);
+      return {
+        ok: true,
+        json: async () => ({
+          id: 999,
+          status: 'processed',
+          transaction_amount: 7900,
+          external_reference: 'ref-del-preapproval',
+          payment: { id: 181878855282, status: 'approved' },
+        }),
+      } as Response;
+    }) as typeof fetch;
+
+    try {
+      const gateway = new GatewayMercadoPago('token-no-usado', '');
+      const pago = await gateway.fetchAuthorizedPayment('999');
+      assert.ok(urlPedida.includes('/authorized_payments/999'), `debe pedir /authorized_payments/{id}, pidió: ${urlPedida}`);
+      assert.ok(!urlPedida.includes('/v1/payments/'), 'NO debe pedir /v1/payments/{id} con el id del authorized_payment');
+      assert.equal(pago.providerPaymentId, '181878855282', 'debe usar el id del `payment` anidado, no el del authorized_payment');
+      assert.equal(pago.status, 'approved');
+      assert.equal(pago.externalReference, 'ref-del-preapproval');
+    } finally {
+      globalThis.fetch = fetchOriginal;
+    }
+  },
+);
+
+await prueba('createSubscriptionCheckout: un 4xx de Mercado Pago se traduce a ErrorProveedorPago con el mensaje legible', async () => {
+  // Bug real encontrado en el sandbox (T4c fase 2): "Both payer and
+  // collector must be real or test users" (payer_email que no es una
+  // cuenta de Mercado Pago) bubbleaba como un Error genérico y los
+  // endpoints de checkout devolvían un 500 sin explicación.
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: false,
+      status: 400,
+      text: async () => JSON.stringify({ message: 'Both payer and collector must be real or test users', status: 400 }),
+    }) as Response) as typeof fetch;
+
+  try {
+    const gateway = new GatewayMercadoPago('token-no-usado', '');
+    await assert.rejects(
+      gateway.createSubscriptionCheckout({
+        externalReference: 'pago-fake',
+        reason: 'prueba',
+        amountArs: 1000,
+        frequency: 1,
+        frequencyType: 'months',
+        startDate: new Date(),
+        backUrl: 'https://kodu.example/back',
+        payerEmail: 'no-es-una-cuenta-de-mp@ejemplo.com',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ErrorProveedorPago, 'debe lanzar ErrorProveedorPago');
+        assert.equal((error as InstanceType<typeof ErrorProveedorPago>).mpMessage, 'Both payer and collector must be real or test users');
+        assert.equal((error as InstanceType<typeof ErrorProveedorPago>).httpStatus, 400);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = fetchOriginal;
+  }
+});
 
 // ─────────────────────────────────────────────────────────────
 // aplicar.ts — monto que no coincide, y replay idempotente (con base real).

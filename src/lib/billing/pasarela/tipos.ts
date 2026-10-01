@@ -15,6 +15,25 @@
  * único lugar que interpreta ese valor.
  */
 
+/**
+ * T4c (sandbox real, fase 2): Mercado Pago puede rechazar la CREACIÓN de un
+ * checkout con un 4xx cuyo mensaje es legible y vale la pena mostrar (p.ej.
+ * "Both payer and collector must be real or test users" cuando `payer_email`
+ * no es una cuenta de Mercado Pago) — antes esto bubbleaba como una
+ * excepción genérica y los endpoints de checkout devolvían un 500 sin
+ * explicación. `aplicar.ts` atrapa este tipo para devolver un 502 con
+ * `mpMessage` en vez de un 500.
+ */
+export class ErrorProveedorPago extends Error {
+  constructor(
+    public readonly httpStatus: number,
+    public readonly mpMessage: string,
+  ) {
+    super(`Mercado Pago rechazó la operación (${httpStatus}): ${mpMessage}`);
+    this.name = 'ErrorProveedorPago';
+  }
+}
+
 export type EstadoPagoProveedor = 'approved' | 'rejected' | 'pending' | 'refunded' | 'cancelled';
 export type EstadoSuscripcionProveedor = 'authorized' | 'paused' | 'cancelled' | 'pending';
 
@@ -79,6 +98,16 @@ export interface PaymentGateway {
   createOneTimeCheckout(input: CheckoutUnicoInput): Promise<ResultadoCheckout>;
   cancelSubscription(providerSubscriptionId: string): Promise<void>;
   fetchPayment(providerPaymentId: string): Promise<PagoObtenido>;
+  /**
+   * T4c (probado contra el sandbox real): un cobro recurrente de una
+   * suscripción (tópico `subscription_authorized_payment`) NO se relee con
+   * `fetchPayment` — el `data.id` de esa notificación es el id del
+   * "authorized payment" (`GET /authorized_payments/{id}`), un recurso
+   * DISTINTO del pago (`GET /v1/payments/{id}` con ese mismo id da 404).
+   * `aplicar.ts#procesarNotificacion` despacha a este método para ese
+   * tópico en vez de a `fetchPayment`.
+   */
+  fetchAuthorizedPayment(providerAuthorizedPaymentId: string): Promise<PagoObtenido>;
   fetchSubscription(providerSubscriptionId: string): Promise<SuscripcionObtenida>;
   /**
    * `false` = rechazar el webhook sin procesarlo (firma inválida o

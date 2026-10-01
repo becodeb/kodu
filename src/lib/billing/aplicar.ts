@@ -5,7 +5,7 @@ import { firstCharge, renewalChargeIndividualAnnual, renewalChargeOrgCycle, type
 import { esCuitValido, formatearCuit } from './cuit.ts';
 import { activarCreditosIndividual, ensureGrants } from './creditos-servicio.ts';
 import { resolverGatewayDePago } from './pasarela/index.ts';
-import type { NotificacionRecibida, PagoObtenido, PaymentGateway } from './pasarela/tipos.ts';
+import { ErrorProveedorPago, type NotificacionRecibida, type PagoObtenido, type PaymentGateway, type ResultadoCheckout } from './pasarela/tipos.ts';
 import { intentarEmitirFactura } from './facturacion-superadmin.ts';
 import type { IndividualInterval, OrgBillingInterval, OrgIvaCondition } from '../../generated/prisma/client.ts';
 
@@ -47,6 +47,29 @@ function gatewayORefuse(): PaymentGateway | { refuse: ResultadoAccion<never> } {
     };
   }
   return gateway;
+}
+
+/**
+ * T4c (sandbox real, fase 2): probando contra Mercado Pago real encontramos
+ * que un checkout puede fallar en la CREACIÓN con un 4xx legible — p.ej.
+ * `payer_email` que no corresponde a ninguna cuenta de Mercado Pago
+ * ("Both payer and collector must be real or test users"), o un monto bajo
+ * el mínimo. Antes esa excepción bubbleaba sin atrapar y los endpoints de
+ * checkout devolvían un 500 sin explicación. Este helper envuelve la
+ * llamada al gateway y traduce `ErrorProveedorPago` a un 502 con el mensaje
+ * de Mercado Pago — cualquier otro error (red, 5xx) sigue bubbleando.
+ */
+async function intentarCheckout(
+  crear: () => Promise<ResultadoCheckout>,
+): Promise<{ ok: true; data: ResultadoCheckout } | ResultadoAccion<never>> {
+  try {
+    return { ok: true, data: await crear() };
+  } catch (error) {
+    if (error instanceof ErrorProveedorPago) {
+      return { ok: false, status: 502, message: `Mercado Pago rechazó el checkout: ${error.mpMessage}` };
+    }
+    throw error;
+  }
 }
 
 async function settings() {
@@ -136,21 +159,24 @@ export async function crearCheckoutOrg(
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
 
   if (input.interval === 'MONTHLY') {
-    const resultado = await gateway.createSubscriptionCheckout({
-      externalReference: checkout.id,
-      reason: 'Kodu — licencia institucional mensual',
-      amountArs: primerCobro.amountArs,
-      frequency: 1,
-      frequencyType: 'months',
-      startDate: now,
-      backUrl,
-      payerEmail: actor.email,
-    });
+    const intento = await intentarCheckout(() =>
+      gateway.createSubscriptionCheckout({
+        externalReference: checkout.id,
+        reason: 'Kodu — licencia institucional mensual',
+        amountArs: primerCobro.amountArs,
+        frequency: 1,
+        frequencyType: 'months',
+        startDate: now,
+        backUrl,
+        payerEmail: actor.email,
+      }),
+    );
+    if (!intento.ok) return intento;
     await prisma.organizationLicense.update({
       where: { id: license.id },
-      data: { externalSubscriptionId: resultado.providerCheckoutId },
+      data: { externalSubscriptionId: intento.data.providerCheckoutId },
     });
-    return { ok: true, data: { url: resultado.initPoint } };
+    return { ok: true, data: { url: intento.data.initPoint } };
   }
 
   // CYCLE: pago único, sin preapproval automática — ver el comentario de
@@ -159,15 +185,18 @@ export async function crearCheckoutOrg(
   // checkout nuevo (T7/T9, fuera de esta tarea): esta licencia queda
   // ACTIVE con `currentPeriodEnd` en el fin del ciclo cubierto y sin
   // `externalSubscriptionId`.
-  const resultado = await gateway.createOneTimeCheckout({
-    externalReference: checkout.id,
-    concept: 'Kodu — licencia institucional, ciclo lectivo',
-    amountArs: primerCobro.amountArs,
-    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
-    notificationUrl,
-    payerEmail: actor.email,
-  });
-  return { ok: true, data: { url: resultado.initPoint } };
+  const intento = await intentarCheckout(() =>
+    gateway.createOneTimeCheckout({
+      externalReference: checkout.id,
+      concept: 'Kodu — licencia institucional, ciclo lectivo',
+      amountArs: primerCobro.amountArs,
+      backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+      notificationUrl,
+      payerEmail: actor.email,
+    }),
+  );
+  if (!intento.ok) return intento;
+  return { ok: true, data: { url: intento.data.initPoint } };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -238,15 +267,18 @@ export async function crearCheckoutRenovacionOrg(
   const env = getEnv();
   const backUrl = `${env.PUBLIC_SITE_URL}/org/plan?checkout=listo`;
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
-  const resultado = await gateway.createOneTimeCheckout({
-    externalReference: checkout.id,
-    concept: 'Kodu — renovación del ciclo lectivo',
-    amountArs: renovacion.amountArs,
-    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
-    notificationUrl,
-    payerEmail: actor.email,
-  });
-  return { ok: true, data: { url: resultado.initPoint } };
+  const intento = await intentarCheckout(() =>
+    gateway.createOneTimeCheckout({
+      externalReference: checkout.id,
+      concept: 'Kodu — renovación del ciclo lectivo',
+      amountArs: renovacion.amountArs,
+      backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+      notificationUrl,
+      payerEmail: actor.email,
+    }),
+  );
+  if (!intento.ok) return intento;
+  return { ok: true, data: { url: intento.data.initPoint } };
 }
 
 export async function cancelarOrg(rootOrganizationId: string): Promise<ResultadoAccion<{ cancelAtPeriodEnd: true }>> {
@@ -452,34 +484,40 @@ export async function crearCheckoutIndividual(
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
 
   if (input.interval === 'MONTHLY') {
-    const resultado = await gateway.createSubscriptionCheckout({
-      externalReference: checkout.id,
-      reason: 'Kodu — plan Individual mensual',
-      amountArs,
-      frequency: 1,
-      frequencyType: 'months',
-      startDate: now,
-      backUrl,
-      payerEmail: actor.email,
-    });
+    const intento = await intentarCheckout(() =>
+      gateway.createSubscriptionCheckout({
+        externalReference: checkout.id,
+        reason: 'Kodu — plan Individual mensual',
+        amountArs,
+        frequency: 1,
+        frequencyType: 'months',
+        startDate: now,
+        backUrl,
+        payerEmail: actor.email,
+      }),
+    );
+    if (!intento.ok) return intento;
     await prisma.payment.update({
       where: { id: checkout.id },
-      data: { pendingExternalSubscriptionId: resultado.providerCheckoutId },
+      data: { pendingExternalSubscriptionId: intento.data.providerCheckoutId },
     });
-    return { ok: true, data: { url: resultado.initPoint } };
+    return { ok: true, data: { url: intento.data.initPoint } };
   }
 
   // ANNUAL: mismo criterio que el ciclo institucional — pago único, sin
   // preapproval automática (ver el comentario de `pasarela/mercadopago.ts`).
-  const resultado = await gateway.createOneTimeCheckout({
-    externalReference: checkout.id,
-    concept: 'Kodu — plan Individual anual',
-    amountArs,
-    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
-    notificationUrl,
-    payerEmail: actor.email,
-  });
-  return { ok: true, data: { url: resultado.initPoint } };
+  const intento = await intentarCheckout(() =>
+    gateway.createOneTimeCheckout({
+      externalReference: checkout.id,
+      concept: 'Kodu — plan Individual anual',
+      amountArs,
+      backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+      notificationUrl,
+      payerEmail: actor.email,
+    }),
+  );
+  if (!intento.ok) return intento;
+  return { ok: true, data: { url: intento.data.initPoint } };
 }
 
 /**
@@ -537,15 +575,18 @@ export async function crearCheckoutRenovacionIndividual(
   const env = getEnv();
   const backUrl = `${env.PUBLIC_SITE_URL}/app/plan?checkout=listo`;
   const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
-  const resultado = await gateway.createOneTimeCheckout({
-    externalReference: checkout.id,
-    concept: 'Kodu — renovación del plan Individual anual',
-    amountArs: renovacion.amountArs,
-    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
-    notificationUrl,
-    payerEmail: actor.email,
-  });
-  return { ok: true, data: { url: resultado.initPoint } };
+  const intento = await intentarCheckout(() =>
+    gateway.createOneTimeCheckout({
+      externalReference: checkout.id,
+      concept: 'Kodu — renovación del plan Individual anual',
+      amountArs: renovacion.amountArs,
+      backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+      notificationUrl,
+      payerEmail: actor.email,
+    }),
+  );
+  if (!intento.ok) return intento;
+  return { ok: true, data: { url: intento.data.initPoint } };
 }
 
 export async function cancelarIndividual(userId: string): Promise<ResultadoAccion<{ cancelAtPeriodEnd: true }>> {
@@ -618,7 +659,13 @@ export async function procesarNotificacion(
 
   let pago: PagoObtenido;
   try {
-    pago = await gateway.fetchPayment(notif.id);
+    // T4c (sandbox real): `subscription_authorized_payment` trae el id de un
+    // "authorized payment", un recurso distinto de un pago — ver el
+    // comentario de `fetchAuthorizedPayment` en `pasarela/tipos.ts`.
+    pago =
+      notif.kind === 'subscription_authorized_payment'
+        ? await gateway.fetchAuthorizedPayment(notif.id)
+        : await gateway.fetchPayment(notif.id);
   } catch (error) {
     console.warn(`[billing] no se pudo releer el pago ${notif.id} del proveedor:`, error);
     return { applied: false, reason: 'fetch_fallido' };

@@ -74,6 +74,13 @@ export class GatewaySimulado implements PaymentGateway {
     };
   }
 
+  /** El simulado nunca produce el tópico `subscription_authorized_payment`
+   *  (`simularRenovacion` siempre arma `{ kind: 'payment' }`) — se
+   *  implementa igual a `fetchPayment` sólo para cumplir la interfaz. */
+  async fetchAuthorizedPayment(providerPaymentId: string): Promise<PagoObtenido> {
+    return this.fetchPayment(providerPaymentId);
+  }
+
   async fetchSubscription(providerSubscriptionId: string): Promise<SuscripcionObtenida> {
     const fila = await prisma.pagoSimulado.findUniqueOrThrow({ where: { id: providerSubscriptionId } });
     return {
