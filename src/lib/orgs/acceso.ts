@@ -2,6 +2,7 @@ import { prisma } from '../db.ts';
 import { licenseAllowsAi, type LicenciaParaAcceso, type RazonAcceso } from '../billing/acceso-licencia.ts';
 import { balance, ensureGrants } from '../billing/creditos-servicio.ts';
 import { proximaRenovacionEtiqueta } from '../billing/creditos.ts';
+import { reconciliarLicenciaOrgVencida } from '../billing/vencimiento.ts';
 
 /**
  * odd/tasks/organizaciones.md (T2) / odd/tasks/planes-y-cobros.md (T2/T3): la
@@ -89,12 +90,17 @@ export function organizacionActiva(org: OrganizacionParaAcceso | null): boolean 
  */
 async function licenciaDeLaRaiz(
   organizationId: string,
+  now: Date = new Date(),
 ): Promise<{ rootId: string; license: LicenciaParaAcceso | null; esAdminDeLaRaiz: (userId: string) => Promise<boolean> }> {
   const org = await prisma.organization.findUnique({
     where: { id: organizationId },
     select: { parentId: true },
   });
   const rootId = org?.parentId ?? organizationId;
+
+  // T4b: antes de leer la licencia, reconciliar un vencimiento de CICLO sin
+  // renovar (perezoso, mismo criterio que `ensureGrants` para créditos).
+  await reconciliarLicenciaOrgVencida(rootId, now);
 
   const license = await prisma.organizationLicense.findUnique({
     where: { organizationId: rootId },
@@ -144,7 +150,7 @@ export async function resolverAccesoIa(
   });
   if (!organizacionActiva(org)) return { allowed: false, reason: 'org_archived' };
 
-  const { rootId, license, esAdminDeLaRaiz } = await licenciaDeLaRaiz(organizationId);
+  const { rootId, license, esAdminDeLaRaiz } = await licenciaDeLaRaiz(organizationId, now);
   if (!license) {
     // T1 backfilleó MANUAL para toda organización de tope preexistente y
     // `crearOrganizacion` (gestion.ts) le pone MANUAL a cualquier alta nueva

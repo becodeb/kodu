@@ -1,6 +1,7 @@
 import { prisma } from '../db.ts';
 import { Prisma } from '../../generated/prisma/client.ts';
 import { creditsForCost, monthlyGrantPeriodKey, WELCOME_PERIOD_KEY } from './creditos.ts';
+import { reconciliarSuscripcionIndividualVencida } from './vencimiento.ts';
 
 /**
  * odd/tasks/planes-y-cobros.md (T2): el libro de créditos de un docente
@@ -67,6 +68,10 @@ async function suscripcionIndividualVigente(
  *   EXPIRY) — nunca se vence dos veces el mismo saldo.
  */
 export async function ensureGrants(userId: string, now: Date): Promise<void> {
+  // T4b: un plan Individual ANUAL vencido sin renovar vuelve a FREE acá,
+  // antes de decidir qué otorgar este período.
+  await reconciliarSuscripcionIndividualVencida(userId, now);
+
   const free = await planFree();
 
   // Bienvenida: única para siempre, nunca vence.

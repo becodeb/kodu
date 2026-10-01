@@ -1,7 +1,7 @@
 import { prisma } from '../db.ts';
 import { billingNow, getEnv } from '../env.ts';
 import { bandForStudents } from './bandas.ts';
-import { firstCharge, type IntervaloCobro } from './ciclo.ts';
+import { firstCharge, renewalChargeIndividualAnnual, renewalChargeOrgCycle, type IntervaloCobro } from './ciclo.ts';
 import { esCuitValido, formatearCuit } from './cuit.ts';
 import { otorgarTopeIndividual } from './creditos-servicio.ts';
 import { resolverGatewayDePago } from './pasarela/index.ts';
@@ -165,6 +165,85 @@ export async function crearCheckoutOrg(
   return { ok: true, data: { url: resultado.initPoint } };
 }
 
+// ─────────────────────────────────────────────────────────────
+// Renovación — ciclo lectivo institucional (T4b)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * odd/tasks/planes-y-cobros.md (T4b): checkout de renovación de una
+ * licencia por CICLO ya contratada — precio de ciclo completo (nunca
+ * prorrateado), período nuevo anclado a `currentPeriodEnd` (nunca a "hoy":
+ * ver `ciclo.ts#renewalChargeOrgCycle`). Se puede pagar desde 30 días antes
+ * del vencimiento (el banner, en las páginas) hasta que entra en sólo
+ * lectura — pagar en cualquier momento de esa ventana da el MISMO período, así
+ * que nunca duplica cobro ni regala meses. Reutiliza `aplicarPrimerCobroOrg`
+ * al aplicarse (ver `aplicarPrimerCobro`): esa función ya es "pisar
+ * status/período con lo que diga el Payment", sin importar si es la primera
+ * vez o una renovación.
+ */
+export async function crearCheckoutRenovacionOrg(
+  actor: { id: string; email: string },
+  rootOrganizationId: string,
+): Promise<ResultadoAccion<{ url: string }>> {
+  const gateway = gatewayORefuse();
+  if ('refuse' in gateway) return gateway.refuse;
+
+  const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootOrganizationId } });
+  if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de tu institución.' };
+  if (license.status === 'MANUAL') {
+    return { ok: false, status: 409, message: 'Esta licencia la administra Kodu directamente — escribinos.' };
+  }
+  if (license.interval !== 'CYCLE') {
+    return { ok: false, status: 409, message: 'La renovación anticipada es sólo para la licencia por ciclo lectivo.' };
+  }
+  if (!license.currentPeriodEnd || !license.bandKey) {
+    return { ok: false, status: 409, message: 'Todavía no tenés un período contratado para renovar.' };
+  }
+
+  const yaHayRenovacionEnCurso = await prisma.payment.findFirst({
+    where: {
+      organizationLicenseId: license.id,
+      periodStart: { gt: license.currentPeriodEnd },
+      status: { in: ['PENDING', 'APPROVED'] },
+    },
+  });
+  if (yaHayRenovacionEnCurso) {
+    return { ok: false, status: 409, message: 'Ya hay una renovación en curso para el próximo ciclo.' };
+  }
+
+  const filaBanda = await prisma.institutionalBand.findUniqueOrThrow({ where: { key: license.bandKey } });
+  const renovacion = renewalChargeOrgCycle({
+    currentPeriodEnd: license.currentPeriodEnd,
+    cyclePriceArs: filaBanda.cyclePriceArs.toNumber(),
+  });
+
+  const checkout = await prisma.payment.create({
+    data: {
+      organizationId: rootOrganizationId,
+      organizationLicenseId: license.id,
+      amountArs: renovacion.amountArs,
+      status: 'PENDING',
+      provider: proveedorActual(),
+      periodStart: renovacion.periodStart,
+      periodEnd: renovacion.periodEnd,
+      intervalSnapshot: 'CYCLE',
+    },
+  });
+
+  const env = getEnv();
+  const backUrl = `${env.PUBLIC_SITE_URL}/org/plan?checkout=listo`;
+  const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
+  const resultado = await gateway.createOneTimeCheckout({
+    externalReference: checkout.id,
+    concept: 'Kodu — renovación del ciclo lectivo',
+    amountArs: renovacion.amountArs,
+    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+    notificationUrl,
+    payerEmail: actor.email,
+  });
+  return { ok: true, data: { url: resultado.initPoint } };
+}
+
 export async function cancelarOrg(rootOrganizationId: string): Promise<ResultadoAccion<{ cancelAtPeriodEnd: true }>> {
   const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootOrganizationId } });
   if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de tu institución.' };
@@ -260,6 +339,72 @@ export async function crearCheckoutIndividual(
     externalReference: checkout.id,
     concept: 'Kodu — plan Individual anual',
     amountArs,
+    backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
+    notificationUrl,
+    payerEmail: actor.email,
+  });
+  return { ok: true, data: { url: resultado.initPoint } };
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T4b): checkout de renovación del plan
+ * Individual ANUAL — mismo criterio que `crearCheckoutRenovacionOrg`
+ * (período anclado a `currentPeriodEnd`, precio anual completo). A
+ * diferencia de la renovación de institución, acá el `Payment` SÍ lleva
+ * `individualSubscriptionId` ya cargado (apuntando a la suscripción
+ * EXISTENTE): es la marca que usa `aplicarPrimerCobro` para despachar a
+ * `aplicarRenovacionIndividualAnual` en vez de crear una fila nueva (que
+ * chocaría con el único de `IndividualSubscription.userId`).
+ */
+export async function crearCheckoutRenovacionIndividual(
+  actor: { id: string; email: string },
+): Promise<ResultadoAccion<{ url: string }>> {
+  const gateway = gatewayORefuse();
+  if ('refuse' in gateway) return gateway.refuse;
+
+  const sub = await prisma.individualSubscription.findUnique({ where: { userId: actor.id } });
+  if (!sub) return { ok: false, status: 404, message: 'No tenés una suscripción Individual.' };
+  if (sub.interval !== 'ANNUAL') {
+    return { ok: false, status: 409, message: 'La renovación anticipada es sólo para el plan anual.' };
+  }
+
+  const yaHayRenovacionEnCurso = await prisma.payment.findFirst({
+    where: {
+      individualSubscriptionId: sub.id,
+      periodStart: { gt: sub.currentPeriodEnd },
+      status: { in: ['PENDING', 'APPROVED'] },
+    },
+  });
+  if (yaHayRenovacionEnCurso) {
+    return { ok: false, status: 409, message: 'Ya hay una renovación en curso.' };
+  }
+
+  const plan = await prisma.individualPlan.findUniqueOrThrow({ where: { key: 'INDIVIDUAL' } });
+  const annualPriceArs = plan.annualPriceArs?.toNumber();
+  if (!annualPriceArs) return { ok: false, status: 422, message: 'El plan anual no está disponible todavía.' };
+
+  const renovacion = renewalChargeIndividualAnnual({ currentPeriodEnd: sub.currentPeriodEnd, annualPriceArs });
+
+  const checkout = await prisma.payment.create({
+    data: {
+      userId: actor.id,
+      individualSubscriptionId: sub.id,
+      amountArs: renovacion.amountArs,
+      status: 'PENDING',
+      provider: proveedorActual(),
+      periodStart: renovacion.periodStart,
+      periodEnd: renovacion.periodEnd,
+      intervalSnapshot: 'ANNUAL',
+    },
+  });
+
+  const env = getEnv();
+  const backUrl = `${env.PUBLIC_SITE_URL}/app/plan?checkout=listo`;
+  const notificationUrl = `${env.PUBLIC_SITE_URL}/api/billing/webhook/mercadopago`;
+  const resultado = await gateway.createOneTimeCheckout({
+    externalReference: checkout.id,
+    concept: 'Kodu — renovación del plan Individual anual',
+    amountArs: renovacion.amountArs,
     backUrls: { success: backUrl, failure: backUrl, pending: backUrl },
     notificationUrl,
     payerEmail: actor.email,
@@ -414,7 +559,16 @@ async function aplicarPrimerCobro(checkoutRaiz: FilaPayment, pago: PagoObtenido)
   if (status !== 'APPROVED') return { applied: true, reason: `primer_cobro_${pago.status}` };
 
   if (checkoutRaiz.organizationLicenseId) {
+    // T4b: sirve tanto para el primer cobro como para la renovación de
+    // CICLO — `aplicarPrimerCobroOrg` sólo pisa status/período con lo que
+    // ya trae este mismo Payment, no le importa si la licencia es nueva.
     await aplicarPrimerCobroOrg(checkoutRaiz);
+  } else if (checkoutRaiz.individualSubscriptionId) {
+    // T4b: renovación del plan Individual ANUAL — `individualSubscriptionId`
+    // ya viene cargado desde `crearCheckoutRenovacionIndividual` apuntando a
+    // la suscripción EXISTENTE; a diferencia del primer cobro, acá hay que
+    // actualizarla, nunca crear una fila nueva (único de `userId`).
+    await aplicarRenovacionIndividualAnual(checkoutRaiz);
   } else if (checkoutRaiz.userId) {
     await aplicarPrimerCobroIndividual(checkoutRaiz);
   }
@@ -454,6 +608,19 @@ async function aplicarPrimerCobroIndividual(checkout: FilaPayment): Promise<void
     },
   });
   await prisma.payment.update({ where: { id: checkout.id }, data: { individualSubscriptionId: sub.id } });
+  await otorgarTopeIndividual(checkout.userId!, billingNow());
+}
+
+async function aplicarRenovacionIndividualAnual(checkout: FilaPayment): Promise<void> {
+  await prisma.individualSubscription.update({
+    where: { id: checkout.individualSubscriptionId! },
+    data: {
+      status: 'ACTIVE',
+      currentPeriodStart: checkout.periodStart,
+      currentPeriodEnd: checkout.periodEnd,
+      cancelAtPeriodEnd: false,
+    },
+  });
   await otorgarTopeIndividual(checkout.userId!, billingNow());
 }
 
