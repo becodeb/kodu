@@ -9,6 +9,10 @@ interface Props {
   alumnosPrefill: string;
   nombreContacto: string;
   emailContacto: string;
+  /** T11: la prueba institucional es un interruptor del superadmin (OFF por
+   *  default) — el botón de envío nunca promete una prueba que está apagada. */
+  trialEnabled: boolean;
+  trialDays: number;
 }
 
 interface Campus {
@@ -33,7 +37,7 @@ const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency
  * `LeadInstitucionForm` en vez de reintentar — nunca se decide "Hablemos" sólo
  * del lado del cliente (el umbral vive en `BillingSettings`, editable).
  */
-export default function AltaInstitucionForm({ dominioPropio, alumnosPrefill, nombreContacto, emailContacto }: Props) {
+export default function AltaInstitucionForm({ dominioPropio, alumnosPrefill, nombreContacto, emailContacto, trialEnabled, trialDays }: Props) {
   const [institutionName, setInstitutionName] = useState('');
   const [kind, setKind] = useState<'CAMPUS' | 'NETWORK'>('CAMPUS');
   const [declaredStudents, setDeclaredStudents] = useState(alumnosPrefill);
@@ -317,7 +321,7 @@ export default function AltaInstitucionForm({ dominioPropio, alumnosPrefill, nom
       )}
 
       <button type="submit" disabled={pending || precio.estado === 'hablemos'} className="kodu-btn kodu-btn-primary w-full">
-        {pending ? 'Creando…' : 'Empezar la prueba de 30 días'}
+        {pending ? 'Creando…' : trialEnabled ? `Empezar la prueba de ${trialDays} días` : 'Contratar'}
       </button>
     </form>
   );

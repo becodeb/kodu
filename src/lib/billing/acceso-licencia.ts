@@ -5,14 +5,15 @@
  * `OrganizationLicense`, siempre la de la organización RAÍZ, nunca la de una
  * sede — ver el comentario de `OrganizationLicense` en schema.prisma).
  *
- * | status     | permite generar                                    |
- * |------------|-----------------------------------------------------|
- * | TRIAL      | sí, mientras `now <= trialEndsAt`                    |
- * | ACTIVE     | siempre sí                                           |
- * | PAST_DUE   | sí, mientras `now <= graceEndsAt` (7 días de gracia) |
- * | MANUAL     | siempre sí (organizaciones preexistentes y altas a mano) |
- * | READ_ONLY  | no (sólo lectura: la prueba terminó sin pago)        |
- * | CANCELED   | no                                                   |
+ * | status          | permite generar                                    |
+ * |-----------------|-----------------------------------------------------|
+ * | TRIAL           | sí, mientras `now <= trialEndsAt`                    |
+ * | ACTIVE          | siempre sí                                           |
+ * | PAST_DUE        | sí, mientras `now <= graceEndsAt` (7 días de gracia) |
+ * | MANUAL          | siempre sí (organizaciones preexistentes y altas a mano) |
+ * | READ_ONLY       | no (sólo lectura: la prueba terminó sin pago)        |
+ * | CANCELED        | no                                                   |
+ * | PENDING_PAYMENT | no (T11: alta con la prueba APAGADA — nunca generó, nunca tuvo prueba) |
  *
  * Los bordes (`now === trialEndsAt`, `now === graceEndsAt`) cuentan como
  * PERMITIDO — "hasta" incluye el instante exacto del vencimiento; recién el
@@ -21,7 +22,7 @@
  * resultado; esta función sólo contesta "en este instante, ¿se puede?".
  */
 
-export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'READ_ONLY' | 'CANCELED' | 'MANUAL';
+export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'READ_ONLY' | 'CANCELED' | 'MANUAL' | 'PENDING_PAYMENT';
 
 export interface LicenciaParaAcceso {
   status: LicenseStatus;
@@ -50,7 +51,8 @@ export type RazonAcceso =
   | 'gracia_expirada'
   | 'gracia_sin_fecha'
   | 'read_only'
-  | 'canceled';
+  | 'canceled'
+  | 'pending_payment';
 
 export interface ResultadoAcceso {
   allowed: boolean;
@@ -93,5 +95,10 @@ export function licenseAllowsAi(license: LicenciaParaAcceso, now: Date): Resulta
 
     case 'CANCELED':
       return { allowed: false, reason: 'canceled' };
+
+    case 'PENDING_PAYMENT':
+      // T11: alta con la prueba institucional APAGADA — nunca tuvo prueba,
+      // nunca generó; sólo contratar (ACTIVE) habilita la IA.
+      return { allowed: false, reason: 'pending_payment' };
   }
 }

@@ -95,6 +95,15 @@ const requiereElegirSede =
         <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">{mensajeAccesoIa(razonConcreta)}</p>
         <a href="/app/plan" class="kodu-btn kodu-btn-primary mt-5 inline-flex">Ver mi plan</a>
       </>
+    ) : razonConcreta && razonConcreta.reason === 'license_pending_payment' ? (
+      <>
+        {/* T11: nunca "tu prueba terminó" — esta institución nunca tuvo prueba. */}
+        <h1 class="font-display text-xl font-bold text-ink-900">Contratá para empezar a usar Kodu</h1>
+        <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">{mensajeAccesoIa(razonConcreta)}</p>
+        {razonConcreta.esAdminOrg && (
+          <a href="/org/plan" class="kodu-btn kodu-btn-primary mt-5 inline-flex">Contratar</a>
+        )}
+      </>
     ) : razonConcreta ? (
       <>
         <h1 class="font-display text-xl font-bold text-ink-900">

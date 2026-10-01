@@ -509,7 +509,17 @@ async function main(): Promise<void> {
     await recorridoIndividual(modelId, mock);
 
     console.log('\n── b. Institución ─────────────────────────────────────');
-    await recorridoInstitucion(adminPage);
+    // T11: este recorrido es el camino "clásico" con prueba institucional
+    // (asume TRIAL al dar de alta, y el botón "Probá N días gratis") — el
+    // interruptor global es OFF por default, así que se prende acá y se
+    // restaura después para no afectar otros scripts de `npm run
+    // test:cobros` que corren a continuación.
+    await prisma.billingSettings.update({ where: { id: 1 }, data: { trialEnabled: true } });
+    try {
+      await recorridoInstitucion(adminPage);
+    } finally {
+      await prisma.billingSettings.update({ where: { id: 1 }, data: { trialEnabled: false } });
+    }
 
     console.log('\n── c. Vencimiento de la prueba ────────────────────────');
     await recorridoVencimiento();

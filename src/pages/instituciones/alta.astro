@@ -33,13 +33,26 @@ if (user) {
 const dominioPropio = fila ? emailDomain(fila.email) : null;
 const dominioEsPublico = dominioPropio ? isPublicEmailDomain(dominioPropio) : false;
 const emailSinConfirmar = fila ? !emailConfiable(fila) : false;
+
+// odd/tasks/planes-y-cobros.md (T11): el alta nunca promete una prueba que
+// el superadmin apagó — título, bajada y botón del formulario reflejan
+// `BillingSettings.trialEnabled` en vivo.
+const cfg = await prisma.billingSettings.findUniqueOrThrow({ where: { id: 1 } });
+const trialEnabled = cfg.trialEnabled;
+const trialDays = cfg.trialDays;
 ---
 
-<BaseLayout title="Dar de alta tu institución">
+<BaseLayout title={trialEnabled ? `Probá Kodu ${trialDays} días gratis` : 'Contratá Kodu para tu institución'}>
   <div class="mx-auto max-w-2xl py-8">
-    <h1 class="font-display text-2xl font-bold text-ink-900">Probá Kodu 30 días gratis</h1>
+    <h1 class="font-display text-2xl font-bold text-ink-900">
+      {trialEnabled ? `Probá Kodu ${trialDays} días gratis` : 'Contratá Kodu para tu institución'}
+    </h1>
     <p class="mt-1 mb-6 text-sm text-ink-500">
-      Sin tarjeta. Elegí tu matrícula, armá tus dominios y empezá a usar Kodu hoy mismo.
+      {
+        trialEnabled
+          ? 'Sin tarjeta. Elegí tu matrícula, armá tus dominios y empezá a usar Kodu hoy mismo.'
+          : 'Elegí tu matrícula, armá tus dominios y contratá para empezar a usar Kodu hoy mismo.'
+      }
     </p>
 
     {
@@ -97,6 +110,8 @@ const emailSinConfirmar = fila ? !emailConfiable(fila) : false;
           alumnosPrefill={alumnosPrefill ?? ''}
           nombreContacto={user.name}
           emailContacto={fila?.email ?? user.email}
+          trialEnabled={trialEnabled}
+          trialDays={trialDays}
         />
       )
     }

@@ -73,13 +73,25 @@ function esperar(ms: number): Promise<void> {
  * docente y esperar una sola vez (mismo criterio que
  * `e2e/planes-acceso.ts`), en vez de crear y registrar de a uno.
  */
-async function prepararOrg(declaredStudents: number): Promise<{ orgId: string; dominio: string }> {
+async function prepararOrg(
+  declaredStudents: number,
+  // T11: por default TRIAL (comportamiento de siempre de este archivo) —
+  // 'PENDING_PAYMENT' prueba el alta con la prueba institucional apagada
+  // (`BillingSettings.trialEnabled = false`, el default), que nunca pasa por
+  // este fixture directo de Prisma salvo que se pida.
+  status: 'TRIAL' | 'PENDING_PAYMENT' = 'TRIAL',
+): Promise<{ orgId: string; dominio: string }> {
   const dominio = `cobro-${randomUUID().slice(0, 8)}.edu.ar`;
   const org = await prisma.organization.create({ data: { name: `Org cobro E2E ${dominio}`, kind: 'CAMPUS' }, select: { id: true } });
   organizacionesCreadas.push(org.id);
   await prisma.organizationDomain.create({ data: { organizationId: org.id, pattern: dominio } });
   await prisma.organizationLicense.create({
-    data: { organizationId: org.id, status: 'TRIAL', declaredStudents, trialEndsAt: new Date(Date.now() + 30 * 86_400_000) },
+    data: {
+      organizationId: org.id,
+      status,
+      declaredStudents,
+      trialEndsAt: status === 'TRIAL' ? new Date(Date.now() + 30 * 86_400_000) : null,
+    },
   });
   return { orgId: org.id, dominio };
 }
@@ -129,13 +141,16 @@ async function main(): Promise<void> {
     // `organizacionParaEmail` — ver el comentario de `prepararOrg`.
     const prep1 = await prepararOrg(100); // PEQUENA
     const prep2 = await prepararOrg(500); // MEDIANA
+    const prep3 = await prepararOrg(100, 'PENDING_PAYMENT'); // T11: alta con la prueba apagada
     console.log('… esperando 11s la caché de organizaciones del dev server…');
     await esperar(11_000);
 
     const admin1 = await registrarAdminDe(prep1);
     const admin2 = await registrarAdminDe(prep2);
+    const admin3 = await registrarAdminDe(prep3);
     const org1 = { orgId: prep1.orgId, dominio: prep1.dominio, page: admin1.page };
     const org2 = { orgId: prep2.orgId, dominio: prep2.dominio, page: admin2.page };
+    const org3 = { orgId: prep3.orgId, dominio: prep3.dominio, page: admin3.page };
 
     // ───────────────────────────────────────────────────────
     // 1. Org en TRIAL contrata MONTHLY → aprobar → ACTIVE.
@@ -230,6 +245,38 @@ async function main(): Promise<void> {
       const license = await prisma.organizationLicense.findUniqueOrThrow({ where: { organizationId: org2.orgId } });
       assert.equal(license.status, 'ACTIVE');
       assert.equal(license.currentPeriodEnd!.getTime(), esperado.periodEnd.getTime());
+    });
+
+    // ───────────────────────────────────────────────────────
+    // 2b. T11: org en PENDING_PAYMENT (alta con la prueba apagada) bloquea
+    //      la IA con el motivo correcto, contrata MONTHLY igual que TRIAL, y
+    //      aprobar el pago la deja ACTIVE — "contratar la activa
+    //      normalmente" (decisión del dueño).
+    // ───────────────────────────────────────────────────────
+    await prueba('PENDING_PAYMENT: bloquea la IA con reason=license_pending_payment, nunca "trial vencido"', async () => {
+      const respuesta = await org3.page.request.post(`${BASE_URL}/api/projects`, { data: { title: 'No debería crearse (PENDING_PAYMENT)' } });
+      assert.equal(respuesta.status(), 403, `dio ${respuesta.status()}`);
+      const cuerpo = (await respuesta.json()) as { reason?: string; error?: string };
+      assert.equal(cuerpo.reason, 'license_pending_payment');
+      assert.ok(cuerpo.error?.includes('Contratá'), `el mensaje tiene que ser "contratá", nunca "tu prueba terminó" (dio "${cuerpo.error}")`);
+    });
+
+    await prueba('PENDING_PAYMENT: el admin puede contratar MONTHLY igual que una org en TRIAL', async () => {
+      const respuesta = await org3.page.request.post(`${BASE_URL}/api/billing/org/checkout`, {
+        data: { interval: 'MONTHLY', legalName: 'Escuela PENDING_PAYMENT E2E SRL', cuit: CUIT_VALIDO, ivaCondition: 'MONOTRIBUTO' },
+      });
+      assert.equal(respuesta.status(), 200, await respuesta.text());
+      const cuerpo = (await respuesta.json()) as { url: string };
+      assert.ok(cuerpo.url.startsWith('/pago-simulado/'), `debe ser una URL de pago simulado (dio ${cuerpo.url})`);
+
+      const resultado = await accionarPagoSimulado(org3.page, cuerpo.url, 'aprobar');
+      assert.equal(resultado.applied, true, JSON.stringify(resultado));
+
+      const license = await prisma.organizationLicense.findUniqueOrThrow({ where: { organizationId: org3.orgId } });
+      assert.equal(license.status, 'ACTIVE', 'pagar activa la licencia normalmente, igual que desde TRIAL');
+
+      const despues = await org3.page.request.post(`${BASE_URL}/api/projects`, { data: { title: 'Ahora sí (PENDING_PAYMENT → ACTIVE)' } });
+      assert.equal(despues.status(), 200, `ya ACTIVE debe poder generar (dio ${despues.status()}: ${await despues.text()})`);
     });
 
     // ───────────────────────────────────────────────────────

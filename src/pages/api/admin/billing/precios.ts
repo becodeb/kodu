@@ -40,6 +40,7 @@ const planSchema = z.object({
 });
 
 const settingsSchema = z.object({
+  trialEnabled: z.boolean(),
   creditUsdValue: z.coerce.number().positive(),
   trialDays: z.coerce.number().int().min(0),
   graceDays: z.coerce.number().int().min(0),
@@ -112,6 +113,7 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
     await tx.billingSettings.update({
       where: { id: 1 },
       data: {
+        trialEnabled: settings.trialEnabled,
         creditUsdValue: settings.creditUsdValue,
         trialDays: settings.trialDays,
         graceDays: settings.graceDays,
@@ -121,6 +123,9 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
     });
     if (settingsActuales.hablemosThresholdStudents !== settings.hablemosThresholdStudents) {
       resumen.push(`umbral Hablemos: ${settingsActuales.hablemosThresholdStudents}→${settings.hablemosThresholdStudents}`);
+    }
+    if (settingsActuales.trialEnabled !== settings.trialEnabled) {
+      resumen.push(`prueba institucional: ${settingsActuales.trialEnabled ? 'habilitada' : 'apagada'}→${settings.trialEnabled ? 'habilitada' : 'apagada'}`);
     }
 
     await tx.billingAuditLog.create({

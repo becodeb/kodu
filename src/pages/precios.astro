@@ -52,9 +52,16 @@ const creditosRecursoNuevo = creditosAproximados(COSTO_REFERENCIA_RECURSO_NUEVO_
 const creditosAjusteMin = creditosAproximados(COSTO_REFERENCIA_AJUSTE_USD.min, creditUsdValue);
 const creditosAjusteMax = creditosAproximados(COSTO_REFERENCIA_AJUSTE_USD.max, creditUsdValue);
 
+// odd/tasks/planes-y-cobros.md (T11, decisión del dueño): la prueba
+// institucional es un interruptor del superadmin ("todavía tenemos 0
+// clientes"), OFF por default — toda la copia de /precios refleja el estado
+// VIGENTE de `BillingSettings.trialEnabled`, nunca "30 días" fijo.
+const trialEnabled = settings.trialEnabled;
+const trialDays = settings.trialDays;
+
 const bulletsInstitucion = [
   'Docentes ilimitados',
-  'Prueba de 30 días sin tarjeta',
+  ...(trialEnabled ? [`Prueba de ${trialDays} días sin tarjeta`] : []),
   'Invitaciones y varios dominios de mail',
   'Panel para administrar tu institución',
   'Factura C',
@@ -81,15 +88,25 @@ const faqs = [
     respuesta:
       'Actualizás tu matrícula declarada desde el panel de tu institución. Si eso te cambia de banda, el precio nuevo se aplica recién desde tu próximo cobro, nunca a mitad de un período ya pago.',
   },
-  {
-    pregunta: '¿Cómo funciona la prueba de 30 días?',
-    respuesta: 'Arrancás sin tarjeta y usás Kodu con tu institución entera durante 30 días, sin restricciones.',
-  },
-  {
-    pregunta: '¿Qué pasa cuando termina la prueba si no contraté?',
-    respuesta:
-      'Tu institución pasa a modo de sólo lectura: ven lo que ya generaron, pero no pueden crear ni editar hasta que contraten.',
-  },
+  ...(trialEnabled
+    ? [
+        {
+          pregunta: `¿Cómo funciona la prueba de ${trialDays} días?`,
+          respuesta: `Arrancás sin tarjeta y usás Kodu con tu institución entera durante ${trialDays} días, sin restricciones.`,
+        },
+        {
+          pregunta: '¿Qué pasa cuando termina la prueba si no contraté?',
+          respuesta:
+            'Tu institución pasa a modo de sólo lectura: ven lo que ya generaron, pero no pueden crear ni editar hasta que contraten.',
+        },
+      ]
+    : [
+        {
+          pregunta: '¿Hay prueba gratuita?',
+          respuesta:
+            'Por ahora no — contratás directamente y arrancás al toque. Si tenés dudas antes de decidir, escribinos y lo vemos.',
+        },
+      ]),
   {
     pregunta: '¿Puedo pagar por transferencia?',
     respuesta: 'Sí, para instituciones grandes o redes lo coordinamos directo — tocá "Hablemos".',
@@ -113,7 +130,9 @@ const faqs = [
 
 <BaseLayout
   title="Precios"
-  description="Precios simples para docentes y colegios: licencia institucional por matrícula o plan de créditos individual. Prueba de 30 días sin tarjeta."
+  description={`Precios simples para docentes y colegios: licencia institucional por matrícula o plan de créditos individual.${
+    trialEnabled ? ` Prueba de ${trialDays} días sin tarjeta.` : ''
+  }`}
   bleed
 >
   <section class="border-b border-linea bg-superficie">
@@ -206,7 +225,7 @@ const faqs = [
               data-band-key={b.key}
               href={`/instituciones/alta?alumnos=${b.minStudents}`}
             >
-              Probá 30 días gratis
+              {trialEnabled ? `Probá ${trialDays} días gratis` : 'Contratar'}
             </a>
           </div>
         ))

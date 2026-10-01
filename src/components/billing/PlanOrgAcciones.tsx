@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../../lib/client/api.ts';
 
 interface Props {
-  licenseStatus: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'READ_ONLY' | 'CANCELED' | 'MANUAL';
+  licenseStatus: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'READ_ONLY' | 'CANCELED' | 'MANUAL' | 'PENDING_PAYMENT';
   declaredStudents: number;
   legalName: string | null;
   cuit: string | null;
@@ -50,7 +50,8 @@ export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legal
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
 
-  const puedeContratar = licenseStatus === 'TRIAL' || licenseStatus === 'READ_ONLY' || licenseStatus === 'CANCELED';
+  const puedeContratar =
+    licenseStatus === 'TRIAL' || licenseStatus === 'READ_ONLY' || licenseStatus === 'CANCELED' || licenseStatus === 'PENDING_PAYMENT';
   const puedeCancelar = (licenseStatus === 'ACTIVE' || licenseStatus === 'PAST_DUE') && !cancelAtPeriodEnd;
 
   useEffect(() => {

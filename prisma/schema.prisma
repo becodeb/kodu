@@ -293,7 +293,13 @@ model BillingSettings {
   /// "1 crédito = USD 0,001 de costo real" — antes 0,0025, ver
   /// `prisma/migrations/20261017000000_valor_credito`). Configurable.
   creditUsdValue            Decimal  @default(0.001) @db.Decimal(12, 6)
-  /// Días de prueba sin tarjeta para una institución (decisión del dueño: 30).
+  /// T11 (decisión del dueño): la prueba institucional es un interruptor del
+  /// superadmin ("todavía tenemos 0 clientes") — OFF por default. Con esto
+  /// apagado, el alta de instituciones (T5) sigue funcionando pero arranca en
+  /// `PENDING_PAYMENT` (sin prueba) en vez de `TRIAL`.
+  trialEnabled              Boolean  @default(false)
+  /// Días de prueba sin tarjeta para una institución (decisión del dueño: 30,
+  /// sólo aplica cuando `trialEnabled` está prendido).
   trialDays                 Int
   /// Días de gracia tras un pago fallido antes de pasar a sólo lectura
   /// (decisión del dueño: 7).
@@ -321,6 +327,12 @@ enum LicenseStatus {
   READ_ONLY
   CANCELED
   MANUAL
+  /// T11 (decisión del dueño): alta con la prueba institucional APAGADA —
+  /// nunca tuvo prueba, bloquea la IA con un motivo explícito ("contratá
+  /// para empezar") en vez de fingir una prueba ya vencida. Sólo contratar
+  /// (pasa a ACTIVE) o que el superadmin le dé una prueba a mano
+  /// (`extenderPrueba`, pasa a TRIAL) la saca de acá.
+  PENDING_PAYMENT
 }
 
 /// Cómo se factura una licencia institucional (decisión del dueño: "también

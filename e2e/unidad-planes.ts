@@ -365,6 +365,13 @@ await prueba('licenseAllowsAi: READ_ONLY y CANCELED nunca permiten', () => {
   assert.equal(licenseAllowsAi(licenciaDePrueba({ status: 'CANCELED' }), AHORA).allowed, false);
 });
 
+await prueba('licenseAllowsAi: PENDING_PAYMENT (T11, prueba institucional apagada) nunca permite, razón pending_payment', () => {
+  assert.deepEqual(licenseAllowsAi(licenciaDePrueba({ status: 'PENDING_PAYMENT', trialEndsAt: null }), AHORA), {
+    allowed: false,
+    reason: 'pending_payment',
+  });
+});
+
 await prueba('licenseAllowsAi: TRIAL permite exactamente hasta trialEndsAt, inclusive', () => {
   const trialEndsAt = medianocheAr(2027, 6, 15);
   const justoAntes = new Date(trialEndsAt.getTime() - 1);

@@ -264,6 +264,7 @@ async function main(): Promise<void> {
           { key: 'INDIVIDUAL', name: planOriginal.name, monthlyPriceArs: planOriginal.monthlyPriceArs.toNumber(), annualPriceArs: planOriginal.annualPriceArs?.toNumber() ?? 1, monthlyCredits: planOriginal.monthlyCredits, welcomeCredits: planOriginal.welcomeCredits, active: true },
         ],
         settings: {
+          trialEnabled: settingsOriginal.trialEnabled,
           creditUsdValue: settingsOriginal.creditUsdValue.toNumber(),
           trialDays: settingsOriginal.trialDays,
           graceDays: settingsOriginal.graceDays,
@@ -396,6 +397,37 @@ async function main(): Promise<void> {
       assert.equal(respuesta.status(), 200, await respuesta.text());
       const despues = await prisma.organizationLicense.findUniqueOrThrow({ where: { organizationId: prepAlta.orgId } });
       assert.equal(despues.trialEndsAt!.getTime() - antes.trialEndsAt!.getTime(), 15 * 86_400_000);
+    });
+
+    // T11: con `BillingSettings.trialEnabled = false` (el default), un alta
+    // propia arranca en PENDING_PAYMENT, sin prueba — "Extender/dar prueba"
+    // en /admin/altas es el único camino para que el superadmin le dé una
+    // prueba A MANO a esa institución puntual.
+    const prepSinPrueba = await prepararOrg(80, { createdVia: 'SELF_SERVE', status: 'PENDING_PAYMENT', trialEndsAt: null });
+
+    await prueba('/admin/altas: "Extender/dar prueba" sobre PENDING_PAYMENT la pasa a TRIAL', async () => {
+      const antes = await prisma.organizationLicense.findUniqueOrThrow({ where: { organizationId: prepSinPrueba.orgId } });
+      assert.equal(antes.status, 'PENDING_PAYMENT');
+      assert.equal(antes.trialEndsAt, null);
+
+      const respuesta = await admin.request.post(`${BASE_URL}/api/admin/billing/altas/prueba`, {
+        data: { organizationId: prepSinPrueba.orgId, dias: 15 },
+      });
+      assert.equal(respuesta.status(), 200, await respuesta.text());
+
+      const despues = await prisma.organizationLicense.findUniqueOrThrow({ where: { organizationId: prepSinPrueba.orgId } });
+      assert.equal(despues.status, 'TRIAL', 'el superadmin le dio una prueba a mano — pasa a TRIAL aunque el interruptor global siga apagado');
+      assert.ok(despues.trialEndsAt, 'tiene que quedar con una fecha de fin de prueba');
+      const diasOtorgados = Math.round((despues.trialEndsAt!.getTime() - Date.now()) / 86_400_000);
+      assert.ok(diasOtorgados >= 14 && diasOtorgados <= 15, `debe otorgar ~15 días desde HOY, no "15 días más" sobre un trialEndsAt nulo (dio ${diasOtorgados})`);
+    });
+
+    await prueba('/admin/altas: extender una licencia que no está ni en prueba ni esperando una se rechaza (409)', async () => {
+      const activa = await prepararOrg(80, { status: 'ACTIVE', trialEndsAt: null, currentPeriodStart: new Date(), currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000) });
+      const respuesta = await admin.request.post(`${BASE_URL}/api/admin/billing/altas/prueba`, {
+        data: { organizationId: activa.orgId, dias: 15 },
+      });
+      assert.equal(respuesta.status(), 409, await respuesta.text());
     });
 
     await prueba('/admin/altas: marcar revisada saca a la institución de la cola', async () => {

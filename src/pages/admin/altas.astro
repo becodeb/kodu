@@ -47,6 +47,7 @@ const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: '
                 <p class="text-xs text-ink-500">
                   Creado por {alta!.creadorEmail ?? '—'} el {formateadorFecha.format(alta!.createdAt)}
                   {alta!.trialEndsAt && <> · Prueba hasta {formateadorFecha.format(alta!.trialEndsAt)}</>}
+                  {alta!.status === 'PENDING_PAYMENT' && <> · <strong>Pendiente de pago (sin prueba)</strong></>}
                 </p>
               </div>
               <button type="button" class="kodu-btn-ghost text-xs" data-accion="revisar" data-organization={alta!.organizationId}>
@@ -66,7 +67,7 @@ const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: '
             </div>
 
             <div class="flex flex-wrap items-center gap-2 text-sm">
-              <span class="text-ink-600">Extender prueba:</span>
+              <span class="text-ink-600">Extender/dar prueba:</span>
               <input class="kodu-input w-20" type="number" min="1" step="1" value="15" data-field="dias" />
               <button type="button" class="kodu-btn-ghost text-xs" data-accion="prueba" data-organization={alta!.organizationId}>
                 días más

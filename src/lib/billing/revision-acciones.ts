@@ -15,6 +15,10 @@ export interface DetalleParaRevision {
   kind: 'CAMPUS' | 'NETWORK';
   declaredStudents: number;
   bandKey: string | null;
+  /** T11: `PENDING_PAYMENT` cuando el alta pasó con la prueba APAGADA — sin
+   *  esto en la UI, el superadmin no podría distinguir "en prueba" de
+   *  "esperando pago". */
+  status: string;
   trialEndsAt: Date | null;
   createdAt: Date;
   reviewedAt: Date | null;
@@ -25,7 +29,7 @@ export interface DetalleParaRevision {
 export async function detalleParaRevision(organizationId: string): Promise<DetalleParaRevision | null> {
   const license = await prisma.organizationLicense.findUnique({
     where: { organizationId },
-    select: { declaredStudents: true, bandKey: true, trialEndsAt: true, createdAt: true, reviewedAt: true },
+    select: { declaredStudents: true, bandKey: true, status: true, trialEndsAt: true, createdAt: true, reviewedAt: true },
   });
   if (!license) return null;
 
@@ -49,6 +53,7 @@ export async function detalleParaRevision(organizationId: string): Promise<Detal
     kind: org.kind as 'CAMPUS' | 'NETWORK',
     declaredStudents: license.declaredStudents,
     bandKey: license.bandKey,
+    status: license.status,
     trialEndsAt: license.trialEndsAt,
     createdAt: license.createdAt,
     reviewedAt: license.reviewedAt,
@@ -112,13 +117,35 @@ export async function marcarRevisada(organizationId: string): Promise<ResultadoA
   return { ok: true, data: { reviewedAt } };
 }
 
+/**
+ * odd/tasks/planes-y-cobros.md (T7/T11): "Extender prueba" en `/admin/altas`.
+ * Dos casos:
+ *
+ * - `TRIAL` vigente: extiende `trialEndsAt` por `dias` más (comportamiento de
+ *   siempre).
+ * - `PENDING_PAYMENT` (T11: alta con la prueba apagada globalmente): el
+ *   superadmin le da una prueba A MANO — pasa a `TRIAL` con `trialEndsAt =
+ *   ahora + dias`. Es el único camino para que esa institución tenga prueba
+ *   mientras `BillingSettings.trialEnabled` siga apagado.
+ *
+ * Cualquier otro estado (ACTIVE, PAST_DUE, READ_ONLY, CANCELED, MANUAL) se
+ * rechaza — no tiene sentido "extender" una licencia que no está ni en
+ * prueba ni esperando una.
+ */
 export async function extenderPrueba(organizationId: string, dias: number): Promise<ResultadoAccion<{ trialEndsAt: Date }>> {
   if (!Number.isInteger(dias) || dias <= 0) return { ok: false, status: 422, message: 'Los días tienen que ser un entero positivo.' };
 
   const license = await prisma.organizationLicense.findUnique({ where: { organizationId } });
   if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de esta institución.' };
+
+  if (license.status === 'PENDING_PAYMENT') {
+    const trialEndsAt = new Date(Date.now() + dias * 24 * 60 * 60 * 1000);
+    await prisma.organizationLicense.update({ where: { id: license.id }, data: { status: 'TRIAL', trialEndsAt } });
+    return { ok: true, data: { trialEndsAt } };
+  }
+
   if (license.status !== 'TRIAL' || !license.trialEndsAt) {
-    return { ok: false, status: 409, message: 'Sólo se puede extender una prueba vigente.' };
+    return { ok: false, status: 409, message: 'Sólo se puede extender (o dar de alta) una prueba.' };
   }
 
   const trialEndsAt = new Date(license.trialEndsAt.getTime() + dias * 24 * 60 * 60 * 1000);

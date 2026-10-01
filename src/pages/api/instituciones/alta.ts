@@ -59,7 +59,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
   return ok({
     organizationId: resultado.data.organizationId,
-    trialEndsAt: resultado.data.trialEndsAt.toISOString(),
+    // T11: `null` cuando la prueba institucional está apagada — el alta
+    // creó la institución igual, en `PENDING_PAYMENT`.
+    trialEndsAt: resultado.data.trialEndsAt ? resultado.data.trialEndsAt.toISOString() : null,
     pendingDomains: resultado.data.pendingDomains,
     individualSubCancelada: resultado.data.individualSubCancelada,
     redirect: '/org?bienvenida=1',

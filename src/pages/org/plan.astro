@@ -107,6 +107,8 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
       return 'Solo lectura';
     case 'CANCELED':
       return 'Cancelada al fin del período';
+    case 'PENDING_PAYMENT':
+      return 'Pendiente de pago';
   }
 }
 ---
@@ -139,6 +141,9 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
           <section class="kodu-card p-4">
             <h2 class="text-sm font-semibold text-ink-900">Estado</h2>
             <p class="mt-2 text-lg text-ink-900">{etiquetaEstado(license)}</p>
+            {license.status === 'PENDING_PAYMENT' && esAdminDeRaiz && (
+              <p class="mt-2 text-sm text-ink-600">Contratá para empezar a usar Kodu con tu institución.</p>
+            )}
             {soloLectura && (
               <p class="mt-2 text-xs text-ink-500">
                 Estás viendo esto como administrador de una sede. Sólo quien administra toda la institución puede

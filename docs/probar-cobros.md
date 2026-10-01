@@ -103,14 +103,19 @@ levante y no lo pares vos), todo pasa por `http://localhost:3200`.
 
 1. Andá a `/precios`, escribí `450` en el campo de alumnos: se resalta la banda
    **Mediana**.
-2. Hacé clic en **Probá 30 días gratis** de esa tarjeta (lleva la matrícula en la URL:
-   `/instituciones/alta?alumnos=450`).
+2. Hacé clic en el botón de esa tarjeta (lleva la matrícula en la URL:
+   `/instituciones/alta?alumnos=450`) — dice **"Probá N días gratis"** si la prueba
+   institucional está habilitada en `/admin/precios` (T11: interruptor del superadmin,
+   OFF por default — "todavía tenemos 0 clientes"), o **"Contratar"** si está apagada.
 3. Si no tenés sesión, **Crear cuenta** con un email de tu colegio (algo con dominio
    propio, no gmail/hotmail/outlook/yahoo — esos quedan rechazados a propósito).
 4. Completá el formulario de alta: nombre del colegio, matrícula (ya viene prellenada en
    450), y agregá un dominio extra con **+ Agregar otro dominio** si tu colegio tiene más
-   de un dominio de mail. **Empezar la prueba de 30 días**. Quedás en `/org` con el
-   banner de prueba (30 días, sin tarjeta) y como administrador de la institución.
+   de un dominio de mail. Con la prueba habilitada: **Empezar la prueba de N días** te deja
+   en `/org` con el banner de prueba, como administrador de la institución. Con la prueba
+   apagada: **Contratar** crea la institución igual, pero la licencia arranca
+   `PENDING_PAYMENT` (sin prueba) — en `/org/plan` vas a ver "Contratá para empezar a usar
+   Kodu" en vez de un banner de prueba, y los botones de pago ya están disponibles.
 5. Invitá a un docente: desde `/org` (o `POST /api/org/invitaciones` si todavía no hay
    botón visible para esto en tu build) generás un enlace `/invitacion/<token>` y se lo
    pasás al docente. El docente entra a ese enlace, se registra o inicia sesión, y hace
@@ -133,6 +138,18 @@ levante y no lo pares vos), todo pasa por `http://localhost:3200`.
    institución no está activa…") al intentar generar; quien la administra ve
    "Contratá para seguir usando la IA" y, en `/org/plan`, los botones de pago siguen
    disponibles para contratar de una.
+
+### D. Prueba institucional apagada (T11)
+
+1. En `/admin/precios`, destildá **Prueba institucional habilitada** y guardá.
+2. Repetí el camino institucional (B): el formulario de alta dice **Contratar**, nunca
+   promete días de prueba. Al confirmar, la licencia queda `PENDING_PAYMENT` — el
+   docente/admin ve "Contratá para empezar a usar Kodu" (nunca "tu prueba terminó", porque
+   nunca hubo prueba).
+3. Pagar (mensual o ciclo lectivo) activa la licencia normalmente, igual que en B.
+4. Si igual querés darle una prueba a esa institución puntual, andá a `/admin/altas` →
+   **Extender/dar prueba** → esa licencia pasa a `TRIAL` con los días que pongas, aunque el
+   interruptor global siga apagado.
 
 ### Cómo entrar como superadmin local
 
@@ -254,10 +271,10 @@ deja estas tres tareas abiertas a propósito (T4c, T8b, T8c):
 
 ### Otras dos cosas a revisar antes de cobrar de verdad
 
-- **Reemplazar los precios placeholder.** El seed carga precios de ejemplo en las bandas
-  institucionales y los planes individuales — son editables desde `/admin/precios`, pero
-  nadie los cambió todavía por los precios reales. Hacerlo ANTES de activar
-  `BILLING_PROVIDER="mercadopago"` en producción.
+- **Precios reales ya cargados (T11).** El seed/migración carga los precios de lanzamiento
+  del dueño (bandas institucionales y plan Individual) — siguen siendo editables desde
+  `/admin/precios` si cambian. Confirmalos ahí ANTES de activar
+  `BILLING_PROVIDER="mercadopago"` en producción, por si ya los tocaste a mano.
 - **Tope del monotributo.** `BillingSettings.monotributoAnnualCapArs` (editable en
   `/admin/precios`) es el tope que dispara los avisos del 70%/90% en `/admin/facturacion`
   y en el banner global de `/admin`. Confirmar que el valor cargado es el tope vigente de

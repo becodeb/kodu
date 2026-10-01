@@ -118,13 +118,13 @@ async function main(): Promise<void> {
 
 /**
  * odd/tasks/planes-y-cobros.md (T1): catálogo de precios editable desde el
- * superadmin. Los montos de acá son PLACEHOLDER — el dueño los edita desde
- * `/admin` (T7) apenas defina precios reales; sólo importa que el catálogo
- * exista con una fila por banda/plan. `upsert` por `key` (única): correr el
- * seed de nuevo nunca pisa un precio que el superadmin ya haya cambiado a
- * mano — el `update: {}` no toca ninguna columna en una fila existente,
- * salvo los casos puntuales de abajo (T10: subir un valor VIEJO placeholder
- * exacto al nuevo default).
+ * superadmin. Los montos de acá son los precios REALES de lanzamiento (T11 —
+ * antes PLACEHOLDER) — el dueño los sigue editando desde `/admin` (T7);
+ * sólo importa que el catálogo exista con una fila por banda/plan. `upsert`
+ * por `key` (única): correr el seed de nuevo nunca pisa un precio que el
+ * superadmin ya haya cambiado a mano — el `update: {}` no toca ninguna
+ * columna en una fila existente, salvo los casos puntuales de abajo (T10/T11:
+ * subir un valor VIEJO placeholder exacto al nuevo default).
  */
 async function seedCatalogoDePrecios(): Promise<void> {
   const bandas: Array<{
@@ -134,32 +134,45 @@ async function seedCatalogoDePrecios(): Promise<void> {
     maxStudents: number;
     monthlyPriceArs: number;
     sortOrder: number;
+    /** T11: valor VIEJO placeholder — si la fila existente sigue EXACTO acá, se la sube al nuevo default. */
+    valorViejoMonthlyPriceArs: number;
   }> = [
-    { key: 'PEQUENA', name: 'Pequeña', minStudents: 1, maxStudents: 300, monthlyPriceArs: 90_000, sortOrder: 0 },
-    { key: 'MEDIANA', name: 'Mediana', minStudents: 301, maxStudents: 800, monthlyPriceArs: 180_000, sortOrder: 1 },
-    { key: 'GRANDE', name: 'Grande', minStudents: 801, maxStudents: 1500, monthlyPriceArs: 350_000, sortOrder: 2 },
+    { key: 'PEQUENA', name: 'Pequeña', minStudents: 1, maxStudents: 300, monthlyPriceArs: 95_000, sortOrder: 0, valorViejoMonthlyPriceArs: 90_000 },
+    { key: 'MEDIANA', name: 'Mediana', minStudents: 301, maxStudents: 800, monthlyPriceArs: 155_000, sortOrder: 1, valorViejoMonthlyPriceArs: 180_000 },
+    { key: 'GRANDE', name: 'Grande', minStudents: 801, maxStudents: 1500, monthlyPriceArs: 280_000, sortOrder: 2, valorViejoMonthlyPriceArs: 350_000 },
   ];
 
   for (const banda of bandas) {
+    const existente = await prisma.institutionalBand.findUnique({
+      where: { key: banda.key },
+      select: { monthlyPriceArs: true, cyclePriceArs: true },
+    });
+    const sigueEnElValorViejo =
+      existente &&
+      existente.monthlyPriceArs.toNumber() === banda.valorViejoMonthlyPriceArs &&
+      existente.cyclePriceArs.toNumber() === banda.valorViejoMonthlyPriceArs * 10;
+    const update = sigueEnElValorViejo
+      ? { monthlyPriceArs: banda.monthlyPriceArs, cyclePriceArs: banda.monthlyPriceArs * 10 }
+      : {};
+
     await prisma.institutionalBand.upsert({
       where: { key: banda.key },
-      update: {},
+      update,
       create: {
         key: banda.key,
         name: banda.name,
         minStudents: banda.minStudents,
         maxStudents: banda.maxStudents,
-        // PLACEHOLDER (decisión del dueño: "los valores iniciales son de
-        // ejemplo"). Default sugerido = 10 × mensual (el ciclo cuesta 10
-        // cuotas, design.md), pero es una columna editable, no una cuenta
-        // derivada — ver el comentario del modelo en schema.prisma.
+        // Default sugerido = 10 × mensual (el ciclo cuesta 10 cuotas,
+        // design.md), pero es una columna editable, no una cuenta derivada —
+        // ver el comentario del modelo en schema.prisma.
         monthlyPriceArs: banda.monthlyPriceArs,
         cyclePriceArs: banda.monthlyPriceArs * 10,
         sortOrder: banda.sortOrder,
       },
     });
   }
-  console.log(`✔ ${bandas.length} banda(s) institucional(es) sembrada(s) (precios PLACEHOLDER, editables en /admin)`);
+  console.log(`✔ ${bandas.length} banda(s) institucional(es) sembrada(s) (precios reales de lanzamiento, editables en /admin)`);
 
   const planes: Array<{
     key: 'FREE' | 'INDIVIDUAL';
@@ -171,23 +184,31 @@ async function seedCatalogoDePrecios(): Promise<void> {
     sortOrder: number;
   }> = [
     { key: 'FREE', name: 'Gratis', monthlyPriceArs: 0, annualPriceArs: null, monthlyCredits: 50, welcomeCredits: 100, sortOrder: 0 },
-    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 2_500, welcomeCredits: 0, sortOrder: 1 },
+    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 7_900, annualPriceArs: 79_000, monthlyCredits: 2_500, welcomeCredits: 0, sortOrder: 1 },
   ];
 
-  // T10 (decisión del dueño): el valor VIEJO placeholder de `monthlyCredits`
-  // de INDIVIDUAL era 1.000 (antes de esta migración/seed). El `upsert` de
-  // abajo nunca pisa una fila existente (`update: {}`, como siempre) salvo
-  // en ESTE caso puntual: si la fila sigue en el valor viejo exacto, se la
-  // sube al nuevo default — si el superadmin ya la editó desde
-  // /admin/precios a OTRO número (incluido 1.000 a propósito), no se toca.
+  // T10/T11 (decisión del dueño): valores VIEJOS placeholder de INDIVIDUAL —
+  // `monthlyCredits` era 1.000, `monthlyPriceArs` 9.000, `annualPriceArs`
+  // 90.000. El `upsert` de abajo nunca pisa una fila existente (`update: {}`,
+  // como siempre) salvo en ESTOS casos puntuales: cada campo se sube al
+  // nuevo default SÓLO si sigue en su valor viejo exacto — si el superadmin
+  // ya editó alguno desde /admin/precios (incluido a propósito al mismo
+  // número viejo), ESE campo no se toca.
   const VALOR_VIEJO_MONTHLY_CREDITS_INDIVIDUAL = 1_000;
+  const VALOR_VIEJO_MONTHLY_PRICE_INDIVIDUAL = 9_000;
+  const VALOR_VIEJO_ANNUAL_PRICE_INDIVIDUAL = 90_000;
 
   for (const plan of planes) {
-    const existente = await prisma.individualPlan.findUnique({ where: { key: plan.key }, select: { monthlyCredits: true } });
-    const update =
-      plan.key === 'INDIVIDUAL' && existente && existente.monthlyCredits === VALOR_VIEJO_MONTHLY_CREDITS_INDIVIDUAL
-        ? { monthlyCredits: plan.monthlyCredits }
-        : {};
+    const existente = await prisma.individualPlan.findUnique({
+      where: { key: plan.key },
+      select: { monthlyCredits: true, monthlyPriceArs: true, annualPriceArs: true },
+    });
+    const update: { monthlyCredits?: number; monthlyPriceArs?: number; annualPriceArs?: number } = {};
+    if (plan.key === 'INDIVIDUAL' && existente) {
+      if (existente.monthlyCredits === VALOR_VIEJO_MONTHLY_CREDITS_INDIVIDUAL) update.monthlyCredits = plan.monthlyCredits;
+      if (existente.monthlyPriceArs.toNumber() === VALOR_VIEJO_MONTHLY_PRICE_INDIVIDUAL) update.monthlyPriceArs = plan.monthlyPriceArs;
+      if (existente.annualPriceArs?.toNumber() === VALOR_VIEJO_ANNUAL_PRICE_INDIVIDUAL) update.annualPriceArs = plan.annualPriceArs ?? undefined;
+    }
 
     await prisma.individualPlan.upsert({
       where: { key: plan.key },
@@ -203,7 +224,7 @@ async function seedCatalogoDePrecios(): Promise<void> {
       },
     });
   }
-  console.log(`✔ ${planes.length} plan(es) individual(es) sembrado(s) (precios PLACEHOLDER, editables en /admin)`);
+  console.log(`✔ ${planes.length} plan(es) individual(es) sembrado(s) (precios reales de lanzamiento, editables en /admin)`);
 
   // T10: mismo criterio que arriba para `creditUsdValue` — el valor VIEJO
   // placeholder era 0,0025 (antes de esta migración/seed); si el superadmin
@@ -225,6 +246,11 @@ async function seedCatalogoDePrecios(): Promise<void> {
     create: {
       id: 1,
       creditUsdValue: NUEVO_CREDIT_USD_VALUE,
+      // T11 (decisión del dueño): la prueba institucional arranca APAGADA
+      // ("todavía tenemos 0 clientes") — el superadmin la prende desde
+      // /admin/precios cuando quiera. Nunca se sube sola en un `update`: una
+      // fila existente que el superadmin ya prendió no se vuelve a apagar acá.
+      trialEnabled: false,
       trialDays: 30,
       graceDays: 7,
       monotributoAnnualCapArs: null,

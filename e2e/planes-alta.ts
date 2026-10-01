@@ -468,6 +468,75 @@ async function faseB(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────
+// FASE C — T11: prueba institucional APAGADA (BillingSettings.trialEnabled = false)
+// ─────────────────────────────────────────────────────────────
+
+async function faseC(): Promise<void> {
+  await prueba('T11: con la prueba apagada, el alta crea todo igual pero en PENDING_PAYMENT, sin trialEndsAt', async () => {
+    const email = `creador-sinprueba-${SUFIJO}@${dominioUnico('sinprueba')}`;
+    const { sesion, body } = await registrar(email);
+    const nombre = `Colegio Sin Prueba E2E ${SUFIJO}`;
+
+    const resultado = await post('/api/instituciones/alta', sesion, {
+      institutionName: nombre,
+      kind: 'CAMPUS',
+      declaredStudents: 120,
+      extraDomains: [],
+      campuses: [],
+    });
+    assert.equal(resultado.status, 200, JSON.stringify(resultado.body));
+    organizacionesCreadas.push(resultado.body.organizationId);
+    assert.equal(resultado.body.trialEndsAt, null, 'sin prueba, la respuesta no promete una fecha de fin');
+
+    const licencia = await prisma.organizationLicense.findUnique({ where: { organizationId: resultado.body.organizationId } });
+    assert.equal(licencia?.status, 'PENDING_PAYMENT', 'sin la prueba habilitada, el alta NUNCA arranca en TRIAL');
+    assert.equal(licencia?.trialEndsAt, null);
+    assert.equal(licencia?.createdVia, 'SELF_SERVE');
+    assert.equal(licencia?.declaredStudents, 120);
+    assert.equal(licencia?.bandKey, 'PEQUENA');
+
+    const admin = await prisma.organizationAdmin.findUnique({
+      where: { userId_organizationId: { userId: body.user.id, organizationId: resultado.body.organizationId } },
+    });
+    assert.ok(admin, 'el creador tiene que quedar como admin de la organización, igual que con la prueba prendida');
+
+    const dominio = await prisma.organizationDomain.findUnique({ where: { pattern: emailDominio(email) } });
+    assert.equal(dominio?.status, 'VERIFIED', 'el dominio del creador se verifica igual, con o sin prueba');
+  });
+
+  await prueba('T11: el formulario de alta no promete una prueba cuando está apagada', async () => {
+    const email = `creador-sinprueba-form-${SUFIJO}@${dominioUnico('sinprueba-form')}`;
+    await registrar(email);
+
+    const browser = await abrirNavegador();
+    browsersAbiertos.push(browser);
+    const context = await browser.newContext();
+    const page: Page = await context.newPage();
+    await page.request.post(`${BASE_URL}/api/auth/login`, { data: { email, password: DOCENTE_PASSWORD } });
+
+    await page.goto(`${BASE_URL}/instituciones/alta`);
+    await page.waitForSelector('#declared-students');
+    const texto = await page.textContent('body');
+    assert.ok(!texto?.includes('días gratis'), 'con la prueba apagada, la página no debe ofrecer "N días gratis"');
+    assert.ok(texto?.includes('Contratá'), 'el título/CTA tiene que hablar de contratar, no de probar');
+
+    await context.close();
+  });
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T11): la prueba institucional es un
+ * interruptor global (`BillingSettings.trialEnabled`), OFF por default. Este
+ * archivo prueba las DOS puntas: FASE A/B (de siempre) corren con el
+ * interruptor PRENDIDO — "TRIAL, admin, dominio VERIFIED" de arriba depende
+ * de eso — y FASE C (abajo) lo prueba APAGADO. Se restaura a `false` (el
+ * default real) al final pase lo que pase, para no dejarle el interruptor
+ * prendido a los demás scripts de `npm run test:cobros` que corren después.
+ */
+async function conTrialEnabled<T>(valor: boolean, fn: () => Promise<T>): Promise<T> {
+  await prisma.billingSettings.update({ where: { id: 1 }, data: { trialEnabled: valor } });
+  return fn();
+}
 
 async function main(): Promise<void> {
   pararDevServer();
@@ -475,8 +544,11 @@ async function main(): Promise<void> {
   await esperarListo();
 
   try {
-    await faseA();
-    await capturarFormulario();
+    await conTrialEnabled(true, async () => {
+      await faseA();
+      await capturarFormulario();
+    });
+    await conTrialEnabled(false, faseC);
   } finally {
     // nada que limpiar entre fases: cada escenario usa emails únicos.
   }
@@ -490,12 +562,15 @@ async function main(): Promise<void> {
   await esperarListo();
 
   try {
-    await faseB();
+    await conTrialEnabled(true, faseB);
   } finally {
     pararDevServer();
     arrancarDevServer({ RESEND_API_KEY: '', RESEND_FROM: '', RESEND_API_URL: '' });
     await esperarListo();
     await limpiar();
+    // T11: dejar el interruptor en su default real (apagado) — los scripts
+    // de `npm run test:cobros` que corren después de éste asumen ese default.
+    await prisma.billingSettings.update({ where: { id: 1 }, data: { trialEnabled: false } }).catch(() => {});
     await prisma.$disconnect();
   }
 

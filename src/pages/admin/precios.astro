@@ -126,6 +126,17 @@ const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: '
       <section class="kodu-card p-4">
         <h2 class="mb-3 text-sm font-semibold text-ink-900">Configuración de cobro</h2>
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2" data-settings>
+          <div class="sm:col-span-2">
+            <label class="flex items-center gap-1.5 text-sm text-ink-600">
+              <input type="checkbox" data-field="trialEnabled" checked={settings.trialEnabled} />
+              Prueba institucional habilitada
+            </label>
+            <p class="mt-1 text-xs text-ink-500">
+              Apagado (default): el alta de una institución crea todo igual pero arranca "Pendiente de pago" (sin
+              prueba) — contratar la activa normalmente. Vos podés seguir dándole una prueba a mano a una
+              institución puntual desde "Altas".
+            </p>
+          </div>
           <label class="kodu-label">
             Valor del crédito (USD)
             <input class="kodu-input" type="number" min="0.000001" step="0.000001" data-field="creditUsdValue" value={settings.creditUsdValue.toString()} />
@@ -188,6 +199,7 @@ const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: '
 
     const settingsEl = document.querySelector('[data-settings]')!;
     const settings = {
+      trialEnabled: (settingsEl.querySelector('[data-field="trialEnabled"]') as HTMLInputElement).checked,
       creditUsdValue: num(settingsEl.querySelector('[data-field="creditUsdValue"]')),
       trialDays: num(settingsEl.querySelector('[data-field="trialDays"]')),
       graceDays: num(settingsEl.querySelector('[data-field="graceDays"]')),

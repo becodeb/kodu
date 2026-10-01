@@ -54,7 +54,9 @@ export interface DatosAltaInstitucion {
 
 export interface AltaInstitucionResultado {
   organizationId: string;
-  trialEndsAt: Date;
+  /** `null` cuando `BillingSettings.trialEnabled` está apagado (T11): el
+   *  alta arranca en `PENDING_PAYMENT`, sin prueba, en vez de `TRIAL`. */
+  trialEndsAt: Date | null;
   pendingDomains: string[];
   /** `true` si el creador tenía un plan Individual pago y quedó con baja al fin del período. */
   individualSubCancelada: boolean;
@@ -189,7 +191,15 @@ export async function altaInstitucion(
     const hayQueCancelarIndividual = existenteIndividual !== null && existenteIndividual.status === 'ACTIVE';
 
     const now = billingNow();
-    const trialEndsAt = new Date(now.getTime() + cfg.trialDays * 86_400_000);
+    // odd/tasks/planes-y-cobros.md (T11, decisión del dueño): la prueba
+    // institucional es un interruptor del superadmin, OFF por default
+    // ("todavía tenemos 0 clientes"). Con el interruptor apagado el alta
+    // sigue creando la institución, los dominios y el admin — pero SIN
+    // prueba: arranca en `PENDING_PAYMENT` (bloquea la IA con un motivo
+    // explícito, nunca una prueba "ya vencida" de mentira) en vez de
+    // `TRIAL`. El superadmin puede seguir dándole una prueba a mano desde
+    // `/admin/altas` (`extenderPrueba`, revision-acciones.ts).
+    const trialEndsAt = cfg.trialEnabled ? new Date(now.getTime() + cfg.trialDays * 86_400_000) : null;
 
     const resultado = await prisma.$transaction(async (tx) => {
       const raiz = await tx.organization.create({
@@ -223,7 +233,7 @@ export async function altaInstitucion(
       await tx.organizationLicense.create({
         data: {
           organizationId: raiz.id,
-          status: 'TRIAL',
+          status: cfg.trialEnabled ? 'TRIAL' : 'PENDING_PAYMENT',
           declaredStudents: datos.declaredStudents,
           bandKey: banda.key,
           trialEndsAt,

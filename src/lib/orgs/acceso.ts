@@ -192,6 +192,12 @@ export function mensajeAccesoIa(resultado: ResultadoAccesoIa, now: Date = new Da
       return 'Tu organización ya no está activa. Escribinos y lo vemos.';
     case 'license_missing':
       return 'Hubo un problema con la licencia de tu institución. Escribinos y lo vemos.';
+    case 'license_pending_payment':
+      // T11: nunca "tu prueba terminó" (nunca hubo prueba) — distinto del
+      // trial/gracia vencidos de abajo.
+      return resultado.esAdminOrg
+        ? 'Contratá para empezar a usar Kodu con tu institución.'
+        : 'Tu institución todavía no contrató Kodu. Avisale a quien la administra.';
     case 'license_trial_expirado':
     case 'license_trial_sin_fecha':
       return resultado.esAdminOrg
