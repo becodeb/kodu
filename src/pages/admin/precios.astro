@@ -1,0 +1,228 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { prisma } from '../../lib/db.ts';
+import { LIMITES_DE_BANDA } from '../../lib/billing/bandas.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T7): editor de precios. El middleware ya
+ * garantiza sesión + rol ADMIN en /admin/** (ver `src/middleware.ts`).
+ *
+ * Los cambios de acá SOLO afectan cobros FUTUROS: una licencia ya contratada
+ * tiene su `bandKey` y su precio ya congelados en el `Payment` del momento en
+ * que se cobró (`aplicar.ts`), y la próxima renovación recién lee el precio
+ * NUEVO de la banda — se avisa explícito en la UI, más abajo.
+ */
+const [bandas, planes, settings] = await Promise.all([
+  prisma.institutionalBand.findMany({ orderBy: { sortOrder: 'asc' } }),
+  prisma.individualPlan.findMany({ orderBy: { sortOrder: 'asc' } }),
+  prisma.billingSettings.findUniqueOrThrow({ where: { id: 1 } }),
+]);
+
+const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: 'Mediana', GRANDE: 'Grande' };
+---
+
+<AdminLayout title="Precios">
+  <div class="max-w-3xl space-y-6">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Precios</h1>
+      <p class="mt-1 text-sm text-ink-500">
+        Un cambio acá sólo afecta cobros futuros: una licencia ya contratada mantiene el precio y la banda que tenía
+        al cobrarse hasta su PRÓXIMA renovación.
+      </p>
+    </div>
+
+    <p id="mensaje-precios" class="hidden rounded-lg px-4 py-3 text-sm"></p>
+
+    <form id="form-precios" class="space-y-6">
+      <section class="kodu-card p-4">
+        <h2 class="mb-3 text-sm font-semibold text-ink-900">Bandas institucionales</h2>
+        <p class="mb-3 text-xs text-ink-500">
+          Los límites de matrícula de cada banda son una regla fija del negocio (no se editan acá) — sólo el nombre,
+          el precio y si está activa.
+        </p>
+        <div class="space-y-4">
+          {
+            bandas.map((banda) => {
+              const limites = LIMITES_DE_BANDA[banda.key as keyof typeof LIMITES_DE_BANDA];
+              return (
+                <div class="rounded-lg border border-linea p-3" data-banda={banda.key}>
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="text-sm font-medium text-ink-900">
+                      {ETIQUETA_BANDA[banda.key] ?? banda.key}
+                      <span class="ml-2 text-xs font-normal text-ink-500">
+                        {limites.minStudents}–{limites.maxStudents} alumnos
+                      </span>
+                    </span>
+                    <label class="flex items-center gap-1.5 text-xs text-ink-600">
+                      <input type="checkbox" data-field="active" checked={banda.active} /> Activa
+                    </label>
+                  </div>
+                  <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <label class="kodu-label">
+                      Nombre
+                      <input class="kodu-input" data-field="name" value={banda.name} />
+                    </label>
+                    <label class="kodu-label">
+                      Precio mensual (ARS)
+                      <input class="kodu-input" type="number" min="1" step="1" data-field="monthlyPriceArs" value={banda.monthlyPriceArs.toString()} />
+                    </label>
+                    <label class="kodu-label">
+                      Precio de ciclo (ARS)
+                      <span class="flex gap-1">
+                        <input class="kodu-input" type="number" min="1" step="1" data-field="cyclePriceArs" value={banda.cyclePriceArs.toString()} />
+                        <button type="button" class="kodu-btn-ghost shrink-0 px-2 text-xs" data-boton-10x>
+                          10× mensual
+                        </button>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+      </section>
+
+      <section class="kodu-card p-4">
+        <h2 class="mb-3 text-sm font-semibold text-ink-900">Planes individuales</h2>
+        <div class="space-y-4">
+          {
+            planes.map((plan) => (
+              <div class="rounded-lg border border-linea p-3" data-plan={plan.key}>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-sm font-medium text-ink-900">{plan.key === 'FREE' ? 'Gratis' : 'Individual'}</span>
+                  <label class="flex items-center gap-1.5 text-xs text-ink-600">
+                    <input type="checkbox" data-field="active" checked={plan.active} /> Activo
+                  </label>
+                </div>
+                <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <label class="kodu-label">
+                    Nombre
+                    <input class="kodu-input" data-field="name" value={plan.name} />
+                  </label>
+                  <label class="kodu-label">
+                    Precio mensual (ARS)
+                    <input class="kodu-input" type="number" min="0" step="1" data-field="monthlyPriceArs" value={plan.monthlyPriceArs.toString()} />
+                  </label>
+                  <label class="kodu-label">
+                    Precio anual (ARS)
+                    <input class="kodu-input" type="number" min="0" step="1" data-field="annualPriceArs" value={plan.annualPriceArs?.toString() ?? ''} placeholder="(sin anual)" />
+                  </label>
+                  <label class="kodu-label">
+                    Créditos/mes
+                    <input class="kodu-input" type="number" min="0" step="1" data-field="monthlyCredits" value={plan.monthlyCredits.toString()} />
+                  </label>
+                  <label class="kodu-label">
+                    Créditos de bienvenida
+                    <input class="kodu-input" type="number" min="0" step="1" data-field="welcomeCredits" value={plan.welcomeCredits.toString()} />
+                  </label>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="kodu-card p-4">
+        <h2 class="mb-3 text-sm font-semibold text-ink-900">Configuración de cobro</h2>
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2" data-settings>
+          <label class="kodu-label">
+            Valor del crédito (USD)
+            <input class="kodu-input" type="number" min="0.000001" step="0.000001" data-field="creditUsdValue" value={settings.creditUsdValue.toString()} />
+          </label>
+          <label class="kodu-label">
+            Días de prueba
+            <input class="kodu-input" type="number" min="0" step="1" data-field="trialDays" value={settings.trialDays.toString()} />
+          </label>
+          <label class="kodu-label">
+            Días de gracia
+            <input class="kodu-input" type="number" min="0" step="1" data-field="graceDays" value={settings.graceDays.toString()} />
+          </label>
+          <label class="kodu-label">
+            Umbral "Hablemos" (alumnos)
+            <input class="kodu-input" type="number" min="1" step="1" data-field="hablemosThresholdStudents" value={settings.hablemosThresholdStudents.toString()} />
+          </label>
+          <label class="kodu-label">
+            Tope anual del monotributo (ARS)
+            <input class="kodu-input" type="number" min="0" step="1" data-field="monotributoAnnualCapArs" value={settings.monotributoAnnualCapArs?.toString() ?? ''} placeholder="(sin tope cargado)" />
+          </label>
+        </div>
+      </section>
+
+      <button type="submit" class="kodu-btn-primary">Guardar precios</button>
+    </form>
+  </div>
+</AdminLayout>
+
+<script>
+  function num(el: HTMLInputElement | null): number {
+    return el ? Number(el.value) : 0;
+  }
+  function numOrNull(el: HTMLInputElement | null): number | null {
+    if (!el || el.value.trim() === '') return null;
+    return Number(el.value);
+  }
+
+  document.getElementById('form-precios')?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const mensaje = document.getElementById('mensaje-precios');
+    mensaje?.classList.add('hidden');
+
+    const bands = Array.from(document.querySelectorAll<HTMLElement>('[data-banda]')).map((el) => ({
+      key: el.dataset.banda,
+      name: (el.querySelector('[data-field="name"]') as HTMLInputElement).value,
+      monthlyPriceArs: num(el.querySelector('[data-field="monthlyPriceArs"]')),
+      cyclePriceArs: num(el.querySelector('[data-field="cyclePriceArs"]')),
+      active: (el.querySelector('[data-field="active"]') as HTMLInputElement).checked,
+    }));
+
+    const plans = Array.from(document.querySelectorAll<HTMLElement>('[data-plan]')).map((el) => ({
+      key: el.dataset.plan,
+      name: (el.querySelector('[data-field="name"]') as HTMLInputElement).value,
+      monthlyPriceArs: num(el.querySelector('[data-field="monthlyPriceArs"]')),
+      annualPriceArs: numOrNull(el.querySelector('[data-field="annualPriceArs"]')),
+      monthlyCredits: num(el.querySelector('[data-field="monthlyCredits"]')),
+      welcomeCredits: num(el.querySelector('[data-field="welcomeCredits"]')),
+      active: (el.querySelector('[data-field="active"]') as HTMLInputElement).checked,
+    }));
+
+    const settingsEl = document.querySelector('[data-settings]')!;
+    const settings = {
+      creditUsdValue: num(settingsEl.querySelector('[data-field="creditUsdValue"]')),
+      trialDays: num(settingsEl.querySelector('[data-field="trialDays"]')),
+      graceDays: num(settingsEl.querySelector('[data-field="graceDays"]')),
+      hablemosThresholdStudents: num(settingsEl.querySelector('[data-field="hablemosThresholdStudents"]')),
+      monotributoAnnualCapArs: numOrNull(settingsEl.querySelector('[data-field="monotributoAnnualCapArs"]')),
+    };
+
+    try {
+      const respuesta = await fetch('/api/admin/billing/precios', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bands, plans, settings }),
+      });
+      const datos = await respuesta.json();
+      if (!respuesta.ok) throw new Error(datos.error ?? 'No se pudo guardar.');
+      if (mensaje) {
+        mensaje.textContent = 'Guardado.';
+        mensaje.className = 'rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700';
+      }
+    } catch (err) {
+      if (mensaje) {
+        mensaje.textContent = err instanceof Error ? err.message : 'No se pudo guardar.';
+        mensaje.className = 'rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700';
+      }
+    }
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-boton-10x]').forEach((boton) => {
+    boton.addEventListener('click', () => {
+      const contenedor = boton.closest('[data-banda]');
+      const mensual = contenedor?.querySelector<HTMLInputElement>('[data-field="monthlyPriceArs"]');
+      const ciclo = contenedor?.querySelector<HTMLInputElement>('[data-field="cyclePriceArs"]');
+      if (mensual && ciclo && mensual.value) {
+        ciclo.value = String(Math.round(Number(mensual.value) * 10));
+      }
+    });
+  });
+</script>
