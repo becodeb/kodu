@@ -100,14 +100,14 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   dominios públicos, dominios extra pendientes, arranque de la prueba, aviso al superadmin. Chequeo: e2e.
 - [x] **T6 — Páginas.** `/precios` pública con calculadora y tarjetas (mensual / ciclo lectivo), `/app/plan`,
   `/org/plan`, preguntas frecuentes, en el design system de kodu. Chequeo: build + capturas.
-- [ ] **T7 — Superadmin.** Editor de precios, cola de revisión (confirmar dominios y matrícula), activación manual
+- [x] **T7 — Superadmin.** Editor de precios, cola de revisión (confirmar dominios y matrícula), activación manual
   por transferencia, facturado contra tope del monotributo. Chequeo: e2e.
 - [ ] **T8 — Facturación.** Puerto `Invoicer`, adaptador simulado y ARCA WSFE (homologación), Factura C al aprobarse un
   pago, CAE guardado, reintento si ARCA falla. Chequeo: unidad + e2e con simulado.
 - [x] **T2b — Débito sin precio.** Si el motor no tiene precio cargado, `costUsd` queda nulo y a una cuenta personal
   no se le descuenta nada. Descontar con una estimación conservadora por tokens (o el precio del motor por defecto) y
   avisar en el superadmin. Encontrado en T2.
-- [ ] **T4b — Renovación del ciclo y del anual.** Mercado Pago no garantiza (no se pudo confirmar) que una suscripción
+- [x] **T4b — Renovación del ciclo y del anual.** Mercado Pago no garantiza (no se pudo confirmar) que una suscripción
   con `frequency: 12` cobre una vez por año, así que el ciclo lectivo y el anual individual se cobran como pago único y
   se renuevan con un nuevo checkout. Falta: aviso 30 días antes del fin (banner + mail por Resend si está configurado)
   con el enlace para pagar el ciclo siguiente.
@@ -155,7 +155,18 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   en la navegación (se arregló un desborde a 390 px). Chequeos según el escritor: check, build, `planes-paginas`,
   `planes-acceso` 8/8, `planes-cobro` 12/12, `planes-alta` verdes; capturas 1280/390 claro/oscuro. El orquestador
   revisó la captura de `/precios` a 1280 claro.
+- T7 y T4b (delegadas): `7de0bd5`…`7b167a3` (8 commits). `/admin/precios` (precios y ajustes con auditoría; los
+  rangos de las bandas no se editan porque son decisión del dueño), `/admin/altas` (verificar/quitar dominios, matrícula,
+  extender prueba, marcar revisada, leads), activación manual por transferencia, `/admin/facturacion` (pagos, facturas,
+  reintento cableado a T8, tope del monotributo con avisos al 70% y 90%). Renovación: aviso 30 días antes, checkout de
+  renovación sin solapar ni regalar dos veces, mails a 30 y 7 días idempotentes vía `/api/internal/recordatorios-renovacion`
+  (pide `INTERNAL_CRON_SECRET` y un cron en el deploy). El escritor no hizo el e2e: lo hizo un segundo escritor,
+  `89dc0f3` `e2e/planes-superadmin.ts`, todo verde, sin defectos de producto.
+- **Defecto encontrado por el orquestador:** la migración de T7 se llamaba `20261001005436_…` (fecha real del reloj) y
+  se ordenaba ANTES de `20261012000000_planes_y_cobros`, cuyas tablas modifica: un `migrate deploy` desde cero (producción)
+  fallaba. Renombrada a `20261014000000_admin_billing_t7_t4b` en `4436730`; probado `migrate deploy` en una base vacía y
+  `migrate diff` contra el schema sin diferencias. Regla: las migraciones de esta rama van de `20261012…` en adelante.
 
 ## Próximo paso
 
-T7 (superadmin).
+T8 (facturación).
