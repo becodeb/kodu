@@ -51,7 +51,7 @@ let pagos: Array<{
   amountArs: unknown;
   status: string;
   createdAt: Date;
-  invoice: { status: string; number: number | null } | null;
+  invoice: { status: string; number: number | null; cae: string | null; caeDueDate: Date | null } | null;
 }> = [];
 let puedeArrepentirse = false;
 
@@ -72,7 +72,13 @@ if (esCuentaPersonal) {
       where: { userId: user.id },
       orderBy: { createdAt: 'desc' },
       take: 20,
-      select: { id: true, amountArs: true, status: true, createdAt: true, invoice: { select: { status: true, number: true } } },
+      select: {
+        id: true,
+        amountArs: true,
+        status: true,
+        createdAt: true,
+        invoice: { select: { status: true, number: true, cae: true, caeDueDate: true } },
+      },
     }),
   ]);
 
@@ -213,7 +219,9 @@ const ESTADO_PAGO: Record<string, string> = {
                           <>
                             {' · '}
                             {p.invoice.status === 'ISSUED' && p.invoice.number
-                              ? `Factura N.º ${p.invoice.number}`
+                              ? `Factura N.º ${p.invoice.number} · CAE ${p.invoice.cae} (vence ${
+                                  p.invoice.caeDueDate ? formateadorFecha.format(p.invoice.caeDueDate) : '—'
+                                })`
                               : ETIQUETA_FACTURA[p.invoice.status] ?? p.invoice.status}
                           </>
                         )}

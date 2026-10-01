@@ -179,6 +179,38 @@ const envSchema = z.object({
    * nunca queda abierto sin secreto).
    */
   INTERNAL_CRON_SECRET: z.string().default(''),
+
+  /**
+   * odd/tasks/planes-y-cobros.md (T8): qué adaptador de `Invoicer` usa el
+   * servidor (`src/lib/billing/facturador/`). `none` (default) = facturación
+   * automática apagada: las facturas quedan `PENDING` para siempre y
+   * `/admin/facturacion` lo muestra ("La facturación automática está
+   * apagada") — NUNCA se inventa un CAE en producción por quedar sin
+   * configurar (mismo criterio que `BILLING_PROVIDER`, T4). `simulado` sólo
+   * funciona fuera de producción (igual que el adaptador de cobro).
+   */
+  INVOICE_PROVIDER: z.enum(['simulado', 'arca', 'none']).default('none'),
+  /** CUIT del emisor (el dueño, monotributista) — "XXXXXXXXXXX" u
+   *  "XX-XXXXXXXX-X", se normaliza igual que `cuit.ts`. */
+  ARCA_CUIT: z.string().default(''),
+  /** Punto de venta habilitado como "Web Services" en el padrón de ARCA. */
+  ARCA_PUNTO_VENTA: z.coerce.number().int().positive().default(1),
+  /** Certificado y clave privada (PEM) del par asociado a ese punto de
+   *  venta — por ARCHIVO (montado en el contenedor) o, si no hay volumen
+   *  disponible en el entorno de deploy, por su contenido en base64
+   *  (`ARCA_CERT_BASE64`/`ARCA_KEY_BASE64`). Si están las dos formas, gana el
+   *  archivo. Ninguna es obligatoria para arrancar: sin ellas, el adaptador
+   *  `arca` simplemente no puede operar (se trata como `INVOICE_PROVIDER`
+   *  sin configurar, nunca como un error que tire el proceso). */
+  ARCA_CERT_PATH: z.string().default(''),
+  ARCA_KEY_PATH: z.string().default(''),
+  ARCA_CERT_BASE64: z.string().default(''),
+  ARCA_KEY_BASE64: z.string().default(''),
+  /** `homologacion` (pruebas, con el certificado de prueba que da ARCA) o
+   *  `produccion` — elige la URL de WSAA y de WSFEv1. Default homologación a
+   *  propósito: nunca se apunta a producción "por accidente" si alguien
+   *  carga `INVOICE_PROVIDER=arca` sin terminar de configurar esta variable. */
+  ARCA_ENV: z.enum(['homologacion', 'produccion']).default('homologacion'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -231,6 +263,14 @@ export function getEnv(): Env {
     MP_WEBHOOK_SECRET: read('MP_WEBHOOK_SECRET'),
     BILLING_FAKE_NOW: read('BILLING_FAKE_NOW'),
     INTERNAL_CRON_SECRET: read('INTERNAL_CRON_SECRET'),
+    INVOICE_PROVIDER: read('INVOICE_PROVIDER'),
+    ARCA_CUIT: read('ARCA_CUIT'),
+    ARCA_PUNTO_VENTA: read('ARCA_PUNTO_VENTA'),
+    ARCA_CERT_PATH: read('ARCA_CERT_PATH'),
+    ARCA_KEY_PATH: read('ARCA_KEY_PATH'),
+    ARCA_CERT_BASE64: read('ARCA_CERT_BASE64'),
+    ARCA_KEY_BASE64: read('ARCA_KEY_BASE64'),
+    ARCA_ENV: read('ARCA_ENV'),
   });
 
   if (!parsed.success) {

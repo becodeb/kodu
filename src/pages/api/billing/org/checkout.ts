@@ -17,6 +17,8 @@ const schema = z.object({
   interval: z.enum(['MONTHLY', 'CYCLE']),
   legalName: z.string().trim().min(1),
   cuit: z.string().trim().min(1),
+  // T8: obligatoria para `CondicionIVAReceptorId` (RG 5616).
+  ivaCondition: z.enum(['RESPONSABLE_INSCRIPTO', 'EXENTO', 'MONOTRIBUTO', 'CONSUMIDOR_FINAL']),
 });
 
 export const POST: APIRoute = async ({ request, locals }) => {

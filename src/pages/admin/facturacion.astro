@@ -3,6 +3,9 @@ import AdminLayout from '../../layouts/AdminLayout.astro';
 import { prisma } from '../../lib/db.ts';
 import { billingNow } from '../../lib/env.ts';
 import { resumenMonotributo } from '../../lib/billing/monotributo.ts';
+import { resolverFacturador } from '../../lib/billing/facturador/index.ts';
+
+const facturacionApagada = resolverFacturador() === null;
 
 /**
  * odd/tasks/planes-y-cobros.md (T7, punto 4): pagos, facturas y el panel del
@@ -29,7 +32,7 @@ const [pagos, monotributo] = await Promise.all([
     include: {
       organization: { select: { name: true } },
       user: { select: { email: true } },
-      invoice: { select: { id: true, status: true, number: true, lastError: true, attempts: true } },
+      invoice: { select: { id: true, status: true, number: true, cae: true, caeDueDate: true, lastError: true, attempts: true } },
     },
   }),
   resumenMonotributo(billingNow()),
@@ -39,7 +42,7 @@ const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency
 const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'numeric', year: 'numeric' });
 
 const ETIQUETA_ESTADO: Record<string, string> = { PENDING: 'Pendiente', APPROVED: 'Aprobado', REJECTED: 'Rechazado', REFUNDED: 'Reintegrado' };
-const ETIQUETA_FACTURA: Record<string, string> = { PENDING: 'En proceso', ISSUED: 'Emitida', FAILED: 'Falló' };
+const ETIQUETA_FACTURA: Record<string, string> = { PENDING: 'En proceso', ISSUING: 'Emitiendo…', ISSUED: 'Emitida', FAILED: 'Falló' };
 
 const porcentaje = monotributo.porcentaje !== null ? Math.round(monotributo.porcentaje * 100) : null;
 const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red-500' : porcentaje >= 70 ? 'bg-amber-500' : 'bg-brand-600';
@@ -51,6 +54,15 @@ const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red
       <h1 class="font-display text-2xl font-bold text-ink-900">Facturación</h1>
       <p class="mt-1 text-sm text-ink-500">Pagos, facturas y el tope del monotributo.</p>
     </div>
+
+    {
+      facturacionApagada && (
+        <p class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
+          La facturación automática está apagada (falta configurar <code>INVOICE_PROVIDER</code>). Las facturas nuevas
+          quedan "En proceso" hasta que se configure un adaptador — nunca se inventa un CAE.
+        </p>
+      )
+    }
 
     <section class="kodu-card p-4">
       <h2 class="mb-2 text-sm font-semibold text-ink-900">Monotributo — últimos 12 meses</h2>
@@ -117,9 +129,13 @@ const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red
               <td class="py-2 pr-2" data-invoice={p.invoice?.id}>
                 {p.invoice ? (
                   <>
-                    {p.invoice.status === 'ISSUED' && p.invoice.number ? `N.º ${p.invoice.number}` : ETIQUETA_FACTURA[p.invoice.status]}
+                    {p.invoice.status === 'ISSUED' && p.invoice.number
+                      ? `N.º ${p.invoice.number} · CAE ${p.invoice.cae} (vence ${
+                          p.invoice.caeDueDate ? formateadorFecha.format(p.invoice.caeDueDate) : '—'
+                        })`
+                      : ETIQUETA_FACTURA[p.invoice.status]}
                     {p.invoice.lastError && <span class="block text-xs text-red-600">{p.invoice.lastError}</span>}
-                    {p.invoice.status !== 'ISSUED' && (
+                    {p.invoice.status !== 'ISSUED' && p.invoice.status !== 'ISSUING' && (
                       <button type="button" class="ml-2 text-xs text-brand-600 hover:underline" data-accion="reintentar-factura" data-invoice-id={p.invoice.id}>
                         Reintentar
                       </button>

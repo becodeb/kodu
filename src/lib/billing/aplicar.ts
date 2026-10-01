@@ -6,7 +6,8 @@ import { esCuitValido, formatearCuit } from './cuit.ts';
 import { otorgarTopeIndividual } from './creditos-servicio.ts';
 import { resolverGatewayDePago } from './pasarela/index.ts';
 import type { NotificacionRecibida, PagoObtenido, PaymentGateway } from './pasarela/tipos.ts';
-import type { IndividualInterval, OrgBillingInterval } from '../../generated/prisma/client.ts';
+import { intentarEmitirFactura } from './facturacion-superadmin.ts';
+import type { IndividualInterval, OrgBillingInterval, OrgIvaCondition } from '../../generated/prisma/client.ts';
 
 /**
  * odd/tasks/planes-y-cobros.md (T4): el servicio de dominio que aplica los
@@ -60,6 +61,9 @@ export interface CheckoutOrgInput {
   interval: OrgBillingInterval;
   legalName: string;
   cuit: string;
+  /** T8: obligatoria para `CondicionIVAReceptorId` (RG 5616) — se pide junto
+   *  con razón social y CUIT, antes de contratar. */
+  ivaCondition: OrgIvaCondition;
 }
 
 export async function crearCheckoutOrg(
@@ -73,6 +77,7 @@ export async function crearCheckoutOrg(
   const legalName = input.legalName.trim();
   if (!legalName) return { ok: false, status: 422, message: 'Falta la razón social.' };
   if (!esCuitValido(input.cuit)) return { ok: false, status: 422, message: 'El CUIT no es válido.' };
+  if (!input.ivaCondition) return { ok: false, status: 422, message: 'Falta la condición frente al IVA.' };
 
   const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootOrganizationId } });
   if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de tu institución.' };
@@ -110,7 +115,7 @@ export async function crearCheckoutOrg(
 
   await prisma.organizationLicense.update({
     where: { id: license.id },
-    data: { legalName, cuit: formatearCuit(input.cuit), interval: input.interval },
+    data: { legalName, cuit: formatearCuit(input.cuit), interval: input.interval, ivaCondition: input.ivaCondition },
   });
 
   const checkout = await prisma.payment.create({
@@ -337,6 +342,18 @@ export async function activarLicenciaManualPorTransferencia(
     });
     return pago;
   });
+
+  // T8: la Invoice ya quedó PENDING adentro de la transacción de arriba;
+  // intentar emitirla pasa DESPUÉS de que esa transacción cerró (mismo
+  // criterio que el webhook: nunca adentro de la transacción crítica).
+  const invoiceCreada = await prisma.invoice.findUnique({ where: { paymentId: payment.id }, select: { id: true } });
+  if (invoiceCreada) {
+    try {
+      await intentarEmitirFactura(invoiceCreada.id);
+    } catch (error) {
+      console.warn(`[billing] la emisión automática de la factura ${invoiceCreada.id} (activación manual) falló:`, error);
+    }
+  }
 
   return { ok: true, data: { paymentId: payment.id } };
 }
@@ -692,7 +709,7 @@ async function aplicarPrimerCobro(checkoutRaiz: FilaPayment, pago: PagoObtenido)
     await aplicarPrimerCobroIndividual(checkoutRaiz);
   }
 
-  await crearFacturaPendiente(checkoutRaiz.id);
+  await crearFacturaYEmitir(checkoutRaiz.id);
   return { applied: true, reason: 'primer_cobro_aprobado' };
 }
 
@@ -784,7 +801,7 @@ async function aplicarRenovacion(checkoutRaiz: FilaPayment, pago: PagoObtenido):
         data: { status: 'ACTIVE', currentPeriodStart: periodStart, currentPeriodEnd: periodEnd, graceEndsAt: null },
       });
       const nuevoPago = await prisma.payment.findFirst({ where: { providerPaymentId: pago.providerPaymentId } });
-      if (nuevoPago) await crearFacturaPendiente(nuevoPago.id);
+      if (nuevoPago) await crearFacturaYEmitir(nuevoPago.id);
     } else {
       await prisma.organizationLicense.update({
         where: { id: license.id },
@@ -838,6 +855,26 @@ async function aplicarRenovacion(checkoutRaiz: FilaPayment, pago: PagoObtenido):
   }
 
   return { applied: false, reason: 'referencia_sin_dueno' };
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T8): crea la factura PENDING y, FUERA de
+ * cualquier transacción (`crearFacturaPendiente` ya hizo su propio `create`
+ * suelto), intenta emitirla de una — nunca bloquea al llamador: un error acá
+ * se traga (queda `FAILED` con `lastError`, reintentable desde
+ * `/admin/facturacion`) para que el webhook siempre responda 200 aunque ARCA
+ * esté caído (design.md — "el webhook debe responder 200 incluso si ARCA
+ * falla").
+ */
+async function crearFacturaYEmitir(paymentId: string): Promise<void> {
+  await crearFacturaPendiente(paymentId);
+  const invoice = await prisma.invoice.findUnique({ where: { paymentId }, select: { id: true } });
+  if (!invoice) return;
+  try {
+    await intentarEmitirFactura(invoice.id);
+  } catch (error) {
+    console.warn(`[billing] la emisión automática de la factura ${invoice.id} falló:`, error);
+  }
 }
 
 async function crearFacturaPendiente(paymentId: string): Promise<void> {

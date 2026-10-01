@@ -368,6 +368,11 @@ model OrganizationLicense {
   /// (pueden completarse después del alta, antes del primer cobro real).
   legalName              String?
   cuit                   String?
+  /// Condición frente al IVA del receptor (T8: obligatoria desde la RG 5616
+  /// para `CondicionIVAReceptorId` de WSFEv1) — se carga en el formulario de
+  /// facturación de `/org/plan` junto con razón social y CUIT, antes del
+  /// primer cobro. `null` hasta que se carga (igual que `legalName`/`cuit`).
+  ivaCondition           OrgIvaCondition?
   /// Ids del lado de Mercado Pago (T4). `null` con el adaptador simulado o
   /// mientras la licencia es `MANUAL`.
   externalSubscriptionId String?
@@ -503,8 +508,20 @@ model Payment {
 
 enum InvoiceStatus {
   PENDING
+  /// T8: transición intermedia PENDING→ISSUING→(ISSUED|FAILED) — el `update`
+  /// condicionado a `status: 'PENDING'` que hace esta transición es el lock
+  /// que evita emitir la misma factura dos veces con dos intentos
+  /// concurrentes (ver `src/lib/billing/facturacion-superadmin.ts`).
+  ISSUING
   ISSUED
   FAILED
+}
+
+enum OrgIvaCondition {
+  RESPONSABLE_INSCRIPTO
+  EXENTO
+  MONOTRIBUTO
+  CONSUMIDOR_FINAL
 }
 
 /// Factura C (el dueño es monotributista — decisión del dueño, "facturar no
@@ -531,6 +548,14 @@ model Invoice {
   recipientDocType   String
   recipientDocNumber String
   recipientName      String
+  /// `CondicionIVAReceptorId` de WSFEv1 que efectivamente se usó al emitir
+  /// (T8) — snapshot numérico, no se recalcula si la condición del receptor
+  /// cambia después. `null` mientras no se emitió.
+  condicionIvaReceptorId Int?
+  /// Cuándo se mandó el mail con el resumen (T8, sólo si Resend está
+  /// configurado) — idempotencia del envío: nunca se manda dos veces para la
+  /// misma factura.
+  emailedAt          DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 }

@@ -55,7 +55,13 @@ const [license, pagos] = await Promise.all([
     where: { organizationId: rootId },
     orderBy: { createdAt: 'desc' },
     take: 20,
-    select: { id: true, amountArs: true, status: true, createdAt: true, invoice: { select: { status: true, number: true } } },
+    select: {
+      id: true,
+      amountArs: true,
+      status: true,
+      createdAt: true,
+      invoice: { select: { status: true, number: true, cae: true, caeDueDate: true } },
+    },
   }),
 ]);
 
@@ -149,6 +155,7 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
               declaredStudents={license.declaredStudents}
               legalName={license.legalName}
               cuit={license.cuit}
+              ivaCondition={license.ivaCondition}
               cancelAtPeriodEnd={license.cancelAtPeriodEnd}
               soloLectura={soloLectura}
             />
@@ -170,7 +177,9 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
                           <>
                             {' · '}
                             {p.invoice.status === 'ISSUED' && p.invoice.number
-                              ? `Factura N.º ${p.invoice.number}`
+                              ? `Factura N.º ${p.invoice.number} · CAE ${p.invoice.cae} (vence ${
+                                  p.invoice.caeDueDate ? formateadorFecha.format(p.invoice.caeDueDate) : '—'
+                                })`
                               : ETIQUETA_FACTURA[p.invoice.status] ?? p.invoice.status}
                           </>
                         )}

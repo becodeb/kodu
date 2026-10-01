@@ -6,6 +6,8 @@ interface Props {
   declaredStudents: number;
   legalName: string | null;
   cuit: string | null;
+  /** T8: condición frente al IVA — obligatoria para contratar (CondicionIVAReceptorId, RG 5616). */
+  ivaCondition: 'RESPONSABLE_INSCRIPTO' | 'EXENTO' | 'MONOTRIBUTO' | 'CONSUMIDOR_FINAL' | null;
   cancelAtPeriodEnd: boolean;
   /** Admin de la organización RAÍZ (puede editar y pagar) vs. admin de una
    *  sede nada más (sólo lectura — odd/tasks/planes-y-cobros.md T6). */
@@ -30,10 +32,18 @@ const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', mont
  * antes de tocar pagar, y cancelar. Un admin de sede sin ser admin de la
  * RAÍZ ve todo esto en modo lectura (sin inputs ni botones de acción).
  */
-export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legalName, cuit, cancelAtPeriodEnd, soloLectura }: Props) {
+const ETIQUETA_IVA: Record<NonNullable<Props['ivaCondition']>, string> = {
+  RESPONSABLE_INSCRIPTO: 'Responsable inscripto',
+  EXENTO: 'Exento',
+  MONOTRIBUTO: 'Monotributo',
+  CONSUMIDOR_FINAL: 'Consumidor final',
+};
+
+export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legalName, cuit, ivaCondition, cancelAtPeriodEnd, soloLectura }: Props) {
   const [matricula, setMatricula] = useState(String(declaredStudents));
   const [razonSocial, setRazonSocial] = useState(legalName ?? '');
   const [cuitValue, setCuitValue] = useState(cuit ?? '');
+  const [ivaConditionValue, setIvaConditionValue] = useState(ivaCondition ?? '');
   const [previewMensual, setPreviewMensual] = useState<Preview>({ estado: 'idle' });
   const [previewCiclo, setPreviewCiclo] = useState<Preview>({ estado: 'idle' });
   const [pending, setPending] = useState(false);
@@ -93,8 +103,8 @@ export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legal
   }
 
   async function pagar(interval: 'MONTHLY' | 'CYCLE') {
-    if (!razonSocial.trim() || !cuitValue.trim()) {
-      setError('Completá razón social y CUIT antes de pagar.');
+    if (!razonSocial.trim() || !cuitValue.trim() || !ivaConditionValue) {
+      setError('Completá razón social, CUIT y condición frente al IVA antes de pagar.');
       return;
     }
     setError(null);
@@ -103,6 +113,7 @@ export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legal
       interval,
       legalName: razonSocial,
       cuit: cuitValue,
+      ivaCondition: ivaConditionValue,
     });
     setPending(false);
     if (!resultado.ok) {
@@ -222,6 +233,28 @@ export default function PlanOrgAcciones({ licenseStatus, declaredStudents, legal
             onChange={(e) => setCuitValue(e.target.value)}
             placeholder="20-12345678-3"
           />
+        </div>
+        <div>
+          <label className="kodu-label" htmlFor="org-iva">
+            Condición frente al IVA
+          </label>
+          <select
+            id="org-iva"
+            className="kodu-input"
+            disabled={soloLectura || pending}
+            value={ivaConditionValue}
+            onChange={(e) => setIvaConditionValue(e.target.value as Props['ivaCondition'] & string)}
+          >
+            <option value="" disabled>
+              Elegí una opción
+            </option>
+            {(Object.keys(ETIQUETA_IVA) as Array<keyof typeof ETIQUETA_IVA>).map((key) => (
+              <option key={key} value={key}>
+                {ETIQUETA_IVA[key]}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-ink-500">Hace falta para la Factura C (es un dato obligatorio de ARCA).</p>
         </div>
       </div>
 
