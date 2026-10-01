@@ -98,6 +98,53 @@ await prueba('verifyNotification: sin MP_WEBHOOK_SECRET configurado, no hay nada
 });
 
 // ─────────────────────────────────────────────────────────────
+// mercadopago.ts — createSubscriptionCheckout: colchón de start_date.
+// ─────────────────────────────────────────────────────────────
+
+await prueba(
+  'createSubscriptionCheckout: auto_recurring.start_date sale en el futuro aunque startDate sea "ahora" (T4c, sandbox real)',
+  async () => {
+    // Bug real encontrado probando contra el sandbox: Mercado Pago rechaza
+    // `start_date` con "cannot be a past date" si se manda el instante EXACTO
+    // de `billingNow()` — para cuando el request le llega, ya es pasado para
+    // su reloj. Este test stubea `fetch` (sin red) y verifica que el body
+    // mandado SIEMPRE queda estrictamente en el futuro respecto del
+    // `startDate` pedido.
+    const fetchOriginal = globalThis.fetch;
+    let bodyEnviado: any;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      bodyEnviado = JSON.parse(init.body as string);
+      return {
+        ok: true,
+        json: async () => ({ id: 'preapproval-fake', init_point: 'https://mp.example/x' }),
+      } as Response;
+    }) as typeof fetch;
+
+    try {
+      const gateway = new GatewayMercadoPago('token-no-usado', '');
+      const ahora = new Date();
+      await gateway.createSubscriptionCheckout({
+        externalReference: 'pago-fake',
+        reason: 'prueba',
+        amountArs: 1000,
+        frequency: 1,
+        frequencyType: 'months',
+        startDate: ahora,
+        backUrl: 'https://kodu.example/back',
+        payerEmail: 'buyer@testuser.com',
+      });
+      const startDateEnviado = new Date(bodyEnviado.auto_recurring.start_date);
+      assert.ok(
+        startDateEnviado.getTime() > ahora.getTime(),
+        `start_date enviado (${bodyEnviado.auto_recurring.start_date}) debe quedar estrictamente en el futuro respecto de ${ahora.toISOString()}`,
+      );
+    } finally {
+      globalThis.fetch = fetchOriginal;
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────
 // aplicar.ts — monto que no coincide, y replay idempotente (con base real).
 // ─────────────────────────────────────────────────────────────
 

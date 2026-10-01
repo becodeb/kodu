@@ -74,6 +74,10 @@ import type {
 
 const API_BASE = 'https://api.mercadopago.com';
 
+/** Ver el comentario de `createSubscriptionCheckout`: colchón para que
+ *  `auto_recurring.start_date` nunca llegue como pasado a Mercado Pago. */
+const COLCHON_START_DATE_MS = 5 * 60 * 1000;
+
 export class GatewayMercadoPago implements PaymentGateway {
   constructor(
     private readonly accessToken: string,
@@ -97,6 +101,16 @@ export class GatewayMercadoPago implements PaymentGateway {
   }
 
   async createSubscriptionCheckout(input: CheckoutSuscripcionInput): Promise<ResultadoCheckout> {
+    // BUG encontrado probando contra el sandbox real (T4c): Mercado Pago
+    // rechaza `auto_recurring.start_date` con "cannot be a past date" si se
+    // manda el `Date` exacto de `billingNow()` — para cuando el request
+    // llega a su servidor (red + el tiempo que tardó `crearCheckoutOrg` /
+    // `crearCheckoutIndividual` en armar el `Payment` antes de este fetch),
+    // ese instante ya quedó en el pasado desde el punto de vista de Mercado
+    // Pago. Se le suma un colchón fijo para que siempre llegue en el futuro;
+    // no cambia marzo/comportamiento visible para quien paga (la suscripción
+    // de todos modos queda "pending" hasta que se autoriza).
+    const startDateConColchon = new Date(input.startDate.getTime() + COLCHON_START_DATE_MS);
     const body = {
       reason: input.reason,
       external_reference: input.externalReference,
@@ -108,7 +122,7 @@ export class GatewayMercadoPago implements PaymentGateway {
         frequency_type: input.frequencyType,
         transaction_amount: input.amountArs,
         currency_id: 'ARS',
-        start_date: input.startDate.toISOString(),
+        start_date: startDateConColchon.toISOString(),
       },
     };
     const respuesta = await this.request<{ id: string; init_point: string }>('/preapproval', {
