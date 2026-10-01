@@ -1,0 +1,63 @@
+---
+/**
+ * odd/tasks/planes-y-cobros.md (T4b): el banner "tu ciclo/plan termina el
+ * tal, pagá para seguir sin cortes" — un solo componente para las 4 páginas
+ * donde tiene que aparecer (`/org`, `/org/plan`, `/app`, `/app/plan`), así la
+ * redacción y el cableado al endpoint de renovación no se repiten 4 veces.
+ */
+interface Props {
+  /** El `currentPeriodEnd` vigente — ya se decidió afuera que hay que avisar
+   *  (ventana de 30 días, ver `mostrarAvisoRenovacion` en cada página). */
+  periodEnd: Date;
+  /** 'Tu ciclo lectivo' | 'Tu plan Individual anual'. */
+  etiqueta: string;
+  /** 'el ciclo 2027' | 'el próximo año' — texto del botón/CTA. */
+  siguienteEtiqueta: string;
+  endpoint: '/api/billing/org/renovar' | '/api/billing/individual/renovar';
+}
+
+const { periodEnd, etiqueta, siguienteEtiqueta, endpoint } = Astro.props;
+const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'numeric' });
+const idUnico = endpoint.includes('org') ? 'org' : 'individual';
+---
+
+<div class="kodu-card border-brand-600/40 bg-brand-50 p-4 text-sm text-ink-900" data-renovacion-banner={idUnico}>
+  <p>
+    {etiqueta} termina el {formateadorFecha.format(periodEnd)}. Pagá {siguienteEtiqueta} para seguir sin cortes.
+  </p>
+  <button type="button" class="kodu-btn-primary mt-3" data-boton-renovar={idUnico} data-endpoint={endpoint}>
+    Pagar la renovación
+  </button>
+  <p class="mt-2 hidden text-xs text-red-600" data-error-renovar={idUnico}></p>
+</div>
+
+<script>
+  function cablearAvisosDeRenovacion() {
+    document.querySelectorAll<HTMLButtonElement>('[data-boton-renovar]').forEach((boton) => {
+      if (boton.dataset.cableado) return;
+      boton.dataset.cableado = '1';
+      const endpoint = boton.dataset.endpoint!;
+      const contenedor = boton.closest('[data-renovacion-banner]');
+      const error = contenedor?.querySelector<HTMLElement>('[data-error-renovar]');
+
+      boton.addEventListener('click', async () => {
+        boton.setAttribute('disabled', 'true');
+        error?.classList.add('hidden');
+        try {
+          const respuesta = await fetch(endpoint, { method: 'POST' });
+          const datos = await respuesta.json();
+          if (!respuesta.ok) throw new Error(datos.message ?? 'No se pudo iniciar el pago.');
+          window.location.href = datos.url;
+        } catch (err) {
+          if (error) {
+            error.textContent = err instanceof Error ? err.message : 'No se pudo iniciar el pago.';
+            error.classList.remove('hidden');
+          }
+          boton.removeAttribute('disabled');
+        }
+      });
+    });
+  }
+  cablearAvisosDeRenovacion();
+  document.addEventListener('astro:page-load', cablearAvisosDeRenovacion);
+</script>

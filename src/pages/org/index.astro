@@ -2,7 +2,11 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import PanelDocentes from '../../components/orgs/PanelDocentes.tsx';
 import AccesoOrganizacion from '../../components/orgs/AccesoOrganizacion.tsx';
+import AvisoRenovacion from '../../components/billing/AvisoRenovacion.astro';
 import { alcanceDeAdmin, requireOrgAdmin } from '../../lib/orgs/alcance.ts';
+import { prisma } from '../../lib/db.ts';
+import { billingNow } from '../../lib/env.ts';
+import { reconciliarLicenciaOrgVencida } from '../../lib/billing/vencimiento.ts';
 import {
   obtenerDetalleOrganizacion,
   listarMiembros,
@@ -92,6 +96,31 @@ const mesPedido = Astro.url.searchParams.get('mes');
 const mes = mesPedido && mesesDisponibles.includes(mesPedido) ? mesPedido : mesActualBA();
 const consumo = detalle ? await consumoDelPanel(campusIdsConsumo, mes) : null;
 
+// T4b: aviso de renovación del ciclo — sólo si quien mira administra la RAÍZ
+// (misma lógica de alcance que `/org/plan.astro`), nunca a un admin de sede
+// suelta, que no puede pagar.
+let mostrarAvisoRenovacion = false;
+let licenciaParaAviso: { currentPeriodEnd: Date } | null = null;
+if (detalle) {
+  const rootId = detalle.padre?.id ?? detalle.id;
+  const esAdminDeEsaRaiz = alcance.esSuperadmin || alcance.redIds.has(rootId) || alcance.campusIds.has(rootId);
+  if (esAdminDeEsaRaiz) {
+    const now = billingNow();
+    await reconciliarLicenciaOrgVencida(rootId, now);
+    const license = await prisma.organizationLicense.findUnique({
+      where: { organizationId: rootId },
+      select: { interval: true, currentPeriodEnd: true },
+    });
+    if (license?.interval === 'CYCLE' && license.currentPeriodEnd) {
+      const TREINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
+      if (now.getTime() >= license.currentPeriodEnd.getTime() - TREINTA_DIAS_MS) {
+        mostrarAvisoRenovacion = true;
+        licenciaParaAviso = { currentPeriodEnd: license.currentPeriodEnd };
+      }
+    }
+  }
+}
+
 function urlConSede(sede: string | null, mesParam?: string): string {
   const params = new URLSearchParams();
   if (sede) params.set('sede', sede);
@@ -111,6 +140,17 @@ function urlConSede(sede: string | null, mesParam?: string): string {
         </a>
       )}
     </div>
+
+    {
+      mostrarAvisoRenovacion && licenciaParaAviso && (
+        <AvisoRenovacion
+          periodEnd={licenciaParaAviso.currentPeriodEnd}
+          etiqueta="Tu ciclo lectivo"
+          siguienteEtiqueta={`el ciclo ${licenciaParaAviso.currentPeriodEnd.getUTCFullYear() + 1}`}
+          endpoint="/api/billing/org/renovar"
+        />
+      )
+    }
 
     {
       detalle === null ? (

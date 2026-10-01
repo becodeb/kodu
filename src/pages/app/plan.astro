@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import PlanIndividualAcciones from '../../components/billing/PlanIndividualAcciones.tsx';
+import AvisoRenovacion from '../../components/billing/AvisoRenovacion.astro';
 import { prisma } from '../../lib/db.ts';
 import { ensureGrants, balance } from '../../lib/billing/creditos-servicio.ts';
 import { proximaRenovacionEtiqueta } from '../../lib/billing/creditos.ts';
@@ -89,6 +90,12 @@ if (esCuentaPersonal) {
 }
 
 const suscripcionActiva = suscripcion?.status === 'ACTIVE';
+
+// T4b: aviso de renovación del plan anual — `ensureGrants` (arriba) ya
+// reconcilió un vencimiento sin renovar antes de esta lectura.
+const TREINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
+const mostrarAvisoRenovacion =
+  suscripcionActiva && suscripcion?.interval === 'ANNUAL' && now.getTime() >= suscripcion.currentPeriodEnd.getTime() - TREINTA_DIAS_MS;
 const topeMensual = suscripcionActiva ? (planIndividual?.monthlyCredits ?? 0) : (planFree?.monthlyCredits ?? 0);
 const porcentajeBarra = topeMensual > 0 ? Math.max(0, Math.min(100, Math.round((saldo / topeMensual) * 100))) : 0;
 
@@ -118,6 +125,14 @@ const ESTADO_PAGO: Record<string, string> = {
         </div>
       ) : (
         <>
+          {mostrarAvisoRenovacion && suscripcion && (
+            <AvisoRenovacion
+              periodEnd={suscripcion.currentPeriodEnd}
+              etiqueta="Tu plan Individual anual"
+              siguienteEtiqueta="el próximo año"
+              endpoint="/api/billing/individual/renovar"
+            />
+          )}
           <section class="kodu-card p-4">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <h2 class="text-sm font-semibold text-ink-900">

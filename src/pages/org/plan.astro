@@ -1,9 +1,11 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import PlanOrgAcciones from '../../components/billing/PlanOrgAcciones.tsx';
+import AvisoRenovacion from '../../components/billing/AvisoRenovacion.astro';
 import { alcanceDeAdmin, requireOrgAdmin } from '../../lib/orgs/alcance.ts';
 import { prisma } from '../../lib/db.ts';
 import { billingNow } from '../../lib/env.ts';
+import { reconciliarLicenciaOrgVencida } from '../../lib/billing/vencimiento.ts';
 
 /**
  * odd/tasks/planes-y-cobros.md (T6): plan y facturación de la institución —
@@ -45,6 +47,8 @@ const rootOrg =
 const esAdminDeRaiz = alcance.esSuperadmin || (rootOrg.kind === 'NETWORK' ? alcance.redIds.has(rootId) : alcance.campusIds.has(rootId));
 const soloLectura = !esAdminDeRaiz;
 
+await reconciliarLicenciaOrgVencida(rootId, billingNow());
+
 const [license, pagos] = await Promise.all([
   prisma.organizationLicense.findUnique({ where: { organizationId: rootId } }),
   prisma.payment.findMany({
@@ -56,6 +60,13 @@ const [license, pagos] = await Promise.all([
 ]);
 
 const now = billingNow();
+const TREINTA_DIAS_MS = 30 * 24 * 60 * 60 * 1000;
+const mostrarAvisoRenovacion =
+  license !== null &&
+  license.interval === 'CYCLE' &&
+  license.currentPeriodEnd !== null &&
+  now.getTime() >= license.currentPeriodEnd.getTime() - TREINTA_DIAS_MS &&
+  esAdminDeRaiz;
 const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -101,6 +112,16 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
       <p class="mt-1 text-sm text-ink-500">Licencia, matrícula, datos de facturación y pagos.</p>
     </div>
 
+    {
+      mostrarAvisoRenovacion && (
+        <AvisoRenovacion
+          periodEnd={license!.currentPeriodEnd!}
+          etiqueta="Tu ciclo lectivo"
+          siguienteEtiqueta={`el ciclo ${license!.currentPeriodEnd!.getUTCFullYear() + 1}`}
+          endpoint="/api/billing/org/renovar"
+        />
+      )
+    }
     {
       !license ? (
         <div class="kodu-card p-6 text-center">
