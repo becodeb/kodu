@@ -1,0 +1,239 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import { prisma } from '../../lib/db.ts';
+import { colaDeRevision } from '../../lib/billing/revision.ts';
+import { detalleParaRevision } from '../../lib/billing/revision-acciones.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T7): cola de revisión — confirmar dominios y
+ * matrícula de las altas por cuenta propia (T5), y contactar los leads
+ * "Hablemos". El middleware ya garantiza ADMIN en /admin/**.
+ */
+const cola = await colaDeRevision();
+
+const altas = await Promise.all(
+  cola.filter((item) => item.tipo === 'ALTA').map((item) => detalleParaRevision(item.organizationId!)),
+);
+
+const leadIds = cola.filter((item) => item.tipo === 'LEAD').map((item) => item.id);
+const leads = leadIds.length
+  ? await prisma.institutionLead.findMany({ where: { id: { in: leadIds } }, orderBy: { createdAt: 'asc' } })
+  : [];
+
+const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
+const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: 'Mediana', GRANDE: 'Grande' };
+---
+
+<AdminLayout title="Altas">
+  <div class="max-w-3xl space-y-8">
+    <div>
+      <h1 class="font-display text-2xl font-bold text-ink-900">Altas</h1>
+      <p class="mt-1 text-sm text-ink-500">Instituciones de alta propia sin revisar y contactos "Hablemos".</p>
+    </div>
+
+    <p id="mensaje-altas" class="hidden rounded-lg px-4 py-3 text-sm"></p>
+
+    <section class="space-y-4">
+      <h2 class="text-sm font-semibold text-ink-900">Instituciones ({altas.length})</h2>
+      {altas.length === 0 && <p class="text-sm text-ink-500">Nada pendiente.</p>}
+      {
+        altas.filter((a) => a !== null).map((alta) => (
+          <div class="kodu-card space-y-3 p-4" data-institucion={alta!.organizationId}>
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p class="font-medium text-ink-900">
+                  {alta!.nombre} <span class="text-xs font-normal text-ink-500">({alta!.kind === 'NETWORK' ? 'Red' : 'Colegio'})</span>
+                </p>
+                <p class="text-xs text-ink-500">
+                  Creado por {alta!.creadorEmail ?? '—'} el {formateadorFecha.format(alta!.createdAt)}
+                  {alta!.trialEndsAt && <> · Prueba hasta {formateadorFecha.format(alta!.trialEndsAt)}</>}
+                </p>
+              </div>
+              <button type="button" class="kodu-btn-ghost text-xs" data-accion="revisar" data-organization={alta!.organizationId}>
+                Marcar revisada
+              </button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <span class="text-ink-600">
+                Matrícula declarada: <strong>{alta!.declaredStudents}</strong>
+                {alta!.bandKey && <> ({ETIQUETA_BANDA[alta!.bandKey] ?? alta!.bandKey})</>}
+              </span>
+              <input class="kodu-input w-24" type="number" min="1" step="1" data-field="matricula" placeholder="nueva" />
+              <button type="button" class="kodu-btn-ghost text-xs" data-accion="matricula" data-organization={alta!.organizationId}>
+                Guardar matrícula
+              </button>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2 text-sm">
+              <span class="text-ink-600">Extender prueba:</span>
+              <input class="kodu-input w-20" type="number" min="1" step="1" value="15" data-field="dias" />
+              <button type="button" class="kodu-btn-ghost text-xs" data-accion="prueba" data-organization={alta!.organizationId}>
+                días más
+              </button>
+            </div>
+
+            <div>
+              <p class="mb-1 text-xs font-medium text-ink-700">Dominios</p>
+              <ul class="space-y-1">
+                {alta!.dominios.map((d) => (
+                  <li class="flex items-center justify-between gap-2 rounded border border-linea px-2 py-1 text-sm" data-dominio={d.id}>
+                    <span>
+                      {d.pattern} <span class={`text-xs ${d.status === 'VERIFIED' ? 'text-green-600' : 'text-amber-600'}`}>({d.status === 'VERIFIED' ? 'verificado' : 'pendiente'})</span>
+                    </span>
+                    <span class="flex gap-2">
+                      {d.status === 'PENDING' && (
+                        <button type="button" class="text-xs text-brand-600 hover:underline" data-accion="dominio-verificar" data-domain={d.id}>
+                          Verificar
+                        </button>
+                      )}
+                      <button type="button" class="text-xs text-red-600 hover:underline" data-accion="dominio-eliminar" data-domain={d.id}>
+                        Eliminar
+                      </button>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <details class="text-sm">
+              <summary class="cursor-pointer text-ink-700">Activar licencia manual por transferencia</summary>
+              <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3" data-manual={alta!.organizationId}>
+                <label class="kodu-label">
+                  Intervalo
+                  <select class="kodu-input" data-field="interval">
+                    <option value="MONTHLY">Mensual</option>
+                    <option value="CYCLE">Ciclo lectivo</option>
+                  </select>
+                </label>
+                <label class="kodu-label">
+                  Inicio del período
+                  <input class="kodu-input" type="date" data-field="periodStart" />
+                </label>
+                <label class="kodu-label">
+                  Fin del período
+                  <input class="kodu-input" type="date" data-field="periodEnd" />
+                </label>
+                <label class="kodu-label">
+                  Monto (ARS)
+                  <input class="kodu-input" type="number" min="1" step="1" data-field="amountArs" />
+                </label>
+                <label class="kodu-label">
+                  Fecha de pago
+                  <input class="kodu-input" type="date" data-field="paymentDate" />
+                </label>
+                <div class="flex items-end">
+                  <button type="button" class="kodu-btn-primary w-full text-xs" data-accion="manual-activar" data-organization={alta!.organizationId}>
+                    Activar
+                  </button>
+                </div>
+              </div>
+            </details>
+          </div>
+        ))
+      }
+    </section>
+
+    <section class="space-y-4">
+      <h2 class="text-sm font-semibold text-ink-900">Contactos "Hablemos" ({leads.length})</h2>
+      {leads.length === 0 && <p class="text-sm text-ink-500">Nada pendiente.</p>}
+      {
+        leads.map((lead) => (
+          <div class="kodu-card space-y-2 p-4" data-lead={lead.id}>
+            <p class="font-medium text-ink-900">{lead.institutionName}</p>
+            <p class="text-xs text-ink-500">
+              {lead.contactName} · {lead.contactEmail}
+              {lead.phone && <> · {lead.phone}</>}
+              {lead.declaredStudents && <> · {lead.declaredStudents} alumnos</>}
+              {' · '}
+              {formateadorFecha.format(lead.createdAt)}
+              {' · estado: '}
+              {lead.status === 'OPEN' ? 'sin contactar' : lead.status === 'CONTACTED' ? 'contactado' : 'cerrado'}
+            </p>
+            {lead.message && <p class="text-sm text-ink-700">"{lead.message}"</p>}
+            {lead.note && <p class="text-sm text-ink-500">Nota: {lead.note}</p>}
+            <textarea class="kodu-input w-full" rows={2} placeholder="Nota (opcional)" data-field="note" />
+            <div class="flex gap-2">
+              <button type="button" class="kodu-btn-ghost text-xs" data-accion="lead-contacted" data-lead-id={lead.id}>
+                Marcar contactado
+              </button>
+              <button type="button" class="kodu-btn-ghost text-xs" data-accion="lead-closed" data-lead-id={lead.id}>
+                Cerrar
+              </button>
+            </div>
+          </div>
+        ))
+      }
+    </section>
+  </div>
+</AdminLayout>
+
+<script>
+  function mensaje(texto: string, esError: boolean) {
+    const el = document.getElementById('mensaje-altas');
+    if (!el) return;
+    el.textContent = texto;
+    el.className = `rounded-lg px-4 py-3 text-sm ${esError ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`;
+  }
+
+  async function post(url: string, body: unknown) {
+    const respuesta = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const datos = await respuesta.json();
+    if (!respuesta.ok) throw new Error(datos.error ?? 'No se pudo completar la acción.');
+    return datos;
+  }
+
+  document.addEventListener('click', async (ev) => {
+    const boton = (ev.target as HTMLElement).closest<HTMLElement>('[data-accion]');
+    if (!boton) return;
+    const accion = boton.dataset.accion!;
+
+    try {
+      if (accion === 'revisar') {
+        await post('/api/admin/billing/altas/revisar', { organizationId: boton.dataset.organization });
+        mensaje('Marcada como revisada. Recargá para verla salir de la lista.', false);
+      } else if (accion === 'matricula') {
+        const contenedor = boton.closest('[data-institucion]')!;
+        const valor = (contenedor.querySelector('[data-field="matricula"]') as HTMLInputElement).value;
+        await post('/api/admin/billing/altas/matricula', { organizationId: boton.dataset.organization, declaredStudents: Number(valor) });
+        mensaje('Matrícula actualizada.', false);
+      } else if (accion === 'prueba') {
+        const contenedor = boton.closest('[data-institucion]')!;
+        const dias = (contenedor.querySelector('[data-field="dias"]') as HTMLInputElement).value;
+        await post('/api/admin/billing/altas/prueba', { organizationId: boton.dataset.organization, dias: Number(dias) });
+        mensaje('Prueba extendida.', false);
+      } else if (accion === 'dominio-verificar' || accion === 'dominio-eliminar') {
+        await post('/api/admin/billing/altas/dominio', {
+          domainId: boton.dataset.domain,
+          accion: accion === 'dominio-verificar' ? 'VERIFICAR' : 'ELIMINAR',
+        });
+        boton.closest('[data-dominio]')?.remove();
+        mensaje('Dominio actualizado.', false);
+      } else if (accion === 'manual-activar') {
+        const contenedor = document.querySelector(`[data-manual="${boton.dataset.organization}"]`)!;
+        const campo = (nombre: string) => (contenedor.querySelector(`[data-field="${nombre}"]`) as HTMLInputElement).value;
+        await post('/api/admin/billing/altas/manual-activar', {
+          organizationId: boton.dataset.organization,
+          interval: campo('interval'),
+          periodStart: campo('periodStart'),
+          periodEnd: campo('periodEnd'),
+          amountArs: Number(campo('amountArs')),
+          paymentDate: campo('paymentDate'),
+        });
+        mensaje('Licencia activada manualmente.', false);
+      } else if (accion === 'lead-contacted' || accion === 'lead-closed') {
+        const contenedor = boton.closest('[data-lead]')!;
+        const note = (contenedor.querySelector('[data-field="note"]') as HTMLTextAreaElement).value;
+        await post('/api/admin/billing/altas/lead', {
+          leadId: boton.dataset.leadId,
+          accion: accion === 'lead-contacted' ? 'CONTACTED' : 'CLOSED',
+          note: note || null,
+        });
+        if (accion === 'lead-closed') contenedor.remove();
+        mensaje('Listo.', false);
+      }
+    } catch (err) {
+      mensaje(err instanceof Error ? err.message : 'No se pudo completar la acción.', true);
+    }
+  });
+</script>

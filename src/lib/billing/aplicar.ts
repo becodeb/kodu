@@ -261,6 +261,125 @@ export async function cancelarOrg(rootOrganizationId: string): Promise<Resultado
 }
 
 // ─────────────────────────────────────────────────────────────
+// Manual — superadmin (T7)
+// ─────────────────────────────────────────────────────────────
+
+export interface ActivarManualInput {
+  interval: OrgBillingInterval;
+  periodStart: Date;
+  periodEnd: Date;
+  amountArs: number;
+  paymentDate: Date;
+  legalName?: string;
+  cuit?: string;
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T7): "Activar licencia manual por
+ * transferencia" — el superadmin carga un cobro que pasó FUERA de cualquier
+ * `PaymentGateway` (transferencia bancaria). Crea el `Payment` ya APROBADO
+ * (provider `MANUAL`) y su `Invoice` PENDING, y deja la licencia ACTIVE con
+ * ese período — mismo resultado final que `aplicarPrimerCobroOrg`, pero sin
+ * pasar por ningún webhook (no hay ninguno: nadie del lado de un proveedor
+ * sabe que esto pasó).
+ */
+export async function activarLicenciaManualPorTransferencia(
+  rootOrganizationId: string,
+  input: ActivarManualInput,
+): Promise<ResultadoAccion<{ paymentId: string }>> {
+  const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootOrganizationId } });
+  if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de esta institución.' };
+  if (!(input.amountArs > 0)) return { ok: false, status: 422, message: 'El monto tiene que ser mayor a 0.' };
+  if (input.periodEnd.getTime() <= input.periodStart.getTime()) {
+    return { ok: false, status: 422, message: 'El período no es válido: el fin tiene que ser posterior al inicio.' };
+  }
+
+  const cfg = await settings();
+  const banda = bandForStudents(license.declaredStudents, cfg.hablemosThresholdStudents);
+
+  const payment = await prisma.$transaction(async (tx) => {
+    const pago = await tx.payment.create({
+      data: {
+        organizationId: rootOrganizationId,
+        organizationLicenseId: license.id,
+        amountArs: input.amountArs,
+        status: 'APPROVED',
+        provider: 'MANUAL',
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        intervalSnapshot: input.interval,
+        createdAt: input.paymentDate,
+      },
+    });
+    await tx.organizationLicense.update({
+      where: { id: license.id },
+      data: {
+        status: 'ACTIVE',
+        interval: input.interval,
+        currentPeriodStart: input.periodStart,
+        currentPeriodEnd: input.periodEnd,
+        bandKey: banda.kind === 'band' ? banda.key : license.bandKey,
+        trialEndsAt: null,
+        cancelAtPeriodEnd: false,
+        legalName: input.legalName ?? license.legalName,
+        cuit: input.cuit ?? license.cuit,
+      },
+    });
+    await tx.invoice.create({
+      data: {
+        paymentId: pago.id,
+        pointOfSale: 1,
+        status: 'PENDING',
+        recipientDocType: 'CUIT',
+        recipientDocNumber: input.cuit ?? license.cuit ?? 'sin-cuit',
+        recipientName: input.legalName ?? license.legalName ?? 'sin-razon-social',
+      },
+    });
+    return pago;
+  });
+
+  return { ok: true, data: { paymentId: payment.id } };
+}
+
+/** T7: "switch a license to/from MANUAL". A MANUAL es inmediato y siempre
+ *  válido (congela la licencia como "la administra Kodu directamente"); de
+ *  MANUAL vuelve a ACTIVE si ya tiene un período cargado, o a TRIAL si
+ *  todavía no — nunca hay un cobro automático en ese camino de vuelta, así
+ *  que el superadmin tiene que cargar uno a mano después si corresponde. */
+export async function cambiarEstadoManual(
+  rootOrganizationId: string,
+  aManual: boolean,
+): Promise<ResultadoAccion<{ status: string }>> {
+  const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootOrganizationId } });
+  if (!license) return { ok: false, status: 404, message: 'No encontramos la licencia de esta institución.' };
+
+  if (aManual) {
+    if (license.status === 'MANUAL') return { ok: false, status: 409, message: 'Ya es manual.' };
+    await prisma.organizationLicense.update({ where: { id: license.id }, data: { status: 'MANUAL' } });
+    return { ok: true, data: { status: 'MANUAL' } };
+  }
+
+  if (license.status !== 'MANUAL') return { ok: false, status: 409, message: 'Esta licencia no es manual.' };
+  const nuevoStatus = license.currentPeriodEnd ? 'ACTIVE' : 'TRIAL';
+  await prisma.organizationLicense.update({ where: { id: license.id }, data: { status: nuevoStatus } });
+  return { ok: true, data: { status: nuevoStatus } };
+}
+
+/** T7: "mark refund done" para un pago con `refundRequested` (arrepentimiento
+ *  individual, T4) — el reintegro de verdad lo hace el dueño a mano fuera de
+ *  Kodu; esto sólo registra que ya se hizo. */
+export async function marcarReintegroHecho(paymentId: string): Promise<ResultadoAccion<{ refundedAt: Date }>> {
+  const payment = await prisma.payment.findUnique({ where: { id: paymentId } });
+  if (!payment) return { ok: false, status: 404, message: 'No encontramos ese pago.' };
+  if (!payment.refundRequested) return { ok: false, status: 409, message: 'Este pago no tiene un reintegro pedido.' };
+  if (payment.refundedAt) return { ok: false, status: 409, message: 'Este reintegro ya estaba marcado como hecho.' };
+
+  const refundedAt = new Date();
+  await prisma.payment.update({ where: { id: paymentId }, data: { refundedAt, status: 'REFUNDED' } });
+  return { ok: true, data: { refundedAt } };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Checkout — individual
 // ─────────────────────────────────────────────────────────────
 
