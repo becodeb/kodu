@@ -39,8 +39,8 @@ Branch `feat/ahorro-tokens` (worktree `~/projects/kodu-wt/ahorro`), cut from `fe
   | vecinos-1810 / visual | 10 | 10 | tie |
 
   Averages: full 7.6, fragments 9.3. Fragments never lost: 3 wins, 3 ties. Full rewrites caused the only regressions, because they re-emit untouched code. Sample: 6 cases, one sample each. Recommendation: turn `fragmentEditsEnabled` on for every plan, not only FREE.
-- [ ] T4 Per-turn trace and anonymized admin export (JSON/CSV; teachers pseudonymized, no emails or names; includes the request text).
-- [ ] T5 Optional teacher feedback: a face on each AI reply, an occasional one-tap question, and implicit signals (a follow-up "no funciona", undo, manual code edit).
+- [x] T4 Per-turn trace and anonymized admin export (JSON/CSV; teachers pseudonymized, no emails or names; includes the request text). Route: delegated (single writer, same isolated worktree/DB/PORT 3300). Commit `c721d28`.
+- [x] T5 Optional teacher feedback: a face on each AI reply, an occasional one-tap question, and implicit signals (a follow-up "no funciona", undo, manual code edit). Route: delegated, same writer. Commit `5a5f7a2`.
 
 ## Levers (analysis, 2026-10-01)
 
@@ -152,3 +152,44 @@ Route: delegated (single writer, same isolated worktree/DB/PORT 3300), using the
 - Quality was not judged here on purpose (the task reserves that for blind evaluators) — only `experimentos/fragmentos/ciego/` exists; nobody has looked at whether the A/B pairs are equivalent in quality.
 - The one real compatibility wrinkle (`tool_choice: 'required'` rejected by DeepSeek, falls back to `'auto'` automatically) costs one extra round trip per forced+fragments call; harmless today but worth knowing if DeepSeek's dialect is ever tightened elsewhere.
 - `fragmentEditsEnabled` is still `false` on every existing database (by migration design) — turning it on for real teachers is a separate, explicit step once the blind evaluation confirms quality holds.
+
+### T4 — per-turn trace and anonymized admin export (commit `c721d28`)
+
+Route: delegated (single writer, same isolated worktree/DB/PORT 3300).
+
+- `prisma/schema.prisma`: new model `AiTrace` — one row per AI turn that touches a resource, linked 1:1-optional to `TokenUsage` (`tokenUsageId`) and `ChatMessage` (`chatMessageId`) so model/tokens/cost are read by join instead of duplicated. Fields: `userId`/`organizationId` (frozen at call time, same criterion as `TokenUsage.organizationId`), `planAtCall` ('FREE'/'INDIVIDUAL'/'ORG'), `turnKind` (reuses `UsagePurpose`), `model`, `reasoningEffort`, `requestText` (the teacher's message, verbatim), `editOutcome` (new enum `TraceEditOutcome`: FULL/FRAGMENTS/FRAGMENTS_FALLBACK/FAILED — `FAILED` has no `TokenUsage.EditMode` equivalent, see the schema comment), `retries`, `truncated`, `htmlCharsBefore`/`htmlCharsAfter`, `durationMs`, `selfTestPassed`/`selfTestFailed`, `correctionRounds`, `verifierFindings`. T5's feedback columns live on the same row (see below). Migration `prisma/migrations/20261018000000_trazas_y_feedback/migration.sql`, applied cleanly to `koduedu_ahorro`.
+- `src/lib/ai/trace.ts` (new): `recordAiTrace` (best-effort, try/catch, never throws — a trace failure can never break a turn), `resolverPlanDeCuenta`. `src/lib/ai/usage.ts#recordUsage` now returns `{id}|null` so the trace can reference the `TokenUsage` row it belongs to.
+- Wired at the 5 required call sites: `src/pages/api/chat/stream.ts` (main turn: GENERATION/ADJUSTMENT — retries/truncation/html-char-deltas/duration all tracked live during the turn; EXTRA_VERSION inside `generarVersionSecundaria`), `src/pages/api/chat/autocorreccion.ts` (CORRECTION, self-test pass/fail from `pruebas`/`errores.length`, `ronda`), `src/pages/api/chat/verificar.ts` (VERIFICATION, `verifierFindings` from the merged `problemas`), `src/pages/api/taller/[id]/turno.ts` (IDEATION, reused cheaply as asked).
+- Export: `src/lib/admin/pseudonimizar.ts` (HMAC-SHA256 keyed by `AUTH_SECRET`, per the task's explicit instruction — namespaced by prefix so a user id and an org id never collide), `src/lib/admin/csv.ts` (RFC4180 escaping), `src/lib/admin/trazas.ts` (`filasExportTrazas`, 29 columns, never the HTML). Endpoints `GET /api/admin/trazas.csv` / `.json` (`requireAdmin`, same pattern as the sibling `/api/admin/metricas.csv.ts`), filters `desde`/`hasta`/`plan`/`model`. Admin page `/admin/trazas.astro` + `TrazasPanel.tsx` (date range, plan/model filters, two download links, one-sentence anonymization copy), added to `AdminLayout.astro`'s nav.
+- Tests: `e2e/unidad-trazas-export.ts` (12 unit tests — pseudonymization stability/uniqueness/prefix-separation/secret-separation, CSV escaping including comma+quotes+newline together).
+
+### T5 — optional teacher feedback (commit `5a5f7a2`)
+
+Route: delegated, same writer.
+
+- `src/lib/feedback/frecuencia.ts` (new, pure): `decidirPreguntaFeedback` — first generation always asks "¿Funciona bien?"; otherwise at most every 5 resource-changing turns, alternating with "¿Te gusta cómo se ve?"; never over an unanswered question; never if the teacher opted out.
+- `src/lib/feedback/clasificador.ts` (new, pure): `detectarFraseDefecto` — accent/case-insensitive substring match against a short catalog of defect phrases ("no funciona", "no anda", "error", "arregl-", "se rompió", "no hace nada", "no aparece", "sigue igual", ...).
+- `AiTrace` (same migration as T4) also carries the feedback columns: `faceRating` (enum `FaceRating`: GOOD/NEUTRAL/BAD), `faceRatingComment`/`faceRatingAt`, `inlineQuestionKind`/`inlineQuestionAnswer`/`inlineQuestionAt`, `suspectedDefect`/`suspectedDefectPhrase`, `undoneSignal`, `codeEditedByTeacherSignal`. `User.feedbackPromptsDisabled` and `Project.feedbackTurnsSinceAsk`/`.lastFeedbackPromptKind` hold the frequency state.
+- UI: `src/components/workspace/FeedbackTurno.tsx` (new) — a 3-face row under each AI reply that changed the resource (never on a text-only or undone turn), with an optional one-line "¿Qué falló?" box after a bad rating; `PreguntaFeedback`, an inline chat bubble (never a modal) with Sí/Más o menos/No and "No preguntar más". Wired into `ChatPanel.tsx`'s message loop and `Workspace.tsx` (optimistic local state, `POST /api/projects/[id]/feedback`, new endpoint, toggling a face off on a second tap of the same one).
+- Implicit signals, all in `src/lib/ai/trace.ts`: `aplicarSenalesImplicitas` (called from `stream.ts` on every new turn, before calling the model) marks the PREVIOUS turn's trace `suspectedDefect`/`suspectedDefectPhrase` when the new message matches `detectarFraseDefecto`, and `codeEditedByTeacherSignal` from the existing `codeEditedByTeacher` ref already threaded through `Workspace.tsx`/`/api/chat/stream` — no new plumbing needed for that one. `marcarTrazaDeshecha` (called from `src/pages/api/projects/[id]/undo.ts`) sets `undoneSignal`.
+- Tests: `e2e/unidad-feedback-y-trazas.ts` (14 unit tests — frequency rule incl. the "first generation"/"5 turns"/"alternation"/"opted-out"/"not twice in a row" cases, defect classifier incl. accents and multiple phrase variants).
+
+### Verification (T4/T5, foreground, isolated worktree/DB/PORT 3300)
+
+- `npm run check`: clean.
+- `npx tsx e2e/unidad-trazas-export.ts`: 12/12 OK.
+- `npx tsx e2e/unidad-feedback-y-trazas.ts`: 14/14 OK.
+- `npx tsx e2e/feedback-y-trazas.ts` (new e2e, against `e2e/mock-proveedor.ts`): generation → `feedbackPrompt: 'FUNCIONA'` on the first turn, `AiTrace` linked to its `ChatMessage` and `TokenUsage`; adjustment → its own `AiTrace` (`ADJUSTMENT`, `editOutcome: FULL`); a "no funciona, arreglalo" follow-up → the ADJUSTMENT trace flips `suspectedDefect: true` / `suspectedDefectPhrase: 'no funciona'`; a face rating saved through `POST /api/projects/:id/feedback` (same route the UI uses); the admin JSON export contains both trace rows, pseudonymized, and the docente's email never appears anywhere in the export body. All assertions passed.
+- All pre-existing `e2e/unidad*.ts` suites: no regressions.
+- `npx tsx e2e/edicion-por-fragmentos.ts`: all 3 scenarios still pass (no regression from the trace hooks added inside `stream.ts`).
+- `npm run test:cobros` (PORT=3300): 11/11 scripts green, same baseline as T1/T2/T3a.
+- `npx tsx e2e/taller-de-ideas.ts`: only the pre-existing known failure ("una cuenta personal (sin IA) no puede abrir el Taller", 403-vs-200), everything else green — same as before this change.
+- `npx tsx e2e/m4-costos.ts`: all scenarios passed in this run (the listed hover-popover flake did not reproduce this time).
+- Screenshots: `experimentos/feedback-capturas/desktop-1280x800.png` and `experimentos/feedback-capturas/mobile-390.png` (headless `/usr/bin/chromium --disable-gpu`, `fullPage: true` to sidestep the known headless-Chromium viewport-height clamp), both showing the face row and the "¿Funciona bien?" inline question together under the same turn. Captured by `e2e/capturas-feedback.ts` (one-off script, not part of the regular e2e battery).
+
+### Open decisions for the owner (T4/T5)
+
+- T5's inline-question/frequency logic only fires on GENERATION/ADJUSTMENT turns (not correction/verification/extra-version/Taller) — a deliberate scoping call, since those are the only turns with a visible chat reply worth asking the teacher about. Worth confirming this matches the intent.
+- The all-providers-failed path in `stream.ts` (before the model ever streams back anything) does not create a trace — no turn-level work happened yet, so there is nothing to record; flagging it for visibility.
+- Verification traces (`verificar.ts`) don't link a specific `tokenUsageId`: a new resource runs 2 passes in parallel, each writing its own `TokenUsage` row, and picking one arbitrarily seemed worse than leaving the FK `null` — the export can still be cross-referenced by project/time if needed.
+- `/opt/pw-browsers/chromium` (named in the task) does not exist in this environment; the screenshots and all e2e browser tests use `/usr/bin/chromium` (the same binary `e2e/harness.ts` already standardizes on).
