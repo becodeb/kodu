@@ -194,3 +194,39 @@ export function firstCharge(input: PrimerCobroInput): PrimerCobroResultado {
     note: `ciclo, contratado en enero-febrero: se cobra el ciclo ${proximo.startYear} completo, días que quedan de regalo`,
   };
 }
+
+export interface RenovacionResultado {
+  amountArs: number;
+  periodStart: Date;
+  periodEnd: Date;
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T4b): la renovación de una licencia
+ * institucional por CICLO LECTIVO (pago único — Mercado Pago no garantiza un
+ * `frequency: 12` real, ver la nota de `aplicar.ts`). A diferencia de
+ * `firstCharge`, acá NUNCA hay prorrateo ni meses de regalo: se cobra el
+ * precio de ciclo COMPLETO, y el período nuevo arranca EXACTAMENTE donde
+ * terminó el anterior (`currentPeriodEnd + 1ms`), sin importar qué día
+ * paguen de verdad (puede ser hasta 30 días antes de que termine, T4b) — así
+ * nunca se regala un período dos veces ni se cobra una franja superpuesta.
+ */
+export function renewalChargeOrgCycle(input: { currentPeriodEnd: Date; cyclePriceArs: number }): RenovacionResultado {
+  const periodStart = new Date(input.currentPeriodEnd.getTime() + 1);
+  const ciclo = cycleFor(periodStart);
+  return { amountArs: input.cyclePriceArs, periodStart, periodEnd: ciclo.end };
+}
+
+/**
+ * odd/tasks/planes-y-cobros.md (T4b): la renovación de una suscripción
+ * Individual ANUAL (mismo criterio de "pago único, sin prorrateo, arranca
+ * donde terminó la anterior" que `renewalChargeOrgCycle`, mismo cálculo de
+ * `periodEnd` que ya usa `aplicar.ts#aplicarRenovacion` para la renovación
+ * mensual: +1 año calendario desde `periodStart`).
+ */
+export function renewalChargeIndividualAnnual(input: { currentPeriodEnd: Date; annualPriceArs: number }): RenovacionResultado {
+  const periodStart = input.currentPeriodEnd;
+  const periodEnd = new Date(periodStart);
+  periodEnd.setUTCFullYear(periodEnd.getUTCFullYear() + 1);
+  return { amountArs: input.annualPriceArs, periodStart, periodEnd };
+}

@@ -8,6 +8,8 @@ import {
   fechaAr,
   firstCharge,
   medianocheAr,
+  renewalChargeIndividualAnnual,
+  renewalChargeOrgCycle,
 } from '../src/lib/billing/ciclo.ts';
 import { creditsForCost, monthlyGrantPeriodKey, WELCOME_PERIOD_KEY } from '../src/lib/billing/creditos.ts';
 import { isPublicEmailDomain, normalizarDominio } from '../src/lib/billing/dominios.ts';
@@ -407,6 +409,40 @@ await prueba('licenseAllowsAi: PAST_DUE sin graceEndsAt cargado nunca se trata c
     allowed: false,
     reason: 'gracia_sin_fecha',
   });
+});
+
+// ─────────────────────────────────────────────────────────────
+// ciclo.ts — renovación (T4b)
+// ─────────────────────────────────────────────────────────────
+
+await prueba('renewalChargeOrgCycle: cobra el precio de ciclo completo, nunca prorrateado', () => {
+  const finDelCicloActual = cicloQueEmpiezaEn(2026).end; // fin de febrero 2027
+  const resultado = renewalChargeOrgCycle({ currentPeriodEnd: finDelCicloActual, cyclePriceArs: 100_000 });
+  assert.equal(resultado.amountArs, 100_000);
+});
+
+await prueba('renewalChargeOrgCycle: el período nuevo arranca exactamente donde terminó el anterior (sin solapar ni regalar días)', () => {
+  const finDelCicloActual = cicloQueEmpiezaEn(2026).end;
+  const resultado = renewalChargeOrgCycle({ currentPeriodEnd: finDelCicloActual, cyclePriceArs: 100_000 });
+  assert.equal(resultado.periodStart.getTime(), finDelCicloActual.getTime() + 1);
+  // El ciclo 2027 (1/3/2027 → fin de febrero 2028).
+  assert.deepEqual(resultado.periodEnd, cicloQueEmpiezaEn(2027).end);
+});
+
+await prueba('renewalChargeOrgCycle: pagar 30 días antes del vencimiento da el MISMO período que pagar el día exacto (sin doble cobro de franja)', () => {
+  const finDelCicloActual = cicloQueEmpiezaEn(2026).end;
+  const resultado = renewalChargeOrgCycle({ currentPeriodEnd: finDelCicloActual, cyclePriceArs: 100_000 });
+  // El cálculo no toma "hoy" como parámetro — pagar antes o después del
+  // vencimiento da el mismo resultado, siempre anclado a `currentPeriodEnd`.
+  assert.equal(resultado.periodStart.getTime(), finDelCicloActual.getTime() + 1);
+});
+
+await prueba('renewalChargeIndividualAnnual: cobra el precio anual completo y el período nuevo arranca donde terminó el anterior', () => {
+  const currentPeriodEnd = medianocheAr(2027, 6, 15);
+  const resultado = renewalChargeIndividualAnnual({ currentPeriodEnd, annualPriceArs: 50_000 });
+  assert.equal(resultado.amountArs, 50_000);
+  assert.equal(resultado.periodStart.getTime(), currentPeriodEnd.getTime());
+  assert.equal(resultado.periodEnd.getTime(), medianocheAr(2028, 6, 15).getTime());
 });
 
 if (fallas > 0) {
