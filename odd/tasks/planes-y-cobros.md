@@ -96,7 +96,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
 - [x] **T4 — Cobro.** Puerto `PaymentGateway`, adaptador simulado (página local de pago con aprobar/rechazar que
   dispara el webhook), adaptador Mercado Pago (suscripciones + pago único para el prorrateo), webhook idempotente,
   endpoints de checkout para institución e individual, cancelación y arrepentimiento. Chequeo: e2e con simulado.
-- [ ] **T5 — Alta de instituciones.** Formulario (nombre, colegio o red, matrícula, dominios, sedes), bloqueo de
+- [x] **T5 — Alta de instituciones.** Formulario (nombre, colegio o red, matrícula, dominios, sedes), bloqueo de
   dominios públicos, dominios extra pendientes, arranque de la prueba, aviso al superadmin. Chequeo: e2e.
 - [ ] **T6 — Páginas.** `/precios` pública con calculadora y tarjetas (mensual / ciclo lectivo), `/app/plan`,
   `/org/plan`, preguntas frecuentes, en el design system de kodu. Chequeo: build + capturas.
@@ -140,7 +140,16 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   página oficial (daba 404 a WebFetch). Chequeos: check y build verdes; re-corrido por el orquestador `unidad-planes`
   45, `unidad` 77, `unidad-pasarela` 14, `unidad-creditos` 9 — todos verdes; `planes-cobro` 12/12 y `planes-acceso`
   8/8 según el escritor.
+- T5 (delegada): `dc3bfa4`, `c0ed331`, `901b528`. `src/lib/billing/alta.ts` (alta atómica, rama "Hablemos" con
+  `InstitutionLead`), `src/lib/billing/revision.ts` (cola para el superadmin, con contador en `AdminLayout`), la
+  resolución por dominio ignora dominios `PENDING`. Una cuenta personal existente con el dominio nuevo se une en su
+  próximo login (misma regla `unirSiCorresponde` de siempre), no al crear la institución. Cambios colaterales: el
+  default de `OrganizationDomain.status` pasó a `VERIFIED` (si no, el alta manual del superadmin y los fixtures
+  quedaban pendientes) y `astro.config.mjs` permite el destino real de un `node_modules` symlinkeado (worktrees; sin
+  efecto en un checkout normal). Chequeos: check, build, `planes-alta` 11/11 + capturas claro/oscuro, `planes-acceso`
+  8/8, `planes-cobro` 12/12, `org-acceso` 7/7, `org-invitaciones` 16/16 según el escritor; `unidad-planes` re-corrido
+  por el orquestador.
 
 ## Próximo paso
 
-T5 (alta de instituciones).
+T6 (páginas).
