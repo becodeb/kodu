@@ -4,6 +4,7 @@ import { ClaveInvalida, ClaveNoConfigurada, descifrar } from '../crypto/secretos
 import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
 import { scheduleFromAiModel } from './pricing.ts';
+import { presetByKey, preciosDePreset } from './presets.ts';
 
 /** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
 type FilaConProveedor = AiModel & { provider: AiProvider };
@@ -80,8 +81,16 @@ function clavePlano(fila: FilaConProveedor): string | null {
 }
 
 function construirConfig(fila: FilaConProveedor): ProviderConfig {
-  const precios =
-    fila.priceInputPerMToken !== null && fila.priceOutputPerMToken !== null
+  // odd/tasks/ahorro-tokens.md (T7): un `presetKey` conocido manda sobre las
+  // columnas de precio/horario de ESTA fila — así un cambio de precio en
+  // `presets.ts` actualiza todo motor enlazado sin tocar la base. Una clave
+  // desconocida (preset sacado del código después de enlazarse) cae al mismo
+  // camino que `presetKey: null`: las columnas de la fila, nunca un crash.
+  const preset = presetByKey(fila.presetKey);
+
+  const precios = preset
+    ? preciosDePreset(preset)
+    : fila.priceInputPerMToken !== null && fila.priceOutputPerMToken !== null
       ? {
           input: fila.priceInputPerMToken,
           output: fila.priceOutputPerMToken,
@@ -110,7 +119,7 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     reasoningEffort: fila.reasoningEffort,
     reasoningParam: fila.reasoningParam,
     precios,
-    schedule: scheduleFromAiModel(fila),
+    schedule: preset ? preset.schedule : scheduleFromAiModel(fila),
   };
 }
 

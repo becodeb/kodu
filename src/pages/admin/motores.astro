@@ -2,7 +2,7 @@
 import AdminLayout from '../../layouts/AdminLayout.astro';
 import ModelosPanel from '../../components/admin/ModelosPanel.tsx';
 import { prisma } from '../../lib/db.ts';
-import { serializarMotor } from '../../lib/admin/modelos.ts';
+import { serializarMotor, presetsParaUI } from '../../lib/admin/modelos.ts';
 import { serializarProveedor } from '../../lib/admin/proveedores.ts';
 
 // El middleware ya garantiza sesión + rol ADMIN en /admin/**.
@@ -13,8 +13,12 @@ const motores = filas.map(serializarMotor);
 // de proveedores, no sólo los que ya tienen algún motor.
 const filasProveedores = await prisma.aiProvider.findMany({ orderBy: [{ kind: 'asc' }, { label: 'asc' }] });
 const proveedores = filasProveedores.map((fila) => serializarProveedor(fila));
+
+// odd/tasks/ahorro-tokens.md (T7): presets de código, en forma plana — ver
+// el comentario de `PresetUI` en lib/admin/modelos.ts.
+const presets = presetsParaUI();
 ---
 
 <AdminLayout>
-  <ModelosPanel client:load initialMotores={motores} proveedores={proveedores} />
+  <ModelosPanel client:load initialMotores={motores} proveedores={proveedores} presets={presets} />
 </AdminLayout>

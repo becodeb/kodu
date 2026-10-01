@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import Modal from '../workspace/Modal.tsx';
 import Interruptor from './Interruptor.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
-import type { MotorAdmin } from '../../lib/admin/modelos.ts';
+import type { MotorAdmin, PresetUI } from '../../lib/admin/modelos.ts';
 import type { ProveedorAdmin } from '../../lib/admin/proveedores.ts';
 
 /**
@@ -24,6 +24,8 @@ interface ModeloFormProps {
   otrosMotores: MotorAdmin[];
   /** El catálogo entero de cuentas de proveedor, para el `<select>` de abajo. */
   proveedores: ProveedorAdmin[];
+  /** odd/tasks/ahorro-tokens.md (T7): presets definidos en código. */
+  presets: PresetUI[];
   onGuardado: (motor: MotorAdmin) => void;
   onCerrar: () => void;
 }
@@ -79,6 +81,15 @@ export default function ModeloForm(props: ModeloFormProps) {
   const idBase = useId();
   const sinProveedores = props.proveedores.length === 0;
 
+  // odd/tasks/ahorro-tokens.md (T7): "" = "Personalizado". Elegir un preset
+  // conocido rellena y bloquea los campos que el preset posee (precio,
+  // horario, razonamiento, tokens máx. de salida, identificador del
+  // modelo) — el servidor los vuelve a pisar con el preset igual (nunca
+  // confía en lo que viaje acá), esto es sólo para que el admin no tipee
+  // valores que después se ignoran.
+  const [presetKey, setPresetKey] = useState(motor?.presetKey ?? '');
+  const presetElegido = props.presets.find((p) => p.key === presetKey) ?? null;
+
   const [providerId, setProviderId] = useState(motor?.providerId ?? '');
   const [providerModel, setProviderModel] = useState(motor?.providerModel ?? '');
   const [displayName, setDisplayName] = useState(motor?.displayName ?? '');
@@ -111,6 +122,29 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const preview = previewDePrecio(precioEntrada, precioCacheada, precioSalida);
+
+  /** Al elegir un preset, rellena (y de ahí en más bloquea) los campos que
+   *  posee — ver el comentario de `presetKey` más arriba. Volver a
+   *  "Personalizado" deja todo tal como haya quedado, editable de nuevo. */
+  function elegirPreset(key: string) {
+    setPresetKey(key);
+    const preset = props.presets.find((p) => p.key === key);
+    if (!preset) return;
+
+    setProviderModel(preset.providerModel);
+    setMaxOutputTokens(String(preset.maxOutputTokens));
+    setReasoningEffort(preset.reasoningDefaultEffort);
+    setReasoningParam(preset.reasoningParam);
+    setPrecioEntrada(String(preset.prices.inputPerMToken));
+    setPrecioCacheada(String(preset.prices.cachedInputPerMToken));
+    setPrecioSalida(String(preset.prices.outputPerMToken));
+
+    // Sugiere la cuenta de proveedor que ya coincide en baseUrl, si existe
+    // una — "reusar", nunca crea una cuenta nueva (eso sigue siendo un paso
+    // manual en /admin/proveedores, el flujo de clave no cambia con T7).
+    const proveedorQueCoincide = props.proveedores.find((p) => p.baseUrl === preset.provider.baseUrl);
+    if (proveedorQueCoincide) setProviderId(proveedorQueCoincide.id);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -145,6 +179,12 @@ export default function ModeloForm(props: ModeloFormProps) {
       priceOffPeakFactor: precioOffPeakFactor.trim() === '' ? null : Number(precioOffPeakFactor),
       peakWindowsUtc: parsearVentanasPico(ventanasPico),
       offPeakDatesUtc: parsearFeriados(feriados),
+      // odd/tasks/ahorro-tokens.md (T7): el servidor es quien manda de
+      // verdad — con un preset elegido, pisa precio/horario/razonamiento/
+      // tokens máx. de salida/identificador del modelo con lo que tenga
+      // cargado `presets.ts`, sin importar lo que haya en los campos de
+      // arriba (que además quedan deshabilitados mientras hay un preset).
+      presetKey: presetKey === '' ? null : presetKey,
     };
 
     const result = motor
@@ -192,6 +232,30 @@ export default function ModeloForm(props: ModeloFormProps) {
           </div>
         )}
 
+        <div>
+          <label className="kodu-label" htmlFor={`${idBase}-preset`}>
+            Preset
+          </label>
+          <select
+            id={`${idBase}-preset`}
+            value={presetKey}
+            onChange={(event) => elegirPreset(event.target.value)}
+            className="kodu-input"
+          >
+            <option value="">Personalizado</option>
+            {props.presets.map((preset) => (
+              <option key={preset.key} value={preset.key}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-ink-500">
+            {presetElegido
+              ? `Valores del preset (verificados el ${presetElegido.pricesVerifiedAt}, fuente: ${presetElegido.sourceUrl}). Un cambio de precio en el preset actualiza este motor solo — no hace falta volver a tocar este formulario.`
+              : 'Personalizado: precio, horario, razonamiento y tokens máx. de salida se cargan y editan a mano, como siempre.'}
+          </p>
+        </div>
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-provider`}>
@@ -225,6 +289,7 @@ export default function ModeloForm(props: ModeloFormProps) {
               placeholder="MiniMaxAI/MiniMax-M3"
               className="kodu-input"
               required
+              disabled={presetElegido !== null}
             />
           </div>
         </div>
@@ -288,6 +353,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioEntrada(event.target.value)}
                 placeholder="0,27"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
             <div>
@@ -301,6 +367,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioCacheada(event.target.value)}
                 placeholder="0,03"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
             <div>
@@ -314,6 +381,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioSalida(event.target.value)}
                 placeholder="1,10"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
           </div>
@@ -323,6 +391,13 @@ export default function ModeloForm(props: ModeloFormProps) {
           {preview && <p className="text-xs text-ink-700">{preview}</p>}
         </fieldset>
 
+        {presetElegido ? (
+          <p className="rounded-[10px] border border-linea p-3 text-xs text-ink-500">
+            {presetElegido.hasSchedule
+              ? 'El horario de pico de este preset lo define el código (presets.ts), no este formulario.'
+              : 'Este preset no tiene horario de pico: siempre el mismo precio.'}
+          </p>
+        ) : (
         <fieldset className="space-y-2 rounded-[10px] border border-linea p-3">
           <legend className="px-1 text-sm font-medium text-ink-700">Horario de pico (opcional)</legend>
           <p className="text-xs text-ink-500">
@@ -376,6 +451,7 @@ export default function ModeloForm(props: ModeloFormProps) {
             </>
           )}
         </fieldset>
+        )}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
@@ -389,6 +465,7 @@ export default function ModeloForm(props: ModeloFormProps) {
               value={maxOutputTokens}
               onChange={(event) => setMaxOutputTokens(event.target.value)}
               className="kodu-input"
+              disabled={presetElegido !== null}
             />
           </div>
           <div>
@@ -454,10 +531,16 @@ export default function ModeloForm(props: ModeloFormProps) {
             value={reasoningEffort}
             onChange={(event) => setReasoningEffort(event.target.value)}
             className="kodu-input"
+            disabled={presetElegido !== null}
           >
             <option value="">No mandar el parámetro</option>
             <option value="none">Sin razonamiento</option>
             <option value="low">Bajo</option>
+            {/* "medium" sólo lo usan niveles internos (verificador, T3) y
+                el default de algún preset (T7, odd/tasks/ahorro-tokens.md) —
+                se deja elegible acá para que el <select> siga reflejando el
+                valor real cuando un preset lo trae. */}
+            <option value="medium">Medio</option>
             <option value="high">Alto</option>
           </select>
           <p className="mt-1 text-xs text-ink-500">
@@ -476,6 +559,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 value={reasoningParam}
                 onChange={(event) => setReasoningParam(event.target.value)}
                 className="kodu-input"
+                disabled={presetElegido !== null}
               >
                 <option value="reasoning_effort">reasoning_effort (DeepSeek, dialecto OpenAI)</option>
                 <option value="thinking">thinking (MiniMax M3)</option>
