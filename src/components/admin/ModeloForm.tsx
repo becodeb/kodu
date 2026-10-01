@@ -52,6 +52,28 @@ function previewDePrecio(entrada: string, cacheada: string, salida: string): str
   return `Un turno típico —8.000 de entrada, 2.000 cacheados, 4.000 de salida— costaría ≈ US$ ${formateado}.`;
 }
 
+/** "1 1-4" → `{weekday:1, startHour:1, endHour:4}`. Una línea inválida se
+ *  ignora (en vez de bloquear el guardado entero por una coma de más). */
+function parsearVentanasPico(texto: string): Array<{ weekday: number; startHour: number; endHour: number }> {
+  return texto
+    .split('\n')
+    .map((linea) => linea.trim())
+    .filter(Boolean)
+    .map((linea) => {
+      const match = /^([0-6])\s+(\d{1,2})-(\d{1,2})$/.exec(linea);
+      if (!match) return null;
+      return { weekday: Number(match[1]), startHour: Number(match[2]), endHour: Number(match[3]) };
+    })
+    .filter((v): v is { weekday: number; startHour: number; endHour: number } => v !== null);
+}
+
+function parsearFeriados(texto: string): string[] {
+  return texto
+    .split(',')
+    .map((fecha) => fecha.trim())
+    .filter((fecha) => /^\d{4}-\d{2}-\d{2}$/.test(fecha));
+}
+
 export default function ModeloForm(props: ModeloFormProps) {
   const { motor } = props;
   const idBase = useId();
@@ -75,6 +97,15 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [precioEntrada, setPrecioEntrada] = useState(motor?.priceInputPerMToken ?? '');
   const [precioCacheada, setPrecioCacheada] = useState(motor?.priceCachedInputPerMToken ?? '');
   const [precioSalida, setPrecioSalida] = useState(motor?.priceOutputPerMToken ?? '');
+  // odd/tasks/ahorro-tokens.md (T1): horario de pico, opcional. Las ventanas
+  // se editan como texto plano ("día hora-hora", un día de la semana Mon=1 a
+  // Dom=0 por línea) para no armar un editor de filas dinámicas para un caso
+  // de uso tan chico — el admin que lo toca hoy es sólo el dueño.
+  const [precioOffPeakFactor, setPrecioOffPeakFactor] = useState(motor?.priceOffPeakFactor ?? '');
+  const [ventanasPico, setVentanasPico] = useState(
+    (motor?.peakWindowsUtc ?? []).map((v) => `${v.weekday} ${v.startHour}-${v.endHour}`).join('\n'),
+  );
+  const [feriados, setFeriados] = useState((motor?.offPeakDatesUtc ?? []).join(', '));
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +142,9 @@ export default function ModeloForm(props: ModeloFormProps) {
       priceInputPerMToken: precioEntrada.trim() === '' ? null : Number(precioEntrada),
       priceCachedInputPerMToken: precioCacheada.trim() === '' ? null : Number(precioCacheada),
       priceOutputPerMToken: precioSalida.trim() === '' ? null : Number(precioSalida),
+      priceOffPeakFactor: precioOffPeakFactor.trim() === '' ? null : Number(precioOffPeakFactor),
+      peakWindowsUtc: parsearVentanasPico(ventanasPico),
+      offPeakDatesUtc: parsearFeriados(feriados),
     };
 
     const result = motor
@@ -287,6 +321,60 @@ export default function ModeloForm(props: ModeloFormProps) {
             Es una estimación. Algunos proveedores cobran distinto según la hora.
           </p>
           {preview && <p className="text-xs text-ink-700">{preview}</p>}
+        </fieldset>
+
+        <fieldset className="space-y-2 rounded-[10px] border border-linea p-3">
+          <legend className="px-1 text-sm font-medium text-ink-700">Horario de pico (opcional)</legend>
+          <p className="text-xs text-ink-500">
+            Algunos proveedores (DeepSeek) cobran menos fuera de su horario de pico. Dejá el factor
+            vacío si este motor no tiene horario — se cobra siempre el precio de arriba, como hasta ahora.
+          </p>
+          <div>
+            <label className="kodu-label text-xs" htmlFor={`${idBase}-offPeakFactor`}>
+              Factor fuera de pico (0 a 1, ej. 0,5 = mitad de precio)
+            </label>
+            <input
+              id={`${idBase}-offPeakFactor`}
+              inputMode="decimal"
+              value={precioOffPeakFactor ?? ''}
+              onChange={(event) => setPrecioOffPeakFactor(event.target.value)}
+              placeholder="0,5"
+              className="kodu-input"
+            />
+          </div>
+          {precioOffPeakFactor.trim() !== '' && (
+            <>
+              <div>
+                <label className="kodu-label text-xs" htmlFor={`${idBase}-ventanasPico`}>
+                  Ventanas de pico, en UTC (una por línea: "día hora_inicio-hora_fin")
+                </label>
+                <textarea
+                  id={`${idBase}-ventanasPico`}
+                  value={ventanasPico}
+                  onChange={(event) => setVentanasPico(event.target.value)}
+                  rows={4}
+                  placeholder={'1 1-4\n1 6-10'}
+                  className="kodu-input resize-none font-mono text-xs"
+                />
+                <p className="mt-1 text-xs text-ink-500">
+                  Día de la semana: 0 = domingo … 6 = sábado. Hora de inicio incluida, hora de fin no
+                  incluida. Fuera de toda ventana (o si no cargás ninguna) es fuera de pico.
+                </p>
+              </div>
+              <div>
+                <label className="kodu-label text-xs" htmlFor={`${idBase}-feriados`}>
+                  Fechas siempre fuera de pico (feriados, UTC, separadas por coma)
+                </label>
+                <input
+                  id={`${idBase}-feriados`}
+                  value={feriados}
+                  onChange={(event) => setFeriados(event.target.value)}
+                  placeholder="2026-01-01, 2026-02-17"
+                  className="kodu-input"
+                />
+              </div>
+            </>
+          )}
         </fieldset>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

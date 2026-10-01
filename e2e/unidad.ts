@@ -537,7 +537,7 @@ function config(extra: Partial<ProviderConfig>): ProviderConfig {
     id: 'x', label: 'x', apiKey: 'k', baseUrl: 'http://localhost:0', model: 'm',
     apiFormat: 'chat', maxTokens: 1, userTokenLimit: 0, userTokenWindowHours: 0, maxInputChars: 1,
     supportsVision: false, reasoningEffort: null, reasoningParam: null,
-    precios: null, ...extra,
+    precios: null, schedule: null, ...extra,
   };
 }
 

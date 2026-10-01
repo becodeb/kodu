@@ -4,7 +4,7 @@ import { Prisma } from '../../../../generated/prisma/client.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { invalidarCatalogo } from '../../../../lib/ai/catalogo.ts';
-import { precioADecimal, serializarMotor } from '../../../../lib/admin/modelos.ts';
+import { horarioDePicoAPrisma, horarioDePicoSchema, precioADecimal, serializarMotor } from '../../../../lib/admin/modelos.ts';
 
 /**
  * PATCH /api/admin/models/:id — edición parcial de un motor (design.md §2, §3.1;
@@ -45,6 +45,7 @@ const actualizarMotorSchema = z.object({
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  ...horarioDePicoSchema,
 });
 
 export const PATCH: APIRoute = async ({ params, request }) => {
@@ -112,6 +113,14 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.priceOutputPerMToken !== undefined) {
     cambios.priceOutputPerMToken = precioADecimal(datos.priceOutputPerMToken);
   }
+  Object.assign(
+    cambios,
+    horarioDePicoAPrisma({
+      priceOffPeakFactor: datos.priceOffPeakFactor,
+      peakWindowsUtc: datos.peakWindowsUtc,
+      offPeakDatesUtc: datos.offPeakDatesUtc,
+    }),
+  );
 
   const subeDefault = datos.isDefault === true;
   // T3 (verificador): mismo motivo que `subeDefault` — el índice único

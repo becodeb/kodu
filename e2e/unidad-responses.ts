@@ -47,7 +47,7 @@ function config(extra: Partial<ProviderConfig> = {}): ProviderConfig {
     id: 'x', label: 'x', apiKey: 'k', baseUrl: 'http://localhost:0', model: 'gpt-6-luna',
     apiFormat: 'responses', maxTokens: 2_000, userTokenLimit: 0, userTokenWindowHours: 0, maxInputChars: 1,
     supportsVision: false, reasoningEffort: 'high', reasoningParam: null,
-    precios: null, ...extra,
+    precios: null, schedule: null, ...extra,
   };
 }
 

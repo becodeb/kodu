@@ -120,6 +120,7 @@ async function ejecutarPasada(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        schedule: args.provider.schedule,
         purpose: 'VERIFICATION',
       }).catch((error) => console.error('[chat/verificar] no se pudo registrar el consumo de una pasada:', error));
     }

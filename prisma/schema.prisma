@@ -1048,6 +1048,23 @@ model AiModel {
   priceCachedInputPerMToken Decimal? @db.Decimal(12, 6)
   priceOutputPerMToken      Decimal? @db.Decimal(12, 6)
 
+  /// odd/tasks/ahorro-tokens.md (T1): time-of-day pricing. NULL = no schedule,
+  /// exactly today's behavior (flat price, no matter when the call happens).
+  /// Factor applied to the three prices above when the call falls OUTSIDE
+  /// every window in `peakWindowsUtc` (or on a date listed in
+  /// `offPeakDatesUtc`): e.g. 0.5 for DeepSeek's official off-peak discount.
+  priceOffPeakFactor Decimal? @db.Decimal(4, 3)
+  /// Peak windows, in UTC, as a JSON array of
+  /// `{ "weekday": 0-6, "startHour": 0-23, "endHour": 0-23 }` — weekday
+  /// matches `Date.prototype.getUTCDay()` (0 = Sunday), startHour inclusive,
+  /// endHour exclusive. Outside every window (or with no schedule at all) is
+  /// off-peak. Only meaningful when `priceOffPeakFactor` is set.
+  peakWindowsUtc Json?
+  /// Extra dates (UTC, "YYYY-MM-DD") treated as fully off-peak regardless of
+  /// the hour or weekday — e.g. DeepSeek's Chinese public holidays. Only
+  /// meaningful when `priceOffPeakFactor` is set.
+  offPeakDatesUtc Json?
+
   enabled             Boolean @default(true)
   /// Aparece en el selector del docente. DeepSeek va en false: es el respaldo.
   selectableByTeacher Boolean @default(true)

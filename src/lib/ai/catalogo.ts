@@ -3,6 +3,7 @@ import type { AiModel, AiProvider } from '../../generated/prisma/client.ts';
 import { ClaveInvalida, ClaveNoConfigurada, descifrar } from '../crypto/secretos.ts';
 import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
+import { scheduleFromAiModel } from './pricing.ts';
 
 /** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
 type FilaConProveedor = AiModel & { provider: AiProvider };
@@ -109,6 +110,7 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     reasoningEffort: fila.reasoningEffort,
     reasoningParam: fila.reasoningParam,
     precios,
+    schedule: scheduleFromAiModel(fila),
   };
 }
 

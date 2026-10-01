@@ -325,6 +325,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             cachedInputTokens: totales.usage.cachedTokens,
             completionTokens: totales.usage.completionTokens,
             precios: provider.precios,
+            schedule: provider.schedule,
             purpose: 'CORRECTION',
           }).catch((error) =>
             console.error(`[chat/autocorreccion] ronda ${ronda}: no se pudo registrar el consumo:`, error),

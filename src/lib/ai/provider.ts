@@ -1,6 +1,7 @@
 import type { Prisma } from '../../generated/prisma/client.ts';
 import { getEnv } from '../env.ts';
 import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE } from './tools.ts';
+import type { PriceSchedule } from './pricing.ts';
 
 /**
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
@@ -63,6 +64,9 @@ export interface ProviderConfig {
     output: Prisma.Decimal;
     cachedInput: Prisma.Decimal | null;
   } | null;
+  /** odd/tasks/ahorro-tokens.md (T1): `null` = no time-of-day schedule, the
+   *  flat `precios` above always applies (today's behavior). */
+  schedule: PriceSchedule | null;
 }
 
 /**

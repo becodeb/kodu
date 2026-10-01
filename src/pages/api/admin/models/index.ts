@@ -5,7 +5,13 @@ import { Prisma } from '../../../../generated/prisma/client.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { invalidarCatalogo } from '../../../../lib/ai/catalogo.ts';
-import { precioADecimal, serializarMotor, type MotorAdmin } from '../../../../lib/admin/modelos.ts';
+import {
+  horarioDePicoAPrisma,
+  horarioDePicoSchema,
+  precioADecimal,
+  serializarMotor,
+  type MotorAdmin,
+} from '../../../../lib/admin/modelos.ts';
 
 /**
  * `/api/admin/models` — listado y alta del catálogo de motores (design.md §2, §3.1;
@@ -38,6 +44,7 @@ const crearMotorSchema = z.object({
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  ...horarioDePicoSchema,
 });
 
 /** GET /api/admin/models — el listado completo, en el orden configurado. */
@@ -92,6 +99,7 @@ export const POST: APIRoute = async ({ request }) => {
     userTokenLimit: datos.userTokenLimit ?? 0,
     fallbackModelId: datos.fallbackModelId ?? null,
     sortOrder,
+    ...horarioDePicoAPrisma(datos),
   };
 
   try {

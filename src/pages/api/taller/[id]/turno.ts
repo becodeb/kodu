@@ -192,6 +192,7 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
               cachedInputTokens: usage.cachedTokens,
               completionTokens: usage.completionTokens,
               precios: usado.precios,
+              schedule: usado.schedule,
               purpose: 'IDEATION',
             }).catch((error) => console.error('[taller/turno] no se pudo registrar el consumo:', error));
           }
