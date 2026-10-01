@@ -1,0 +1,12 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import TrazasPanel from '../../components/admin/TrazasPanel.tsx';
+import { modelosConTrazas } from '../../lib/admin/trazas.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const modelos = await modelosConTrazas();
+---
+
+<AdminLayout title="Trazas">
+  <TrazasPanel client:load modelos={modelos} />
+</AdminLayout>

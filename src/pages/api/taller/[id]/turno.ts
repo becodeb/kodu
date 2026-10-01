@@ -13,6 +13,7 @@ import {
   type TokenUsage,
 } from '../../../../lib/ai/provider.ts';
 import { recordUsage } from '../../../../lib/ai/usage.ts';
+import { recordAiTrace } from '../../../../lib/ai/trace.ts';
 import { debeTallerDesactivarRazonamiento } from '../../../../lib/taller/razonamiento.ts';
 import { readImageAsDataUrl } from '../../../../lib/uploads.ts';
 import {
@@ -186,6 +187,7 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
         }, HEARTBEAT_MS);
 
         try {
+          const arranque = Date.now();
           const { acumulado, usado, usage } = await pedirRespuesta(
             mensajes,
             motor,
@@ -195,7 +197,7 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
           );
 
           if (usage) {
-            await recordUsage({
+            const registroDeUso = await recordUsage({
               userId: user.id,
               projectId: null,
               aiModelId: usado.id,
@@ -206,7 +208,24 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
               precios: usado.precios,
               schedule: usado.schedule,
               purpose: 'IDEATION',
-            }).catch((error) => console.error('[taller/turno] no se pudo registrar el consumo:', error));
+            }).catch((error) => {
+              console.error('[taller/turno] no se pudo registrar el consumo:', error);
+              return null;
+            });
+
+            // odd/tasks/ahorro-tokens.md (T4): "Taller turns too if cheap" —
+            // reusa exactamente lo que ya se calculó arriba (sin HTML, sin
+            // self-test: el Taller no escribe código).
+            await recordAiTrace({
+              userId: user.id,
+              projectId: null,
+              tokenUsageId: registroDeUso?.id ?? null,
+              turnKind: 'IDEATION',
+              model: usado.model,
+              reasoningEffort: usado.reasoningEffort,
+              requestText: message,
+              durationMs: Date.now() - arranque,
+            });
           }
 
           const { visible, datos, bloqueValido } = separarRespuesta(acumulado);

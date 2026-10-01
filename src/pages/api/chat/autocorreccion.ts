@@ -24,6 +24,7 @@ import {
 } from '../../../lib/ai/verificador.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { recordAiTrace, type EditOutcomeLlamador } from '../../../lib/ai/trace.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
@@ -292,6 +293,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       }, HEARTBEAT_MS);
 
       let codeUpdated = false;
+      const arranque = Date.now();
 
       try {
         // Una sola llamada al MISMO motor, forzada: ya se sabe que hay algo
@@ -344,7 +346,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         if (totales.usage) {
           // Fila PROPIA por ronda (nunca fusionada con la del turno
           // principal): consume el cupo del docente igual que T7/T8.
-          await recordUsage({
+          const registroDeUso = await recordUsage({
             userId: user.id,
             projectId: project.id,
             aiModelId: provider.id,
@@ -356,9 +358,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
             schedule: provider.schedule,
             purpose: 'CORRECTION',
             editMode: editModeAplicado,
-          }).catch((error) =>
-            console.error(`[chat/autocorreccion] ronda ${ronda}: no se pudo registrar el consumo:`, error),
-          );
+          }).catch((error) => {
+            console.error(`[chat/autocorreccion] ronda ${ronda}: no se pudo registrar el consumo:`, error);
+            return null;
+          });
+
+          // odd/tasks/ahorro-tokens.md (T4): no hay un "pedido del docente"
+          // literal acá (la ronda la dispara el self-test, no un mensaje de
+          // chat) — `requestText` describe el disparador en su lugar.
+          // `selfTestPassed` sale de `pruebas` (el checklist T17, si vino);
+          // `selfTestFailed` es `errores.length`, la misma cuenta que ya
+          // loguea la línea de arriba.
+          const editOutcomeTrace: EditOutcomeLlamador = editModeAplicado ?? (htmlFinal ? null : 'failed');
+          await recordAiTrace({
+            userId: user.id,
+            projectId: project.id,
+            tokenUsageId: registroDeUso?.id ?? null,
+            turnKind: 'CORRECTION',
+            model: provider.model,
+            reasoningEffort: provider.reasoningEffort,
+            requestText: `Autocorrección automática (ronda ${ronda}): ${errores.length} error(es) detectado(s) por la autoprueba.`,
+            editOutcome: editOutcomeTrace,
+            htmlCharsBefore: htmlPreCorreccion.length,
+            htmlCharsAfter: htmlFinal ? htmlFinal.length : null,
+            durationMs: Date.now() - arranque,
+            selfTestFailed: errores.length,
+            selfTestPassed: pruebas ? pruebas.filter((p) => p.ok).length : null,
+            correctionRounds: ronda,
+          });
         }
 
         if (htmlFinal) {

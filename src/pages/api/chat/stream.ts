@@ -39,6 +39,8 @@ import {
 } from '../../../lib/ai/checklist.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { recordAiTrace, vincularTrazaAMensaje, aplicarSenalesImplicitas } from '../../../lib/ai/trace.ts';
+import { detectarFraseDefecto } from '../../../lib/feedback/clasificador.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
@@ -358,6 +360,9 @@ async function generarVersionSecundaria(args: {
   temaProyecto: TemaId | null;
   userId: string;
   projectId: string;
+  /** odd/tasks/ahorro-tokens.md (T4): el pedido del docente que disparó el
+   *  turno de versiones entero — las tres versiones comparten el mismo. */
+  requestText: string;
   signal?: AbortSignal;
 }): Promise<string | null> {
   let primeraPasada: string | null = null;
@@ -380,7 +385,7 @@ async function generarVersionSecundaria(args: {
       }
     }
     if (usage) {
-      await recordUsage({
+      const registroDeUso = await recordUsage({
         userId: args.userId,
         projectId: args.projectId,
         aiModelId: args.provider.id,
@@ -391,9 +396,22 @@ async function generarVersionSecundaria(args: {
         precios: args.provider.precios,
         schedule: args.provider.schedule,
         purpose: 'EXTRA_VERSION',
-      }).catch((error) =>
-        console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
-      );
+      }).catch((error) => {
+        console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error);
+        return null;
+      });
+
+      await recordAiTrace({
+        userId: args.userId,
+        projectId: args.projectId,
+        tokenUsageId: registroDeUso?.id ?? null,
+        turnKind: 'EXTRA_VERSION',
+        model: args.provider.model,
+        reasoningEffort: args.provider.reasoningEffort,
+        requestText: args.requestText,
+        editOutcome: primeraPasada ? 'full' : 'failed',
+        htmlCharsAfter: primeraPasada ? primeraPasada.length : null,
+      });
     }
   } catch (error) {
     console.warn(
@@ -850,6 +868,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
     select: { id: true },
   });
 
+  // odd/tasks/ahorro-tokens.md (T5): señales implícitas (a) y (c), sobre el
+  // turno ANTERIOR que de verdad cerró (la traza más nueva de este proyecto
+  // con un mensaje asociado) — se dispara con el pedido de ESTE turno nuevo,
+  // antes de llamar al motor. Nunca bloquea: ver `aplicarSenalesImplicitas`.
+  void aplicarSenalesImplicitas({
+    projectId: project.id,
+    fraseDefecto: detectarFraseDefecto(message),
+    codeEditedByTeacher: codeEditedByTeacher ?? false,
+  });
+
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...[...history].reverse().map((entry) => ({
@@ -1158,6 +1186,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               temaProyecto,
               userId: user.id,
               projectId: project.id,
+              requestText: message,
               signal: turnoAbort.signal,
             })
               .then((html) => {
@@ -1257,6 +1286,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // tiene que disparar un SEGUNDO reintento si esa recuperación terminó
       // sin código ni problema (el modelo sólo contestó texto, por ejemplo).
       let recuperacionDeEdicionIntentada = false;
+      // odd/tasks/ahorro-tokens.md (T4): para `AiTrace.retries`/`.truncated`
+      // — cuántos re-pedidos automáticos corrieron en este turno (edición
+      // fallida recuperada, o el re-pedido forzado genérico; nunca los dos
+      // a la vez, ver los `if` de más abajo) y si algún tool call llegó
+      // recortado por el streaming.
+      let reintentosRealizados = 0;
+      let huboTruncado = false;
       /**
        * Va en un objeto y no en un `let` suelto porque lo completa `consumir`,
        * que es una función anidada: con una variable suelta, el análisis de
@@ -1319,6 +1355,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               send({ type: 'code', html });
             } else {
               codeProblem = CODE_PROBLEMS[result.reason];
+              if (result.reason === 'truncated') huboTruncado = true;
               send({ type: 'error', message: codeProblem });
             }
           }
@@ -1336,6 +1373,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
             if (!parsed.ok) {
               codeProblem = CODE_PROBLEMS[parsed.reason];
+              if (parsed.reason === 'truncated') huboTruncado = true;
               estadoEdicion.ultimoFallo = { find: '', detalle: codeProblem };
               send({ type: 'error', message: codeProblem });
               continue;
@@ -1400,6 +1438,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           });
 
           recuperacionDeEdicionIntentada = true;
+          reintentosRealizados += 1;
           await consumir(reintentoEdicion);
         }
 
@@ -1430,6 +1469,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
         if (forzar && !generatedHtml && !codeProblem && !recuperacionDeEdicionIntentada) {
           console.warn(`[chat/stream] no aplicó el cambio; se re-pide a los ${transcurrido()}`);
+          reintentosRealizados += 1;
           // T3: el re-pedido forzado es un tool call nuevo de cero.
           reiniciarCodeDelta();
           send({ type: 'notice', message: 'Se quedó a mitad de camino. Se lo vuelvo a pedir…' });
@@ -1491,8 +1531,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
         // Campo por campo y sin spread: `usage` se completa dentro de `consumir`,
         // así que el análisis de flujo de TypeScript lo da por null en este
         // punto y un spread de ahí no compila.
+        // odd/tasks/ahorro-tokens.md (T4): se llena fuera del `if` para que
+        // `recordAiTrace` de más abajo (que SÍ corre aunque no haya `usage`
+        // — un turno puede fallar sin gastar nada medible, y la traza igual
+        // interesa) tenga el `tokenUsageId` cuando corresponda.
+        let registroDeUso: { id: string } | null = null;
         if (totales.usage) {
-          await recordUsage({
+          registroDeUso = await recordUsage({
             userId: user.id,
             projectId: project.id,
             aiModelId: proveedorUsado.id,
@@ -1504,8 +1549,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
             schedule: proveedorUsado.schedule,
             purpose: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
             editMode: editModeAplicado,
-          }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
+          }).catch((error) => {
+            console.error('[chat/stream] no se pudo registrar el consumo:', error);
+            return null;
+          });
         }
+
+        // odd/tasks/ahorro-tokens.md (T4): la traza del turno. `editOutcome`
+        // suma 'failed' cuando SE PIDIÓ un cambio (`forzar`) y, agotados los
+        // reintentos de arriba, el recurso terminó sin código — un caso que
+        // `TokenUsage.editMode` nunca distinguió de "este turno no escribía
+        // código" (ver el comentario de `TraceEditOutcome` en el schema).
+        const traza = await recordAiTrace({
+          userId: user.id,
+          projectId: project.id,
+          tokenUsageId: registroDeUso?.id ?? null,
+          turnKind: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
+          model: proveedorUsado.model,
+          reasoningEffort: proveedorUsado.reasoningEffort,
+          requestText: message,
+          editOutcome: editModeAplicado ?? (forzar && !generatedHtml ? 'failed' : null),
+          retries: reintentosRealizados,
+          truncated: huboTruncado,
+          htmlCharsBefore: htmlAlInicioDelTurno.length,
+          htmlCharsAfter: generatedHtml ? generatedHtml.length : null,
+          durationMs: Date.now() - arranque,
+          considerarPreguntaFeedback: true,
+          esPrimeraGeneracion: recursoInicial,
+        });
 
         /**
          * T9: se espera a que la 2 y la 3 terminen (o se descarten solas)
@@ -1679,12 +1750,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
             }
           }
 
+          // odd/tasks/ahorro-tokens.md (T4): se vincula la traza recién
+          // creada (más arriba, antes de que este mensaje existiera) a ESTE
+          // mensaje — nunca bloquea, mismo criterio que todo lo demás acá.
+          if (traza) void vincularTrazaAMensaje(traza.id, saved.id);
+
           send({
             type: 'done',
             messageId: saved.id,
             userMessageId: mensajeDocenteGuardado.id,
             codeUpdated: Boolean(generatedHtml),
             content: finalText,
+            // odd/tasks/ahorro-tokens.md (T5): la pregunta inline decidida
+            // para este turno ('FUNCIONA' | 'VISUAL'), o nada si no
+            // correspondía una — ver `decidirPreguntaFeedback`.
+            ...(traza?.preguntaFeedback ? { feedbackPrompt: traza.preguntaFeedback } : {}),
           });
         } catch (error) {
           console.error('[chat/stream] no se pudo persistir el turno:', error);

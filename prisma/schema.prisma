@@ -68,6 +68,8 @@ model Organization {
   license       OrganizationLicense?
   /// Pagos institucionales de esta organización (T1/T4).
   payments      Payment[]
+  /// odd/tasks/ahorro-tokens.md (T4): back-relation de AiTrace.organization.
+  aiTraces      AiTrace[]
 
   @@index([parentId])
 }
@@ -448,39 +450,39 @@ enum PaymentProvider {
 /// hace cumplir en la base (mismo criterio que el CHECK de `AppSettings.id`:
 /// no se puede expresar en `schema.prisma`, se agrega a mano en el SQL).
 model Payment {
-  id                       String                  @id @default(uuid())
-  organizationId           String?
-  organization             Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
-  organizationLicenseId    String?
-  organizationLicense      OrganizationLicense?    @relation(fields: [organizationLicenseId], references: [id], onDelete: SetNull)
-  userId                   String?
-  user                     User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  individualSubscriptionId String?
-  individualSubscription   IndividualSubscription? @relation(fields: [individualSubscriptionId], references: [id], onDelete: SetNull)
-  amountArs                Decimal                 @db.Decimal(12, 2)
-  status                   PaymentStatus           @default(PENDING)
-  provider                 PaymentProvider
+  id                            String                  @id @default(uuid())
+  organizationId                String?
+  organization                  Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  organizationLicenseId         String?
+  organizationLicense           OrganizationLicense?    @relation(fields: [organizationLicenseId], references: [id], onDelete: SetNull)
+  userId                        String?
+  user                          User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  individualSubscriptionId      String?
+  individualSubscription        IndividualSubscription? @relation(fields: [individualSubscriptionId], references: [id], onDelete: SetNull)
+  amountArs                     Decimal                 @db.Decimal(12, 2)
+  status                        PaymentStatus           @default(PENDING)
+  provider                      PaymentProvider
   /// Id del pago/orden del lado del proveedor. Único: es la clave de
   /// idempotencia del webhook (design.md: "nunca se confía en el cuerpo del
   /// webhook; se relee el recurso en el proveedor" — este id es lo que se usa
   /// para releerlo). `null` sólo mientras el adaptador simulado no lo asignó
   /// todavía.
-  providerPaymentId        String?                 @unique
+  providerPaymentId             String?                 @unique
   /// Qué período cubre este cobro (coincide con lo que calcula
   /// `src/lib/billing/ciclo.ts#firstCharge` para el primer cobro de una
   /// licencia institucional).
-  periodStart              DateTime
-  periodEnd                DateTime
+  periodStart                   DateTime
+  periodEnd                     DateTime
   /// El estado crudo tal cual lo devolvió el proveedor, para diagnóstico —
   /// `status` es la traducción normalizada que usa el resto del código.
-  rawStatus                String?
+  rawStatus                     String?
   /// odd/tasks/planes-y-cobros.md (T4): el intervalo elegido AL CONTRATAR
   /// ('MONTHLY'/'CYCLE' institucional, 'MONTHLY'/'ANNUAL' individual),
   /// snapshot de texto (no un enum: los dos catálogos de intervalo son
   /// distintos y esta columna sirve para los dos). Sólo hace falta en el
   /// checkout ROW original (el primer cobro) — `aplicar.ts` lo lee para
   /// saber cómo armar el período; en una renovación se copia del padre.
-  intervalSnapshot         String?
+  intervalSnapshot              String?
   /// SÓLO para el primer checkout INDIVIDUAL (T4): el id de la
   /// `preapproval` del lado del proveedor, guardado acá porque todavía no
   /// existe ninguna `IndividualSubscription` en la que guardarlo — recién se
@@ -491,13 +493,13 @@ model Payment {
   /// T4, arrepentimiento (10 días): marcado cuando hace falta que el
   /// superadmin (T7) devuelva este pago a mano — el puerto `PaymentGateway`
   /// de este cambio no expone un método de reintegro automático.
-  refundRequested          Boolean                 @default(false)
+  refundRequested               Boolean                 @default(false)
   /// odd/tasks/planes-y-cobros.md (T7): cuándo el superadmin marcó hecho el
   /// reintegro manual pedido por `refundRequested`. `null` = todavía
   /// pendiente (sólo tiene sentido si `refundRequested` es `true`).
-  refundedAt               DateTime?
-  createdAt                DateTime                @default(now())
-  updatedAt                DateTime                @updatedAt
+  refundedAt                    DateTime?
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
 
   invoice Invoice?
 
@@ -529,25 +531,25 @@ enum OrgIvaCondition {
 /// sola opción a propósito: el día que el dueño deje de ser monotributista y
 /// pueda emitir Factura A/B, no hace falta una migración de esquema.
 model Invoice {
-  id                 String        @id @default(uuid())
-  paymentId          String        @unique
-  payment            Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
-  type               String        @default("C")
-  pointOfSale        Int
+  id                     String        @id @default(uuid())
+  paymentId              String        @unique
+  payment                Payment       @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  type                   String        @default("C")
+  pointOfSale            Int
   /// `null` hasta que ARCA (o el adaptador simulado) la emite.
-  number             Int?
-  cae                String?
-  caeDueDate         DateTime?
-  status             InvoiceStatus @default(PENDING)
+  number                 Int?
+  cae                    String?
+  caeDueDate             DateTime?
+  status                 InvoiceStatus @default(PENDING)
   /// Cuántas veces se reintentó emitirla (design.md: "reintento si ARCA
   /// falla", T8).
-  attempts           Int           @default(0)
-  lastError          String?
+  attempts               Int           @default(0)
+  lastError              String?
   /// Datos del receptor de la Factura C: CUIT/DNI institucional o del
   /// docente individual.
-  recipientDocType   String
-  recipientDocNumber String
-  recipientName      String
+  recipientDocType       String
+  recipientDocNumber     String
+  recipientName          String
   /// `CondicionIVAReceptorId` de WSFEv1 que efectivamente se usó al emitir
   /// (T8) — snapshot numérico, no se recalcula si la condición del receptor
   /// cambia después. `null` mientras no se emitió.
@@ -555,9 +557,9 @@ model Invoice {
   /// Cuándo se mandó el mail con el resumen (T8, sólo si Resend está
   /// configurado) — idempotencia del envío: nunca se manda dos veces para la
   /// misma factura.
-  emailedAt          DateTime?
-  createdAt          DateTime      @default(now())
-  updatedAt          DateTime      @updatedAt
+  emailedAt              DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
 }
 
 /// De dónde salió un movimiento del libro de créditos de un docente
@@ -629,7 +631,7 @@ model CreditLedgerEntry {
 /// cobro recurrente es un pago distinto, todos con el mismo
 /// `externalReference`).
 model PagoSimulado {
-  id                String   @id @default(uuid())
+  id                String         @id @default(uuid())
   /// 'SUBSCRIPTION' (institución u individual, admite renovaciones) u
   /// 'ONE_TIME' (un solo pago, sin renovación — hoy sin uso real de T4, pero
   /// el puerto lo contempla).
@@ -639,9 +641,9 @@ model PagoSimulado {
   /// `external_reference` en Mercado Pago.
   externalReference String
   concept           String
-  amountArs         Decimal  @db.Decimal(12, 2)
+  amountArs         Decimal        @db.Decimal(12, 2)
   /// 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'.
-  status            String   @default("PENDING")
+  status            String         @default("PENDING")
   payerEmail        String
   /// A dónde redirige la página simulada tras aprobar/rechazar.
   backUrl           String
@@ -731,6 +733,14 @@ model User {
   /// Libro de créditos de esta cuenta (T1/T2). Sólo tiene filas una cuenta
   /// personal: las organizaciones no tienen créditos (decisión del dueño).
   creditLedgerEntries              CreditLedgerEntry[]
+  /// odd/tasks/ahorro-tokens.md (T5): "No preguntar más" de la pregunta
+  /// inline de feedback. Por cuenta, no por proyecto — una vez que el
+  /// docente lo pide, ninguna pregunta inline se le vuelve a mostrar en
+  /// ningún recurso. El rating de caritas y el texto corto de "¿Qué falló?"
+  /// NO se apagan con esto (son un tap, nunca interrumpen).
+  feedbackPromptsDisabled          Boolean                    @default(false)
+  /// odd/tasks/ahorro-tokens.md (T4): back-relation de AiTrace.user.
+  aiTraces                         AiTrace[]
 
   @@index([organizationId])
 }
@@ -741,21 +751,21 @@ model User {
 /// y en pocos lugares por request — ver la justificacion completa en
 /// design.md.
 model AppSettings {
-  id                 Int      @id @default(1) // CHECK (id = 1) en la migracion: jamas una segunda fila.
-  demoEnabled        Boolean  @default(false)
-  demoTokenLimit     Int      @default(200000)
-  demoCycleStartedAt DateTime @default(now())
+  id                   Int      @id @default(1) // CHECK (id = 1) en la migracion: jamas una segunda fila.
+  demoEnabled          Boolean  @default(false)
+  demoTokenLimit       Int      @default(200000)
+  demoCycleStartedAt   DateTime @default(now())
   /// odd/tasks/generacion-simple-y-reanudable.md: el único interruptor de
   /// "capa 1" que sobrevivió a la baja de modo prime — ver
   /// `src/lib/ai/capacidades.ts`.
-  versionsForAll     Boolean  @default(false)
+  versionsForAll       Boolean  @default(false)
   /// odd/tasks/ahorro-tokens.md (T3a): interruptor global de edición por
   /// fragmentos (`edit_resource_code`) en turnos de ajuste/autocorrección.
   /// Default `true` en código (para una fila NUEVA), pero la migración que
   /// agrega esta columna la deja en `false` en toda base existente — se
   /// prende a mano desde `/admin/generacion` recién después de medir T3b.
   fragmentEditsEnabled Boolean  @default(true)
-  updatedAt          DateTime @updatedAt
+  updatedAt            DateTime @updatedAt
 }
 
 /// odd/tasks/organizaciones.md (T1): enum `UsagePurpose` — para qué fue cada
@@ -842,6 +852,11 @@ model TokenUsage {
   /// `USAGE` referencia este turno (débito del costo real, sólo para cuentas
   /// personales). Back-relation de CreditLedgerEntry.tokenUsage.
   creditLedgerEntries      CreditLedgerEntry[]
+  /// odd/tasks/ahorro-tokens.md (T4): la traza del turno que esta fila
+  /// facturó, si se pudo registrar. 1:1 opcional, FK del lado de AiTrace
+  /// (`tokenUsageId` es `@unique` ahí) — esta fila ya existe (`recordUsage`
+  /// la crea primero) cuando `recordAiTrace` arma la traza y la referencia.
+  aiTrace                  AiTrace?
 
   @@index([userId, provider])
   @@index([createdAt])
@@ -850,54 +865,198 @@ model TokenUsage {
   @@index([organizationId, createdAt])
 }
 
+/// odd/tasks/ahorro-tokens.md (T4): una fila por turno de IA que tocó (o
+/// intentó tocar) un recurso — generación, ajuste, corrección automática,
+/// versión extra, verificación, y Taller de ideas. Complementa a
+/// `TokenUsage` (que ya tiene motor/tokens/costo — acá nunca se duplican,
+/// se leen por el join de `tokenUsageId`) con todo lo que un docente o el
+/// dueño necesitan para entender QUÉ pasó en ese turno: el pedido en texto,
+/// cómo se escribió el código, cuántos reintentos, si se truncó, cuánto
+/// cambió el HTML, cuánto tardó, y el resultado del self-test/corrección/
+/// verificador cuando corrieron. Nunca guarda el HTML en sí (sólo largos).
+///
+/// La escritura es SIEMPRE best-effort (`recordAiTrace`, `src/lib/ai/
+/// trace.ts`): una falla acá nunca puede tirar abajo un turno que ya
+/// terminó bien para el docente.
+///
+/// T5 (feedback del docente) cuelga de la MISMA fila en vez de una tabla
+/// aparte: son datos chicos, sparse, del mismo turno, y el export de T4 los
+/// necesita juntos de cualquier manera — separarlos sólo agregaría un join
+/// más sin ganar nada.
+model AiTrace {
+  id                        String            @id @default(uuid())
+  tokenUsageId              String?           @unique
+  tokenUsage                TokenUsage?       @relation(fields: [tokenUsageId], references: [id], onDelete: SetNull)
+  projectId                 String?
+  project                   Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  /// El mensaje "assistant" que cerró este turno, cuando lo hay (el Taller
+  /// de ideas no tiene `ChatMessage` de recurso). Se completa con un UPDATE
+  /// chico apenas ese mensaje se persiste — ver stream.ts, que llama a
+  /// `recordAiTrace` ANTES de guardar el mensaje (necesita el costo ya
+  /// calculado para decidir si re-pedir, mismo orden que `recordUsage`
+  /// siempre tuvo).
+  chatMessageId             String?           @unique
+  chatMessage               ChatMessage?      @relation(fields: [chatMessageId], references: [id], onDelete: SetNull)
+  userId                    String
+  user                      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// La sede del docente AL MOMENTO del turno (mismo criterio "congelado"
+  /// que `TokenUsage.organizationId`). `NULL` = cuenta personal.
+  organizationId            String?
+  organization              Organization?     @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// Plan de la cuenta al momento del turno: 'FREE' | 'INDIVIDUAL' | 'ORG'
+  /// (`src/lib/ai/trace.ts#resolverPlanDeCuenta`). Guardado como texto y no
+  /// enum a propósito: es un snapshot de lectura para el export, no un
+  /// estado que algo más consulta o valida.
+  planAtCall                String
+  /// Para qué fue este turno. Reusa `UsagePurpose` (el mismo vocabulario que
+  /// `TokenUsage.purpose`) — nunca tiene sentido que discrepen, porque
+  /// siempre nacen del mismo `recordUsage`/sitio de llamada.
+  turnKind                  UsagePurpose
+  model                     String
+  reasoningEffort           String?
+  /// El pedido del docente en texto plano, tal cual lo escribió. Es
+  /// justamente lo que el export de T4 necesita exportar (decisión del
+  /// dueño) — nunca se trunca ni se resume acá.
+  requestText               String
+  editOutcome               TraceEditOutcome?
+  /// Reintentos automáticos DENTRO de este mismo turno (rescate de HTML en
+  /// el texto, re-pedido forzado, recuperación de una edición fallida).
+  retries                   Int               @default(0)
+  /// Si algún tool call de este turno llegó recortado (streaming cortado a
+  /// mitad del JSON) — `event.truncated` en stream.ts/autocorreccion.ts.
+  truncated                 Boolean           @default(false)
+  htmlCharsBefore           Int?
+  htmlCharsAfter            Int?
+  durationMs                Int?
+  /// Resultado de `__koduPruebas`/post-checks, cuando ese turno disparó la
+  /// autoprueba del navegador antes de esta traza existir (CORRECTION).
+  selfTestPassed            Int?
+  selfTestFailed            Int?
+  /// En qué ronda de autocorrección automática está este turno (1 o 2,
+  /// `odd/tasks/arnes-robustez.md` T12). `NULL` fuera de CORRECTION.
+  correctionRounds          Int?
+  /// Cantidad de hallazgos del verificador (`VERIFICATION`), después de
+  /// combinar las pasadas (`unirPasadas`). `NULL` si no corrió o ninguna
+  /// pasada dio un JSON parseable.
+  verifierFindings          Int?
+  /// odd/tasks/ahorro-tokens.md (T5): la carita que el docente tocó bajo
+  /// esta respuesta. Un segundo tap la cambia; otro tap sobre la misma la
+  /// borra (`NULL` de nuevo) — nunca un tercer estado "neutral forzado".
+  faceRating                FaceRating?
+  /// El texto corto y opcional de "¿Qué falló?", sólo ofrecido después de
+  /// una carita mala. Puede quedar `NULL` aunque `faceRating = BAD` — es
+  /// ignorable por diseño.
+  faceRatingComment         String?
+  faceRatingAt              DateTime?
+  /// La pregunta inline de T5 que se decidió mostrar junto a ESTE turno
+  /// ('FUNCIONA' | 'VISUAL'), si `decidirPreguntaFeedback` resolvió
+  /// mostrar una. `NULL` = no se le mostró ninguna en este turno.
+  inlineQuestionKind        String?
+  /// La respuesta de un tap ('SI' | 'MAS_O_MENOS' | 'NO'), o `NULL`
+  /// mientras sigue sin responder/descartada.
+  inlineQuestionAnswer      String?
+  inlineQuestionAt          DateTime?
+  /// Señal implícita (a): el PRÓXIMO mensaje del docente sobre el mismo
+  /// recurso matcheó una frase de defecto ("no funciona", "no anda", ...) —
+  /// `src/lib/feedback/clasificador.ts`.
+  suspectedDefect           Boolean           @default(false)
+  suspectedDefectPhrase     String?
+  /// Señal implícita (b): el docente deshizo este turno
+  /// (`POST /api/projects/[id]/undo`).
+  undoneSignal              Boolean           @default(false)
+  /// Señal implícita (c): el docente editó el código a mano DESPUÉS de este
+  /// turno y ANTES del turno siguiente (el mismo `codeEditedByTeacher` que
+  /// ya viaja en `/api/chat/stream`, ver Workspace.tsx).
+  codeEditedByTeacherSignal Boolean           @default(false)
+  createdAt                 DateTime          @default(now())
+
+  @@index([createdAt])
+  @@index([projectId])
+  @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+/// odd/tasks/ahorro-tokens.md (T4): resultado de aplicar el código de un
+/// turno. 'FAILED' es el único valor sin equivalente en `TokenUsage.
+/// EditMode` — ese enum nunca distinguió "se intentó y no se pudo" de "este
+/// turno no escribía código"; acá sí hace falta para el export (un turno
+/// que falló del todo no es lo mismo que una consulta sin cambios).
+enum TraceEditOutcome {
+  FULL
+  FRAGMENTS
+  FRAGMENTS_FALLBACK
+  FAILED
+}
+
+/// odd/tasks/ahorro-tokens.md (T5): la carita de feedback bajo una
+/// respuesta de la IA.
+enum FaceRating {
+  GOOD
+  NEUTRAL
+  BAD
+}
+
 model Project {
-  id                String            @id @default(uuid())
-  title             String            @default("Nuevo Recurso")
-  description       String?
-  slug              String            @unique
-  currentHtml       String            @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
-  screenshotUrl     String?
+  id                     String            @id @default(uuid())
+  title                  String            @default("Nuevo Recurso")
+  description            String?
+  slug                   String            @unique
+  currentHtml            String            @default("<!DOCTYPE html><html><head><meta charset='UTF-8'><script src='https://cdn.tailwindcss.com'></script></head><body class='p-6 text-center text-gray-700 font-sans'><p>Tu recurso aparecerá acá...</p></body></html>")
+  screenshotUrl          String?
   /// Cuando se saco la portada vigente. Se compara contra `updatedAt` para
   /// saber si quedo vieja (ver design.md §6 de publicacion-likes-y-motores).
   /// NULL = portada sacada antes de que esta columna existiera; se trata
   /// como FRESCA, nunca como vieja.
-  screenshotAt      DateTime?
-  isInGallery       Boolean           @default(false)
+  screenshotAt           DateTime?
+  isInGallery            Boolean           @default(false)
   /// dato historico, no leer: reemplazado por aiModelId (ver AiModel).
-  selectedModel     ModelChoice       @default(MINIMAX)
-  aiModelId         String?
-  aiModel           AiModel?          @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
-  userId            String
-  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selectedModel          ModelChoice       @default(MINIMAX)
+  aiModelId              String?
+  aiModel                AiModel?          @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+  userId                 String
+  user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Marca los recursos creados por la cuenta compartida de demo (design.md
   /// #8): habilita el purgado masivo desde /admin/demo sin rozar nada de
   /// docentes reales.
-  createdByDemo     Boolean           @default(false)
+  createdByDemo          Boolean           @default(false)
   /// odd/tasks/generacion-simple-y-reanudable.md (T2): opt-in per project for
   /// "3 versions per request", off by default. Only takes effect when
   /// `AppSettings.versionsForAll` is also on — see
   /// `src/lib/ai/versiones.ts`/`capacidades.ts`.
-  versionsEnabled   Boolean           @default(false)
-  threads           ChatThread[]
-  assets            ProjectAsset[]
-  tokenUsage        TokenUsage[]
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  versionsEnabled        Boolean           @default(false)
+  threads                ChatThread[]
+  assets                 ProjectAsset[]
+  tokenUsage             TokenUsage[]
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
   /// M8 (design.md #7): último admin que actuó sobre este recurso sin ser
   /// su dueño, y cuándo. Un puntero simple, no un historial — se
   /// sobrescribe en cada mutación hecha por un admin en nombre de otro
   /// docente. NULL mientras el dueño es el único que lo tocó.
-  lastAdminActorId  String?
-  lastAdminActor    User?             @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
-  lastAdminActionAt DateTime?
-  likes             ProjectLike[]
+  lastAdminActorId       String?
+  lastAdminActor         User?             @relation("ProjectLastAdminActor", fields: [lastAdminActorId], references: [id], onDelete: SetNull)
+  lastAdminActionAt      DateTime?
+  likes                  ProjectLike[]
   /// T4 ("Deshacer cambios de la IA"): instantáneas
   /// para volver atrás, podadas a las 20 más nuevas por stream.ts.
   /// Back-relation de ProjectSnapshot.project.
-  snapshots         ProjectSnapshot[]
+  snapshots              ProjectSnapshot[]
   /// odd/tasks/taller-de-ideas.md: la charla del Taller de ideas de la que
   /// salió este recurso, si salió de una. Back-relation de IdeaSession.project.
-  ideaSession       IdeaSession?
+  ideaSession            IdeaSession?
+  /// odd/tasks/ahorro-tokens.md (T4): back-relation de AiTrace.project.
+  aiTraces               AiTrace[]
+  /// odd/tasks/ahorro-tokens.md (T5): cuántos turnos que cambiaron el
+  /// recurso (GENERATION/ADJUSTMENT con resultado aplicado) pasaron desde
+  /// la última pregunta inline de feedback que se mostró en este proyecto.
+  /// Se resetea a 0 cada vez que se muestra una (`decidirPreguntaFeedback`,
+  /// `src/lib/feedback/frecuencia.ts`); nunca cuenta turnos que no
+  /// cambiaron nada (consulta sin código, turno fallido).
+  feedbackTurnsSinceAsk  Int               @default(0)
+  /// odd/tasks/ahorro-tokens.md (T5): la última pregunta mostrada en este
+  /// proyecto ('FUNCIONA' | 'VISUAL'), para alternar — `NULL` = todavía
+  /// ninguna (la primera siempre es 'FUNCIONA', ver `frecuencia.ts`).
+  lastFeedbackPromptKind String?
 
   @@index([userId])
   @@index([isInGallery, updatedAt])
@@ -1082,11 +1241,11 @@ model AiModel {
   /// matches `Date.prototype.getUTCDay()` (0 = Sunday), startHour inclusive,
   /// endHour exclusive. Outside every window (or with no schedule at all) is
   /// off-peak. Only meaningful when `priceOffPeakFactor` is set.
-  peakWindowsUtc Json?
+  peakWindowsUtc     Json?
   /// Extra dates (UTC, "YYYY-MM-DD") treated as fully off-peak regardless of
   /// the hour or weekday — e.g. DeepSeek's Chinese public holidays. Only
   /// meaningful when `priceOffPeakFactor` is set.
-  offPeakDatesUtc Json?
+  offPeakDatesUtc    Json?
 
   enabled             Boolean @default(true)
   /// Aparece en el selector del docente. DeepSeek va en false: es el respaldo.
@@ -1225,6 +1384,15 @@ model ChatMessage {
   /// camino) queda viejo pasados `POST_CHECKS_CLAIM_STALE_MS` y cualquier
   /// otra pestaña puede reintentar.
   postChecksClaimedAt   DateTime?
+  /// odd/tasks/ahorro-tokens.md (T4): la traza del turno de IA que cerró
+  /// este mensaje "assistant", si se pudo registrar (la escritura de la
+  /// traza es best-effort y nunca bloquea el turno — ver
+  /// `src/lib/ai/trace.ts`). 1:1 opcional, FK del lado de AiTrace
+  /// (`chatMessageId` es `@unique` ahí) porque la traza se crea en el mismo
+  /// `recordUsage`/`recordAiTrace` ANTES de que este mensaje exista todavía
+  /// (se actualiza con el id recién creado un poco después, en el mismo
+  /// request).
+  aiTrace               AiTrace?
 
   @@index([threadId, createdAt])
 }
@@ -1312,7 +1480,7 @@ model ProjectAsset {
 /// mail. `reviewedAt` null = todavía sin contactar (misma convención que
 /// `OrganizationLicense.reviewedAt`).
 model InstitutionLead {
-  id               String    @id @default(uuid())
+  id               String     @id @default(uuid())
   institutionName  String
   contactName      String
   contactEmail     String
@@ -1322,7 +1490,7 @@ model InstitutionLead {
   /// calculadora de matrícula).
   declaredStudents Int?
   message          String?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime   @default(now())
   /// odd/tasks/planes-y-cobros.md (T7): "contactado" no saca al lead de la
   /// cola (`reviewedAt` sigue null) — sólo lo anota; "cerrado" sí la saca
   /// (pone `reviewedAt`), con el mismo criterio que ya usaba T5/revision.ts.

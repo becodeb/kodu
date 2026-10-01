@@ -244,9 +244,16 @@ async function forNewResourceHeredado(projectId: string | null, userId: string):
   return ultima?.forNewResource ?? null;
 }
 
-export async function recordUsage(record: UsageRecord): Promise<void> {
+/**
+ * odd/tasks/ahorro-tokens.md (T4): devuelve `{ id }` de la fila creada (o
+ * `null` si el turno no gastó nada y no se registró) para que el llamador
+ * pueda vincular una `AiTrace` a ESTA fila puntual (`recordAiTrace`,
+ * `src/lib/ai/trace.ts`) sin que `recordUsage` tenga que saber nada de
+ * trazas — se mantiene con una sola responsabilidad.
+ */
+export async function recordUsage(record: UsageRecord): Promise<{ id: string } | null> {
   // Un turno que no gastó nada no se registra: ensucia la tabla y no aporta.
-  if (record.promptTokens <= 0 && record.completionTokens <= 0) return;
+  if (record.promptTokens <= 0 && record.completionTokens <= 0) return null;
 
   // odd/tasks/ahorro-tokens.md (T1): el precio REALMENTE vigente a esta hora,
   // no el de pico siempre. Sin `schedule` (motor sin horario configurado)
@@ -313,6 +320,8 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       }
     }
   }
+
+  return { id: fila.id };
 }
 
 /** Tokens acumulados por un usuario en UN motor puntual (prompt + respuesta). */
