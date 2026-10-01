@@ -46,6 +46,13 @@ export default defineConfig({
       // Los bind mounts de Docker en Windows/macOS no propagan eventos de FS.
       watch: process.env.CHOKIDAR_USEPOLLING === 'true' ? { usePolling: true } : undefined,
       fs: { allow: [projectRoot, realNodeModules] },
+      // odd/tasks/planes-y-cobros.md (T4c): Vite rechaza con 403 cualquier
+      // `Host` que no sea localhost — necesario para exponer el dev server a
+      // través de un túnel (cloudflared) y que el webhook de Mercado Pago
+      // llegue de verdad. Sin `VITE_ALLOWED_HOSTS` el comportamiento no
+      // cambia (undefined = sólo localhost, como siempre); nunca se carga en
+      // producción (no hace falta: ahí no hay dev server de Vite).
+      allowedHosts: process.env.VITE_ALLOWED_HOSTS ? process.env.VITE_ALLOWED_HOSTS.split(',') : undefined,
     },
   },
 });
