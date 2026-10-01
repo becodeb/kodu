@@ -1,0 +1,104 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import AltaInstitucionForm from '../../components/instituciones/AltaInstitucionForm.tsx';
+import LeadInstitucionForm from '../../components/instituciones/LeadInstitucionForm.tsx';
+import { emailDomain } from '../../lib/auth/domains.ts';
+import { isPublicEmailDomain } from '../../lib/billing/dominios.ts';
+import { emailConfiable } from '../../lib/orgs/membresia.ts';
+import { nextSeguro } from '../../lib/http.ts';
+import { prisma } from '../../lib/db.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T5): "Probá 30 días gratis" — alta de
+ * institución por cuenta propia. Página AFUERA de `PROTECTED_PAGE_PREFIXES`
+ * (ver middleware.ts): sin sesión muestra su propio cartel con el link a
+ * registro/login (con `next` de vuelta acá, incluido `?alumnos=`), en vez de
+ * un redirect ciego — decisión de esta tarea, distinta de `/app` y `/org`.
+ */
+
+const aquiMismo = Astro.url.pathname + Astro.url.search;
+const safeNext = nextSeguro(aquiMismo) ?? '/instituciones/alta';
+
+const user = Astro.locals.user;
+const alumnosPrefill = Astro.url.searchParams.get('alumnos');
+
+let fila: { email: string; emailVerifiedAt: Date | null; organizationId: string | null } | null = null;
+if (user) {
+  fila = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { email: true, emailVerifiedAt: true, organizationId: true },
+  });
+}
+
+const dominioPropio = fila ? emailDomain(fila.email) : null;
+const dominioEsPublico = dominioPropio ? isPublicEmailDomain(dominioPropio) : false;
+const emailSinConfirmar = fila ? !emailConfiable(fila) : false;
+---
+
+<BaseLayout title="Dar de alta tu institución">
+  <div class="mx-auto max-w-2xl py-8">
+    <h1 class="font-display text-2xl font-bold text-ink-900">Probá Kodu 30 días gratis</h1>
+    <p class="mt-1 mb-6 text-sm text-ink-500">
+      Sin tarjeta. Elegí tu matrícula, armá tus dominios y empezá a usar Kodu hoy mismo.
+    </p>
+
+    {
+      !user ? (
+        <div class="kodu-card p-6 text-center">
+          <h2 class="font-display text-lg font-bold text-ink-900">Entrá primero</h2>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Para dar de alta tu institución, creá tu cuenta o ingresá con tu email institucional.
+            Te traemos de vuelta acá.
+          </p>
+          <div class="mt-5 flex flex-wrap justify-center gap-3">
+            <a href={`/register?next=${encodeURIComponent(safeNext)}`} class="kodu-btn kodu-btn-primary">
+              Crear cuenta
+            </a>
+            <a href={`/login?next=${encodeURIComponent(safeNext)}`} class="kodu-btn kodu-btn-ghost">
+              Ya tengo cuenta
+            </a>
+          </div>
+        </div>
+      ) : fila && fila.organizationId !== null ? (
+        <div class="kodu-card p-6 text-center">
+          <h2 class="font-display text-lg font-bold text-ink-900">Tu cuenta ya pertenece a una institución</h2>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Un docente pertenece a una sola organización. Si necesitás dar de alta otra, escribinos.
+          </p>
+        </div>
+      ) : emailSinConfirmar ? (
+        <div class="kodu-card p-6 text-center">
+          <h2 class="font-display text-lg font-bold text-ink-900">Confirmá tu email primero</h2>
+          <p class="mx-auto mt-3 max-w-md text-sm text-ink-600">
+            Te mandamos un enlace de confirmación. Una vez que lo confirmes, volvé a esta página para
+            dar de alta tu institución.
+          </p>
+        </div>
+      ) : dominioEsPublico ? (
+        <div class="kodu-card p-6">
+          <h2 class="font-display text-lg font-bold text-ink-900">Necesitamos un email institucional</h2>
+          <p class="mt-3 text-sm text-ink-600">
+            Tu cuenta usa <strong>{dominioPropio}</strong>, un correo público. Para dar de alta una
+            institución hace falta un dominio propio (por ejemplo, "@tuescuela.edu.ar"). Si es un caso
+            particular, contanos y lo vemos:
+          </p>
+          <div class="mt-5">
+            <LeadInstitucionForm
+              client:load
+              nombreInicial={user.name}
+              emailInicial={fila?.email ?? user.email}
+            />
+          </div>
+        </div>
+      ) : (
+        <AltaInstitucionForm
+          client:load
+          dominioPropio={dominioPropio ?? ''}
+          alumnosPrefill={alumnosPrefill ?? ''}
+          nombreContacto={user.name}
+          emailContacto={fila?.email ?? user.email}
+        />
+      )
+    }
+  </div>
+</BaseLayout>

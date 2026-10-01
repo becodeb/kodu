@@ -1225,3 +1225,28 @@ model ProjectAsset {
 
   @@index([projectId])
 }
+
+/// odd/tasks/planes-y-cobros.md (T5): un contacto de "Hablemos" — matrícula
+/// declarada por encima del umbral configurado (`BillingSettings.hablemosThresholdStudents`)
+/// desde `/instituciones/alta`, o el formulario de contacto simple que ofrece
+/// esa misma página. Nunca crea una `Organization` ni una `OrganizationLicense`
+/// — queda como fila suelta para que el superadmin (T7) la contacte a mano;
+/// esta tarea sólo guarda el dato y (si Resend está configurado) avisa por
+/// mail. `reviewedAt` null = todavía sin contactar (misma convención que
+/// `OrganizationLicense.reviewedAt`).
+model InstitutionLead {
+  id               String    @id @default(uuid())
+  institutionName  String
+  contactName      String
+  contactEmail     String
+  /// Opcional: el formulario de contacto no lo exige.
+  phone            String?
+  /// Null cuando viene del formulario de contacto simple (no pasó por la
+  /// calculadora de matrícula).
+  declaredStudents Int?
+  message          String?
+  createdAt        DateTime  @default(now())
+  reviewedAt       DateTime?
+
+  @@index([reviewedAt])
+}

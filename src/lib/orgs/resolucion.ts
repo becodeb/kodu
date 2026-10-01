@@ -45,7 +45,15 @@ async function leerSnapshot(): Promise<Snapshot> {
 
   const [emails, dominios, organizaciones, exclusiones] = await Promise.all([
     prisma.organizationAllowedEmail.findMany({ select: { email: true, organizationId: true } }),
-    prisma.organizationDomain.findMany({ select: { pattern: true, organizationId: true } }),
+    // odd/tasks/planes-y-cobros.md (T5): un dominio PENDING (recién agregado
+    // en el alta propia, todavía sin confirmar por el superadmin) no une a
+    // nadie — sólo el del creador queda VERIFIED al instante. Filtrar acá
+    // (y no en `mejorDominioCoincidente`) evita que un PENDING participe
+    // siquiera del "más específico gana" entre comodines.
+    prisma.organizationDomain.findMany({
+      where: { status: 'VERIFIED' },
+      select: { pattern: true, organizationId: true },
+    }),
     prisma.organization.findMany({
       select: { id: true, name: true, kind: true, parentId: true, archivedAt: true },
     }),

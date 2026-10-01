@@ -1,6 +1,7 @@
 ---
 import BaseLayout from './BaseLayout.astro';
 import { hasResendApiKey } from '../lib/env.ts';
+import { colaDeRevision } from '../lib/billing/revision.ts';
 
 /**
  * Cascarón de /admin: encabezado fijo + fila de pestañas horizontal.
@@ -26,6 +27,12 @@ const ruta = Astro.url.pathname;
  * aviso una vez al arrancar el servidor (para quien no entra a /admin).
  */
 const resendApagado = !hasResendApiKey();
+
+// odd/tasks/planes-y-cobros.md (T5): entrada de la cola de revisión en TODA
+// página de /admin (mismo criterio que el aviso de Resend arriba) — altas
+// propias sin confirmar + contactos "Hablemos" sin contactar. Sólo cuenta +
+// lista con link; la pantalla para confirmar dominios/matrícula es T7.
+const cola = await colaDeRevision();
 
 const PESTAÑAS = [
   { href: '/admin/usuarios', etiqueta: 'Docentes' },
@@ -58,6 +65,31 @@ const PESTAÑAS = [
       <div class="mb-6 max-w-2xl rounded-lg border border-brand-300 bg-brand-50 px-4 py-3 text-sm text-brand-700">
         La verificación de email está apagada: falta <code class="font-mono">RESEND_API_KEY</code>. Toda
         cuenta nueva se toma como verificada.
+      </div>
+    )
+  }
+
+  {
+    cola.length > 0 && (
+      <div class="mb-6 max-w-2xl rounded-lg border border-linea bg-sutil px-4 py-3 text-sm">
+        <p class="font-medium text-ink-900">
+          {cola.length} {cola.length === 1 ? 'institución espera' : 'instituciones esperan'} revisión
+        </p>
+        <ul class="mt-2 space-y-1">
+          {cola.slice(0, 5).map((item) => (
+            <li class="text-ink-700">
+              {item.tipo === 'ALTA' ? (
+                <a href={`/admin/organizaciones/${item.organizationId}`} class="text-brand-600 hover:underline">
+                  {item.nombre}
+                </a>
+              ) : (
+                <span>{item.nombre} (Hablemos)</span>
+              )}
+              {item.declaredStudents !== null && <span class="text-ink-500"> · {item.declaredStudents} alumnos</span>}
+            </li>
+          ))}
+        </ul>
+        {cola.length > 5 && <p class="mt-2 text-xs text-ink-500">y {cola.length - 5} más.</p>}
       </div>
     )
   }

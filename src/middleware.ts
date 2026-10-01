@@ -35,6 +35,13 @@ const PROTECTED_API_PREFIXES = [
   '/api/billing/org',
   '/api/billing/individual',
   '/api/billing/pago-simulado',
+  // odd/tasks/planes-y-cobros.md (T5): el alta propia de instituciones exige
+  // `requireFreshUser` (crea una organización + licencia de verdad) — igual
+  // que `/api/billing/*`, necesita que `identityFresh` se calcule en este
+  // mismo request. `/instituciones/alta` (la PÁGINA) queda AFUERA a
+  // propósito: sin sesión muestra su propio cartel de "entrá primero" en vez
+  // de un redirect ciego a /login (decisión de T5).
+  '/api/instituciones',
 ];
 const ADMIN_PAGE_PREFIXES = ['/admin'];
 const ADMIN_API_PREFIXES = ['/api/admin'];
