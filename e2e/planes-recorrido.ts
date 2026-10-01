@@ -207,7 +207,7 @@ async function recorridoIndividual(modelId: string, mock: Awaited<ReturnType<typ
     assert.ok(texto?.includes('Te quedaste sin créditos'), 'la página del recurso debe mostrar el aviso de sin créditos');
   });
 
-  await prueba('individual: /app/plan → "Pasate a Individual" → pago simulado aprobado → Plan Individual + 1.000 créditos + factura', async () => {
+  await prueba('individual: /app/plan → "Pasate a Individual" → pago simulado aprobado → Plan Individual + créditos del plan + factura', async () => {
     await page.goto(`${BASE_URL}/app/plan`);
     const texto1 = await page.textContent('body');
     assert.ok(texto1?.includes('Plan Gratis'), 'antes de pagar debe mostrar "Plan Gratis"');
@@ -228,12 +228,13 @@ async function recorridoIndividual(modelId: string, mock: Awaited<ReturnType<typ
 
     // `otorgarTopeIndividual` (creditos-servicio.ts) completa el otorgamiento
     // de ESTE período hasta `monthlyCredits` de Individual — un "top-up" de
-    // `monthlyCredits - otorgamientoOriginal`, no "sumale 1.000 al saldo
-    // total". Como el paso anterior de este mismo recorrido vació el saldo a
-    // mano (un `ADJUSTMENT` plano, no el vencimiento normal del mes), el
-    // saldo final queda en `monthlyCredits(Individual) - monthlyCredits(Gratis)`,
-    // no en 1.000 — se verifica contra el catálogo real en vez de un número
-    // fijo, para no inventar un invariante que el código no promete.
+    // `monthlyCredits - otorgamientoOriginal`, no "sumale monthlyCredits al
+    // saldo total". Como el paso anterior de este mismo recorrido vació el
+    // saldo a mano (un `ADJUSTMENT` plano, no el vencimiento normal del mes),
+    // el saldo final queda en `monthlyCredits(Individual) - monthlyCredits(Gratis)`
+    // — se verifica contra el catálogo real en vez de un número fijo (T8,
+    // odd/tasks/ahorro-tokens.md, cambió monthlyCredits(Individual) de 1.000
+    // a 2.500), para no inventar un invariante que el código no promete.
     const [planFree, planIndividual] = await Promise.all([
       prisma.individualPlan.findUniqueOrThrow({ where: { key: 'FREE' }, select: { monthlyCredits: true } }),
       prisma.individualPlan.findUniqueOrThrow({ where: { key: 'INDIVIDUAL' }, select: { monthlyCredits: true } }),

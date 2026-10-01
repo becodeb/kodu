@@ -169,7 +169,10 @@ async function seedCatalogoDePrecios(): Promise<void> {
     sortOrder: number;
   }> = [
     { key: 'FREE', name: 'Gratis', monthlyPriceArs: 0, annualPriceArs: null, monthlyCredits: 50, welcomeCredits: 100, sortOrder: 0 },
-    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 1_000, welcomeCredits: 0, sortOrder: 1 },
+    // odd/tasks/ahorro-tokens.md (T8): 1.000 -> 2.500 créditos/mes para que
+    // siga cubriendo USD 2,50 de uso real, a la par de bajar
+    // BillingSettings.creditUsdValue de 0,0025 a 0,001 más abajo.
+    { key: 'INDIVIDUAL', name: 'Individual', monthlyPriceArs: 9_000, annualPriceArs: 90_000, monthlyCredits: 2_500, welcomeCredits: 0, sortOrder: 1 },
   ];
 
   for (const plan of planes) {
@@ -197,7 +200,9 @@ async function seedCatalogoDePrecios(): Promise<void> {
     update: {},
     create: {
       id: 1,
-      creditUsdValue: 0.0025,
+      // odd/tasks/ahorro-tokens.md (T8): 1 crédito = USD 0,001 (antes
+      // 0,0025) — el valor del crédito bajó, no los créditos de bienvenida.
+      creditUsdValue: 0.001,
       trialDays: 30,
       graceDays: 7,
       monotributoAnnualCapArs: null,

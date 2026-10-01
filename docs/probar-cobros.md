@@ -93,7 +93,9 @@ levante y no lo pares vos), todo pasa por `http://localhost:3200`.
    `/app/project/[id]`.
 5. Andá a `/app/plan` → **Pasate a Individual** → te lleva a
    `/pago-simulado/[id]` → **Aprobar pago**. Volvés a `/app/plan` con "Plan Individual",
-   el saldo subido a nivel de 1.000 créditos y la factura emitida (CAE) a la vista.
+   el saldo subido a nivel de 2.500 créditos (T8, `odd/tasks/ahorro-tokens.md`: antes
+   1.000 — bajó `creditUsdValue` de USD 0,0025 a 0,001 y subió `monthlyCredits` de
+   Individual para seguir cubriendo USD 2,50/mes) y la factura emitida (CAE) a la vista.
 6. **Cancelar suscripción** en `/app/plan`: confirmá el diálogo. Seguís viendo "Plan
    Individual" — el acceso no se corta hasta el fin del período que ya pagaste.
 

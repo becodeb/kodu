@@ -5,7 +5,9 @@
  *
  * Semántica elegida para "el otorgamiento mensual no se acumula" (decisión
  * del dueño: "50 por mes (no se acumulan)" en FREE, "1.000 créditos por mes"
- * en Individual) — la RECOMENDADA en el documento de la feature:
+ * en Individual — odd/tasks/ahorro-tokens.md T8 lo subió a 2.500/mes al
+ * bajar `creditUsdValue`, misma cobertura de USD 2,50) — la RECOMENDADA en
+ * el documento de la feature:
  *
  *   En cada mes calendario (hora de Argentina) nuevo, el saldo del
  *   otorgamiento mensual se REPONE a `monthlyCredits`, no se le suma otra
@@ -25,7 +27,8 @@
  */
 
 /** 1 crédito = este costo real en USD (`BillingSettings.creditUsdValue`,
- *  decisión de diseño: 0,0025 por default — configurable). */
+ *  decisión de diseño: USD 0,001 por default desde T8 — era 0,0025 —,
+ *  configurable). */
 export function creditsForCost(costUsd: number, creditUsdValue: number): number {
   if (!(creditUsdValue > 0)) {
     throw new Error('creditUsdValue tiene que ser mayor a 0');
