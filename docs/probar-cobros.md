@@ -219,28 +219,93 @@ Después de cualquiera de estos UPDATE, visitá `/app/plan`, `/org/plan` o gener
 recurso: la reconciliación de estado corre al vuelo en esos caminos (no hace falta
 reiniciar el servidor ni esperar un cron).
 
+## Probado contra el sandbox real (T4c)
+
+Hecho en cuatro fases contra credenciales de PRUEBA reales de Mercado Pago (nunca contra
+producción). Resultado: los cuatro checkouts (individual mensual/anual, institucional
+mensual/ciclo lectivo) funcionan de punta a punta, incluido un cobro recurrente real y la
+cancelación; se encontraron y corrigieron tres bugs reales del adaptador en el camino
+(colchón de `start_date`, lectura de `authorized_payments` en vez de `v1/payments` para
+los cobros recurrentes, y el rediseño de `payer_email` descrito abajo).
+
+**Verificado:**
+
+- Los cuatro tipos de checkout (preapproval individual mensual, Checkout Pro individual
+  anual, preapproval institucional mensual, Checkout Pro institucional por ciclo lectivo)
+  crean el link real y, pagados con una tarjeta de prueba, activan la licencia/suscripción
+  con el período, el monto y la factura (CAE simulado) correctos.
+- Un cobro recurrente real (la segunda vez que Mercado Pago cobra una `preapproval`, vía
+  `GET /authorized_payments/{id}`) **trae el mismo `external_reference`** que el primer
+  cobro de esa misma suscripción — confirma el supuesto que quedaba abierto en T4b.
+- `PUT /preapproval/{id}` con `auto_recurring.transaction_amount` SÍ cambia el monto de
+  una suscripción existente, tanto si se creó con el flujo viejo (`payer_email`) como con
+  el nuevo (`preapproval_plan`) — confirma el otro supuesto de T4b.
+- **El bug real de producción:** `payer_email` (el email de login de Kodu) casi nunca es
+  una cuenta de Mercado Pago, así que un checkout de suscripción institucional fallaba al
+  crearse ("Both payer and collector must be real or test users"). Se resolvió creando un
+  `preapproval_plan` por checkout en vez de un `preapproval` directo — el `init_point` que
+  devuelve ESE endpoint deja que quien paga use cualquier cuenta propia de Mercado Pago,
+  sin que nosotros mandemos ningún email. La contrapartida: esa `preapproval` nunca trae
+  `external_reference`, así que se agregó resolución por `preapproval_plan_id`
+  (`OrganizationLicense.externalPlanId`/`IndividualSubscription.externalPlanId`/
+  `Payment.pendingPlanId`), con protección contra que una segunda `preapproval` reutilice
+  el mismo link de pago (se cancela y se ignora, nunca pisa al primer titular).
+- El webhook real llega en DOS formatos: el nuevo, firmado (`?data.id=…&type=…` +
+  `x-signature`), y el IPN legado (`?topic=…&id=…`, sin firma) — Mercado Pago todavía
+  manda el segundo para Checkout Pro vía `notification_url` por-preferencia. El endpoint
+  procesa los dos por la misma vía seguro-por-relectura (nunca confía en el cuerpo);
+  cuando falta o no valida la firma, loguea los headers (nombres, nunca valores) y aplica
+  un límite de tasa por IP para acotar abuso.
+- Reenviar la MISMA notificación (de cualquiera de los dos formatos) nunca duplica el
+  efecto (`ya_aplicado`/`ya_reclamada`).
+- Cancelar desde `/app/plan` (o el endpoint) cancela la `preapproval` real en Mercado Pago
+  (`status: "cancelled"`, verificado contra la API) y mantiene el acceso hasta el fin del
+  período ya pagado, igual que con el adaptador simulado.
+- Una `preapproval` creada FUERA de la app (sin ningún checkout de Kodu detrás) se ignora
+  de forma segura y logueada, tanto al autorizarse como al generar su primer cobro real —
+  no rompe nada ni confunde a otro checkout.
+
+**Lo que falta (fuera de alcance de esta ronda):**
+
+- Una SEGUNDA renovación real (un segundo cobro mensual consecutivo) — sólo se confirmó
+  el primer cobro recurrente de cada suscripción; falta ver que el tercer/cuarto cobro
+  siga trayendo el mismo `external_reference`/se siga aplicando sin intervención.
+- La primera factura real en producción (ARCA, no el adaptador simulado) — ver T8c más
+  abajo, segunda tarea de esta sección.
+- La UI todavía no pide el "email de Mercado Pago" en ningún checkout — no hace falta,
+  porque el nuevo flujo (`preapproval_plan`) no lo necesita, pero si en el futuro se
+  agrega un checkout que SÍ llama a `POST /preapproval` directo (flujo viejo, todavía
+  soportado para las suscripciones ya existentes), ese problema reaparece para cuentas
+  nuevas que lo usen.
+
+**Cómo repetir esta prueba:**
+
+1. Credenciales de prueba reales en un archivo tipo `~/.credentials/mp-kodu-test.env`
+   (fuera del repo, nunca commiteado) con `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` y los
+   datos del vendedor/comprador de prueba — "Tus integraciones" en el panel de Mercado
+   Pago. Cargarlas con `set -a; . ~/.credentials/mp-kodu-test.env; set +a` antes de
+   levantar el servidor.
+2. Exponer el servidor local con un túnel (`cloudflared tunnel --url http://localhost:3200`
+   u otro) y setear `PUBLIC_SITE_URL` al URL del túnel — así los checkouts de Checkout Pro
+   (pago único) mandan su `notification_url` por-preferencia al servidor local de verdad.
+   El checkout de PREAPPROVAL (suscripción) nunca manda ahí — su notificación va a la URL
+   global configurada en el panel de Mercado Pago (normalmente la de producción), así que
+   para probar ese camino localmente hay que reenviar la notificación a mano (firmada o
+   como IPN legado) al mismo endpoint, con el `MP_WEBHOOK_SECRET` real.
+3. `POST https://api.mercadopago.com/users/test_user` (con el access token del vendedor)
+   crea compradores de prueba nuevos al vuelo — no hace falta quedarse con uno solo.
+4. Levantar el dev server con `BILLING_PROVIDER=mercadopago`, `MP_ACCESS_TOKEN`,
+   `MP_WEBHOOK_SECRET`, `VITE_ALLOWED_HOSTS=<host del túnel>` (nunca en `.env`: todo por
+   variable de entorno en el comando, así no queda nada apuntando al sandbox en el
+   worktree). Dejar `INVOICE_PROVIDER=simulado` salvo que también se esté probando ARCA.
+
 ## Antes de salir a producción
 
-Esto es lo que **todavía no se probó** contra servicios reales — `npm run test:cobros` y
-el paseo manual de arriba sólo cubren los adaptadores `simulado`. `odd/tasks/planes-y-cobros.md`
-deja estas tres tareas abiertas a propósito (T4c, T8b, T8c):
+`npm run test:cobros` y el paseo manual de arriba sólo cubren los adaptadores `simulado`;
+la sección de arriba cubre lo que sí se probó contra el sandbox real de Mercado Pago
+(T4c). `odd/tasks/planes-y-cobros.md` deja estas dos tareas abiertas (T8b, T8c):
 
-1. **Sandbox real de Mercado Pago (T4c).**
-   - Credenciales de prueba del dueño (`MP_ACCESS_TOKEN` de prueba, "Tus integraciones" en
-     el panel de Mercado Pago) y usuarios/tarjetas de prueba del sandbox.
-   - El webhook (`POST /api/billing/mercadopago/webhook` o la ruta que tengas cableada)
-     necesita una URL pública: para probar desde una máquina local, exponela con un túnel
-     como `cloudflared tunnel --url http://localhost:3200` (o `ngrok`) y cargá esa URL en
-     "Tus integraciones → Webhooks" junto con `MP_WEBHOOK_SECRET`.
-   - **Dos supuestos sin confirmar** (de los que depende la renovación del ciclo
-     lectivo/anual, ver T4b):
-     1. Que `PUT /preapproval` efectivamente cambia el monto de una suscripción existente.
-     2. Que cada cobro recurrente de una suscripción trae el MISMO `external_reference`
-        (de ahí depende distinguir "primer cobro" de "renovación" en
-        `src/lib/billing/aplicar.ts`).
-     Probar esto antes de confiar en el camino de renovación contra Mercado Pago real.
-
-2. **Homologación de ARCA (T8c).** Nunca se corrió contra el servicio real de ARCA (ni
+1. **Homologación de ARCA (T8c).** Nunca se corrió contra el servicio real de ARCA (ni
    siquiera homologación) — sólo contra el adaptador `simulado`. Hace falta el
    certificado de homologación del dueño (`ARCA_CERT_PATH`/`ARCA_KEY_PATH` o sus
    variantes `_BASE64`, con `ARCA_ENV="homologacion"`) y correr un alta real para
