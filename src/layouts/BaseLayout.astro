@@ -157,6 +157,15 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
               >
                 Galería
               </a>
+              {/* odd/tasks/planes-y-cobros.md (T6): precios públicos, visible
+                  para todos — con o sin sesión, docente u organización. */}
+              <a
+                href="/precios"
+                class="kodu-nav-link"
+                aria-current={ruta.startsWith('/precios') ? 'page' : undefined}
+              >
+                Precios
+              </a>
               {user && (
                 /* odd/tasks/taller-de-ideas.md: un destino más, no un ajuste. En
                    el celular se achica a "Taller" para que la barra entre. */

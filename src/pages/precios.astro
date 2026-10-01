@@ -1,0 +1,496 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { prisma } from '../lib/db.ts';
+
+/**
+ * odd/tasks/planes-y-cobros.md (T6): página pública de precios. Todos los
+ * números salen del catálogo (`InstitutionalBand`, `IndividualPlan`,
+ * `BillingSettings`) — nada hardcodeado acá ni en el script del cliente, que
+ * sólo hace el MATCH de banda sobre los datos que esta misma página le pasa
+ * en un `<script type="application/json">`. Si el superadmin cambia un
+ * precio, esta página lo refleja en el siguiente render (SSR, sin caché).
+ */
+
+const [bandas, planesIndividuales, settings] = await Promise.all([
+  prisma.institutionalBand.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
+  prisma.individualPlan.findMany({ where: { active: true }, orderBy: { sortOrder: 'asc' } }),
+  prisma.billingSettings.findUniqueOrThrow({ where: { id: 1 } }),
+]);
+
+const bandasData = bandas.map((b) => ({
+  key: b.key,
+  name: b.name,
+  minStudents: b.minStudents,
+  maxStudents: b.maxStudents,
+  monthlyPriceArs: b.monthlyPriceArs.toNumber(),
+  cyclePriceArs: b.cyclePriceArs.toNumber(),
+}));
+
+const free = planesIndividuales.find((p) => p.key === 'FREE') ?? null;
+const individual = planesIndividuales.find((p) => p.key === 'INDIVIDUAL') ?? null;
+
+const datosParaElCliente = {
+  bands: bandasData,
+  hablemosThreshold: settings.hablemosThresholdStudents,
+  individual: individual
+    ? {
+        monthlyPriceArs: individual.monthlyPriceArs.toNumber(),
+        annualPriceArs: individual.annualPriceArs?.toNumber() ?? null,
+        monthlyCredits: individual.monthlyCredits,
+      }
+    : null,
+};
+
+const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+const bulletsInstitucion = [
+  'Docentes ilimitados',
+  'Prueba de 30 días sin tarjeta',
+  'Invitaciones y varios dominios de mail',
+  'Panel para administrar tu institución',
+  'Factura C',
+];
+
+const faqs = [
+  {
+    pregunta: '¿Qué es un crédito?',
+    respuesta:
+      'Es la unidad con la que medimos el costo real de usar la IA. Un recurso nuevo gasta aproximadamente 10 créditos; un ajuste sobre algo que ya existe, entre 2 y 4.',
+  },
+  {
+    pregunta: '¿Qué pasa si me quedo sin créditos?',
+    respuesta:
+      'Dejás de poder generar hasta que se renueven (el plan Gratis suma 50 por mes) o te pasás al plan Individual, que te da 1.000 por mes.',
+  },
+  {
+    pregunta: '¿Cómo cuentan los alumnos de mi institución?',
+    respuesta:
+      'Por la matrícula total: la cantidad de alumnos que tiene tu colegio, o la suma de todas las sedes si sos una red.',
+  },
+  {
+    pregunta: '¿Qué pasa si mi matrícula crece durante el año?',
+    respuesta:
+      'Actualizás tu matrícula declarada desde el panel de tu institución. Si eso te cambia de banda, el precio nuevo se aplica recién desde tu próximo cobro, nunca a mitad de un período ya pago.',
+  },
+  {
+    pregunta: '¿Cómo funciona la prueba de 30 días?',
+    respuesta: 'Arrancás sin tarjeta y usás Kodu con tu institución entera durante 30 días, sin restricciones.',
+  },
+  {
+    pregunta: '¿Qué pasa cuando termina la prueba si no contraté?',
+    respuesta:
+      'Tu institución pasa a modo de sólo lectura: ven lo que ya generaron, pero no pueden crear ni editar hasta que contraten.',
+  },
+  {
+    pregunta: '¿Puedo pagar por transferencia?',
+    respuesta: 'Sí, para instituciones grandes o redes lo coordinamos directo — tocá "Hablemos".',
+  },
+  {
+    pregunta: '¿Emiten factura?',
+    respuesta: 'Sí, Factura C por cada cobro.',
+  },
+  {
+    pregunta: '¿Cómo cancelo?',
+    respuesta:
+      'Desde tu panel, con un botón de cancelar que explica hasta cuándo seguís con acceso. Si pagaste el plan Individual hace menos de 10 días, tenés además un botón de arrepentimiento que te devuelve a Gratis al instante.',
+  },
+  {
+    pregunta: '¿Qué pasa si mi colegio es una red con varias sedes?',
+    respuesta:
+      'Declarás la matrícula total de todas tus sedes y contratás una sola licencia para toda la red, con docentes ilimitados en cada una.',
+  },
+];
+---
+
+<BaseLayout
+  title="Precios"
+  description="Precios simples para docentes y colegios: licencia institucional por matrícula o plan de créditos individual. Prueba de 30 días sin tarjeta."
+  bleed
+>
+  <section class="border-b border-linea bg-superficie">
+    <div class="mx-auto max-w-4xl px-4 py-12 text-center sm:py-16">
+      <h1 class="font-display text-3xl leading-tight tracking-[-0.02em] text-ink-900 uppercase sm:text-5xl">
+        Precios simples para docentes y colegios
+      </h1>
+      <p class="mx-auto mt-4 max-w-xl text-base text-ink-500 sm:text-lg">
+        Un costo fijo si sos una institución, o créditos si venís solo. Sin letra chica.
+      </p>
+
+      <div class="mt-8 inline-flex rounded-lg border border-linea bg-sutil p-1" role="tablist" aria-label="Para quién es el precio">
+        <button type="button" id="tab-instituciones" class="audiencia-tab rounded-md px-4 py-2 text-sm font-semibold" aria-selected="true" role="tab">
+          Para instituciones
+        </button>
+        <button type="button" id="tab-docentes" class="audiencia-tab rounded-md px-4 py-2 text-sm font-semibold" aria-selected="false" role="tab">
+          Para docentes
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Instituciones ───────────────────────── -->
+  <section id="panel-instituciones" class="mx-auto max-w-6xl px-4 py-12">
+    <div class="kodu-card mx-auto max-w-2xl p-5 sm:p-6">
+      <label for="alumnos-input" class="kodu-label">¿Cuántos alumnos tiene tu institución?</label>
+      <div class="flex items-center gap-3">
+        <input
+          id="alumnos-input"
+          type="number"
+          min="1"
+          step="1"
+          value="300"
+          class="kodu-input w-28 shrink-0 text-right tabular-nums"
+        />
+        <input id="alumnos-slider" type="range" min="1" max="2000" step="1" value="300" class="w-full accent-brand-600" />
+      </div>
+      <p class="mt-3 text-sm text-ink-700" id="alumnos-resultado" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="mt-6 flex justify-center">
+      <div class="inline-flex rounded-lg border border-linea bg-sutil p-1">
+        <button type="button" id="tab-mensual" class="intervalo-tab rounded-md px-4 py-2 text-sm font-semibold" aria-pressed="true">
+          Mensual
+        </button>
+        <button type="button" id="tab-ciclo" class="intervalo-tab inline-flex items-center gap-2 rounded-md px-4 py-2 text-sm font-semibold" aria-pressed="false">
+          Ciclo lectivo
+          <span class="rounded-full bg-brand-100 px-2 py-0.5 text-[0.65rem] font-semibold text-brand-700">
+            Pagás 10 meses, usás 12
+          </span>
+        </button>
+      </div>
+    </div>
+
+    <div class="mt-8 grid gap-4 lg:grid-cols-4" id="bandas-grid">
+      {
+        bandasData.map((b, i) => (
+          <div class="kodu-card banda-card flex flex-col p-5" data-band-key={b.key}>
+            {i === 1 && (
+              <span class="mb-2 w-fit rounded-full bg-brand-600 px-2.5 py-0.5 text-[0.7rem] font-semibold text-white">
+                Más elegido
+              </span>
+            )}
+            <h3 class="font-display text-lg text-ink-900">{b.name}</h3>
+            <p class="text-xs text-ink-500">
+              {b.minStudents}
+              {b.maxStudents ? `–${b.maxStudents}` : '+'} alumnos
+            </p>
+            <p class="precio-mensual mt-4 font-display text-3xl text-ink-900">
+              {formateador.format(b.monthlyPriceArs)}
+              <span class="text-sm font-sans font-normal text-ink-500">/mes</span>
+            </p>
+            <p class="precio-ciclo mt-4 hidden font-display text-3xl text-ink-900">
+              {formateador.format(Math.round(b.cyclePriceArs / 12))}
+              <span class="text-sm font-sans font-normal text-ink-500">/mes equiv.</span>
+            </p>
+            <p class="precio-ciclo-total hidden text-xs text-ink-500">
+              {formateador.format(b.cyclePriceArs)} el ciclo completo
+            </p>
+            <ul class="mt-4 flex-1 space-y-1.5 text-sm text-ink-700">
+              {bulletsInstitucion.map((bullet) => (
+                <li class="flex gap-2">
+                  <span class="text-brand-600" aria-hidden="true">✓</span>
+                  {bullet}
+                </li>
+              ))}
+            </ul>
+            <a
+              class="alta-link kodu-btn kodu-btn-primary mt-5 w-full"
+              data-band-key={b.key}
+              href={`/instituciones/alta?alumnos=${b.minStudents}`}
+            >
+              Probá 30 días gratis
+            </a>
+          </div>
+        ))
+      }
+
+      <div class="kodu-card banda-card flex flex-col p-5" data-band-key="HABLEMOS">
+        <h3 class="font-display text-lg text-ink-900">Red o más de 1.500 alumnos</h3>
+        <p class="text-xs text-ink-500">Matrícula grande o varias sedes</p>
+        <p class="mt-4 font-display text-3xl text-ink-900">Hablemos</p>
+        <ul class="mt-4 flex-1 space-y-1.5 text-sm text-ink-700">
+          <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> Precio a medida</li>
+          <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> Varias sedes y dominios</li>
+          <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> Factura C</li>
+        </ul>
+        <a href="/instituciones/alta" class="kodu-btn kodu-btn-ghost mt-5 w-full">Hablemos</a>
+      </div>
+    </div>
+
+    <p class="mx-auto mt-8 max-w-2xl text-center text-sm text-ink-500">
+      El ciclo lectivo va de marzo a febrero. Si arrancás de septiembre a diciembre, lo que queda del año va de
+      regalo; en marzo-agosto pagás sólo la parte proporcional hasta fin de febrero.
+    </p>
+  </section>
+
+  <!-- ───────────────────────── Docentes ───────────────────────── -->
+  <section id="panel-docentes" class="mx-auto hidden max-w-6xl px-4 py-12">
+    {
+      individual && (
+        <div class="mb-6 flex justify-center">
+          <div class="inline-flex rounded-lg border border-linea bg-sutil p-1">
+            <button type="button" id="tab-ind-mensual" class="intervalo-ind-tab rounded-md px-4 py-2 text-sm font-semibold" aria-pressed="true">
+              Mensual
+            </button>
+            {individual.annualPriceArs && (
+              <button type="button" id="tab-ind-anual" class="intervalo-ind-tab rounded-md px-4 py-2 text-sm font-semibold" aria-pressed="false">
+                Anual
+              </button>
+            )}
+          </div>
+        </div>
+      )
+    }
+
+    <div class="mx-auto grid max-w-3xl gap-4 sm:grid-cols-2">
+      {
+        free && (
+          <div class="kodu-card flex flex-col p-5">
+            <h3 class="font-display text-lg text-ink-900">Gratis</h3>
+            <p class="mt-4 font-display text-3xl text-ink-900">$0</p>
+            <ul class="mt-4 flex-1 space-y-1.5 text-sm text-ink-700">
+              <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> {free.welcomeCredits} créditos de bienvenida</li>
+              <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> {free.monthlyCredits} créditos por mes</li>
+            </ul>
+            <a href="/register" class="kodu-btn kodu-btn-ghost mt-5 w-full">Empezá gratis</a>
+          </div>
+        )
+      }
+      {
+        individual && (
+          <div class="kodu-card flex flex-col p-5">
+            <h3 class="font-display text-lg text-ink-900">Individual</h3>
+            <p class="precio-ind-mensual mt-4 font-display text-3xl text-ink-900">
+              {formateador.format(individual.monthlyPriceArs.toNumber())}
+              <span class="text-sm font-sans font-normal text-ink-500">/mes</span>
+            </p>
+            {individual.annualPriceArs && (
+              <p class="precio-ind-anual mt-4 hidden font-display text-3xl text-ink-900">
+                {formateador.format(individual.annualPriceArs.toNumber())}
+                <span class="text-sm font-sans font-normal text-ink-500">/año</span>
+              </p>
+            )}
+            <ul class="mt-4 flex-1 space-y-1.5 text-sm text-ink-700">
+              <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> Todo lo de Gratis, más…</li>
+              <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> {individual.monthlyCredits} créditos por mes</li>
+              <li class="flex gap-2"><span class="text-brand-600" aria-hidden="true">✓</span> Factura C</li>
+            </ul>
+            <a href="/app/plan" class="kodu-btn kodu-btn-primary mt-5 w-full">Pasate a Individual</a>
+          </div>
+        )
+      }
+    </div>
+
+    <p class="mx-auto mt-6 max-w-xl text-center text-sm text-ink-500">
+      1 recurso nuevo ≈ 10 créditos, un ajuste ≈ 2 a 4. Si tu colegio usa Kodu, no necesitás créditos: entrás con el
+      mail de tu institución.
+    </p>
+  </section>
+
+  <!-- ───────────────────────── Comparación ───────────────────────── -->
+  <section class="border-y border-linea bg-lienzo">
+    <div class="mx-auto max-w-5xl px-4 py-12">
+      <h2 class="font-display text-2xl text-ink-900 uppercase">Comparar todo</h2>
+      <div class="mt-6 overflow-x-auto">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead class="border-b border-linea text-xs text-ink-500 uppercase">
+            <tr>
+              <th class="py-2 pr-3 font-medium">Plan</th>
+              <th class="py-2 px-3 font-medium">A quién sirve</th>
+              <th class="py-2 px-3 text-right font-medium">Docentes</th>
+              <th class="py-2 px-3 text-right font-medium">Créditos/mes</th>
+              <th class="py-2 pl-3 text-right font-medium">Factura</th>
+            </tr>
+          </thead>
+          <tbody>
+            {free && (
+              <tr class="border-b border-linea">
+                <td class="py-2 pr-3 text-ink-900">Gratis</td>
+                <td class="py-2 px-3 text-ink-700">Docente individual</td>
+                <td class="py-2 px-3 text-right tabular-nums text-ink-700">1</td>
+                <td class="py-2 px-3 text-right tabular-nums text-ink-700">{free.monthlyCredits}</td>
+                <td class="py-2 pl-3 text-right text-ink-700">—</td>
+              </tr>
+            )}
+            {individual && (
+              <tr class="border-b border-linea">
+                <td class="py-2 pr-3 text-ink-900">Individual</td>
+                <td class="py-2 px-3 text-ink-700">Docente individual</td>
+                <td class="py-2 px-3 text-right tabular-nums text-ink-700">1</td>
+                <td class="py-2 px-3 text-right tabular-nums text-ink-700">{individual.monthlyCredits}</td>
+                <td class="py-2 pl-3 text-right text-ink-700">Factura C</td>
+              </tr>
+            )}
+            {bandasData.map((b) => (
+              <tr class="border-b border-linea last:border-0">
+                <td class="py-2 pr-3 text-ink-900">{b.name}</td>
+                <td class="py-2 px-3 text-ink-700">
+                  Institución ({b.minStudents}
+                  {b.maxStudents ? `–${b.maxStudents}` : '+'} alumnos)
+                </td>
+                <td class="py-2 px-3 text-right tabular-nums text-ink-700">Ilimitados</td>
+                <td class="py-2 px-3 text-right text-ink-700">—</td>
+                <td class="py-2 pl-3 text-right text-ink-700">Factura C</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── FAQ ───────────────────────── -->
+  <section class="mx-auto max-w-3xl px-4 py-12">
+    <h2 class="font-display text-2xl text-ink-900 uppercase">Preguntas frecuentes</h2>
+    <div class="mt-6 divide-y divide-linea">
+      {
+        faqs.map((faq) => (
+          <details class="group py-3">
+            <summary class="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-semibold text-ink-900">
+              {faq.pregunta}
+              <span class="shrink-0 text-ink-500 transition-transform group-open:rotate-45">+</span>
+            </summary>
+            <p class="mt-2 text-sm leading-relaxed text-ink-600">{faq.respuesta}</p>
+          </details>
+        ))
+      }
+    </div>
+  </section>
+</BaseLayout>
+
+<script type="application/json" id="precios-data" set:html={JSON.stringify(datosParaElCliente)} />
+
+<style>
+  .audiencia-tab[aria-selected='true'],
+  .intervalo-tab[aria-pressed='true'],
+  .intervalo-ind-tab[aria-pressed='true'] {
+    background: var(--color-superficie);
+    color: var(--color-brand-700);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+  .audiencia-tab[aria-selected='false'],
+  .intervalo-tab[aria-pressed='false'],
+  .intervalo-ind-tab[aria-pressed='false'] {
+    color: var(--color-ink-500);
+  }
+  .banda-card[data-match='true'] {
+    border-color: var(--color-brand-600);
+    box-shadow: 0 0 0 1px var(--color-brand-600);
+  }
+</style>
+
+<script>
+  interface BandaCliente {
+    key: string;
+    name: string;
+    minStudents: number;
+    maxStudents: number | null;
+    monthlyPriceArs: number;
+    cyclePriceArs: number;
+  }
+  interface DatosPrecios {
+    bands: BandaCliente[];
+    hablemosThreshold: number;
+    individual: { monthlyPriceArs: number; annualPriceArs: number | null; monthlyCredits: number } | null;
+  }
+
+  const dataEl = document.getElementById('precios-data');
+  const datos: DatosPrecios = JSON.parse(dataEl?.textContent ?? '{"bands":[],"hablemosThreshold":1500,"individual":null}');
+
+  // ── Switch de audiencia ──────────────────────────────────────────
+  const tabInstituciones = document.getElementById('tab-instituciones');
+  const tabDocentes = document.getElementById('tab-docentes');
+  const panelInstituciones = document.getElementById('panel-instituciones');
+  const panelDocentes = document.getElementById('panel-docentes');
+
+  function mostrarAudiencia(audiencia: 'instituciones' | 'docentes') {
+    const esInstituciones = audiencia === 'instituciones';
+    tabInstituciones?.setAttribute('aria-selected', String(esInstituciones));
+    tabDocentes?.setAttribute('aria-selected', String(!esInstituciones));
+    panelInstituciones?.classList.toggle('hidden', !esInstituciones);
+    panelDocentes?.classList.toggle('hidden', esInstituciones);
+  }
+  tabInstituciones?.addEventListener('click', () => mostrarAudiencia('instituciones'));
+  tabDocentes?.addEventListener('click', () => mostrarAudiencia('docentes'));
+  if (location.hash === '#docentes') mostrarAudiencia('docentes');
+
+  // ── Toggle mensual / ciclo lectivo (instituciones) ──────────────
+  const tabMensual = document.getElementById('tab-mensual');
+  const tabCiclo = document.getElementById('tab-ciclo');
+  function mostrarIntervalo(ciclo: boolean) {
+    tabMensual?.setAttribute('aria-pressed', String(!ciclo));
+    tabCiclo?.setAttribute('aria-pressed', String(ciclo));
+    document.querySelectorAll<HTMLElement>('.precio-mensual').forEach((el) => el.classList.toggle('hidden', ciclo));
+    document.querySelectorAll<HTMLElement>('.precio-ciclo').forEach((el) => el.classList.toggle('hidden', !ciclo));
+    document.querySelectorAll<HTMLElement>('.precio-ciclo-total').forEach((el) => el.classList.toggle('hidden', !ciclo));
+  }
+  tabMensual?.addEventListener('click', () => mostrarIntervalo(false));
+  tabCiclo?.addEventListener('click', () => mostrarIntervalo(true));
+
+  // ── Toggle mensual / anual (docentes) ───────────────────────────
+  const tabIndMensual = document.getElementById('tab-ind-mensual');
+  const tabIndAnual = document.getElementById('tab-ind-anual');
+  function mostrarIntervaloInd(anual: boolean) {
+    tabIndMensual?.setAttribute('aria-pressed', String(!anual));
+    tabIndAnual?.setAttribute('aria-pressed', String(anual));
+    document.querySelectorAll<HTMLElement>('.precio-ind-mensual').forEach((el) => el.classList.toggle('hidden', anual));
+    document.querySelectorAll<HTMLElement>('.precio-ind-anual').forEach((el) => el.classList.toggle('hidden', !anual));
+  }
+  tabIndMensual?.addEventListener('click', () => mostrarIntervaloInd(false));
+  tabIndAnual?.addEventListener('click', () => mostrarIntervaloInd(true));
+
+  // ── Calculadora de matrícula ─────────────────────────────────────
+  // Mismo criterio que `src/lib/billing/bandas.ts#bandForStudents`: por
+  // encima del umbral es "Hablemos" sin importar si calzaría en una banda;
+  // si no, la primera banda del catálogo cuyo rango lo cubre.
+  const input = document.getElementById('alumnos-input') as HTMLInputElement | null;
+  const slider = document.getElementById('alumnos-slider') as HTMLInputElement | null;
+  const resultado = document.getElementById('alumnos-resultado');
+  const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+  function bandaPara(n: number): BandaCliente | 'hablemos' | null {
+    if (!Number.isInteger(n) || n < 1) return null;
+    if (n > datos.hablemosThreshold) return 'hablemos';
+    for (const b of datos.bands) {
+      if (n >= b.minStudents && (b.maxStudents === null || n <= b.maxStudents)) return b;
+    }
+    return 'hablemos';
+  }
+
+  function actualizarCalculadora() {
+    const n = Number(input?.value ?? '0');
+    document.querySelectorAll<HTMLElement>('.banda-card').forEach((card) => card.removeAttribute('data-match'));
+
+    const match = bandaPara(n);
+    if (!resultado) return;
+
+    if (match === null) {
+      resultado.textContent = '';
+      return;
+    }
+    if (match === 'hablemos') {
+      resultado.innerHTML = 'Esa matrícula es <strong>Hablemos</strong> — escribinos y armamos una propuesta.';
+      document.querySelector('[data-band-key="HABLEMOS"]')?.setAttribute('data-match', 'true');
+      return;
+    }
+
+    document.querySelector(`.banda-card[data-band-key="${match.key}"]`)?.setAttribute('data-match', 'true');
+    resultado.innerHTML = `Te corresponde la banda <strong>${match.name}</strong>: ${formateador.format(match.monthlyPriceArs)}/mes o ${formateador.format(match.cyclePriceArs)} el ciclo lectivo completo.`;
+
+    document.querySelectorAll<HTMLAnchorElement>('.alta-link').forEach((a) => {
+      if (a.dataset.bandKey === match.key) {
+        const base = a.getAttribute('href')?.split('?')[0] ?? '/instituciones/alta';
+        a.setAttribute('href', `${base}?alumnos=${n}`);
+      }
+    });
+  }
+
+  input?.addEventListener('input', () => {
+    if (slider) slider.value = input.value;
+    actualizarCalculadora();
+  });
+  slider?.addEventListener('input', () => {
+    if (input) input.value = slider.value;
+    actualizarCalculadora();
+  });
+  actualizarCalculadora();
+</script>
