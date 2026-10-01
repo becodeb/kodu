@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../../lib/projects.ts';
 import { checklistActual } from '../../../../lib/ai/checklist-db.ts';
+import { marcarTrazaDeshecha } from '../../../../lib/ai/trace.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 
 const schema = z.object({
@@ -122,6 +123,10 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
   // (`undoneAt` ya quedó puesto) para que el cliente actualice la UI de "Esto
   // es lo que probé" sin tener que adivinar si corresponde o pedirlo aparte.
   const checklist = await checklistActual(project.id);
+
+  // odd/tasks/ahorro-tokens.md (T5): señal implícita (b) — nunca bloquea
+  // (ver `marcarTrazaDeshecha`).
+  void marcarTrazaDeshecha(snapshot.chatMessage.id);
 
   return ok({ currentHtml: snapshot.html, undoneMessageIds, checklist });
 };

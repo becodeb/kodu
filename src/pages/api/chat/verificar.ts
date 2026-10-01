@@ -22,6 +22,7 @@ import {
   type Problema,
 } from '../../../lib/ai/verificador.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { recordAiTrace } from '../../../lib/ai/trace.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
@@ -120,6 +121,7 @@ async function ejecutarPasada(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        schedule: args.provider.schedule,
         purpose: 'VERIFICATION',
       }).catch((error) => console.error('[chat/verificar] no se pudo registrar el consumo de una pasada:', error));
     }
@@ -221,6 +223,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // Un recurso NUEVO corre 2 pasadas en paralelo (se combinan con
   // `unirPasadas`); un ajuste, 1 sola.
   const cantidadPasadas = tipo === 'nuevo' ? 2 : 1;
+  const arranque = Date.now();
   const resultados = await Promise.all(
     Array.from({ length: cantidadPasadas }, () =>
       ejecutarPasada({ messages, provider, userId: user.id, projectId: project.id, signalExterno: request.signal }),
@@ -231,11 +234,38 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const fallidas = resultados.length - listasOk.length;
 
   if (listasOk.length === 0) {
+    // odd/tasks/ahorro-tokens.md (T4): se registra igual, sin hallazgos —
+    // "cuando corre" incluye el caso en que ninguna pasada dio un JSON
+    // parseable. Cada pasada ya registró su propia fila de `TokenUsage`
+    // (dentro de `ejecutarPasada`) — acá no hay un `tokenUsageId` único que
+    // vincular, se deja sin vincular (ver el comentario de `trace.ts`).
+    await recordAiTrace({
+      userId: user.id,
+      projectId: project.id,
+      turnKind: 'VERIFICATION',
+      model: provider.model,
+      reasoningEffort: provider.reasoningEffort,
+      requestText: pedido,
+      durationMs: Date.now() - arranque,
+      verifierFindings: null,
+    });
     // Cada pasada ya logueó su propio motivo (arriba, en `ejecutarPasada`)
     // — acá no hay nada más que reportar, y NUNCA se loguea la clave.
     return ok({ estado: 'error' });
   }
 
   const problemas = unirPasadas(listasOk.map((r) => r.problemas));
+
+  await recordAiTrace({
+    userId: user.id,
+    projectId: project.id,
+    turnKind: 'VERIFICATION',
+    model: provider.model,
+    reasoningEffort: provider.reasoningEffort,
+    requestText: pedido,
+    durationMs: Date.now() - arranque,
+    verifierFindings: problemas.length,
+  });
+
   return ok({ estado: 'ok', problemas, pasadas: cantidadPasadas, fallidas });
 };

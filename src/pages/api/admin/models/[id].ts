@@ -4,7 +4,7 @@ import { Prisma } from '../../../../generated/prisma/client.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { invalidarCatalogo } from '../../../../lib/ai/catalogo.ts';
-import { precioADecimal, serializarMotor } from '../../../../lib/admin/modelos.ts';
+import { camposDePreset, horarioDePicoAPrisma, horarioDePicoSchema, precioADecimal, serializarMotor } from '../../../../lib/admin/modelos.ts';
 
 /**
  * PATCH /api/admin/models/:id — edición parcial de un motor (design.md §2, §3.1;
@@ -39,12 +39,15 @@ const actualizarMotorSchema = z.object({
    *  éste" de más abajo. */
   isVerifier: z.boolean().optional(),
   maxOutputTokens: z.coerce.number().int().positive().max(1_000_000).optional(),
-  reasoningEffort: z.enum(['none', 'low', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(['none', 'low', 'medium', 'high']).nullable().optional(),
   reasoningParam: z.enum(['reasoning_effort', 'thinking']).nullable().optional(),
   maxInputChars: z.coerce.number().int().positive().max(2_000_000).optional(),
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  /** odd/tasks/ahorro-tokens.md (T7): `null` vuelve a "Personalizado". */
+  presetKey: z.string().trim().min(1).nullable().optional(),
+  ...horarioDePicoSchema,
 });
 
 export const PATCH: APIRoute = async ({ params, request }) => {
@@ -112,6 +115,19 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   if (datos.priceOutputPerMToken !== undefined) {
     cambios.priceOutputPerMToken = precioADecimal(datos.priceOutputPerMToken);
   }
+  Object.assign(
+    cambios,
+    horarioDePicoAPrisma({
+      priceOffPeakFactor: datos.priceOffPeakFactor,
+      peakWindowsUtc: datos.peakWindowsUtc,
+      offPeakDatesUtc: datos.offPeakDatesUtc,
+    }),
+  );
+  // T7: `presetKey` sólo se toca si vino en el body. `null` explícito vuelve
+  // a "Personalizado" (las columnas de arriba, recién tocadas, quedan como
+  // valor manual); un preset conocido las pisa de nuevo, después, para ganar.
+  if (datos.presetKey !== undefined) cambios.presetKey = datos.presetKey;
+  Object.assign(cambios, camposDePreset(datos.presetKey) ?? {});
 
   const subeDefault = datos.isDefault === true;
   // T3 (verificador): mismo motivo que `subeDefault` — el índice único

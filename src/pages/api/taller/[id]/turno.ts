@@ -5,6 +5,7 @@ import { fail, readBody } from '../../../../lib/http.ts';
 import { cadenaDeMotores, motorPorDefecto } from '../../../../lib/ai/catalogo.ts';
 import {
   ProviderError,
+  razonamientoNulo,
   readCompletionStream,
   requestCompletionStream,
   supportsVision,
@@ -12,6 +13,8 @@ import {
   type TokenUsage,
 } from '../../../../lib/ai/provider.ts';
 import { recordUsage } from '../../../../lib/ai/usage.ts';
+import { recordAiTrace } from '../../../../lib/ai/trace.ts';
+import { debeTallerDesactivarRazonamiento } from '../../../../lib/taller/razonamiento.ts';
 import { readImageAsDataUrl } from '../../../../lib/uploads.ts';
 import {
   fusionarFicha,
@@ -93,6 +96,10 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
   if (message.length > motor.maxInputChars) {
     return fail('Tu mensaje es demasiado largo. Probá contármelo en partes.', 413);
   }
+
+  // odd/tasks/ahorro-tokens.md (T2): una cuenta personal en el plan FREE no
+  // paga razonamiento en el Taller — ni paga ni organización lo pierden.
+  const sinRazonamiento = await debeTallerDesactivarRazonamiento(user);
 
   if (!reclamarTurno(sesion.id)) {
     return fail('Todavía estoy contestando tu mensaje anterior. Esperá un momento.', 409);
@@ -180,10 +187,17 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
         }, HEARTBEAT_MS);
 
         try {
-          const { acumulado, usado, usage } = await pedirRespuesta(mensajes, motor, abortador.signal, enviar);
+          const arranque = Date.now();
+          const { acumulado, usado, usage } = await pedirRespuesta(
+            mensajes,
+            motor,
+            abortador.signal,
+            enviar,
+            sinRazonamiento,
+          );
 
           if (usage) {
-            await recordUsage({
+            const registroDeUso = await recordUsage({
               userId: user.id,
               projectId: null,
               aiModelId: usado.id,
@@ -192,8 +206,26 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
               cachedInputTokens: usage.cachedTokens,
               completionTokens: usage.completionTokens,
               precios: usado.precios,
+              schedule: usado.schedule,
               purpose: 'IDEATION',
-            }).catch((error) => console.error('[taller/turno] no se pudo registrar el consumo:', error));
+            }).catch((error) => {
+              console.error('[taller/turno] no se pudo registrar el consumo:', error);
+              return null;
+            });
+
+            // odd/tasks/ahorro-tokens.md (T4): "Taller turns too if cheap" —
+            // reusa exactamente lo que ya se calculó arriba (sin HTML, sin
+            // self-test: el Taller no escribe código).
+            await recordAiTrace({
+              userId: user.id,
+              projectId: null,
+              tokenUsageId: registroDeUso?.id ?? null,
+              turnKind: 'IDEATION',
+              model: usado.model,
+              reasoningEffort: usado.reasoningEffort,
+              requestText: message,
+              durationMs: Date.now() - arranque,
+            });
           }
 
           const { visible, datos, bloqueValido } = separarRespuesta(acumulado);
@@ -313,6 +345,7 @@ async function pedirRespuesta(
   motor: ProviderConfig,
   signal: AbortSignal,
   enviar: (evento: EventoTaller) => void,
+  sinRazonamiento: boolean,
 ): Promise<{ acumulado: string; usado: ProviderConfig; usage: TokenUsage | null }> {
   const cadena = await cadenaDeMotores(motor.id);
   let ultimaFalla: unknown = null;
@@ -328,6 +361,10 @@ async function pedirRespuesta(
         // final (ver `lib/taller/ficha.ts`, "Por qué un bloque").
         sinHerramientas: true,
         maxTokensOverride: Math.min(MAX_TOKENS_TURNO, candidato.maxTokens),
+        // odd/tasks/ahorro-tokens.md (T2): cuenta personal en FREE → "none"
+        // fijo, sin importar el nivel configurado en el motor. Paga u
+        // organización: `undefined`, el nivel configurado de siempre.
+        razonamientoOverride: sinRazonamiento ? razonamientoNulo(candidato) : undefined,
         onReintento: () => enviar({ type: 'notice', message: 'Hay mucha gente usando Kodu ahora. Sigo intentando…' }),
       });
     } catch (error) {

@@ -1,6 +1,7 @@
 import { prisma } from '../db.ts';
-import { Prisma, type UsagePurpose } from '../../generated/prisma/client.ts';
+import { Prisma, type UsagePurpose, type EditMode } from '../../generated/prisma/client.ts';
 import { debitUsage } from '../billing/creditos-servicio.ts';
+import { precioVigente, type PriceSchedule } from './pricing.ts';
 
 /**
  * Registro de tokens por usuario y proveedor.
@@ -154,8 +155,23 @@ export interface UsageRecord {
   /** Subconjunto de `promptTokens` — ver `calcularCostoTurno`. */
   cachedInputTokens: number;
   completionTokens: number;
-  /** Los precios vigentes del motor usado, ya resueltos (`ProviderConfig.precios`). */
+  /** El precio DE PICO del motor usado, ya resuelto (`ProviderConfig.precios`).
+   *  El precio REALMENTE aplicado sale de combinarlo con `schedule` y `at`
+   *  más abajo (odd/tasks/ahorro-tokens.md, T1). */
   precios: Precios | null;
+  /** odd/tasks/ahorro-tokens.md (T1): el horario de pico del motor usado
+   *  (`ProviderConfig.schedule`). `null`/`undefined` = sin horario, el
+   *  comportamiento de siempre (precio de pico sin importar la hora). */
+  schedule?: PriceSchedule | null;
+  /**
+   * odd/tasks/ahorro-tokens.md (T1): el momento del turno, para resolver el
+   * precio vigente contra `schedule`. Por defecto el momento en que se llama
+   * a `recordUsage` — en la práctica el turno ya terminó para entonces, así
+   * que es la misma aproximación que ya hace `TokenUsage.createdAt`
+   * (`@default(now())`, escrito unas líneas más abajo en esta misma
+   * llamada).
+   */
+  at?: Date;
   /**
    * odd/tasks/organizaciones.md (T5): para qué fue esta llamada. REQUERIDO
    * (no opcional) a propósito — así ningún llamador nuevo se olvida de
@@ -163,6 +179,29 @@ export interface UsageRecord {
    * únicas con `purpose: null`, y esas nunca se escriben por acá.
    */
   purpose: UsagePurpose;
+  /**
+   * odd/tasks/ahorro-tokens.md (T3a): cómo se escribió el código en este
+   * turno (ver el enum `EditMode`). `null`/`undefined` para cualquier turno
+   * que no escribe código, o para un motor que no ofrece la edición por
+   * fragmentos — mismo criterio "nunca inventar un dato" que el resto de
+   * los campos opcionales de este registro.
+   */
+  editMode?: 'full' | 'fragments' | 'fragments_fallback' | null;
+}
+
+/** odd/tasks/ahorro-tokens.md (T3a): `UsageRecord.editMode` (minúsculas,
+ *  vocabulario del llamador) al enum de Prisma. `undefined`/`null` pasa. */
+function editModeAEnum(editMode: UsageRecord['editMode']): EditMode | null {
+  switch (editMode) {
+    case 'full':
+      return 'FULL';
+    case 'fragments':
+      return 'FRAGMENTS';
+    case 'fragments_fallback':
+      return 'FRAGMENTS_FALLBACK';
+    default:
+      return null;
+  }
 }
 
 /** GENERATION/CHECKLIST/EXTRA_VERSION nacen de un recurso nuevo;
@@ -205,15 +244,29 @@ async function forNewResourceHeredado(projectId: string | null, userId: string):
   return ultima?.forNewResource ?? null;
 }
 
-export async function recordUsage(record: UsageRecord): Promise<void> {
+/**
+ * odd/tasks/ahorro-tokens.md (T4): devuelve `{ id }` de la fila creada (o
+ * `null` si el turno no gastó nada y no se registró) para que el llamador
+ * pueda vincular una `AiTrace` a ESTA fila puntual (`recordAiTrace`,
+ * `src/lib/ai/trace.ts`) sin que `recordUsage` tenga que saber nada de
+ * trazas — se mantiene con una sola responsabilidad.
+ */
+export async function recordUsage(record: UsageRecord): Promise<{ id: string } | null> {
   // Un turno que no gastó nada no se registra: ensucia la tabla y no aporta.
-  if (record.promptTokens <= 0 && record.completionTokens <= 0) return;
+  if (record.promptTokens <= 0 && record.completionTokens <= 0) return null;
+
+  // odd/tasks/ahorro-tokens.md (T1): el precio REALMENTE vigente a esta hora,
+  // no el de pico siempre. Sin `schedule` (motor sin horario configurado)
+  // `precioVigente` devuelve `record.precios` sin tocar — comportamiento
+  // idéntico al de antes de T1.
+  const at = record.at ?? new Date();
+  const preciosVigentes = record.precios ? precioVigente(record.precios, record.schedule ?? null, at) : null;
 
   const costo = calcularCostoTurno(
     record.promptTokens,
     record.cachedInputTokens,
     record.completionTokens,
-    record.precios,
+    preciosVigentes,
   );
 
   // La sede que paga: la del docente EN ESTE MOMENTO, no la que tenía cuando
@@ -241,6 +294,7 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       organizationId,
       purpose: record.purpose,
       forNewResource,
+      editMode: editModeAEnum(record.editMode),
     },
   });
 
@@ -266,6 +320,8 @@ export async function recordUsage(record: UsageRecord): Promise<void> {
       }
     }
   }
+
+  return { id: fila.id };
 }
 
 /** Tokens acumulados por un usuario en UN motor puntual (prompt + respuesta). */

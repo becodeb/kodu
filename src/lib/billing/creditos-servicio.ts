@@ -32,7 +32,12 @@ async function planFree(): Promise<PlanParaCreditos> {
  * fecha). Una suscripción vencida o cancelada no cuenta — el docente cae de
  * nuevo al otorgamiento FREE ese mes (decisión de diseño: sin fila = FREE).
  */
-async function suscripcionIndividualVigente(
+/** Exportada para odd/tasks/ahorro-tokens.md (T2): es la MISMA fuente de
+ *  verdad de "¿este docente paga el plan Individual ahora mismo?" que ya usa
+ *  `ensureGrants` acá arriba — la decisión de "Taller sin razonamiento para
+ *  FREE" (`src/lib/taller/razonamiento.ts`) no puede reimplementar este
+ *  criterio sin arriesgarse a que se desalinee. */
+export async function suscripcionIndividualVigente(
   userId: string,
   now: Date,
 ): Promise<{ monthlyCredits: number } | null> {

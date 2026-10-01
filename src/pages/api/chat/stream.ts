@@ -5,6 +5,7 @@ import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../
 import {
   buildCurrentResourceBlock,
   buildSystemPrompt,
+  MAX_HTML_CHARS,
   type AssetContext,
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
@@ -38,14 +39,19 @@ import {
 } from '../../../lib/ai/checklist.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
+import { recordAiTrace, vincularTrazaAMensaje, aplicarSenalesImplicitas } from '../../../lib/ai/trace.ts';
+import { detectarFraseDefecto } from '../../../lib/feedback/clasificador.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import {
   UPDATE_RESOURCE_CODE,
+  EDIT_RESOURCE_CODE,
   parseUpdateResourceArgs,
+  parseEditResourceArgs,
   rescatarHtmlDelTexto,
 } from '../../../lib/ai/tools.ts';
+import { applyResourceEdits, EDIT_FAILURE_MESSAGES } from '../../../lib/ai/edits.ts';
 import { readImageAsDataUrl } from '../../../lib/uploads.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
@@ -354,6 +360,9 @@ async function generarVersionSecundaria(args: {
   temaProyecto: TemaId | null;
   userId: string;
   projectId: string;
+  /** odd/tasks/ahorro-tokens.md (T4): el pedido del docente que disparó el
+   *  turno de versiones entero — las tres versiones comparten el mismo. */
+  requestText: string;
   signal?: AbortSignal;
 }): Promise<string | null> {
   let primeraPasada: string | null = null;
@@ -376,7 +385,7 @@ async function generarVersionSecundaria(args: {
       }
     }
     if (usage) {
-      await recordUsage({
+      const registroDeUso = await recordUsage({
         userId: args.userId,
         projectId: args.projectId,
         aiModelId: args.provider.id,
@@ -385,10 +394,24 @@ async function generarVersionSecundaria(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        schedule: args.provider.schedule,
         purpose: 'EXTRA_VERSION',
-      }).catch((error) =>
-        console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error),
-      );
+      }).catch((error) => {
+        console.error(`[chat/stream] versión ${args.indice}: no se pudo registrar el consumo:`, error);
+        return null;
+      });
+
+      await recordAiTrace({
+        userId: args.userId,
+        projectId: args.projectId,
+        tokenUsageId: registroDeUso?.id ?? null,
+        turnKind: 'EXTRA_VERSION',
+        model: args.provider.model,
+        reasoningEffort: args.provider.reasoningEffort,
+        requestText: args.requestText,
+        editOutcome: primeraPasada ? 'full' : 'failed',
+        htmlCharsAfter: primeraPasada ? primeraPasada.length : null,
+      });
     }
   } catch (error) {
     console.warn(
@@ -493,6 +516,7 @@ async function generarChecklist(args: {
         cachedInputTokens: usage.cachedTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
+        schedule: args.provider.schedule,
         purpose: 'CHECKLIST',
       }).catch((error) => console.error('[chat/stream] checklist: no se pudo registrar el consumo:', error));
     }
@@ -775,6 +799,15 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // regla de colisión con la guía de preguntas tempranas.
   const forzar = pideCambio(message);
 
+  // odd/tasks/ahorro-tokens.md (T3a/T6): sólo en un AJUSTE (nunca un recurso
+  // nuevo). T3a lo tenía detrás de un interruptor global
+  // (`AppSettings.fragmentEditsEnabled`); T6 lo sacó tras la evaluación
+  // ciega (T3c) — fragmentos es ahora el único camino de edición, no una
+  // opción medida. El primer intento ofrece ÚNICAMENTE `edit_resource_code`
+  // (`soloEdicion` en el `pedirA` de abajo); `update_resource_code` sólo
+  // reaparece en la recuperación de una edición fallida, más abajo.
+  const editsEnabled = forzar && !recursoInicial;
+
   const systemPrompt = buildSystemPrompt({
     globalRules,
     userRules,
@@ -797,7 +830,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // este turno puntual, así que va en el mismo bloque, nunca mezclado con
   // el `message` del docente que se persiste tal cual (ver `buildUserContent`).
   const currentResourceBlock =
-    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false) +
+    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false, editsEnabled) +
     (checklistVigente.length > 0 ? `\n\n${bloqueChecklistParaAjuste(checklistVigente)}` : '');
 
   const userContent = await buildUserContent(
@@ -837,6 +870,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
       authorUserId: actuaComoAdmin ? user.id : null,
     },
     select: { id: true },
+  });
+
+  // odd/tasks/ahorro-tokens.md (T5): señales implícitas (a) y (c), sobre el
+  // turno ANTERIOR que de verdad cerró (la traza más nueva de este proyecto
+  // con un mensaje asociado) — se dispara con el pedido de ESTE turno nuevo,
+  // antes de llamar al motor. Nunca bloquea: ver `aplicarSenalesImplicitas`.
+  void aplicarSenalesImplicitas({
+    projectId: project.id,
+    fraseDefecto: detectarFraseDefecto(message),
+    codeEditedByTeacher: codeEditedByTeacher ?? false,
   });
 
   const messages: ChatMessage[] = [
@@ -1061,6 +1104,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
           provider: usado,
           signal: turnoAbort.signal,
           forzarHerramienta: forzar,
+          editsEnabled,
+          // T6: el primer intento de un AJUSTE ofrece SÓLO edit_resource_code
+          // (nunca 'required' con las dos) — ver el comentario de
+          // `editsEnabled` más arriba.
+          soloEdicion: editsEnabled,
           onReintento: (intento, esperaMs) => {
             console.warn(`[chat/stream] ${usado.label} saturado, reintento ${intento} en ${esperaMs}ms`);
             // T3: un reintento arranca un pedido nuevo — cualquier parcial
@@ -1146,6 +1194,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               temaProyecto,
               userId: user.id,
               projectId: project.id,
+              requestText: message,
               signal: turnoAbort.signal,
             })
               .then((html) => {
@@ -1229,6 +1278,29 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // cambié el fondo", el recurso no cambia y el docente no entiende por qué.
       let codeProblem: string | null = null;
       let finishReason = '';
+      // odd/tasks/ahorro-tokens.md (T3a): cómo terminó escribiéndose el
+      // código en este turno, para `TokenUsage.editMode`. `null` si este
+      // turno no escribió código (consulta sin cambios, o falló del todo).
+      let editModeAplicado: 'full' | 'fragments' | 'fragments_fallback' | null = null;
+      // El detalle de la última edición rechazada (`edit_resource_code`),
+      // para armar el mensaje de recuperación de UNA sola vez más abajo. En
+      // un objeto y no en un `let` suelto por el mismo motivo que `totales`
+      // más abajo: lo completa `consumir`, una función anidada, y con una
+      // variable suelta el análisis de flujo de TypeScript no puede seguirle
+      // el tipo de vuelta a través del `await`.
+      const estadoEdicion: { ultimoFallo: { find: string; detalle: string } | null } = { ultimoFallo: null };
+      // Si ya se usó la única oportunidad de recuperación de una edición
+      // fallida (ver más abajo), el camino genérico de "no llamó nada" no
+      // tiene que disparar un SEGUNDO reintento si esa recuperación terminó
+      // sin código ni problema (el modelo sólo contestó texto, por ejemplo).
+      let recuperacionDeEdicionIntentada = false;
+      // odd/tasks/ahorro-tokens.md (T4): para `AiTrace.retries`/`.truncated`
+      // — cuántos re-pedidos automáticos corrieron en este turno (edición
+      // fallida recuperada, o el re-pedido forzado genérico; nunca los dos
+      // a la vez, ver los `if` de más abajo) y si algún tool call llegó
+      // recortado por el streaming.
+      let reintentosRealizados = 0;
+      let huboTruncado = false;
       /**
        * Va en un objeto y no en un `let` suelto porque lo completa `consumir`,
        * que es una función anidada: con una variable suelta, el análisis de
@@ -1285,9 +1357,49 @@ export const POST: APIRoute = async ({ request, locals }) => {
               const html = aplicarKitAlTurno(result.html, temaProyecto);
               generatedHtml = html;
               codeProblem = null;
+              // Si antes hubo un intento de edición fallido en este mismo turno,
+              // esto es la caída a reescritura completa (T3a), no un turno "full" liso.
+              editModeAplicado = estadoEdicion.ultimoFallo ? 'fragments_fallback' : 'full';
               send({ type: 'code', html });
             } else {
               codeProblem = CODE_PROBLEMS[result.reason];
+              if (result.reason === 'truncated') huboTruncado = true;
+              send({ type: 'error', message: codeProblem });
+            }
+          }
+
+          /**
+           * odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code`. Se aplica
+           * SIEMPRE contra `htmlAlInicioDelTurno` (el HTML real guardado,
+           * nunca lo que ya se haya mandado en este mismo turno) — en un
+           * turno normal eso es exactamente "el HTML vigente", porque nada
+           * más lo toca antes de este punto.
+           */
+          if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
+            descartarCodeDelta();
+            const parsed = parseEditResourceArgs(event.arguments, event.truncated);
+
+            if (!parsed.ok) {
+              codeProblem = CODE_PROBLEMS[parsed.reason];
+              if (parsed.reason === 'truncated') huboTruncado = true;
+              estadoEdicion.ultimoFallo = { find: '', detalle: codeProblem };
+              send({ type: 'error', message: codeProblem });
+              continue;
+            }
+
+            const aplicado = applyResourceEdits(htmlAlInicioDelTurno, parsed.edits, MAX_HTML_CHARS);
+
+            if (aplicado.ok) {
+              const html = aplicarKitAlTurno(aplicado.html, temaProyecto);
+              generatedHtml = html;
+              codeProblem = null;
+              editModeAplicado = 'fragments';
+              estadoEdicion.ultimoFallo = null;
+              send({ type: 'code', html });
+            } else {
+              const detalle = EDIT_FAILURE_MESSAGES[aplicado.reason];
+              codeProblem = `No pude aplicar uno de los cambios puntuales: ${detalle}. No toqué el recurso.`;
+              estadoEdicion.ultimoFallo = { find: aplicado.find, detalle };
               send({ type: 'error', message: codeProblem });
             }
           }
@@ -1298,14 +1410,63 @@ export const POST: APIRoute = async ({ request, locals }) => {
         await consumir(upstream);
 
         /**
+         * odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code` falló (0 o
+         * 2+ matches, JSON inválido o recortado, o cayó en zona plegada/
+         * truncada). El recurso NO se tocó. Se le explica EXACTAMENTE qué
+         * `find` falló y por qué, y se le da UNA sola oportunidad de
+         * corregirlo —con `edit_resource_code` de nuevo o cayendo a
+         * `update_resource_code` con el documento completo—, reusando el
+         * mismo mecanismo de "un reintento y no más" que el camino de abajo.
+         */
+        if (editsEnabled && estadoEdicion.ultimoFallo && !generatedHtml) {
+          console.warn(
+            `[chat/stream] edit_resource_code falló (${estadoEdicion.ultimoFallo.detalle}); se da una oportunidad de corregirlo a los ${transcurrido()}`,
+          );
+          reiniciarCodeDelta();
+          send({ type: 'notice', message: 'Ese cambio puntual no se pudo aplicar. Se lo vuelvo a pedir…' });
+
+          const pistaFind = estadoEdicion.ultimoFallo.find
+            ? ` El "find" que falló fue: ${JSON.stringify(estadoEdicion.ultimoFallo.find.slice(0, 300))}.`
+            : '';
+
+          const reintentoEdicion = await requestCompletionStream({
+            messages: [
+              ...messages,
+              { role: 'assistant', content: assistantText },
+              {
+                role: 'user',
+                content:
+                  `No pude aplicar esa edición: ${estadoEdicion.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
+              },
+            ],
+            provider: proveedorUsado,
+            signal: turnoAbort.signal,
+            forzarHerramienta: true,
+            editsEnabled: true,
+            // T6: la ÚNICA ocasión en la que esta recuperación vuelve a
+            // ofrecer update_resource_code — el modelo puede resolver con
+            // una edición corregida o caer a la reescritura completa.
+            soloEdicion: false,
+          });
+
+          recuperacionDeEdicionIntentada = true;
+          reintentosRealizados += 1;
+          await consumir(reintentoEdicion);
+        }
+
+        /**
          * Se pidió un cambio y no llegó código. Antes de darlo por perdido:
          *
          * 1) Puede que el modelo haya escrito el HTML en el texto en vez de
          *    llamar la herramienta. Ese trabajo se rescata en vez de tirarlo.
          * 2) Si no, se le vuelve a pedir una sola vez. Un reintento y no más:
          *    si tampoco así lo hace, es mejor decirlo que quedar en un bucle.
+         *
+         * No corre si ya se usó la oportunidad de recuperar una edición
+         * fallida de arriba (`recuperacionDeEdicionIntentada`): esa YA fue
+         * el único reintento de este turno.
          */
-        if (forzar && !generatedHtml && !codeProblem) {
+        if (forzar && !generatedHtml && !codeProblem && !recuperacionDeEdicionIntentada) {
           const rescatado = rescatarHtmlDelTexto(assistantText);
 
           if (rescatado) {
@@ -1318,8 +1479,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
           }
         }
 
-        if (forzar && !generatedHtml && !codeProblem) {
+        if (forzar && !generatedHtml && !codeProblem && !recuperacionDeEdicionIntentada) {
           console.warn(`[chat/stream] no aplicó el cambio; se re-pide a los ${transcurrido()}`);
+          reintentosRealizados += 1;
           // T3: el re-pedido forzado es un tool call nuevo de cero.
           reiniciarCodeDelta();
           send({ type: 'notice', message: 'Se quedó a mitad de camino. Se lo vuelvo a pedir…' });
@@ -1381,8 +1543,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
         // Campo por campo y sin spread: `usage` se completa dentro de `consumir`,
         // así que el análisis de flujo de TypeScript lo da por null en este
         // punto y un spread de ahí no compila.
+        // odd/tasks/ahorro-tokens.md (T4): se llena fuera del `if` para que
+        // `recordAiTrace` de más abajo (que SÍ corre aunque no haya `usage`
+        // — un turno puede fallar sin gastar nada medible, y la traza igual
+        // interesa) tenga el `tokenUsageId` cuando corresponda.
+        let registroDeUso: { id: string } | null = null;
         if (totales.usage) {
-          await recordUsage({
+          registroDeUso = await recordUsage({
             userId: user.id,
             projectId: project.id,
             aiModelId: proveedorUsado.id,
@@ -1391,9 +1558,37 @@ export const POST: APIRoute = async ({ request, locals }) => {
             cachedInputTokens: totales.usage.cachedTokens,
             completionTokens: totales.usage.completionTokens,
             precios: proveedorUsado.precios,
+            schedule: proveedorUsado.schedule,
             purpose: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
-          }).catch((error) => console.error('[chat/stream] no se pudo registrar el consumo:', error));
+            editMode: editModeAplicado,
+          }).catch((error) => {
+            console.error('[chat/stream] no se pudo registrar el consumo:', error);
+            return null;
+          });
         }
+
+        // odd/tasks/ahorro-tokens.md (T4): la traza del turno. `editOutcome`
+        // suma 'failed' cuando SE PIDIÓ un cambio (`forzar`) y, agotados los
+        // reintentos de arriba, el recurso terminó sin código — un caso que
+        // `TokenUsage.editMode` nunca distinguió de "este turno no escribía
+        // código" (ver el comentario de `TraceEditOutcome` en el schema).
+        const traza = await recordAiTrace({
+          userId: user.id,
+          projectId: project.id,
+          tokenUsageId: registroDeUso?.id ?? null,
+          turnKind: recursoInicial ? 'GENERATION' : 'ADJUSTMENT',
+          model: proveedorUsado.model,
+          reasoningEffort: proveedorUsado.reasoningEffort,
+          requestText: message,
+          editOutcome: editModeAplicado ?? (forzar && !generatedHtml ? 'failed' : null),
+          retries: reintentosRealizados,
+          truncated: huboTruncado,
+          htmlCharsBefore: htmlAlInicioDelTurno.length,
+          htmlCharsAfter: generatedHtml ? generatedHtml.length : null,
+          durationMs: Date.now() - arranque,
+          considerarPreguntaFeedback: true,
+          esPrimeraGeneracion: recursoInicial,
+        });
 
         /**
          * T9: se espera a que la 2 y la 3 terminen (o se descarten solas)
@@ -1567,12 +1762,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
             }
           }
 
+          // odd/tasks/ahorro-tokens.md (T4): se vincula la traza recién
+          // creada (más arriba, antes de que este mensaje existiera) a ESTE
+          // mensaje — nunca bloquea, mismo criterio que todo lo demás acá.
+          if (traza) void vincularTrazaAMensaje(traza.id, saved.id);
+
           send({
             type: 'done',
             messageId: saved.id,
             userMessageId: mensajeDocenteGuardado.id,
             codeUpdated: Boolean(generatedHtml),
             content: finalText,
+            // odd/tasks/ahorro-tokens.md (T5): la pregunta inline decidida
+            // para este turno ('FUNCIONA' | 'VISUAL'), o nada si no
+            // correspondía una — ver `decidirPreguntaFeedback`.
+            ...(traza?.preguntaFeedback ? { feedbackPrompt: traza.preguntaFeedback } : {}),
           });
         } catch (error) {
           console.error('[chat/stream] no se pudo persistir el turno:', error);

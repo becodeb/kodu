@@ -1,0 +1,47 @@
+[
+  {
+    "id": "vecinos-1810",
+    "titulo": "Vecinos de 1810",
+    "fuenteHtml": "/home/opencode/projects/kodu-medicion/experimentos/razonamiento/resultados/gen-mimo-pro/N2-revolucion-de-mayo__low/recurso.html",
+    "pedidos": [
+      {
+        "tipo": "visual",
+        "mensaje": "Cambiá el título a \"Mayo de 1810\" y poné el subtítulo en mayúsculas."
+      },
+      {
+        "tipo": "logica",
+        "mensaje": "Agregá un botón para reiniciar el debate: tiene que volver a mostrar la consigna inicial y borrar la elección que hizo el alumno."
+      }
+    ]
+  },
+  {
+    "id": "media-mediana-moda",
+    "titulo": "Media, mediana y moda",
+    "fuenteHtml": "/home/opencode/projects/kodu-medicion/experimentos/razonamiento/resultados/gen-mimo-pro/D3-media-mediana-moda__low/recurso.html",
+    "pedidos": [
+      {
+        "tipo": "visual",
+        "mensaje": "El botón de reiniciar me gustaría que diga \"Empezar de nuevo\" en vez de lo que dice ahora, y que el título se vea más grande."
+      },
+      {
+        "tipo": "logica",
+        "mensaje": "Cuando agrego un valor nuevo a la lista de alturas, quiero que la moda se recalcule y se muestre resaltada en la recta numérica, no sólo en el texto."
+      }
+    ]
+  },
+  {
+    "id": "tiro-al-blanco",
+    "titulo": "Tiro al blanco",
+    "fuenteHtml": "/home/opencode/projects/kodu-medicion/experimentos/razonamiento/resultados/gen-mimo-pro/N1-tiro-oblicuo__low/recurso.html",
+    "pedidos": [
+      {
+        "tipo": "visual",
+        "mensaje": "Cambiá el color de fondo del panel de controles para que combine mejor, y hacé el botón de disparar más grande."
+      },
+      {
+        "tipo": "logica",
+        "mensaje": "Quiero que el contador de intentos se reinicie a cero cada vez que cambio el ángulo o la velocidad, no sólo cuando aprieto reiniciar."
+      }
+    ]
+  }
+]

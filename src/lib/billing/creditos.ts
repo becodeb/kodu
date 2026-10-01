@@ -27,7 +27,8 @@
  */
 
 /** 1 crédito = este costo real en USD (`BillingSettings.creditUsdValue`,
- *  decisión de diseño: 0,0025 por default — configurable). */
+ *  decisión de diseño: USD 0,001 por default desde T8 — era 0,0025 —,
+ *  configurable). */
 export function creditsForCost(costUsd: number, creditUsdValue: number): number {
   if (!(creditUsdValue > 0)) {
     throw new Error('creditUsdValue tiene que ser mayor a 0');

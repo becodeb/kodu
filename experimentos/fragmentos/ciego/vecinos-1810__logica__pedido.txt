@@ -1,0 +1,1 @@
+Agregá un botón para reiniciar el debate: tiene que volver a mostrar la consigna inicial y borrar la elección que hizo el alumno.

@@ -71,6 +71,11 @@ const messages = await prisma.chatMessage.findMany({
     // de cada versión acá, sólo al elegir.
     chosenVariantIndex: true,
     variants: { select: { index: true }, orderBy: { index: 'asc' } },
+    // odd/tasks/ahorro-tokens.md (T5): sólo lo que la carita/pregunta
+    // inline necesitan — nunca el pedido en texto ni nada de T4 que no sea
+    // feedback, ese vive sólo en el export de admin.
+    resultHtmlFingerprint: true,
+    aiTrace: { select: { faceRating: true, inlineQuestionKind: true, inlineQuestionAnswer: true } },
   },
 });
 
@@ -298,6 +303,11 @@ const pedidoInicial =
             variants: message.variants.map((variant) => ({ index: variant.index })),
             chosenVariant: message.chosenVariantIndex ?? 1,
           }
+        : {}),
+      canGiveFeedback: message.resultHtmlFingerprint !== null,
+      faceRating: message.aiTrace?.faceRating ?? null,
+      ...(message.aiTrace?.inlineQuestionKind && !message.aiTrace?.inlineQuestionAnswer
+        ? { feedbackPrompt: message.aiTrace.inlineQuestionKind as 'FUNCIONA' | 'VISUAL' }
         : {}),
     }))}
     assets={project.assets}

@@ -2,13 +2,15 @@ import { useState, type DragEvent, type KeyboardEvent } from 'react';
 import Interruptor from './Interruptor.tsx';
 import ModeloForm from './ModeloForm.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
-import type { MotorAdmin } from '../../lib/admin/modelos.ts';
+import type { MotorAdmin, PresetUI } from '../../lib/admin/modelos.ts';
 import type { ProveedorAdmin } from '../../lib/admin/proveedores.ts';
 
 interface ModelosPanelProps {
   initialMotores: MotorAdmin[];
   /** El catálogo entero de cuentas de proveedor, para el <select> de ModeloForm. */
   proveedores: ProveedorAdmin[];
+  /** odd/tasks/ahorro-tokens.md (T7): presets de código, para el <select> de ModeloForm. */
+  presets: PresetUI[];
 }
 
 /**
@@ -323,6 +325,7 @@ export default function ModelosPanel(props: ModelosPanelProps) {
           motor={motorEnEdicion}
           otrosMotores={otrosMotores}
           proveedores={props.proveedores}
+          presets={props.presets}
           onGuardado={alGuardar}
           onCerrar={() => setFormAbierto(null)}
         />

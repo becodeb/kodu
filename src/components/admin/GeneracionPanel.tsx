@@ -23,7 +23,7 @@ export default function GeneracionPanel({ initial }: Props) {
     setError(null);
     setGuardando(true);
     const anterior = resumen.versionsForAll;
-    setResumen({ versionsForAll: valor });
+    setResumen({ ...resumen, versionsForAll: valor });
 
     const result = await apiRequest<{ settings: { versionsForAll: boolean } }>('/api/admin/settings', 'PATCH', {
       versionsForAll: valor,
@@ -31,7 +31,7 @@ export default function GeneracionPanel({ initial }: Props) {
 
     setGuardando(false);
     if (!result.ok) {
-      setResumen({ versionsForAll: anterior });
+      setResumen({ ...resumen, versionsForAll: anterior });
       setError(result.error);
     }
   }

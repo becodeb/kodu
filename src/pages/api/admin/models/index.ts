@@ -5,7 +5,14 @@ import { Prisma } from '../../../../generated/prisma/client.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { invalidarCatalogo } from '../../../../lib/ai/catalogo.ts';
-import { precioADecimal, serializarMotor, type MotorAdmin } from '../../../../lib/admin/modelos.ts';
+import {
+  camposDePreset,
+  horarioDePicoAPrisma,
+  horarioDePicoSchema,
+  precioADecimal,
+  serializarMotor,
+  type MotorAdmin,
+} from '../../../../lib/admin/modelos.ts';
 
 /**
  * `/api/admin/models` — listado y alta del catálogo de motores (design.md §2, §3.1;
@@ -32,12 +39,15 @@ const crearMotorSchema = z.object({
   selectableByTeacher: z.boolean().optional(),
   supportsVision: z.boolean().optional(),
   maxOutputTokens: z.coerce.number().int().positive().max(1_000_000).optional(),
-  reasoningEffort: z.enum(['none', 'low', 'high']).nullable().optional(),
+  reasoningEffort: z.enum(['none', 'low', 'medium', 'high']).nullable().optional(),
   reasoningParam: z.enum(['reasoning_effort', 'thinking']).nullable().optional(),
   maxInputChars: z.coerce.number().int().positive().max(2_000_000).optional(),
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
   fallbackModelId: z.string().trim().min(1).nullable().optional(),
+  /** odd/tasks/ahorro-tokens.md (T7): `null`/ausente = "Personalizado". */
+  presetKey: z.string().trim().min(1).nullable().optional(),
+  ...horarioDePicoSchema,
 });
 
 /** GET /api/admin/models — el listado completo, en el orden configurado. */
@@ -92,6 +102,11 @@ export const POST: APIRoute = async ({ request }) => {
     userTokenLimit: datos.userTokenLimit ?? 0,
     fallbackModelId: datos.fallbackModelId ?? null,
     sortOrder,
+    presetKey: datos.presetKey ?? null,
+    ...horarioDePicoAPrisma(datos),
+    // T7: un preset conocido pisa precio/horario/reasoning/maxOutputTokens/
+    // providerModel de arriba — tiene que ir DESPUÉS en el spread para ganar.
+    ...(camposDePreset(datos.presetKey) ?? {}),
   };
 
   try {

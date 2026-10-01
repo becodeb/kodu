@@ -122,6 +122,22 @@ export interface WorkspaceMessage {
   variants?: WorkspaceMessageVariant[];
   /** T9: cuál de `variants` está elegida ahora mismo (1, 2 o 3). */
   chosenVariant?: number | null;
+  /**
+   * odd/tasks/ahorro-tokens.md (T5): este turno "assistant" cambió el
+   * recurso (tiene huella de resultado) — sólo esos ofrecen la carita de
+   * feedback. Ausente/`false` en un turno sin cambios (consulta, falló).
+   */
+  canGiveFeedback?: boolean;
+  /** La carita que el docente ya tocó bajo esta respuesta, o `null`/ausente
+   *  si todavía no tocó ninguna. */
+  faceRating?: 'GOOD' | 'NEUTRAL' | 'BAD' | null;
+  /**
+   * La pregunta inline de T5 decidida para ESTE turno, si
+   * `decidirPreguntaFeedback` resolvió mostrar una y todavía no se
+   * respondió/descartó. Ausente en cualquier otro mensaje — nunca hay dos a
+   * la vez en el mismo proyecto.
+   */
+  feedbackPrompt?: 'FUNCIONA' | 'VISUAL' | null;
 }
 
 /** T9: una de las versiones que expone el servidor para un mensaje ya

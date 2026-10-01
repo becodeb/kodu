@@ -102,7 +102,12 @@ async function asegurarMotorMockPorDefecto(admin: APIRequestContext, mockUrl: st
     motor = await prisma.aiModel.findUniqueOrThrow({ where: { id } });
   }
 
-  const patch = await admin.patch(`/api/admin/models/${motor.id}`, { data: { isDefault: true, enabled: true } });
+  // odd/tasks/ahorro-tokens.md (T2): razonamiento configurado "high" a
+  // propósito — así el turno siguiente puede afirmar que una cuenta FREE lo
+  // recibe apagado ("none") y no "high".
+  const patch = await admin.patch(`/api/admin/models/${motor.id}`, {
+    data: { isDefault: true, enabled: true, reasoningEffort: 'high', reasoningParam: 'reasoning_effort' },
+  });
   assert.equal(patch.status(), 200, `motor mock como default: ${await patch.text()}`);
   return motor.id;
 }
@@ -250,9 +255,24 @@ await prueba('un turno: el bloque <taller> nunca llega como texto y la ficha se 
   assert.equal(done.message.questions.length, 2);
   assert.ok(!done.message.content.includes('<taller>'));
 
-  const ultimaLlamada = mock.llamadas.at(-1)!.body as { tools?: unknown; messages: Array<{ content: string }> };
+  const ultimaLlamada = mock.llamadas.at(-1)!.body as {
+    tools?: unknown;
+    messages: Array<{ content: string }>;
+    reasoning_effort?: string;
+  };
   assert.equal(ultimaLlamada.tools, undefined, 'el Taller pide sin herramientas');
   assert.ok(ultimaLlamada.messages.at(-1)!.content.includes('Palancas'));
+
+  // odd/tasks/ahorro-tokens.md (T2): DOCENTE_EMAIL es una cuenta PERSONAL sin
+  // ninguna IndividualSubscription cargada ("sin fila = FREE") — el motor
+  // está configurado en "high" (ver asegurarMotorMockPorDefecto), así que si
+  // el pedido real llegó en "none" es porque el Taller apagó el razonamiento
+  // para este docente, no porque el motor lo tuviera así de entrada.
+  assert.equal(
+    ultimaLlamada.reasoning_effort,
+    'none',
+    'una cuenta personal FREE tiene que mandar el turno del Taller con el razonamiento apagado',
+  );
 
   const mensajes = await prisma.ideaMessage.findMany({ where: { sessionId: sesionId }, orderBy: { createdAt: 'asc' } });
   assert.deepEqual(

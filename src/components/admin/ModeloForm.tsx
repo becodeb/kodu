@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import Modal from '../workspace/Modal.tsx';
 import Interruptor from './Interruptor.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
-import type { MotorAdmin } from '../../lib/admin/modelos.ts';
+import type { MotorAdmin, PresetUI } from '../../lib/admin/modelos.ts';
 import type { ProveedorAdmin } from '../../lib/admin/proveedores.ts';
 
 /**
@@ -24,6 +24,8 @@ interface ModeloFormProps {
   otrosMotores: MotorAdmin[];
   /** El catálogo entero de cuentas de proveedor, para el `<select>` de abajo. */
   proveedores: ProveedorAdmin[];
+  /** odd/tasks/ahorro-tokens.md (T7): presets definidos en código. */
+  presets: PresetUI[];
   onGuardado: (motor: MotorAdmin) => void;
   onCerrar: () => void;
 }
@@ -52,10 +54,41 @@ function previewDePrecio(entrada: string, cacheada: string, salida: string): str
   return `Un turno típico —8.000 de entrada, 2.000 cacheados, 4.000 de salida— costaría ≈ US$ ${formateado}.`;
 }
 
+/** "1 1-4" → `{weekday:1, startHour:1, endHour:4}`. Una línea inválida se
+ *  ignora (en vez de bloquear el guardado entero por una coma de más). */
+function parsearVentanasPico(texto: string): Array<{ weekday: number; startHour: number; endHour: number }> {
+  return texto
+    .split('\n')
+    .map((linea) => linea.trim())
+    .filter(Boolean)
+    .map((linea) => {
+      const match = /^([0-6])\s+(\d{1,2})-(\d{1,2})$/.exec(linea);
+      if (!match) return null;
+      return { weekday: Number(match[1]), startHour: Number(match[2]), endHour: Number(match[3]) };
+    })
+    .filter((v): v is { weekday: number; startHour: number; endHour: number } => v !== null);
+}
+
+function parsearFeriados(texto: string): string[] {
+  return texto
+    .split(',')
+    .map((fecha) => fecha.trim())
+    .filter((fecha) => /^\d{4}-\d{2}-\d{2}$/.test(fecha));
+}
+
 export default function ModeloForm(props: ModeloFormProps) {
   const { motor } = props;
   const idBase = useId();
   const sinProveedores = props.proveedores.length === 0;
+
+  // odd/tasks/ahorro-tokens.md (T7): "" = "Personalizado". Elegir un preset
+  // conocido rellena y bloquea los campos que el preset posee (precio,
+  // horario, razonamiento, tokens máx. de salida, identificador del
+  // modelo) — el servidor los vuelve a pisar con el preset igual (nunca
+  // confía en lo que viaje acá), esto es sólo para que el admin no tipee
+  // valores que después se ignoran.
+  const [presetKey, setPresetKey] = useState(motor?.presetKey ?? '');
+  const presetElegido = props.presets.find((p) => p.key === presetKey) ?? null;
 
   const [providerId, setProviderId] = useState(motor?.providerId ?? '');
   const [providerModel, setProviderModel] = useState(motor?.providerModel ?? '');
@@ -75,11 +108,43 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [precioEntrada, setPrecioEntrada] = useState(motor?.priceInputPerMToken ?? '');
   const [precioCacheada, setPrecioCacheada] = useState(motor?.priceCachedInputPerMToken ?? '');
   const [precioSalida, setPrecioSalida] = useState(motor?.priceOutputPerMToken ?? '');
+  // odd/tasks/ahorro-tokens.md (T1): horario de pico, opcional. Las ventanas
+  // se editan como texto plano ("día hora-hora", un día de la semana Mon=1 a
+  // Dom=0 por línea) para no armar un editor de filas dinámicas para un caso
+  // de uso tan chico — el admin que lo toca hoy es sólo el dueño.
+  const [precioOffPeakFactor, setPrecioOffPeakFactor] = useState(motor?.priceOffPeakFactor ?? '');
+  const [ventanasPico, setVentanasPico] = useState(
+    (motor?.peakWindowsUtc ?? []).map((v) => `${v.weekday} ${v.startHour}-${v.endHour}`).join('\n'),
+  );
+  const [feriados, setFeriados] = useState((motor?.offPeakDatesUtc ?? []).join(', '));
 
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const preview = previewDePrecio(precioEntrada, precioCacheada, precioSalida);
+
+  /** Al elegir un preset, rellena (y de ahí en más bloquea) los campos que
+   *  posee — ver el comentario de `presetKey` más arriba. Volver a
+   *  "Personalizado" deja todo tal como haya quedado, editable de nuevo. */
+  function elegirPreset(key: string) {
+    setPresetKey(key);
+    const preset = props.presets.find((p) => p.key === key);
+    if (!preset) return;
+
+    setProviderModel(preset.providerModel);
+    setMaxOutputTokens(String(preset.maxOutputTokens));
+    setReasoningEffort(preset.reasoningDefaultEffort);
+    setReasoningParam(preset.reasoningParam);
+    setPrecioEntrada(String(preset.prices.inputPerMToken));
+    setPrecioCacheada(String(preset.prices.cachedInputPerMToken));
+    setPrecioSalida(String(preset.prices.outputPerMToken));
+
+    // Sugiere la cuenta de proveedor que ya coincide en baseUrl, si existe
+    // una — "reusar", nunca crea una cuenta nueva (eso sigue siendo un paso
+    // manual en /admin/proveedores, el flujo de clave no cambia con T7).
+    const proveedorQueCoincide = props.proveedores.find((p) => p.baseUrl === preset.provider.baseUrl);
+    if (proveedorQueCoincide) setProviderId(proveedorQueCoincide.id);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -111,6 +176,15 @@ export default function ModeloForm(props: ModeloFormProps) {
       priceInputPerMToken: precioEntrada.trim() === '' ? null : Number(precioEntrada),
       priceCachedInputPerMToken: precioCacheada.trim() === '' ? null : Number(precioCacheada),
       priceOutputPerMToken: precioSalida.trim() === '' ? null : Number(precioSalida),
+      priceOffPeakFactor: precioOffPeakFactor.trim() === '' ? null : Number(precioOffPeakFactor),
+      peakWindowsUtc: parsearVentanasPico(ventanasPico),
+      offPeakDatesUtc: parsearFeriados(feriados),
+      // odd/tasks/ahorro-tokens.md (T7): el servidor es quien manda de
+      // verdad — con un preset elegido, pisa precio/horario/razonamiento/
+      // tokens máx. de salida/identificador del modelo con lo que tenga
+      // cargado `presets.ts`, sin importar lo que haya en los campos de
+      // arriba (que además quedan deshabilitados mientras hay un preset).
+      presetKey: presetKey === '' ? null : presetKey,
     };
 
     const result = motor
@@ -158,6 +232,30 @@ export default function ModeloForm(props: ModeloFormProps) {
           </div>
         )}
 
+        <div>
+          <label className="kodu-label" htmlFor={`${idBase}-preset`}>
+            Preset
+          </label>
+          <select
+            id={`${idBase}-preset`}
+            value={presetKey}
+            onChange={(event) => elegirPreset(event.target.value)}
+            className="kodu-input"
+          >
+            <option value="">Personalizado</option>
+            {props.presets.map((preset) => (
+              <option key={preset.key} value={preset.key}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-ink-500">
+            {presetElegido
+              ? `Valores del preset (verificados el ${presetElegido.pricesVerifiedAt}, fuente: ${presetElegido.sourceUrl}). Un cambio de precio en el preset actualiza este motor solo — no hace falta volver a tocar este formulario.`
+              : 'Personalizado: precio, horario, razonamiento y tokens máx. de salida se cargan y editan a mano, como siempre.'}
+          </p>
+        </div>
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="kodu-label" htmlFor={`${idBase}-provider`}>
@@ -191,6 +289,7 @@ export default function ModeloForm(props: ModeloFormProps) {
               placeholder="MiniMaxAI/MiniMax-M3"
               className="kodu-input"
               required
+              disabled={presetElegido !== null}
             />
           </div>
         </div>
@@ -254,6 +353,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioEntrada(event.target.value)}
                 placeholder="0,27"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
             <div>
@@ -267,6 +367,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioCacheada(event.target.value)}
                 placeholder="0,03"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
             <div>
@@ -280,6 +381,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 onChange={(event) => setPrecioSalida(event.target.value)}
                 placeholder="1,10"
                 className="kodu-input"
+                disabled={presetElegido !== null}
               />
             </div>
           </div>
@@ -288,6 +390,68 @@ export default function ModeloForm(props: ModeloFormProps) {
           </p>
           {preview && <p className="text-xs text-ink-700">{preview}</p>}
         </fieldset>
+
+        {presetElegido ? (
+          <p className="rounded-[10px] border border-linea p-3 text-xs text-ink-500">
+            {presetElegido.hasSchedule
+              ? 'El horario de pico de este preset lo define el código (presets.ts), no este formulario.'
+              : 'Este preset no tiene horario de pico: siempre el mismo precio.'}
+          </p>
+        ) : (
+        <fieldset className="space-y-2 rounded-[10px] border border-linea p-3">
+          <legend className="px-1 text-sm font-medium text-ink-700">Horario de pico (opcional)</legend>
+          <p className="text-xs text-ink-500">
+            Algunos proveedores (DeepSeek) cobran menos fuera de su horario de pico. Dejá el factor
+            vacío si este motor no tiene horario — se cobra siempre el precio de arriba, como hasta ahora.
+          </p>
+          <div>
+            <label className="kodu-label text-xs" htmlFor={`${idBase}-offPeakFactor`}>
+              Factor fuera de pico (0 a 1, ej. 0,5 = mitad de precio)
+            </label>
+            <input
+              id={`${idBase}-offPeakFactor`}
+              inputMode="decimal"
+              value={precioOffPeakFactor ?? ''}
+              onChange={(event) => setPrecioOffPeakFactor(event.target.value)}
+              placeholder="0,5"
+              className="kodu-input"
+            />
+          </div>
+          {precioOffPeakFactor.trim() !== '' && (
+            <>
+              <div>
+                <label className="kodu-label text-xs" htmlFor={`${idBase}-ventanasPico`}>
+                  Ventanas de pico, en UTC (una por línea: "día hora_inicio-hora_fin")
+                </label>
+                <textarea
+                  id={`${idBase}-ventanasPico`}
+                  value={ventanasPico}
+                  onChange={(event) => setVentanasPico(event.target.value)}
+                  rows={4}
+                  placeholder={'1 1-4\n1 6-10'}
+                  className="kodu-input resize-none font-mono text-xs"
+                />
+                <p className="mt-1 text-xs text-ink-500">
+                  Día de la semana: 0 = domingo … 6 = sábado. Hora de inicio incluida, hora de fin no
+                  incluida. Fuera de toda ventana (o si no cargás ninguna) es fuera de pico.
+                </p>
+              </div>
+              <div>
+                <label className="kodu-label text-xs" htmlFor={`${idBase}-feriados`}>
+                  Fechas siempre fuera de pico (feriados, UTC, separadas por coma)
+                </label>
+                <input
+                  id={`${idBase}-feriados`}
+                  value={feriados}
+                  onChange={(event) => setFeriados(event.target.value)}
+                  placeholder="2026-01-01, 2026-02-17"
+                  className="kodu-input"
+                />
+              </div>
+            </>
+          )}
+        </fieldset>
+        )}
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div>
@@ -301,6 +465,7 @@ export default function ModeloForm(props: ModeloFormProps) {
               value={maxOutputTokens}
               onChange={(event) => setMaxOutputTokens(event.target.value)}
               className="kodu-input"
+              disabled={presetElegido !== null}
             />
           </div>
           <div>
@@ -366,10 +531,16 @@ export default function ModeloForm(props: ModeloFormProps) {
             value={reasoningEffort}
             onChange={(event) => setReasoningEffort(event.target.value)}
             className="kodu-input"
+            disabled={presetElegido !== null}
           >
             <option value="">No mandar el parámetro</option>
             <option value="none">Sin razonamiento</option>
             <option value="low">Bajo</option>
+            {/* "medium" sólo lo usan niveles internos (verificador, T3) y
+                el default de algún preset (T7, odd/tasks/ahorro-tokens.md) —
+                se deja elegible acá para que el <select> siga reflejando el
+                valor real cuando un preset lo trae. */}
+            <option value="medium">Medio</option>
             <option value="high">Alto</option>
           </select>
           <p className="mt-1 text-xs text-ink-500">
@@ -388,6 +559,7 @@ export default function ModeloForm(props: ModeloFormProps) {
                 value={reasoningParam}
                 onChange={(event) => setReasoningParam(event.target.value)}
                 className="kodu-input"
+                disabled={presetElegido !== null}
               >
                 <option value="reasoning_effort">reasoning_effort (DeepSeek, dialecto OpenAI)</option>
                 <option value="thinking">thinking (MiniMax M3)</option>

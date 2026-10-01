@@ -1,0 +1,1 @@
+Cuando agrego un valor nuevo a la lista de alturas, quiero que la moda se recalcule y se muestre resaltada en la recta numérica, no sólo en el texto.

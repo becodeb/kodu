@@ -46,7 +46,7 @@ export interface PromptContext {
  * sólo puede rehacerlo — y rehacerlo es exactamente lo que rompe el trabajo del
  * docente. MiniMax M3 tiene contexto de sobra para esto.
  */
-const MAX_HTML_CHARS = 200_000;
+export const MAX_HTML_CHARS = 200_000;
 const MAX_PDF_CHARS = 12_000;
 
 const BASE_PROMPT = `Sos el motor de generación de KoduEdu, una plataforma donde docentes sin conocimientos técnicos crean recursos didácticos interactivos (quizzes, simuladores, calculadoras, flashcards) conversando en español rioplatense.
@@ -313,10 +313,35 @@ function renderAssets(assets: AssetContext[], canSeeImages: boolean): string {
  * reglas, assets o la guía de preguntas tempranas) y el proveedor los
  * cachea solo.
  */
+/**
+ * odd/tasks/ahorro-tokens.md (T3a/T6): guía de uso de `edit_resource_code`.
+ * Va PEGADA a este bloque (que ya cambia en cada turno) y NUNCA en
+ * `BASE_PROMPT`: ese system prompt tiene que quedar byte a byte igual turno
+ * a turno para que el proveedor siga cacheando el prefijo (ver el
+ * comentario grande sobre el cache más abajo). Como esto depende de si el
+ * turno ofrece o no esta herramienta (ajuste, nunca un recurso nuevo),
+ * ponerlo en el system prompt partiría ese cache cada vez que cambiara.
+ *
+ * T6: la evaluación ciega (T3c) mostró que fragmentos nunca pierde en
+ * calidad y corta el costo ~78%, así que dejó de ser una opción entre dos
+ * herramientas — ahora es la ÚNICA ofrecida en el primer intento de un
+ * ajuste. La guía ya no compara "cuándo usar una u otra": explica cómo
+ * resolver CUALQUIER cambio, chico o grande, con `edit_resource_code`.
+ */
+const GUIA_EDICION_POR_FRAGMENTOS = `
+
+## Cómo aplicar este cambio
+Para este ajuste tenés UNA sola herramienta disponible: \`edit_resource_code\`, una lista de reemplazos de texto puntuales. No tenés \`update_resource_code\` en este turno.
+
+- Para un cambio LOCALIZADO (un texto, un color, una función, un botón), usá un \`find\`/\`replace\` acotado a esa parte.
+- Para un rediseño grande que toca buena parte del documento, igual resolvelo con \`edit_resource_code\`: armá uno o varios reemplazos GRANDES (por ejemplo, un \`find\` que abarque el \`<body>\` entero o una sección completa) en vez de muchos reemplazos chiquitos.
+- Cada \`find\` tiene que ser una copia EXACTA de un fragmento que aparece una sola vez en el HTML de arriba (mismos espacios y saltos de línea); si no matchea ni una vez o matchea más de una, la edición entera se rechaza y el recurso queda igual.`;
+
 export function buildCurrentResourceBlock(
   currentHtml: string,
   projectTitle: string,
   htmlEditedByTeacher: boolean,
+  editsEnabled = false,
 ): string {
   // El bloque canónico del kit (T2, "Kit aplicado por el servidor") son ~40
   // líneas de Tailwind config que el modelo no escribió y no tiene que
@@ -348,7 +373,9 @@ export function buildCurrentResourceBlock(
       '\nEste documento es tan largo que hubo que recortarlo para mostrártelo: lo que sigue NO es el archivo completo. No lo reescribas entero, porque perderías la parte que no ves. Hacé el cambio más acotado posible y, si el pedido toca la zona recortada, decíselo al docente y pedile que te pegue esa parte en el chat.\n';
   }
 
-  return `${section}\n\`\`\`html\n${body}\n\`\`\``;
+  const guia = editsEnabled ? GUIA_EDICION_POR_FRAGMENTOS : '';
+
+  return `${section}\n\`\`\`html\n${body}\n\`\`\`${guia}`;
 }
 
 export function buildSystemPrompt(context: PromptContext): string {

@@ -47,6 +47,11 @@ export const PUERTO_POR_DEFECTO = 4790;
 
 export const UPDATE_RESOURCE_CODE = 'update_resource_code';
 
+/** odd/tasks/ahorro-tokens.md (T3a): la segunda herramienta
+ *  (`edit_resource_code`), para scriptear un turno de edición por
+ *  fragmentos con este mismo mock. */
+export const EDIT_RESOURCE_CODE = 'edit_resource_code';
+
 /** Lo que ve la app en cada pedido (`messages`, `model`, `tools`, `tool_choice`, …). */
 export interface LlamadaRegistrada {
   recibidaEn: number;
@@ -84,6 +89,25 @@ export interface RespuestaScript {
   llamarHerramienta?: boolean;
   /** El HTML del argumento `html`. Default: `htmlDeEjemplo()` (~15 KB). */
   html?: string;
+  /**
+   * odd/tasks/ahorro-tokens.md (T3a): si viene, el tool call usa ESTE
+   * nombre de función en vez de `UPDATE_RESOURCE_CODE` por defecto — para
+   * scriptear `edit_resource_code`. Combinar con `edits` para el argumento.
+   */
+  herramienta?: string;
+  /**
+   * odd/tasks/ahorro-tokens.md (T3a): cuando `herramienta` es
+   * `EDIT_RESOURCE_CODE`, esto reemplaza a `html` como argumento del tool
+   * call — se manda como `JSON.stringify({edits})`, repartido en chunks
+   * igual que el argumento `html` de siempre.
+   */
+  edits?: { find: string; replace: string }[];
+  /**
+   * odd/tasks/ahorro-tokens.md (T3a): JSON crudo a mandar como `arguments`,
+   * sin pasar por `html`/`edits` — para scriptear un argumento deliberadamente
+   * inválido (JSON roto, `edits` vacío, etc.) en una prueba de recuperación.
+   */
+  argumentosCrudos?: string;
   /** Tamaño de cada chunk de `arguments`, en bytes. */
   chunkBytes?: number;
   /** Demora entre chunks de `arguments`, en ms. Con los defaults, un
@@ -642,8 +666,12 @@ async function manejarPedido(
   const llamarHerramienta = script.llamarHerramienta ?? true;
 
   if (llamarHerramienta) {
-    const html = script.html ?? htmlDeEjemplo();
-    const argumentos = JSON.stringify({ html });
+    const nombreHerramienta = script.herramienta ?? UPDATE_RESOURCE_CODE;
+    const argumentos =
+      script.argumentosCrudos ??
+      (nombreHerramienta === EDIT_RESOURCE_CODE
+        ? JSON.stringify({ edits: script.edits ?? [] })
+        : JSON.stringify({ html: script.html ?? htmlDeEjemplo() }));
     const chunkBytes = script.chunkBytes ?? CHUNK_BYTES_DEFECTO;
     const chunkDelayMs = script.chunkDelayMs ?? CHUNK_DELAY_MS_DEFECTO;
 
@@ -656,7 +684,7 @@ async function manejarPedido(
           index: 0,
           delta: {
             tool_calls: [
-              { index: 0, id: `call_${id}`, type: 'function', function: { name: UPDATE_RESOURCE_CODE, arguments: '' } },
+              { index: 0, id: `call_${id}`, type: 'function', function: { name: nombreHerramienta, arguments: '' } },
             ],
           },
           finish_reason: null,
