@@ -255,7 +255,7 @@ async function main(): Promise<void> {
     // ───────────────────────────────────────────────────────
     // 4. Individual: suscribirse, créditos, cancelar, arrepentimiento.
     // ───────────────────────────────────────────────────────
-    await prueba('individual checkout MONTHLY: aprobar sube los créditos al nivel Individual (1.000)', async () => {
+    await prueba('individual checkout MONTHLY: aprobar sube los créditos al nivel Individual', async () => {
       const { page, body } = await registrar(`individual-sub-${SUFIJO}@afuera-cobro-e2e.com`);
       const respuesta = await page.request.post(`${BASE_URL}/api/billing/individual/checkout`, { data: { interval: 'MONTHLY' } });
       assert.equal(respuesta.status(), 200, await respuesta.text());
@@ -268,12 +268,24 @@ async function main(): Promise<void> {
       assert.equal(sub.status, 'ACTIVE');
       assert.equal(sub.interval, 'MONTHLY');
 
+      // odd/tasks/ahorro-tokens.md (T8): el nivel de créditos del plan
+      // Individual ya no es un número fijo (1.000 -> 2.500) — se lee del
+      // catálogo real en vez de inventar un invariante que el código no
+      // promete, mismo criterio que planes-recorrido.ts.
+      const planIndividual = await prisma.individualPlan.findUniqueOrThrow({
+        where: { key: 'INDIVIDUAL' },
+        select: { monthlyCredits: true },
+      });
+
       const saldo = await prisma.creditLedgerEntry.aggregate({ where: { userId: body.user.id }, _sum: { delta: true } });
-      assert.ok((saldo._sum.delta ?? 0) >= 1000, `el saldo debe reflejar el nivel Individual (dio ${saldo._sum.delta})`);
+      assert.ok(
+        (saldo._sum.delta ?? 0) >= planIndividual.monthlyCredits,
+        `el saldo debe reflejar el nivel Individual (catálogo: ${planIndividual.monthlyCredits}, dio ${saldo._sum.delta})`,
+      );
 
       const planGrant = await prisma.creditLedgerEntry.findFirst({ where: { userId: body.user.id, kind: 'PLAN_GRANT' } });
-      assert.ok(planGrant, 'debe existir un movimiento PLAN_GRANT de 1.000');
-      assert.equal(planGrant!.delta, 1000);
+      assert.ok(planGrant, `debe existir un movimiento PLAN_GRANT de ${planIndividual.monthlyCredits}`);
+      assert.equal(planGrant!.delta, planIndividual.monthlyCredits);
     });
 
     await prueba('individual cancel: mantiene acceso (ACTIVE) hasta el fin del período', async () => {
