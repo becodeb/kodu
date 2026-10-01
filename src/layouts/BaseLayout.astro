@@ -149,7 +149,15 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
               />
             </a>
 
-            <div class="flex items-center gap-2.5 text-sm whitespace-nowrap sm:gap-6">
+            {/* odd/tasks/planes-y-cobros.md (T6): "Precios" sumó un cuarto
+                enlace al centro y, con "Mis recursos"/"Taller" puestos
+                (docente logueado), a 390px ya no entraban todos en una
+                línea — `min-w-0` (sin esto, un item de grid no se achica
+                nunca por debajo de su contenido) + `overflow-x-auto` acá
+                contienen el scroll DENTRO de esta franja en vez de ensanchar
+                la página entera, que es lo que de verdad importa (no debe
+                haber scroll horizontal del documento). */}
+            <div class="flex min-w-0 items-center gap-2.5 overflow-x-auto text-sm whitespace-nowrap sm:gap-6">
               <a
                 href="/gallery"
                 class="kodu-nav-link"
