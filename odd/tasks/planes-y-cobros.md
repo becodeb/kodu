@@ -111,7 +111,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   con `frequency: 12` cobre una vez por año, así que el ciclo lectivo y el anual individual se cobran como pago único y
   se renuevan con un nuevo checkout. Falta: aviso 30 días antes del fin (banner + mail por Resend si está configurado)
   con el enlace para pagar el ciclo siguiente.
-- [ ] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
+- [x] **T4c — Probar con el sandbox real de Mercado Pago.** Credenciales de prueba del dueño + túnel para el webhook.
   Confirmar dos supuestos no verificados: que `PUT /preapproval` cambia el monto, y que cada cobro recurrente trae el
   mismo `external_reference` (de eso depende distinguir primer cobro de renovación en `aplicar.ts`).
 - [x] **T10 — Créditos al pasarse a Individual.** Decisión del dueño: al pagar se dan los créditos completos de nuevo.
@@ -216,9 +216,18 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   ahora tabla `ArcaAccessTicket` con advisory lock), elementos SOAP sin el namespace `ar:` y `SOAPAction` vacío; además el
   orden `ImpTrib`/`ImpIVA` estaba invertido. Facturas C reales de homologación con CAE (consumidor final y CUIT exento),
   la segunda desde otro proceso reusando el acceso guardado. `unidad-facturador` 23/23 (re-corrido por el orquestador).
+- T4c (delegada, 5 fases con pagos reales del dueño en el sandbox): `2ab8600`, `67e2dc1`, `c3ec76f`, `052fcfd`, `7345919`,
+  `70127ad`. Confirmados los dos supuestos (`PUT /preapproval` cambia el monto; el cobro recurrente trae la referencia).
+  Defectos encontrados: `start_date` llegaba en el pasado; los cobros recurrentes (`subscription_authorized_payment`) se
+  buscaban como pagos y se habrían perdido; los avisos reales llegaban en formato IPN sin firma y se rechazaban con 401
+  (ahora se procesan siempre releyendo el recurso, con límite por IP); y una suscripción directa exige que el mail de
+  Kodu sea cuenta de Mercado Pago. **Decisión de diseño:** las suscripciones mensuales usan un `preapproval_plan` por
+  compra (el pagador entra con cualquier cuenta; se enlaza por id de plan; un segundo suscriptor del mismo link se cancela
+  solo). Verificado con pagos reales del dueño: anual individual, ciclo lectivo, mensual individual y mensual de colegio,
+  más cancelación. `unidad-pasarela` re-corrido por el orquestador; `test:cobros` 11/11 según el escritor.
 
 ## Próximo paso
 
 Que el dueño pruebe en local con `docs/probar-cobros.md`. Pendientes antes de producción: T4c (sandbox de Mercado
-Pago), T8b (umbral de identificación), T8c (ARCA homologación). Push a `main` cuando el dueño confirme el backup de la
-base de producción (no hay backups programados).
+T8b (umbral de identificación). Subir a `main` los arreglos de T8c y T4c (migraciones aditivas `20261025…` y `20261026…`)
+y cargar las variables de producción en Coolify.
