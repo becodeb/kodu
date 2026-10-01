@@ -196,7 +196,7 @@ Ruta: todas delegadas (tocan 2+ archivos no triviales → disparador de escritor
   `test:cobros` 11/11, `taller-de-ideas` verde, migraciones en base vacía; el orquestador re-corrió `unidad-creditos`,
   `unidad-planes` y `check`.
 - **Defecto encontrado leyendo la otra sesión:** producción solo corre `migrate deploy`, nunca el seed, así que las
-  bandas y los planes individuales quedaban vacíos en un deploy nuevo. `20261019000000_catalogo_inicial` los inserta con
+  bandas y los planes individuales quedaban vacíos en un deploy nuevo. `20261024000000_catalogo_inicial` los inserta con
   los precios de lanzamiento (`ON CONFLICT DO NOTHING`). Probado en base vacía: 3 bandas, 2 planes, crédito 0,001,
   prueba apagada.
 

@@ -272,7 +272,7 @@ model IndividualPlan {
   /// `null` para FREE (no se vende anual).
   annualPriceArs  Decimal?          @db.Decimal(12, 2)
   /// Créditos que otorga cada mes (50 en FREE, 2.500 en INDIVIDUAL desde T10
-  /// — antes 1.000, ver `prisma/migrations/20261017000000_valor_credito` — ver
+  /// — antes 1.000, ver `prisma/migrations/20261022000000_valor_credito` — ver
   /// `src/lib/billing/creditos.ts` para la semántica exacta de "por mes").
   monthlyCredits  Int
   /// Créditos de bienvenida, ÚNICOS, sólo al crear la cuenta (100 en FREE, 0
@@ -291,7 +291,7 @@ model BillingSettings {
   id                        Int      @id @default(1)
   /// 1 crédito = este valor en USD de costo real (decisión del dueño, T10:
   /// "1 crédito = USD 0,001 de costo real" — antes 0,0025, ver
-  /// `prisma/migrations/20261017000000_valor_credito`). Configurable.
+  /// `prisma/migrations/20261022000000_valor_credito`). Configurable.
   creditUsdValue            Decimal  @default(0.001) @db.Decimal(12, 6)
   /// T11 (decisión del dueño): la prueba institucional es un interruptor del
   /// superadmin ("todavía tenemos 0 clientes") — OFF por default. Con esto
