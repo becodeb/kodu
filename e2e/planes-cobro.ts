@@ -145,7 +145,7 @@ async function main(): Promise<void> {
 
     await prueba('org checkout MONTHLY: admin de la organización puede contratar', async () => {
       const respuesta = await org1.page.request.post(`${BASE_URL}/api/billing/org/checkout`, {
-        data: { interval: 'MONTHLY', legalName: 'Escuela E2E SRL', cuit: CUIT_VALIDO },
+        data: { interval: 'MONTHLY', legalName: 'Escuela E2E SRL', cuit: CUIT_VALIDO, ivaCondition: 'MONOTRIBUTO' },
       });
       assert.equal(respuesta.status(), 200, await respuesta.text());
       const cuerpo = (await respuesta.json()) as { url: string };
@@ -208,7 +208,7 @@ async function main(): Promise<void> {
     // ───────────────────────────────────────────────────────
     await prueba('org checkout CYCLE (septiembre-diciembre): cobra el ciclo siguiente completo', async () => {
       const respuesta = await org2.page.request.post(`${BASE_URL}/api/billing/org/checkout`, {
-        data: { interval: 'CYCLE', legalName: 'Red E2E SA', cuit: CUIT_VALIDO },
+        data: { interval: 'CYCLE', legalName: 'Red E2E SA', cuit: CUIT_VALIDO, ivaCondition: 'RESPONSABLE_INSCRIPTO' },
       });
       assert.equal(respuesta.status(), 200, await respuesta.text());
       const cuerpo = (await respuesta.json()) as { url: string };
@@ -239,7 +239,7 @@ async function main(): Promise<void> {
       const { page, body } = await registrar(`docente@${org1.dominio}`);
       assert.notEqual(body.user.organizationId, null);
       const respuesta = await page.request.post(`${BASE_URL}/api/billing/org/checkout`, {
-        data: { interval: 'MONTHLY', legalName: 'x', cuit: CUIT_VALIDO },
+        data: { interval: 'MONTHLY', legalName: 'x', cuit: CUIT_VALIDO, ivaCondition: 'MONOTRIBUTO' },
       });
       assert.equal(respuesta.status(), 404, `un no-admin no debe poder ni ver que la organización existe (dio ${respuesta.status()})`);
     });
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
     await prueba('org checkout: una cuenta personal no puede contratar una licencia institucional', async () => {
       const { page } = await registrar(`personal-org-${SUFIJO}@afuera-cobro-e2e.com`);
       const respuesta = await page.request.post(`${BASE_URL}/api/billing/org/checkout`, {
-        data: { interval: 'MONTHLY', legalName: 'x', cuit: CUIT_VALIDO },
+        data: { interval: 'MONTHLY', legalName: 'x', cuit: CUIT_VALIDO, ivaCondition: 'MONOTRIBUTO' },
       });
       assert.equal(respuesta.status(), 403, `dio ${respuesta.status()}`);
     });

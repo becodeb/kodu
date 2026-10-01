@@ -146,10 +146,17 @@ async function loginWSAA(config: ArcaConfig): Promise<LoginTicket> {
 const cacheTokens = new Map<string, LoginTicket>();
 const MARGEN_EXPIRACION_MS = 10 * 60 * 1000; // renueva 10' antes de que venza, no al filo.
 
+/** `true` si todavía falta más del margen de renovación para que venza —
+ *  función PURA, exportada para probar el manejo de expiración sin pegarle a
+ *  WSAA (`e2e/unidad-facturador.ts`). */
+export function ticketVigente(ticket: LoginTicket, ahora: Date): boolean {
+  return ticket.expirationTime.getTime() - MARGEN_EXPIRACION_MS > ahora.getTime();
+}
+
 async function obtenerTicketVigente(config: ArcaConfig): Promise<LoginTicket> {
   const clave = `${config.cuit}:${config.entorno}`;
   const cacheado = cacheTokens.get(clave);
-  if (cacheado && cacheado.expirationTime.getTime() - MARGEN_EXPIRACION_MS > Date.now()) return cacheado;
+  if (cacheado && ticketVigente(cacheado, new Date())) return cacheado;
   const nuevo = await loginWSAA(config);
   cacheTokens.set(clave, nuevo);
   return nuevo;
