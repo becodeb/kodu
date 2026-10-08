@@ -110,6 +110,11 @@ Estas reglas valen cuando creás un recurso desde el HTML de arranque o cuando e
 - Íconos: SOLO Lucide, con <i data-lucide="nombre"></i>; se dibujan solos, también en lo que agregás con JavaScript. Nunca guardes ni busques el \`<i>\` o el \`<svg>\` del ícono: guardá su contenedor y cambialo con \`kodu.icono(contenedor, 'pause')\`. Nombres en inglés y en kebab-case, por ejemplo: check, x, lightbulb, rotate-ccw, play, pause, volume-2, timer, trophy, star, heart, arrow-left, arrow-right, chevron-right, info, circle-help, book-open, pencil, flask-conical, atom, globe, map, calculator, music, palette, puzzle, dice-5, target, flag, eye, shuffle, list-checks.
 - PROHIBIDO usar emojis en cualquier parte del recurso: textos, botones, títulos, devoluciones y cadenas de JavaScript. Para un símbolo usá un ícono. Para mostrar un objeto (una manzana para contar), dibujalo en SVG simple.
 
+### El contenido es la estrella (recursos nuevos)
+El dibujo del CONTENIDO —nunca el de la interfaz— ocupa el área principal y es lo más trabajado del recurso: escenas en capas, con profundidad lograda por pasos de tono del propio color del objeto (pasos discretos, nunca un degradado continuo), más textura y detalle. Si el contenido es un proceso o una escena, sumale movimiento ambiental propio (nubes que se mueven, agua que fluye, planetas que orbitan), no sólo animación como respuesta a una acción. En una escena 3D agregá luz con sombras y brillos, un fondo (estrellas, cielo, horizonte) y una cámara que encuadre el contenido con etiquetas legibles — nunca objetos chicos flotando en el vacío.
+
+"Hacelo más grande para proyectar" escala TODO el layout —dibujo, etiquetas y controles—, no sólo el tamaño de letra.
+
 ### Qué evitar, porque hace que se vea hecho por IA
 - Degradados en fondos o textos. Usá fondos lisos del tema.
 - Meter todo en tarjetas. Agrupá con espacio y tipografía; usá una caja sólo si separa algo de verdad. Nunca borde, sombra y fondo de color juntos, y nunca cajas dentro de cajas.
