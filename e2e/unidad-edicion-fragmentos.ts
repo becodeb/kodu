@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyResourceEdits } from '../src/lib/ai/edits.ts';
+import { applyResourceEdits, textoCercano } from '../src/lib/ai/edits.ts';
 import { parseEditResourceArgs } from '../src/lib/ai/tools.ts';
 import { aplicarKit, plegarKit } from '../src/lib/ai/kit.ts';
 
@@ -221,6 +221,44 @@ await prueba('applyResourceEdits: un find antes del corte se aplica igual con do
 await prueba('applyResourceEdits: sin truncamiento (documento entra entero) no rechaza nada por "truncated_region"', () => {
   const r = applyResourceEdits(HTML_SIMPLE, [{ find: 'Título original', replace: 'x' }], 200_000);
   assert.equal(r.ok, true);
+});
+
+// ─────────────────────────────────────────────────────────────
+// textoCercano (T4, round 1 de motor-claude): el texto real alrededor del
+// prefijo más largo de un `find` que falló con "no_match", para el
+// reintento. Round 1 lo verificó a mano; esta es su cobertura automatizada.
+// ─────────────────────────────────────────────────────────────
+
+await prueba('textoCercano: con el find completo presente, devuelve ese punto con contexto', () => {
+  const html = '<p>antes de la frase real que sí existe en el documento, después</p>';
+  const resultado = textoCercano(html, 'la frase real que sí existe', 5);
+  assert.ok(resultado !== null);
+  assert.ok(resultado!.includes('la frase real que sí existe'));
+});
+
+await prueba('textoCercano: con sólo un PREFIJO del find presente, ubica ese prefijo (no el find entero)', () => {
+  const html = '<p>el texto real dice hola mundo, nada más</p>';
+  // El modelo inventó "dice hola PLANETA" — sólo "dice hola " es real.
+  const resultado = textoCercano(html, 'dice hola PLANETA', 10);
+  assert.ok(resultado !== null);
+  assert.ok(resultado!.includes('dice hola'), 'tiene que ubicar el prefijo real más largo');
+  assert.ok(!resultado!.includes('PLANETA'), 'nunca inventa texto que no está en el HTML');
+});
+
+await prueba('textoCercano: ni el primer carácter del find aparece → null', () => {
+  const html = '<p>contenido sin relación alguna</p>';
+  assert.equal(textoCercano(html, 'ZZZ texto inventado que no existe'), null);
+});
+
+await prueba('textoCercano: find vacío → null (nunca tira)', () => {
+  assert.equal(textoCercano('<p>algo</p>', ''), null);
+});
+
+await prueba('textoCercano: recorta el contexto a los bordes del documento sin romper', () => {
+  const html = 'cabeza';
+  const resultado = textoCercano(html, 'cabeza extra que no está', 50);
+  assert.ok(resultado !== null);
+  assert.equal(resultado, 'cabeza');
 });
 
 if (fallas > 0) {

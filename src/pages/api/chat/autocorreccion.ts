@@ -4,7 +4,7 @@ import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { buildCurrentResourceBlock, buildSystemPrompt, TURNOS_TEMPRANOS } from '../../../lib/ai/prompt.ts';
 import { aplicarKitAlTurno } from './stream.ts';
-import { temaDe } from '../../../lib/ai/kit.ts';
+import { temaDe, desenvolverPruebas } from '../../../lib/ai/kit.ts';
 import {
   razonamientoCorreccion,
   readCompletionStream,
@@ -198,6 +198,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const temaProyecto = temaDe(project.currentHtml);
   const htmlPreCorreccion = project.currentHtml;
+  // T4 (round 1b, motor-claude): `htmlPreCorreccion` YA llega con cualquier
+  // `<script data-kodu-pruebas>` envuelto en `try{eval("...")}` (lo hizo
+  // `aislarPruebasKit` al guardar el turno anterior) — ver el comentario de
+  // `desenvolverPruebas`. Mostrarle ESE texto al modelo y pedirle que
+  // reproduzca un `find` con comillas escapadas que él nunca escribió así
+  // es la causa real de buena parte de los `no_match` del checklist: se le
+  // muestra y se matchea contra la versión DESENVUELTA; el resultado de una
+  // edición vuelve a pasar por `aplicarKitAlTurno`/`aislarPruebasKit`, que
+  // re-envuelve lo que haga falta antes de guardar.
+  const htmlParaModelo = desenvolverPruebas(htmlPreCorreccion);
   // odd/tasks/ahorro-tokens.md (T3a/T6): una autocorrección es, por
   // naturaleza, siempre sobre un recurso que YA existe — nunca hace falta el
   // chequeo de "recurso inicial" que sí aplica en /api/chat/stream. T3a lo
@@ -239,6 +249,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
 
   const informe: InformeAutoprueba = { errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas };
+  if (process.env.KODU_DEBUG_AUTOCORRECCION) {
+    console.log(`[debug/autocorreccion] ronda=${ronda} informe=${JSON.stringify(informe)}`);
+  }
   // T17: el checklist VIGENTE lo carga el SERVIDOR (nunca lo que mande el
   // cliente): es lo mismo que ya hace este endpoint con `htmlPreCorreccion`
   // — el texto de cada ítem citado en la corrección tiene que ser el real.
@@ -259,13 +272,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const mensajeCorreccion =
     problemasVerificadorAccionables.length > 0
       ? construirMensajeCorreccionVerificador(problemasVerificadorAccionables)
-      : construirMensajeCorreccion({ html: htmlPreCorreccion, informe, ronda, checklist });
+      : construirMensajeCorreccion({ html: htmlParaModelo, informe, ronda, checklist });
 
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     {
       role: 'user',
-      content: `${buildCurrentResourceBlock(htmlPreCorreccion, project.title, false, editsEnabled)}\n\n${mensajeCorreccion}`,
+      content: `${buildCurrentResourceBlock(htmlParaModelo, project.title, false, editsEnabled)}\n\n${mensajeCorreccion}`,
     },
   ];
 
@@ -366,13 +379,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 resultado.huboFalloDeEdicion = true;
                 continue;
               }
-              const aplicado = applyResourceEdits(htmlPreCorreccion, parsed.edits, MAX_HTML_CHARS);
+              const aplicado = applyResourceEdits(htmlParaModelo, parsed.edits, MAX_HTML_CHARS);
               if (aplicado.ok) {
                 resultado.htmlFinal = aplicarKitAlTurno(aplicado.html, temaProyecto);
                 resultado.editModeAplicado = 'fragments';
                 resultado.ultimoFallo = null;
               } else {
                 console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code no se pudo aplicar (${aplicado.reason}).`);
+                if (process.env.KODU_DEBUG_AUTOCORRECCION) {
+                  console.log(
+                    `[debug/autocorreccion] find fallido (${aplicado.reason}): ${JSON.stringify(aplicado.find)}`,
+                  );
+                  if (aplicado.reason === 'no_match') {
+                    console.log(
+                      `[debug/autocorreccion] texto cercano real: ${JSON.stringify(textoCercano(htmlParaModelo, aplicado.find))}`,
+                    );
+                  }
+                }
                 resultado.ultimoFallo = {
                   find: aplicado.find,
                   detalle: EDIT_FAILURE_MESSAGES[aplicado.reason],
@@ -408,7 +431,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           // vez. Ver el comentario de `textoCercano` (edits.ts).
           const cercano =
             resultado.ultimoFallo.reason === 'no_match' && resultado.ultimoFallo.find
-              ? textoCercano(htmlPreCorreccion, resultado.ultimoFallo.find)
+              ? textoCercano(htmlParaModelo, resultado.ultimoFallo.find)
               : null;
           const pistaCercana = cercano
             ? ` El texto real del recurso más parecido a ese punto es:\n${cercano}\nCopiá el "find" EXACTO de ahí (mismos espacios y saltos de línea).`

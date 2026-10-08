@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { aislarPruebasKit, aplicarKit, bloqueKit } from '../src/lib/ai/kit.ts';
+import { aislarPruebasKit, aplicarKit, bloqueKit, desenvolverPruebas } from '../src/lib/ai/kit.ts';
 
 /**
  * Pruebas unitarias de `aislarPruebasKit` (T1 de `odd/tasks/verificador.md`):
@@ -280,6 +280,44 @@ await prueba('aislarPruebasKit: un HTML sin ningún __koduPruebas no cambia', ()
   const html = documento('<p>Hola</p><script>function reiniciar() {}</script>');
   const resultado = aislarPruebasKit(html);
   assert.equal(resultado, html);
+});
+
+// ── desenvolverPruebas (T4, round 1b de motor-claude) ────────────────────
+// Inverso de `envolverPruebas`: lo que el modelo tiene que ver/matchear
+// para corregir un `<script data-kodu-pruebas>` ya envuelto, en vez del
+// `try{eval("...")}` con comillas escapadas que nadie escribe así a mano.
+
+await prueba('desenvolverPruebas: recupera el código original de un script ya envuelto', () => {
+  const codigoOriginal = `window.__koduPruebas=[{id:'c1',prueba:async t=>{return {ok: document.querySelector('[data-cont="1"]') !== null, detalle:''}}}];`;
+  const html = documento(`<script>function reiniciar() {}</script>\n<script data-kodu-pruebas>${codigoOriginal}</script>`);
+  const envuelto = aislarPruebasKit(html);
+  const [contenidoEnvuelto] = scriptsDePruebas(envuelto);
+  assert.ok(contenidoEnvuelto!.startsWith('try{eval('), 'tiene que haber quedado envuelto');
+
+  const desenvuelto = desenvolverPruebas(envuelto);
+  const [contenidoDesenvuelto] = scriptsDePruebas(desenvuelto);
+  assert.equal(
+    contenidoDesenvuelto,
+    codigoOriginal,
+    'el código recuperado tiene que ser EXACTAMENTE el original, sin comillas escapadas de más ni el envoltorio',
+  );
+});
+
+await prueba('desenvolverPruebas: round-trip con aislarPruebasKit es idempotente (envolver → desenvolver → envolver)', () => {
+  const codigoOriginal = `window.__koduPruebas=[{id:'c1',prueba:async t=>{return {ok:true,detalle:"con \\"comillas\\" adentro"}}}];`;
+  const html = documento(`<script data-kodu-pruebas>${codigoOriginal}</script>`);
+  const envueltoUnaVez = aislarPruebasKit(html);
+  const desenvuelto = desenvolverPruebas(envueltoUnaVez);
+  const envueltoDeNuevo = aislarPruebasKit(desenvuelto);
+  assert.equal(envueltoDeNuevo, envueltoUnaVez, 'desenvolver y re-envolver tiene que dar BYTE A BYTE lo mismo');
+});
+
+await prueba('desenvolverPruebas: un script sin envolver (o sin data-kodu-pruebas) no cambia', () => {
+  const html = documento('<p>Hola</p><script>function reiniciar() {}</script>');
+  assert.equal(desenvolverPruebas(html), html);
+
+  const sinEnvolver = documento(`<script data-kodu-pruebas>window.__koduPruebas=[];</script>`);
+  assert.equal(desenvolverPruebas(sinEnvolver), sinEnvolver);
 });
 
 if (fallas > 0) {

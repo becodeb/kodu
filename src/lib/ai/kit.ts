@@ -3565,3 +3565,52 @@ export function aislarPruebasKit(html: string): string {
   }
   return resultado;
 }
+
+/**
+ * T4 (round 1b, motor-claude): inverso de `envolverPruebas`, para mostrarle
+ * al modelo (y para que `edit_resource_code` matchee contra) el código del
+ * checklist tal como se escribiría normalmente, nunca el
+ * `try{eval("...")}` con el código entero `JSON.stringify`eado — ESE es el
+ * texto real guardado (lo hace `aislarPruebasKit` en cuanto el recurso se
+ * guarda, así que `project.currentHtml` YA llega envuelto desde el turno
+ * anterior), pero pedirle a un modelo que reproduzca un `find` byte a byte
+ * con comillas escapadas que él nunca escribió así es, en la práctica,
+ * garantía de `no_match`.
+ *
+ * Sólo DESENVUELVE para que el modelo lea/edite texto natural — nunca
+ * vuelve a guardarse así: el HTML resultante de una edición pasa de nuevo
+ * por `aplicarKitAlTurno` → `aislarPruebasKit`, que re-envuelve cualquier
+ * `<script data-kodu-pruebas>` que encuentre sin envolver (idempotente,
+ * mismo mecanismo que ya usa con un script que el modelo escribe directo
+ * sin pasar por `envolverPruebas`).
+ *
+ * Pura e idempotente: un script que no está envuelto (o no es JSON válido
+ * adentro del `eval`, lo que no debería pasar si `yaEnvuelto` dio `true`)
+ * se deja tal cual.
+ */
+export function desenvolverPruebas(html: string): string {
+  const scripts = listarScripts(html).filter((s) => tieneAtributoBooleano(s.etiquetaApertura, 'data-kodu-pruebas'));
+  if (scripts.length === 0) return html;
+
+  const ediciones: Array<{ desde: number; hasta: number; texto: string }> = [];
+  for (const script of scripts) {
+    const contenido = html.slice(script.contenidoDesde, script.contenidoHasta);
+    if (!yaEnvuelto(contenido)) continue;
+    const medio = contenido.slice(ENVOLTORIO_PREFIJO.length, contenido.length - ENVOLTORIO_SUFIJO.length);
+    let original: string;
+    try {
+      original = JSON.parse(medio) as string;
+    } catch {
+      continue; // no debería pasar si `yaEnvuelto` dio `true`, pero nunca tirar por esto.
+    }
+    ediciones.push({ desde: script.contenidoDesde, hasta: script.contenidoHasta, texto: original });
+  }
+  if (ediciones.length === 0) return html;
+
+  ediciones.sort((a, b) => b.desde - a.desde);
+  let resultado = html;
+  for (const edicion of ediciones) {
+    resultado = resultado.slice(0, edicion.desde) + edicion.texto + resultado.slice(edicion.hasta);
+  }
+  return resultado;
+}
