@@ -41,7 +41,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 
 ## Tasks
 
-- [ ] T1 Native Anthropic provider + admin option + real smoke call (delegated: 2+ files)
+- [x] T1 Native Anthropic provider + admin option + real smoke call (delegated: 2+ files)
 - [ ] T2 Experiment tooling and teacher prompt set on `exp/motor-claude` (delegated)
 - [ ] T3 Haiku 5.5 baseline run + blind evaluation
 - [ ] T4 Harness improvement rounds on Haiku (up to 5)
@@ -67,3 +67,55 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 | Batch | Estimated | Measured |
 |---|---|---|
 | Key smoke test (2026-10-07) | <0.01 | <0.01 |
+| T1 `scripts/sonda-anthropic.ts`, two runs (2026-10-08) | <0.05 | ~0.003 total (both runs combined; second run's cache hit made costs even smaller than the first) |
+
+## T1 notes (2026-10-08)
+
+- `src/lib/ai/provider.ts`: new `apiFormat: 'anthropic'` path — streaming via
+  `@anthropic-ai/sdk`'s `client.messages.create({..., stream:true})`
+  (awaited, so request-level errors surface before iteration, same shape as
+  the `fetch`+`response.ok` check the other two dialects use), a new
+  `reasoningParam: 'effort'` (`thinking:{type:'adaptive'}` +
+  `output_config.effort`; Haiku 5.5 accepts `thinking:{type:'disabled'}` for
+  "none", Sonnet/Opus 5.5 map "none" to `effort:'low'` instead — both 400 on
+  `disabled`), forced `tool_choice` degrades to `auto` by reusing the
+  EXISTING `ToolChoiceNoSoportado` retry path (no new per-model capability
+  table needed — verified live against Sonnet 5.5), 529/`RateLimitError`/
+  `APIConnectionError` reuse the existing 429 retry loop, message/tool/image
+  translation to Anthropic's content-block vocabulary, and one
+  `cache_control` breakpoint on the system block (render order
+  `tools→system→messages` means one breakpoint there already covers tools).
+- `RESOURCE_TOOLS`/`EDIT_RESOURCE_TOOL` (`tools.ts`) gained
+  `additionalProperties:false` so `strict:true` applies — inert for the
+  existing chat/responses dialects.
+- Schema: additive migration `20261027000000_anthropic_cache_write`
+  (`AiModel.priceCacheWritePerMToken`, `TokenUsage.cacheWriteTokens`,
+  `TokenUsage.priceCacheWriteSnapshot`), applied to `koduedu_claude` only via
+  `prisma migrate deploy` (hand-written SQL, no `migrate dev`).
+- **Bug found and fixed by the smoke test itself**: `calcularCostoTurno`
+  (`usage.ts`) subtracted only `cachedInputTokens` from `promptTokens` before
+  billing the remainder at full input price, then billed `cacheWriteTokens`
+  AGAIN at the cache-write rate — Anthropic's `cache_creation_input_tokens`
+  was charged twice. Fixed by also subtracting `cacheWriteTokens` from
+  `facturables`. Caught by comparing the first sonda run's reported `costUsd`
+  against hand computation before trusting it.
+- Admin UI: `ProveedorForm.tsx` offers "anthropic"; `ModeloForm.tsx` offers
+  `effort` and a cache-write price field; both admin API zod schemas
+  (`providers`/`models`, index + `[id]`) accept the new values.
+- Smoke test (`scripts/sonda-anthropic.ts`, real API, Haiku 5.5 + one tiny
+  Sonnet 5.5 forced-tool_choice call): tool call received on every
+  tools-enabled call; second identical call showed `cache_read_input_tokens
+  = 6329 > 0` (actually both calls did, in the second run, because the first
+  run's cache entry was still warm — confirms caching end-to-end); checklist
+  call (`sinHerramientas`) received plain text, no tool call; forced
+  `tool_choice` against Sonnet 5.5 completed without a 400, degrading via
+  the existing mechanism (logged warning observed). Full numbers in the
+  session report.
+- Deviation: ran the sonda twice (found the billing bug on the first run,
+  fixed it, re-ran to verify with corrected real Haiku 5.5 prices) — still
+  ~0.003 USD total, well under the 0.05 budget for this probe battery.
+- Open for T2+: no Anthropic preset in `presets.ts` yet (admin must enter
+  model/prices by hand for now); `ModeloForm`'s preset-apply path doesn't
+  carry a cache-write price (no preset defines one yet); vision was
+  implemented (base64 image blocks) but not exercised by the smoke test —
+  worth a real image call before relying on it for teacher attachments.
