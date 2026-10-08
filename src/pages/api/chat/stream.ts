@@ -9,7 +9,13 @@ import {
   type AssetContext,
   type RuleContext,
 } from '../../../lib/ai/prompt.ts';
-import { aislarPruebasKit, aplicarKitConRedDeSeguridad, temaDe, type TemaId } from '../../../lib/ai/kit.ts';
+import {
+  aislarPruebasKit,
+  aplicarKitConRedDeSeguridad,
+  desenvolverPruebas,
+  temaDe,
+  type TemaId,
+} from '../../../lib/ai/kit.ts';
 import {
   ProviderError,
   razonamientoNulo,
@@ -632,6 +638,16 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // lectura sigue siendo válida durante todo el turno.
   const htmlAlInicioDelTurno = project.currentHtml;
 
+  // T4 (round 2, motor-claude): mismo problema que `autocorreccion.ts`
+  // (ver `desenvolverPruebas`) pero en un AJUSTE normal — `project.currentHtml`
+  // ya llega con el `<script data-kodu-pruebas>` envuelto en
+  // `try{eval("...")}`, así que mostrárselo tal cual al modelo (y matchear
+  // su `find` de `edit_resource_code` contra eso) es pedirle que reproduzca
+  // comillas escapadas que nunca escribiría por su cuenta. Sólo afecta lo
+  // que el modelo LEE y contra lo que se matchea; `htmlAlInicioDelTurno`
+  // (la forma real guardada) sigue usándose para comparar/persistir/deshacer.
+  const htmlParaModelo = desenvolverPruebas(htmlAlInicioDelTurno);
+
   // T16 (round 4, "checklist del docente"): la misma pregunta que ya
   // resolvía `esRecursoInicial(htmlAlInicioDelTurno)` de más abajo, sólo que
   // ahora hacen falta DOS respuestas que la comparten (versiones Y
@@ -833,7 +849,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // este turno puntual, así que va en el mismo bloque, nunca mezclado con
   // el `message` del docente que se persiste tal cual (ver `buildUserContent`).
   const currentResourceBlock =
-    buildCurrentResourceBlock(project.currentHtml, project.title, codeEditedByTeacher ?? false, editsEnabled) +
+    buildCurrentResourceBlock(htmlParaModelo, project.title, codeEditedByTeacher ?? false, editsEnabled) +
     (checklistVigente.length > 0 ? `\n\n${bloqueChecklistParaAjuste(checklistVigente)}` : '');
 
   const userContent = await buildUserContent(
@@ -1373,10 +1389,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
           /**
            * odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code`. Se aplica
-           * SIEMPRE contra `htmlAlInicioDelTurno` (el HTML real guardado,
-           * nunca lo que ya se haya mandado en este mismo turno) — en un
-           * turno normal eso es exactamente "el HTML vigente", porque nada
-           * más lo toca antes de este punto.
+           * SIEMPRE contra `htmlParaModelo` (el equivalente de
+           * `htmlAlInicioDelTurno` con cualquier checklist desenvuelto — ver
+           * T4 round 2 en `odd/tasks/motor-claude.md` — nunca lo que ya se
+           * haya mandado en este mismo turno) — en un turno normal eso es
+           * exactamente "el HTML vigente, tal como lo vería el modelo",
+           * porque nada más lo toca antes de este punto.
            */
           if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
             descartarCodeDelta();
@@ -1390,7 +1408,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               continue;
             }
 
-            const aplicado = applyResourceEdits(htmlAlInicioDelTurno, parsed.edits, MAX_HTML_CHARS);
+            const aplicado = applyResourceEdits(htmlParaModelo, parsed.edits, MAX_HTML_CHARS);
 
             if (aplicado.ok) {
               const html = aplicarKitAlTurno(aplicado.html, temaProyecto);

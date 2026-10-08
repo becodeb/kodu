@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
+import { desenvolverPruebas } from '../../../lib/ai/kit.ts';
 import { motorVerificador } from '../../../lib/ai/catalogo.ts';
 import {
   razonamientoVerificador,
@@ -214,7 +215,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const pedido = pedidoDocente(primerMensaje?.content ?? '', mensajeDeAjuste);
   const sistema = construirSistemaVerificador(reglasDelArnes());
-  const mensajeUsuario = construirUsuarioVerificador(pedido, project.currentHtml);
+  // T4 (round 2, motor-claude): mismo fix que `autocorreccion.ts`/`stream.ts`
+  // — `project.currentHtml` ya llega con el checklist envuelto en
+  // `try{eval("...")}`; el revisor sólo LEE el HTML (no edita nada acá), pero
+  // mostrarle el texto escapado igual lo confunde sobre qué es código real.
+  const htmlParaRevisor = desenvolverPruebas(project.currentHtml);
+  const mensajeUsuario = construirUsuarioVerificador(pedido, htmlParaRevisor);
 
   const messages: ChatMessage[] = [
     { role: 'system', content: sistema },

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { applyResourceEdits, textoCercano } from '../src/lib/ai/edits.ts';
 import { parseEditResourceArgs } from '../src/lib/ai/tools.ts';
-import { aplicarKit, plegarKit } from '../src/lib/ai/kit.ts';
+import { aislarPruebasKit, aplicarKit, desenvolverPruebas, plegarKit } from '../src/lib/ai/kit.ts';
 
 /**
  * Pruebas unitarias de odd/tasks/ahorro-tokens.md (T3a): `edit_resource_code`
@@ -259,6 +259,55 @@ await prueba('textoCercano: recorta el contexto a los bordes del documento sin r
   const resultado = textoCercano(html, 'cabeza extra que no está', 50);
   assert.ok(resultado !== null);
   assert.equal(resultado, 'cabeza');
+});
+
+// ── T4 round 2 (motor-claude): mismo bug que round 1b, en turnos normales ──
+// (`stream.ts`/`verificar.ts`, no sólo `autocorreccion.ts`) — un `find`
+// "natural" (sin comillas escapadas) no matchea contra el checklist
+// envuelto en `try{eval("...")}`, pero sí matchea después de
+// `desenvolverPruebas`, y el resultado re-envuelve al pasar de nuevo por
+// `aislarPruebasKit` (lo que ya hace `aplicarKitAlTurno` en los endpoints
+// reales).
+
+const HTML_CON_CHECKLIST_ENVUELTO = aislarPruebasKit(
+  [
+    '<!DOCTYPE html>',
+    '<html><head><meta charset="UTF-8"></head>',
+    '<body>',
+    '  <div data-cont="1">A</div>',
+    '  <script data-kodu-pruebas>',
+    '    window.__koduPruebas = () => {',
+    '      const el = document.querySelector(\'[data-cont="1"]\');',
+    '      return { ok: Boolean(el) };',
+    '    };',
+    '  </script>',
+    '</body></html>',
+  ].join('\n'),
+);
+
+await prueba('applyResourceEdits: un find natural NO matchea el checklist envuelto (reproduce el bug)', () => {
+  const findNatural = 'document.querySelector(\'[data-cont="1"]\');';
+  const resultado = applyResourceEdits(HTML_CON_CHECKLIST_ENVUELTO, [{ find: findNatural, replace: 'x' }], 50_000);
+  assert.equal(resultado.ok, false);
+  if (!resultado.ok) assert.equal(resultado.reason, 'no_match');
+});
+
+await prueba('applyResourceEdits: el mismo find SÍ matchea tras desenvolverPruebas, y el resultado re-envuelve', () => {
+  const findNatural = 'document.querySelector(\'[data-cont="1"]\');';
+  const htmlParaModelo = desenvolverPruebas(HTML_CON_CHECKLIST_ENVUELTO);
+  const resultado = applyResourceEdits(
+    htmlParaModelo,
+    [{ find: findNatural, replace: 'document.querySelector(\'[data-cont="2"]\');' }],
+    50_000,
+  );
+  assert.equal(resultado.ok, true);
+  if (resultado.ok) {
+    assert.ok(resultado.html.includes('data-cont="2"'));
+    // Al volver a pasar por el guardado real, el checklist queda protegido otra vez.
+    const reguardado = aislarPruebasKit(resultado.html);
+    assert.ok(reguardado.includes('try{eval('), 'el checklist debe re-envolverse al persistir');
+    assert.ok(!reguardado.includes('document.querySelector(\'[data-cont="2"]\');'), 'ya no debe quedar texto plano');
+  }
 });
 
 if (fallas > 0) {
