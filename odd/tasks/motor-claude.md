@@ -205,3 +205,105 @@ the double-reset sample, the SVG-NaN scan, or the errors dedupe/cap
 specifically (existing suites pass unchanged, which only proves no
 regression, not that the new paths are exercised). `correctionTriggers`
 is not yet surfaced anywhere (export, admin UI) — only recorded.
+
+## T4 round 1b notes (2026-10-08)
+
+Investigated why `correctionTriggers` showed up as `NULL` on every
+`CORRECTION` `AiTrace` row from the round-1 measurement (20 rows, same
+hour), and why ~19 `edit_resource_code no se pudo aplicar (no_match)`
+server-log lines showed up across the 16-case × 3-turn Haiku run.
+
+**Root cause 1 — `correctionTriggers` always `NULL`: a stale dev-server
+process, not a code bug.** The computation in `autocorreccion.ts`
+(`if (errores.length > 0) correctionTriggers.push('errors')`, etc.,
+matching `necesitaCorreccion` exactly) was already correct — verified by
+calling `recordAiTrace` directly with `tsx` (wrote `'errors,tests'`
+correctly) and by inspecting the embedded DMMF in
+`src/generated/prisma/internal/class.ts` (the `correctionTriggers` field
+was present). The dev-server process that produced the NULL rows had
+been running since BEFORE the commit that introduced the field/logic
+landed on disk; whatever changed (the regenerated Prisma client and/or
+`trace.ts`/`autocorreccion.ts` edits) never made it into that process's
+module graph. `npx astro dev stop` + a fresh `PORT=3400 npm run dev`
+(current HEAD, no code change needed) immediately fixed it — a direct
+live request afterward stored `correctionTriggers: 'reset'`, then later
+runs stored `'errors'` and `'tests'` correctly too. **Lesson for next
+time: after any change under `src/generated/prisma/` or anything a
+correction/trace path imports, restart the dev server before trusting a
+real-model measurement — don't assume hot reload picked it up.**
+
+**Root cause 2 — most `no_match` failures: the checklist test script is
+shown to the model (and matched against) in its WRAPPED, not natural,
+form.** `aislarPruebasKit` (kit.ts) wraps every `<script
+data-kodu-pruebas>` as `try{eval("<JSON.stringify of the real
+code>")}catch{...}` as soon as a turn saves — a safety net so a broken
+checklist script can't crash the resource. That means `project.currentHtml`
+going INTO a correction turn already has the checklist code
+double-escaped (every `"` becomes `\"`, etc.). Reproduced live with a
+real Haiku call (H4, `debug-corr-4`/temporary debug logging): the model's
+`edit_resource_code` `find` was
+`document.querySelector('[data-cont="1"]')...` (plain quotes — the
+code it would naturally write), while the REAL stored text was
+`document.querySelector('[data-cont=\"1\"]')...` (backslash-escaped,
+because it's living inside the `eval("...")` string). The model had no
+way to "know" to reproduce that escaping — nobody writes JS like that on
+purpose — so the `find` almost always missed, burned the no_match retry
+too, and ended the round in `editOutcome: FAILED`.
+
+Fix: added `desenvolverPruebas` (kit.ts, exact inverse of
+`envolverPruebas`, pure/idempotent) and used it in
+`autocorreccion.ts` to build a `htmlParaModelo` — what the model is
+shown (`buildCurrentResourceBlock`, `construirMensajeCorreccion`'s
+quoted source lines) and matched against (`applyResourceEdits`,
+`textoCercano`) — instead of the raw wrapped `htmlPreCorreccion`. The
+edited result still flows through the existing `aplicarKitAlTurno` →
+`aislarPruebasKit` before saving, which re-wraps any now-plain
+`<script data-kodu-pruebas>` it finds — so the saved resource is exactly
+as protected as before; only the model's view/match target changed.
+Scoped to `autocorreccion.ts` only (the explicit target of this task);
+`stream.ts`'s ordinary adjustment turns have the identical exposure but
+touching that file was out of scope here — worth a follow-up round.
+
+The `textoCercano` no_match retry (added round 1) was re-verified
+working as designed — it correctly offers the real text around the
+longest matching prefix, never invents text — but it's a mitigation,
+not a fix for root cause 2: a retry with "real text near your guess"
+still can't help the model guess a redundant backslash it has no reason
+to write. The checklist branch of `construirMensajeCorreccion` already
+told the model to decide RECURSO-vs-PRUEBA before touching anything
+(added in T17, prior round) — no further change needed there.
+
+Fixes (commits below):
+- `fix(trace): none needed — restart only` (no commit; see root cause 1
+  above — documented as an operational note, not a code change).
+- `fix(kit): show and match the checklist script unwrapped during
+  correction` — `desenvolverPruebas` (kit.ts) + wiring in
+  `autocorreccion.ts`.
+- Tests added: `e2e/unidad-pruebas-aisladas.ts` (`desenvolverPruebas`
+  round-trip with `aislarPruebasKit`, exact recovery, no-op on an
+  unwrapped/absent script) and `e2e/unidad-edicion-fragmentos.ts`
+  (`textoCercano`: full match, prefix-only match, no match at all, empty
+  find, context clamped to document edges).
+
+Checks run: `npm run check` (clean); `npx tsx
+e2e/unidad-pruebas-aisladas.ts`, `npx tsx e2e/unidad-edicion-fragmentos.ts`,
+`npx tsx e2e/unidad.ts` (all pass, new cases included); `npx tsx
+e2e/unidad-kit.ts`; `npx tsx e2e/navegador-kit.ts`; `KODU_BASE_URL=http://localhost:3400
+npx tsx e2e/t11-autoprueba.ts` (all pass against the live dev server on
+this worktree).
+
+Real-model verification (Haiku 5.5, low effort, after the fix and a
+clean dev-server restart): `debug-corr-4`→`final-corr` series, H4 and D1
+each re-run — `AiTrace.correctionTriggers` stored `'reset'`, `'errors'`,
+and `'tests'` correctly across several corrections in the same session
+(previously ALL were `NULL`); no new `no_match`/`FAILED` outcome
+observed in the post-fix runs (small sample — this round's budget didn't
+allow a full 16-case re-run). Spend for this whole round-1b session:
+**USD 0.0540** of the 0.10 budget (9 case-runs:
+`debug-corr-1..4` + `final-corr`, both H4 and D1).
+
+Open for a future round: the exact same wrapped-script exposure exists
+in `stream.ts`'s ordinary adjustment turns (not just the self-test
+correction loop) — not fixed here, out of scope for this task's target
+file. `correctionTriggers` is still not surfaced in any export/admin UI
+(same gap round 1 left open).
