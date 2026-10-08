@@ -1041,7 +1041,7 @@ export default function Workspace(props: WorkspaceProps) {
       const controllerArreglo = new AbortController();
       let htmlCorregido: string | null = null;
       try {
-        htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controllerArreglo.signal);
+        htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controllerArreglo.signal, htmlDespues);
       } catch (error) {
         if ((error as Error)?.name !== 'AbortError') {
           console.warn('[verificador] el arreglo automático del revisor visual falló:', error);
@@ -1081,12 +1081,30 @@ export default function Workspace(props: WorkspaceProps) {
   async function aplicarCorreccionDesdeVerificador(
     problemas: Problema[],
     signal: AbortSignal,
+    /**
+     * T4 round 3 (motor-claude): el HTML real sobre el que se calcula la
+     * huella — NUNCA el cierre de `html` (estado de React). `iniciarVerificacion`
+     * es una función de render NO memoizada: cuando se la invoca desde
+     * `handleSend` (justo después de `setHtml(htmlTrasAutoprueba)`, sin
+     * esperar a que React vuelva a renderizar), su cuerpo todavía ve el
+     * `html` de ESE render — el de ANTES de este turno, no `htmlDespues`.
+     * `aplicarCorreccionDesdeVerificador`, definida en el mismo cuerpo del
+     * componente, hereda el mismo cierre viejo. El resultado: la huella que
+     * se mandaba NUNCA coincidía con `project.currentHtml` (que stream.ts ya
+     * había actualizado a `htmlDespues`) — todo arreglo automático del
+     * revisor visual terminaba en 409 ("El recurso cambió después de la
+     * autoprueba"), SIEMPRE, no por una carrera real. Medido contra Haiku
+     * 5.5 real: 8 de 9 correcciones disparadas por el revisor terminaron así
+     * antes de este fix. Cada llamador pasa el HTML que sabe que es el
+     * vigente de verdad (ver los dos call sites).
+     */
+    htmlBase: string,
   ): Promise<string | null> {
     let htmlCorregido: string | null = null;
     for await (const event of streamAutocorreccion(
       {
         projectId,
-        fingerprint: fingerprintHtml(html),
+        fingerprint: fingerprintHtml(htmlBase),
         ronda: 1,
         errores: [],
         reinicioOk: null,
@@ -1135,7 +1153,7 @@ export default function Workspace(props: WorkspaceProps) {
 
     let htmlCorregido: string | null = null;
     try {
-      htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controller.signal);
+      htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controller.signal, html);
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') {
         setVerificador({ fase: 'inactivo' });
