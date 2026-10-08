@@ -27,7 +27,7 @@ const actualizarProveedorSchema = z.object({
     .optional(),
   label: z.string().trim().min(1).max(120).optional(),
   baseUrl: z.string().trim().min(1).max(300).optional(),
-  apiFormat: z.enum(['chat', 'responses']).optional(),
+  apiFormat: z.enum(['chat', 'responses', 'anthropic']).optional(),
   /** `undefined` = dejar la clave como está, `null` = borrarla, string = reemplazarla. */
   apiKey: z.string().trim().min(1).max(500).nullable().optional(),
   enabled: z.boolean().optional(),

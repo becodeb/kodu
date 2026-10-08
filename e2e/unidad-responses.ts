@@ -106,7 +106,7 @@ async function pedidoResponses(opts: {
     });
     // Se agota el body: si no, `server.close()` puede quedar esperando la
     // conexión keep-alive (mismo motivo que en `bodyDelPedido`).
-    for await (const _chunk of respuesta.body as any) void _chunk;
+    for await (const _chunk of (respuesta as Response).body as any) void _chunk;
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

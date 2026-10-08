@@ -1,7 +1,35 @@
+import Anthropic from '@anthropic-ai/sdk';
+import type { Stream } from '@anthropic-ai/sdk/core/streaming';
+import type {
+  MessageCreateParamsStreaming,
+  MessageParam,
+  ContentBlockParam,
+  Tool as AnthropicToolDef,
+  ToolChoice as AnthropicToolChoice,
+  RawMessageStreamEvent,
+} from '@anthropic-ai/sdk/resources/messages';
 import type { Prisma } from '../../generated/prisma/client.ts';
 import { getEnv } from '../env.ts';
 import { RESOURCE_TOOLS, UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE, EDIT_RESOURCE_TOOL, type AiTool } from './tools.ts';
 import type { PriceSchedule } from './pricing.ts';
+
+/**
+ * T1 (motor-claude): el stream crudo que devuelve el SDK de Anthropic
+ * (`client.messages.create({..., stream:true})`) para una llamada en curso.
+ * No es un `fetch` Response — es la pieza que `readCompletionStream` itera
+ * cuando `apiFormat === 'anthropic'`, mismo rol que la `Response` del
+ * dialecto OpenAI para las otras dos.
+ */
+export type AnthropicRawStream = Stream<RawMessageStreamEvent>;
+
+/**
+ * Lo que devuelve `requestCompletionStream`: una `Response` HTTP de verdad
+ * para chat/responses, o el stream crudo del SDK para `anthropic`. Todo
+ * llamador que sólo reenvía esto a `readCompletionStream` (que ya sabe
+ * distinguir por `apiFormat`) puede tipar su variable local con esto en vez
+ * de `Response` a secas.
+ */
+export type CompletionHandle = Response | AnthropicRawStream;
 
 /**
  * Capa de proveedores de IA. El backend actúa de proxy seguro: las API keys
@@ -25,11 +53,14 @@ export type ModelChoice = 'ALPHA' | 'DEEPSEEK' | 'MINIMAX';
 /**
  * T2 (verificador): "chat" (Chat Completions, el dialecto de siempre) o
  * "responses" (OpenAI Responses API — la única que combina function tools
- * con razonamiento para gpt-6-luna). Viene de `AiProvider.apiFormat`
- * (catalogo.ts), no de `AiModel`: es la cuenta entera la que habla un
- * dialecto u otro, no un motor puntual.
+ * con razonamiento para gpt-6-luna), o "anthropic" (T1, `motor-claude`: la
+ * Messages API nativa de Anthropic — único dialecto que soporta prompt
+ * caching de verdad, efecto "effort" con thinking adaptativo y el precio de
+ * escritura de cache). Viene de `AiProvider.apiFormat` (catalogo.ts), no de
+ * `AiModel`: es la cuenta entera la que habla un dialecto u otro, no un
+ * motor puntual.
  */
-export type ApiFormat = 'chat' | 'responses';
+export type ApiFormat = 'chat' | 'responses' | 'anthropic';
 
 /** Lo que hace falta para pedirle un turno a un motor concreto. */
 export interface ProviderConfig {
@@ -56,13 +87,18 @@ export interface ProviderConfig {
    * cualquier proveedor que no lo conozca: mandárselo a ciegas es un 400.
    */
   reasoningEffort: string | null;
-  /** Con qué nombre viaja: "reasoning_effort" (default) o "thinking". */
+  /** Con qué nombre viaja: "reasoning_effort" (default), "thinking", o
+   *  "effort" (T1, `motor-claude`: Anthropic — `thinking:{type:'adaptive'}` +
+   *  `output_config:{effort}`, nunca el `budget_tokens` viejo). */
   reasoningParam: string | null;
   /** `null` si a este motor le falta algún precio: nunca se inventa un costo. */
   precios: {
     input: Prisma.Decimal;
     output: Prisma.Decimal;
     cachedInput: Prisma.Decimal | null;
+    /** T1 (motor-claude): tarifa de escritura de cache (`AiModel.priceCacheWritePerMToken`).
+     *  `null`/`undefined` = sin cargar — ver el default en `usage.ts`. */
+    cacheWrite?: Prisma.Decimal | null;
   } | null;
   /** odd/tasks/ahorro-tokens.md (T1): `null` = no time-of-day schedule, the
    *  flat `precios` above always applies (today's behavior). */
@@ -233,7 +269,7 @@ export async function requestCompletionStream(options: {
    * a ofrecer las dos). Sin efecto si `editsEnabled` es `false`.
    */
   soloEdicion?: boolean;
-}): Promise<Response> {
+}): Promise<Response | AnthropicRawStream> {
   const { provider } = options;
 
   if (!provider.apiKey) {
@@ -313,6 +349,14 @@ export function razonamiento(provider: ProviderConfig): Record<string, unknown> 
     return { thinking: { type: provider.reasoningEffort === 'none' ? 'disabled' : 'enabled' } };
   }
 
+  // T1 (motor-claude): vocabulario intermedio — `anthropicRazonamientoBody`
+  // (más abajo) es quien lo traduce a `thinking`/`output_config` de verdad,
+  // porque esa traducción depende del MODELO (Haiku acepta `disabled`,
+  // Sonnet/Opus no) y acá sólo tenemos el `ProviderConfig`.
+  if (provider.reasoningParam === 'effort') {
+    return { effort: provider.reasoningEffort };
+  }
+
   return { reasoning_effort: provider.reasoningEffort };
 }
 
@@ -333,6 +377,10 @@ export function razonamientoNulo(provider: ProviderConfig): Record<string, unkno
 
   if (provider.reasoningParam === 'thinking') {
     return { thinking: { type: 'disabled' } };
+  }
+
+  if (provider.reasoningParam === 'effort') {
+    return { effort: 'none' };
   }
 
   return { reasoning_effort: 'none' };
@@ -358,6 +406,10 @@ export function razonamientoCorreccion(provider: ProviderConfig): Record<string,
     return { thinking: { type: 'enabled' } };
   }
 
+  if (provider.reasoningParam === 'effort') {
+    return { effort: 'low' };
+  }
+
   return { reasoning_effort: 'low' };
 }
 
@@ -378,6 +430,10 @@ export function razonamientoVerificador(provider: ProviderConfig): Record<string
 
   if (provider.reasoningParam === 'thinking') {
     return { thinking: { type: 'enabled' } };
+  }
+
+  if (provider.reasoningParam === 'effort') {
+    return { effort: 'medium' };
   }
 
   return { reasoning_effort: 'medium' };
@@ -556,6 +612,283 @@ function aResponsesBody(options: {
   return body;
 }
 
+/**
+ * T1 (motor-claude): el `content` de un mensaje `user`/`assistant`/`tool`
+ * (dialecto Chat Completions) a bloques de contenido de la Messages API de
+ * Anthropic. `image_url` con una data URL (`data:<mime>;base64,<...>`) se
+ * traduce a un bloque `image` en base64 — es la forma en que todo este
+ * archivo ya recibe las imágenes (ver `readImageAsDataUrl` del lado del
+ * llamador); una URL http(s) sin ese prefijo se manda como `source: {type:
+ * 'url'}` igual, por si algún día deja de ser siempre base64.
+ */
+function aAnthropicUserContent(content: string | ContentPart[]): string | ContentBlockParam[] {
+  if (typeof content === 'string') return content;
+  return content.map((parte): ContentBlockParam => {
+    if (parte.type === 'text') return { type: 'text', text: parte.text };
+
+    const dataUrl = /^data:([^;]+);base64,([\s\S]+)$/.exec(parte.image_url.url);
+    if (dataUrl) {
+      return {
+        type: 'image',
+        source: { type: 'base64', media_type: dataUrl[1] as never, data: dataUrl[2]! },
+      };
+    }
+    return { type: 'image', source: { type: 'url', url: parte.image_url.url } };
+  });
+}
+
+/**
+ * `messages` (dialecto Chat Completions) a `{system, messages}` de la
+ * Messages API: el mensaje `system` sale del top-level `system` (nunca va
+ * adentro de `messages`, a diferencia de Chat Completions); `tool_calls` del
+ * asistente se vuelven bloques `tool_use`; un mensaje `tool` se vuelve un
+ * bloque `tool_result` DENTRO de un mensaje `user` — fusionado con el
+ * anterior si ya era una tanda de `tool_result` consecutiva (la API exige
+ * que todos los resultados de una misma tanda de tool calls paralelos viajen
+ * en un solo mensaje `user`, nunca repartidos).
+ *
+ * El `system` vuelve como un array de UN bloque con `cache_control:
+ * {type:'ephemeral'}` — alcanza con esa única marca porque el orden de
+ * render de la API es `tools` → `system` → `messages`: un breakpoint en el
+ * bloque de `system` ya cachea los `tools` que vinieron antes.
+ */
+function aAnthropicMessages(messages: ChatMessage[]): {
+  system?: Array<{ type: 'text'; text: string; cache_control: { type: 'ephemeral' } }>;
+  messages: MessageParam[];
+} {
+  let systemText = '';
+  const out: MessageParam[] = [];
+
+  for (const mensaje of messages) {
+    if (mensaje.role === 'system') {
+      systemText += (systemText ? '\n\n' : '') + textoDeContenido(mensaje.content);
+      continue;
+    }
+
+    if (mensaje.role === 'user') {
+      out.push({ role: 'user', content: aAnthropicUserContent(mensaje.content) });
+      continue;
+    }
+
+    if (mensaje.role === 'assistant') {
+      const bloques: ContentBlockParam[] = [];
+      const texto = textoDeContenido(mensaje.content);
+      if (texto) bloques.push({ type: 'text', text: texto });
+      for (const llamada of mensaje.tool_calls ?? []) {
+        let input: unknown = {};
+        try {
+          input = JSON.parse(llamada.function.arguments || '{}');
+        } catch {
+          input = {};
+        }
+        bloques.push({ type: 'tool_use', id: llamada.id, name: llamada.function.name, input });
+      }
+      out.push({ role: 'assistant', content: bloques.length > 0 ? bloques : texto });
+      continue;
+    }
+
+    if (mensaje.role === 'tool') {
+      const bloque: ContentBlockParam = {
+        type: 'tool_result',
+        tool_use_id: mensaje.tool_call_id ?? '',
+        content: textoDeContenido(mensaje.content),
+      };
+      const ultimo = out[out.length - 1];
+      const ultimoEsTandaDeResultados =
+        ultimo?.role === 'user' &&
+        Array.isArray(ultimo.content) &&
+        ultimo.content.length > 0 &&
+        ultimo.content.every((b) => (b as { type?: string }).type === 'tool_result');
+      if (ultimoEsTandaDeResultados) {
+        (ultimo!.content as ContentBlockParam[]).push(bloque);
+      } else {
+        out.push({ role: 'user', content: [bloque] });
+      }
+    }
+  }
+
+  return {
+    system: systemText ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }] : undefined,
+    messages: out,
+  };
+}
+
+/** `AiTool[]` (dialecto Chat Completions) a `Tool[]` de Anthropic.
+ *  `strict: true` sólo cuando el schema ya trae `additionalProperties:false`
+ *  Y `required` (ver tools.ts) — "donde el schema lo permite", nunca
+ *  forzado: un schema que no cumple eso se manda sin `strict`, nunca se le
+ *  inventa la propiedad. */
+function aAnthropicTools(tools: AiTool[]): AnthropicToolDef[] {
+  return tools.map((tool) => {
+    const schema = tool.function.parameters as {
+      type?: string;
+      properties?: unknown;
+      required?: unknown;
+      additionalProperties?: unknown;
+    };
+    const esEstricto = schema.additionalProperties === false && Array.isArray(schema.required);
+    return {
+      name: tool.function.name,
+      description: tool.function.description,
+      input_schema: schema as AnthropicToolDef['input_schema'],
+      ...(esEstricto ? { strict: true as const } : {}),
+    };
+  });
+}
+
+/** Mismo criterio que `eleccionForzada` (dialecto OpenAI) pero con el
+ *  vocabulario de `tool_choice` de Anthropic: `{type:'tool', name}` para una
+ *  herramienta puntual, `{type:'any'}` para "cualquiera de las ofrecidas". */
+function eleccionForzadaAnthropic(editsEnabled: boolean, soloEdicion: boolean): AnthropicToolChoice {
+  if (soloEdicion) return { type: 'tool', name: EDIT_RESOURCE_CODE };
+  return editsEnabled ? { type: 'any' } : { type: 'tool', name: UPDATE_RESOURCE_CODE };
+}
+
+/**
+ * Traduce el vocabulario intermedio que ya arman `razonamiento()` y
+ * compañía para `reasoningParam === 'effort'` (`{effort: nivel}`) al cuerpo
+ * real de la Messages API: `thinking` + `output_config.effort`.
+ *
+ * La razón de que esto viva separado de `razonamiento()` es que la
+ * traducción depende del MODELO, no sólo del nivel: sólo Haiku 5.5 acepta
+ * `thinking:{type:'disabled'}` — Sonnet 5.5 y Opus 5.5 contestan 400 con eso,
+ * así que ahí "none" se manda como `effort:'low'` en su lugar (instrucción
+ * explícita de motor-claude, no un invento de este archivo). Nunca manda
+ * `budget_tokens`, `temperature`, `top_p` ni `top_k` — esos cuatro quedan
+ * fuera del body entero de Anthropic en este archivo.
+ */
+function anthropicRazonamientoBody(provider: ProviderConfig, chatReasoning: Record<string, unknown>): Record<string, unknown> {
+  const nivel = chatReasoning.effort;
+  if (typeof nivel !== 'string') return {};
+
+  const esHaiku = provider.model.includes('haiku');
+
+  if (nivel === 'none') {
+    if (esHaiku) return { thinking: { type: 'disabled' } };
+    return { thinking: { type: 'adaptive' }, output_config: { effort: 'low' } };
+  }
+
+  return { thinking: { type: 'adaptive' }, output_config: { effort: nivel } };
+}
+
+/**
+ * El body de un pedido a la Messages API de Anthropic (T1,
+ * `apiFormat: 'anthropic'`). Mismo criterio que `aResponsesBody`: quien
+ * llama ya resolvió "sinHerramientas gana por encima de forzarHerramienta"
+ * antes de pasar para acá.
+ */
+function aAnthropicBody(options: {
+  provider: ProviderConfig;
+  messages: ChatMessage[];
+  forzarHerramienta: boolean;
+  sinHerramientas: boolean;
+  editsEnabled: boolean;
+  soloEdicion: boolean;
+  razonamiento: Record<string, unknown>;
+  maxTokens: number;
+}): MessageCreateParamsStreaming {
+  const { system, messages } = aAnthropicMessages(options.messages);
+
+  const body: MessageCreateParamsStreaming = {
+    model: options.provider.model,
+    max_tokens: options.maxTokens,
+    messages,
+    stream: true,
+  };
+  if (system) body.system = system;
+
+  if (!options.sinHerramientas) {
+    body.tools = aAnthropicTools(herramientasDeEscritura(options.editsEnabled, options.soloEdicion));
+    body.tool_choice = options.forzarHerramienta
+      ? eleccionForzadaAnthropic(options.editsEnabled, options.soloEdicion)
+      : { type: 'auto' };
+  }
+
+  Object.assign(body, anthropicRazonamientoBody(options.provider, options.razonamiento));
+
+  return body;
+}
+
+/**
+ * Igual rol que `intentarUna` (fetch + chequeo de errores) pero contra el
+ * SDK de Anthropic en vez de `fetch` crudo — la Messages API no habla el
+ * dialecto Chat Completions, así que no hay endpoint HTTP común que
+ * reutilizar. Devuelve el stream crudo del SDK (`AnthropicRawStream`), que
+ * `readCompletionStream` sabe iterar cuando `apiFormat === 'anthropic'`.
+ *
+ * Mapeo de errores — mismo propósito que el bloque de `!response.ok` de
+ * `intentarUna`, pero con las clases tipadas del SDK en vez de un status
+ * HTTP crudo:
+ *  - 400 que menciona `tool_choice` → `ToolChoiceNoSoportado` (reutiliza EL
+ *    MISMO mecanismo de aflojar a "auto" que ya existe en
+ *    `requestCompletionStream`, no uno nuevo);
+ *  - `RateLimitError` (429) y sobrecarga (529 "overloaded") y
+ *    `APIConnectionError` (de red) → `ProviderError` con `status: 429`, para
+ *    que el MISMO bucle de reintentos de `requestCompletionStream` los
+ *    reintente — no hay un camino de reintento paralelo;
+ *  - cualquier otro `APIError` → `ProviderError` con el status real.
+ */
+async function intentarUnaAnthropic(options: {
+  messages: ChatMessage[];
+  provider: ProviderConfig;
+  signal?: AbortSignal;
+  forzarHerramienta?: boolean;
+  razonamientoOverride?: Record<string, unknown> | null;
+  maxTokensOverride?: number | null;
+  sinHerramientas?: boolean;
+  editsEnabled?: boolean;
+  soloEdicion?: boolean;
+}): Promise<AnthropicRawStream> {
+  const { provider } = options;
+
+  const client = new Anthropic({
+    apiKey: provider.apiKey,
+    baseURL: provider.baseUrl || undefined,
+  });
+
+  const body = aAnthropicBody({
+    provider,
+    messages: options.messages,
+    forzarHerramienta: options.forzarHerramienta ?? false,
+    sinHerramientas: options.sinHerramientas ?? false,
+    editsEnabled: options.editsEnabled ?? false,
+    soloEdicion: options.soloEdicion ?? false,
+    razonamiento: options.razonamientoOverride ?? razonamiento(provider),
+    maxTokens: options.maxTokensOverride ?? provider.maxTokens,
+  });
+
+  try {
+    return await client.messages.create(body, { signal: options.signal });
+  } catch (error) {
+    if (error instanceof Anthropic.BadRequestError && /tool_choice/i.test(error.message)) {
+      throw new ToolChoiceNoSoportado(
+        `${provider.label} no acepta forzar la herramienta. ${error.message.slice(0, 200)}`.trim(),
+      );
+    }
+
+    if (error instanceof Anthropic.RateLimitError) {
+      throw new ProviderError(`${provider.label} está saturado en este momento.`, 429);
+    }
+
+    if (error instanceof Anthropic.APIConnectionError) {
+      throw new ProviderError(`No se pudo contactar a ${provider.label}: ${error.message}`);
+    }
+
+    if (error instanceof Anthropic.APIError) {
+      const status = typeof error.status === 'number' ? error.status : 502;
+      // 529 "overloaded" (y cualquier otro 5xx): mismo tratamiento que un
+      // 429 — es saturación del proveedor, no un pedido mal armado, así que
+      // entra al mismo camino de reintentos.
+      if (status === 529 || status >= 500) {
+        throw new ProviderError(`${provider.label} está saturado en este momento (${status}).`, 429);
+      }
+      throw new ProviderError(`${provider.label} respondió ${status}. ${error.message.slice(0, 300)}`.trim(), status);
+    }
+
+    throw new ProviderError(`No se pudo contactar a ${provider.label}: ${(error as Error).message}`);
+  }
+}
+
 async function intentarUna(
   endpoint: string,
   options: {
@@ -569,8 +902,16 @@ async function intentarUna(
     editsEnabled?: boolean;
     soloEdicion?: boolean;
   },
-): Promise<Response> {
+): Promise<Response | AnthropicRawStream> {
   const { provider } = options;
+
+  // T1: la Messages API de Anthropic no comparte NADA del dialecto HTTP de
+  // Chat Completions/Responses (no es `fetch` + JSON, es el SDK) — se
+  // bifurca ANTES de armar el `endpoint`/`cuerpo` de acá abajo, que nunca
+  // llega a usarse en este camino.
+  if (provider.apiFormat === 'anthropic') {
+    return intentarUnaAnthropic(options);
+  }
 
   // T2: la Responses API habla un dialecto de body enteramente distinto
   // (`input` en vez de `messages`, `reasoning.effort` en vez de
@@ -687,6 +1028,14 @@ export interface TokenUsage {
    * módulo sólo reporta lo que el proveedor mandó.
    */
   cachedTokens: number;
+  /**
+   * T1 (motor-claude): tokens de ESCRITURA al cache (`cache_creation_input_tokens`
+   * de Anthropic). NO es un subconjunto de `promptTokens` — a diferencia de
+   * `cachedTokens`, Anthropic cuenta el input "nuevo", el leído de cache y el
+   * escrito al cache como TRES baldes separados (`promptTokens` acá ya es la
+   * suma de los tres, ver `readAnthropicStream`). Siempre 0 para chat/responses.
+   */
+  cacheWriteTokens: number;
 }
 
 export type StreamEvent =
@@ -729,20 +1078,25 @@ interface PendingToolCall {
  *    en el buffer y el turno termina mudo. Por eso se normalizan los saltos.
  */
 export async function* readCompletionStream(
-  response: Response,
+  response: Response | AnthropicRawStream,
   apiFormat: ApiFormat = 'chat',
 ): AsyncGenerator<StreamEvent> {
-  // T2: mismo `StreamEvent` de salida, dialecto de SSE completamente
-  // distinto de entrada — ver `readResponsesStream` más abajo. El default
-  // 'chat' es a propósito: todo llamador viejo (y todo test viejo) que no
-  // sabe que este segundo parámetro existe sigue viendo el comportamiento de
-  // siempre, byte a byte.
+  // T2/T1: mismo `StreamEvent` de salida, dialecto de entrada completamente
+  // distinto según el formato — ver `readResponsesStream` y
+  // `readAnthropicStream` más abajo. El default 'chat' es a propósito: todo
+  // llamador viejo (y todo test viejo) que no sabe que este segundo
+  // parámetro existe sigue viendo el comportamiento de siempre, byte a byte.
   if (apiFormat === 'responses') {
-    yield* readResponsesStream(response);
+    yield* readResponsesStream(response as Response);
     return;
   }
 
-  const reader = response.body!.getReader();
+  if (apiFormat === 'anthropic') {
+    yield* readAnthropicStream(response as AnthropicRawStream);
+    return;
+  }
+
+  const reader = (response as Response).body!.getReader();
   const decoder = new TextDecoder();
   const toolCalls = new Map<number, PendingToolCall>();
 
@@ -807,6 +1161,8 @@ export async function* readCompletionStream(
               // Subconjunto de prompt_tokens, no un extra (ver el comentario
               // en la interfaz TokenUsage más arriba).
               cachedTokens: Number(chunk.usage.prompt_tokens_details?.cached_tokens ?? 0),
+              cacheWriteTokens: 0, // T1: dialecto OpenAI, nunca reporta escritura de cache.
+
             },
           };
         }
@@ -989,6 +1345,8 @@ async function* readResponsesStream(response: Response): AsyncGenerator<StreamEv
                   // Subconjunto de promptTokens, no un extra — mismo
                   // comentario que en la interfaz `TokenUsage` más arriba.
                   cachedTokens: Number(usage.input_tokens_details?.cached_tokens ?? 0),
+                  cacheWriteTokens: 0, // T1: dialecto OpenAI, nunca reporta escritura de cache.
+
                 },
               };
             }
@@ -1029,5 +1387,124 @@ async function* readResponsesStream(response: Response): AsyncGenerator<StreamEv
     if (!terminalVisto) yield* flush(false);
   } finally {
     reader.releaseLock();
+  }
+}
+
+/**
+ * Igual rol que `readResponsesStream` pero para el stream crudo del SDK de
+ * Anthropic (T1, `apiFormat: 'anthropic'`): mismo `StreamEvent` de salida,
+ * dialecto de eventos totalmente distinto de entrada.
+ *
+ * Tres detalles que no tienen los otros dos dialectos:
+ *  - los tool calls se identifican por el `index` NUMÉRICO del content
+ *    block (igual que Chat Completions, a diferencia de la Responses API
+ *    que usa un `item_id` string) — no hace falta mapear nada;
+ *  - el consumo final (`usage`) viaja en `message_delta`, YA ACUMULADO
+ *    (`input_tokens`/`cache_read_input_tokens`/`cache_creation_input_tokens`/
+ *    `output_tokens` cubren el turno entero, no un delta) — se lee una sola
+ *    vez, al final;
+ *  - Anthropic reporta tres baldes de "entrada" por separado
+ *    (`input_tokens` nuevo, `cache_read_input_tokens`, y
+ *    `cache_creation_input_tokens`) en vez de uno solo con un subconjunto
+ *    cacheado — `promptTokens` acá es la SUMA de los tres (instrucción
+ *    explícita de motor-claude: "promptTokens = input_tokens +
+ *    cache_read_input_tokens + cache_creation_input_tokens"), para que
+ *    `usage.ts` siga pudiendo tratar `promptTokens` como "todo lo que se
+ *    mandó de entrada" sin importar el proveedor.
+ */
+async function* readAnthropicStream(stream: AnthropicRawStream): AsyncGenerator<StreamEvent> {
+  const nombrePorIndice = new Map<number, string>();
+  const argsPorIndice = new Map<number, string>();
+  let announcedTool = false;
+  let modeloDeEsteTurno = '';
+
+  function* flush(truncated: boolean): Generator<StreamEvent> {
+    for (const [indice, nombre] of [...nombrePorIndice.entries()].sort((a, b) => a[0] - b[0])) {
+      if (nombre) yield { type: 'tool', name: nombre, arguments: argsPorIndice.get(indice) ?? '', truncated };
+    }
+    nombrePorIndice.clear();
+    argsPorIndice.clear();
+  }
+
+  try {
+    for await (const ev of stream) {
+      switch (ev.type) {
+        case 'message_start':
+          modeloDeEsteTurno = ev.message.model;
+          break;
+
+        case 'content_block_start':
+          if (ev.content_block.type === 'tool_use') {
+            nombrePorIndice.set(ev.index, ev.content_block.name);
+            argsPorIndice.set(ev.index, '');
+            if (!announcedTool) {
+              announcedTool = true;
+              yield { type: 'tool_start', name: ev.content_block.name };
+            }
+          }
+          break;
+
+        case 'content_block_delta':
+          if (ev.delta.type === 'text_delta') {
+            if (ev.delta.text.length > 0) yield { type: 'text', delta: ev.delta.text };
+          } else if (ev.delta.type === 'input_json_delta') {
+            const nombre = nombrePorIndice.get(ev.index) ?? '';
+            argsPorIndice.set(ev.index, (argsPorIndice.get(ev.index) ?? '') + ev.delta.partial_json);
+            if (ev.delta.partial_json.length > 0) {
+              yield { type: 'tool_delta', index: ev.index, name: nombre, delta: ev.delta.partial_json };
+            }
+          }
+          // `thinking_delta`/`signature_delta`/`citations_delta`: se ignoran
+          // a propósito, mismo criterio que los resúmenes de razonamiento de
+          // la Responses API.
+          break;
+
+        case 'message_delta': {
+          const usage = ev.usage;
+          const promptTokens =
+            Number(usage.input_tokens ?? 0) +
+            Number(usage.cache_read_input_tokens ?? 0) +
+            Number(usage.cache_creation_input_tokens ?? 0);
+          const cachedTokens = Number(usage.cache_read_input_tokens ?? 0);
+          const cacheWriteTokens = Number(usage.cache_creation_input_tokens ?? 0);
+
+          // motor-claude: guardia de prompt largo en Haiku — sólo logueo,
+          // nunca corta el turno. El tope (100K) es el punto a partir del
+          // cual Haiku 5.5 pasa a cobrar 5x.
+          if (modeloDeEsteTurno.includes('haiku') && promptTokens > 100_000) {
+            console.warn(
+              `[provider] turno de Haiku con prompt de ${promptTokens} tokens (>100K): a partir de ahí el motor cobra 5x.`,
+            );
+          }
+
+          yield {
+            type: 'usage',
+            usage: { promptTokens, completionTokens: Number(usage.output_tokens ?? 0), cachedTokens, cacheWriteTokens },
+          };
+
+          const stopReason = ev.delta.stop_reason;
+          if (stopReason === 'refusal') {
+            console.warn('[provider] Anthropic devolvió stop_reason "refusal" (clasificador de seguridad).');
+          }
+          const finishReason =
+            stopReason === 'tool_use'
+              ? 'tool_calls'
+              : stopReason === 'max_tokens'
+                ? 'length'
+                : 'stop';
+          yield* flush(finishReason === 'length');
+          yield { type: 'finish', reason: finishReason };
+          break;
+        }
+
+        default:
+          break; // 'content_block_stop'/'message_stop': nada que hacer, ya se emitió todo arriba.
+      }
+    }
+  } catch (error) {
+    if (error instanceof Anthropic.APIError) {
+      throw new ProviderError(`Anthropic falló a mitad de stream: ${error.message}`);
+    }
+    throw error;
   }
 }

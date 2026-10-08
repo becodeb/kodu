@@ -60,6 +60,10 @@ export interface MotorAdmin {
   priceInputPerMToken: string | null;
   priceCachedInputPerMToken: string | null;
   priceOutputPerMToken: string | null;
+  /** T1 (motor-claude): tarifa de ESCRIBIR al cache (sólo importa con
+   *  `apiFormat: 'anthropic'`). `null` = sin cargar — `calcularCostoTurno`
+   *  cae al 1.25x del precio de entrada, nunca se inventa desde acá. */
+  priceCacheWritePerMToken: string | null;
   enabled: boolean;
   selectableByTeacher: boolean;
   isDefault: boolean;
@@ -75,7 +79,7 @@ export interface MotorAdmin {
   userTokenWindowHours: number;
   /** "none" | "low" | "high", o null = no mandar el parámetro. */
   reasoningEffort: string | null;
-  /** "reasoning_effort" (default) o "thinking". */
+  /** "reasoning_effort" (default), "thinking", o "effort" (T1, motor-claude: Anthropic). */
   reasoningParam: string | null;
   fallbackModelId: string | null;
   /** odd/tasks/ahorro-tokens.md (T1): `null` = sin horario de pico, precio
@@ -105,6 +109,7 @@ export function serializarMotor(fila: AiModel & { provider: AiProvider }): Motor
     priceInputPerMToken: fila.priceInputPerMToken?.toString() ?? null,
     priceCachedInputPerMToken: fila.priceCachedInputPerMToken?.toString() ?? null,
     priceOutputPerMToken: fila.priceOutputPerMToken?.toString() ?? null,
+    priceCacheWritePerMToken: fila.priceCacheWritePerMToken?.toString() ?? null,
     enabled: fila.enabled,
     selectableByTeacher: fila.selectableByTeacher,
     isDefault: fila.isDefault,

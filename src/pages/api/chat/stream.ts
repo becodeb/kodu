@@ -20,6 +20,7 @@ import {
   type ContentPart,
   type ProviderConfig,
   type TokenUsage as MotorTokenUsage,
+  type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
@@ -392,6 +393,7 @@ async function generarVersionSecundaria(args: {
         model: args.provider.model,
         promptTokens: usage.promptTokens,
         cachedInputTokens: usage.cachedTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
         schedule: args.provider.schedule,
@@ -514,6 +516,7 @@ async function generarChecklist(args: {
         model: args.provider.model,
         promptTokens: usage.promptTokens,
         cachedInputTokens: usage.cachedTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
         schedule: args.provider.schedule,
@@ -1128,7 +1131,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
        * avisa qué pasó y se sigue trabajando.
        */
       const motores = await cadenaDeMotores(provider.id);
-      let upstream: Response | null = null;
+      let upstream: CompletionHandle | null = null;
       let proveedorUsado = provider;
       let ultimaFalla: unknown = null;
       // T9: promesas de las versiones 2 y 3 — `Promise.resolve(null)` por
@@ -1312,7 +1315,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       };
 
       /** Consume un pase completo del proveedor, acumulando en las variables. */
-      async function consumir(respuesta: Response) {
+      async function consumir(respuesta: CompletionHandle) {
         for await (const event of readCompletionStream(respuesta, proveedorUsado.apiFormat)) {
           if (event.type === 'text') {
             assistantText += event.delta;
@@ -1556,6 +1559,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             model: proveedorUsado.model,
             promptTokens: totales.usage.promptTokens,
             cachedInputTokens: totales.usage.cachedTokens,
+            cacheWriteTokens: totales.usage.cacheWriteTokens,
             completionTokens: totales.usage.completionTokens,
             precios: proveedorUsado.precios,
             schedule: proveedorUsado.schedule,

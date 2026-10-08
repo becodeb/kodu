@@ -11,6 +11,7 @@ import {
   supportsVision,
   type ProviderConfig,
   type TokenUsage,
+  type CompletionHandle,
 } from '../../../../lib/ai/provider.ts';
 import { recordUsage } from '../../../../lib/ai/usage.ts';
 import { recordAiTrace } from '../../../../lib/ai/trace.ts';
@@ -204,6 +205,7 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
               model: usado.model,
               promptTokens: usage.promptTokens,
               cachedInputTokens: usage.cachedTokens,
+              cacheWriteTokens: usage.cacheWriteTokens,
               completionTokens: usage.completionTokens,
               precios: usado.precios,
               schedule: usado.schedule,
@@ -351,7 +353,7 @@ async function pedirRespuesta(
   let ultimaFalla: unknown = null;
 
   for (const candidato of cadena) {
-    let respuesta: Response;
+    let respuesta: CompletionHandle;
     try {
       respuesta = await requestCompletionStream({
         messages: mensajes,

@@ -119,6 +119,7 @@ async function ejecutarPasada(args: {
         model: args.provider.model,
         promptTokens: usage.promptTokens,
         cachedInputTokens: usage.cachedTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
         completionTokens: usage.completionTokens,
         precios: args.provider.precios,
         schedule: args.provider.schedule,

@@ -95,6 +95,10 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
           input: fila.priceInputPerMToken,
           output: fila.priceOutputPerMToken,
           cachedInput: fila.priceCachedInputPerMToken,
+          // T1 (motor-claude): sin tarifa propia cargada, `calcularCostoTurno`
+          // ya cae al 1.25x del precio de entrada — acá sólo se pasa la
+          // columna, nunca se inventa el default (eso vive en usage.ts).
+          cacheWrite: fila.priceCacheWritePerMToken,
         }
       : null;
 
@@ -106,10 +110,17 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
     // lo rechaza con 503 antes de pegarle a la red).
     apiKey: clavePlano(fila) ?? '',
     baseUrl: fila.provider.baseUrl,
-    // T2 (verificador): cualquier valor que no sea "responses" se trata como
-    // "chat" — mismo criterio defensivo que el resto de este archivo (nunca
-    // un throw por un dato de fila inesperado, ver `clavePlano` más arriba).
-    apiFormat: fila.provider.apiFormat === 'responses' ? 'responses' : 'chat',
+    // T2/T1 (verificador / motor-claude): "responses" y "anthropic" son los
+    // dos valores reconocidos aparte de "chat" — cualquier otra cosa se
+    // trata como "chat", mismo criterio defensivo que el resto de este
+    // archivo (nunca un throw por un dato de fila inesperado, ver
+    // `clavePlano` más arriba).
+    apiFormat:
+      fila.provider.apiFormat === 'responses'
+        ? 'responses'
+        : fila.provider.apiFormat === 'anthropic'
+          ? 'anthropic'
+          : 'chat',
     model: fila.providerModel,
     maxTokens: fila.maxOutputTokens,
     userTokenLimit: fila.userTokenLimit,

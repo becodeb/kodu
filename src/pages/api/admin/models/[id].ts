@@ -29,6 +29,7 @@ const actualizarMotorSchema = z.object({
   priceInputPerMToken: precioSchema,
   priceCachedInputPerMToken: precioSchema,
   priceOutputPerMToken: precioSchema,
+  priceCacheWritePerMToken: precioSchema,
   enabled: z.boolean().optional(),
   selectableByTeacher: z.boolean().optional(),
   supportsVision: z.boolean().optional(),
@@ -40,7 +41,7 @@ const actualizarMotorSchema = z.object({
   isVerifier: z.boolean().optional(),
   maxOutputTokens: z.coerce.number().int().positive().max(1_000_000).optional(),
   reasoningEffort: z.enum(['none', 'low', 'medium', 'high']).nullable().optional(),
-  reasoningParam: z.enum(['reasoning_effort', 'thinking']).nullable().optional(),
+  reasoningParam: z.enum(['reasoning_effort', 'thinking', 'effort']).nullable().optional(),
   maxInputChars: z.coerce.number().int().positive().max(2_000_000).optional(),
   userTokenLimit: z.coerce.number().int().min(0).optional(),
   userTokenWindowHours: z.coerce.number().int().min(0).max(8_760).optional(),
@@ -114,6 +115,9 @@ export const PATCH: APIRoute = async ({ params, request }) => {
   }
   if (datos.priceOutputPerMToken !== undefined) {
     cambios.priceOutputPerMToken = precioADecimal(datos.priceOutputPerMToken);
+  }
+  if (datos.priceCacheWritePerMToken !== undefined) {
+    cambios.priceCacheWritePerMToken = precioADecimal(datos.priceCacheWritePerMToken);
   }
   Object.assign(
     cambios,

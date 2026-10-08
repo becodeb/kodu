@@ -108,6 +108,9 @@ export default function ModeloForm(props: ModeloFormProps) {
   const [precioEntrada, setPrecioEntrada] = useState(motor?.priceInputPerMToken ?? '');
   const [precioCacheada, setPrecioCacheada] = useState(motor?.priceCachedInputPerMToken ?? '');
   const [precioSalida, setPrecioSalida] = useState(motor?.priceOutputPerMToken ?? '');
+  // T1 (motor-claude): sólo importa con apiFormat "anthropic" — vacío =
+  // calcularCostoTurno cae al 1.25x del precio de entrada, no se inventa acá.
+  const [precioEscrituraCache, setPrecioEscrituraCache] = useState(motor?.priceCacheWritePerMToken ?? '');
   // odd/tasks/ahorro-tokens.md (T1): horario de pico, opcional. Las ventanas
   // se editan como texto plano ("día hora-hora", un día de la semana Mon=1 a
   // Dom=0 por línea) para no armar un editor de filas dinámicas para un caso
@@ -176,6 +179,7 @@ export default function ModeloForm(props: ModeloFormProps) {
       priceInputPerMToken: precioEntrada.trim() === '' ? null : Number(precioEntrada),
       priceCachedInputPerMToken: precioCacheada.trim() === '' ? null : Number(precioCacheada),
       priceOutputPerMToken: precioSalida.trim() === '' ? null : Number(precioSalida),
+      priceCacheWritePerMToken: precioEscrituraCache.trim() === '' ? null : Number(precioEscrituraCache),
       priceOffPeakFactor: precioOffPeakFactor.trim() === '' ? null : Number(precioOffPeakFactor),
       peakWindowsUtc: parsearVentanasPico(ventanasPico),
       offPeakDatesUtc: parsearFeriados(feriados),
@@ -341,7 +345,7 @@ export default function ModeloForm(props: ModeloFormProps) {
           <legend className="px-1 text-sm font-medium text-ink-700">
             Precio aproximado (USD por millón de tokens)
           </legend>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
             <div>
               <label className="kodu-label text-xs" htmlFor={`${idBase}-precioEntrada`}>
                 Entrada (sin caché)
@@ -384,9 +388,24 @@ export default function ModeloForm(props: ModeloFormProps) {
                 disabled={presetElegido !== null}
               />
             </div>
+            <div>
+              <label className="kodu-label text-xs" htmlFor={`${idBase}-precioEscrituraCache`}>
+                Escritura de caché
+              </label>
+              <input
+                id={`${idBase}-precioEscrituraCache`}
+                inputMode="decimal"
+                value={precioEscrituraCache ?? ''}
+                onChange={(event) => setPrecioEscrituraCache(event.target.value)}
+                placeholder="1,375 (1,25x entrada)"
+                className="kodu-input"
+                disabled={presetElegido !== null}
+              />
+            </div>
           </div>
           <p className="text-xs text-ink-500">
-            Es una estimación. Algunos proveedores cobran distinto según la hora.
+            Es una estimación. Algunos proveedores cobran distinto según la hora. La escritura de
+            caché sólo importa con Anthropic — vacío cae al 1,25x del precio de entrada.
           </p>
           {preview && <p className="text-xs text-ink-700">{preview}</p>}
         </fieldset>
@@ -563,6 +582,7 @@ export default function ModeloForm(props: ModeloFormProps) {
               >
                 <option value="reasoning_effort">reasoning_effort (DeepSeek, dialecto OpenAI)</option>
                 <option value="thinking">thinking (MiniMax M3)</option>
+                <option value="effort">effort (Anthropic — thinking adaptativo + output_config.effort)</option>
               </select>
               <p className="mt-1 text-xs text-ink-500">
                 Cada proveedor le puso otro nombre al mismo parámetro. Si elegís el equivocado, el

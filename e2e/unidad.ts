@@ -585,7 +585,7 @@ async function bodyDelPedido(extra: { sinHerramientas?: boolean; forzarHerramien
     });
     // Se agota el body: si no, `server.close()` puede quedar esperando la
     // conexión keep-alive.
-    for await (const _chunk of respuesta.body as any) void _chunk;
+    for await (const _chunk of (respuesta as Response).body as any) void _chunk;
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

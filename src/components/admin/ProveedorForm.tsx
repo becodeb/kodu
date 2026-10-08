@@ -137,10 +137,12 @@ export default function ProveedorForm(props: ProveedorFormProps) {
           >
             <option value="chat">Chat Completions (la mayoría)</option>
             <option value="responses">Responses (OpenAI)</option>
+            <option value="anthropic">Anthropic (Claude)</option>
           </select>
           <p className="mt-1 text-xs text-ink-500">
             Los modelos de razonamiento de OpenAI (como gpt-6-luna) sólo aceptan herramientas junto con
-            razonamiento a través de Responses.
+            razonamiento a través de Responses. Los modelos Claude (Haiku/Sonnet/Opus) van por Anthropic:
+            es el único formato con caché de prompt de verdad.
           </p>
         </div>
 

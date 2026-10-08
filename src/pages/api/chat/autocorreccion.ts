@@ -12,6 +12,7 @@ import {
   supportsVision,
   type ChatMessage,
   type TokenUsage as MotorTokenUsage,
+  type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
 import { normalizarMotor } from '../../../lib/ai/catalogo.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
@@ -330,7 +331,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         // más arriba.
         const apiFormat = provider.apiFormat;
 
-        async function consumir(stream: Response): Promise<void> {
+        async function consumir(stream: CompletionHandle): Promise<void> {
           for await (const event of readCompletionStream(stream, apiFormat)) {
             if (event.type === 'usage') {
               totales.usage = event.usage;
@@ -423,6 +424,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             model: provider.model,
             promptTokens: totales.usage.promptTokens,
             cachedInputTokens: totales.usage.cachedTokens,
+            cacheWriteTokens: totales.usage.cacheWriteTokens,
             completionTokens: totales.usage.completionTokens,
             precios: provider.precios,
             schedule: provider.schedule,

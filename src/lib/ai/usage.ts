@@ -12,12 +12,22 @@ import { precioVigente, type PriceSchedule } from './pricing.ts';
  * cada turno con los precios vigentes ese día (design.md §6).
  */
 
-/** Los tres precios de un motor, en USD por millón de tokens (`AiModel`). */
+/** Los precios de un motor, en USD por millón de tokens (`AiModel`). */
 export interface Precios {
   input: Prisma.Decimal;
   output: Prisma.Decimal;
   /** `null` cuando el motor no tiene una tarifa de caché propia cargada. */
   cachedInput: Prisma.Decimal | null;
+  /**
+   * T1 (motor-claude): tarifa de ESCRIBIR al cache (Anthropic
+   * `cache_creation_input_tokens`). `undefined`/`null` cuando el motor no
+   * tiene `priceCacheWritePerMToken` cargado — nunca se confunde con el 0:
+   * el default que aplica `calcularCostoTurno` ahí abajo es 1.25x el precio
+   * de entrada (lo que cobra Anthropic de verdad), no cero. Ningún llamador
+   * existente (OpenAI dialects) lo manda, así que esto es puramente
+   * aditivo.
+   */
+  cacheWrite?: Prisma.Decimal | null;
 }
 
 export interface CostoCalculado {
@@ -27,6 +37,9 @@ export interface CostoCalculado {
   priceOutputSnapshot: Prisma.Decimal | null;
   /** La tarifa REALMENTE aplicada a los tokens cacheados (ver más abajo). */
   priceCachedInputSnapshot: Prisma.Decimal | null;
+  /** T1 (motor-claude): la tarifa REALMENTE aplicada a `cacheWriteTokens`.
+   *  `null` cuando no hubo tokens de escritura de cache en este turno. */
+  priceCacheWriteSnapshot: Prisma.Decimal | null;
 }
 
 /**
@@ -54,6 +67,14 @@ export function calcularCostoTurno(
   cachedInputTokens: number,
   completionTokens: number,
   precios: Precios | null,
+  /**
+   * T1 (motor-claude): tokens de ESCRITURA al cache de este turno
+   * (`cache_creation_input_tokens` de Anthropic). NO es un subconjunto de
+   * `promptTokens` — ver el comentario de `cacheWriteTokens` en
+   * `prisma/schema.prisma`. Default 0: todo llamador OpenAI-dialecto
+   * existente sigue viendo exactamente el mismo cálculo de antes.
+   */
+  cacheWriteTokens = 0,
 ): CostoCalculado {
   if (!precios) {
     return {
@@ -61,6 +82,7 @@ export function calcularCostoTurno(
       priceInputSnapshot: null,
       priceOutputSnapshot: null,
       priceCachedInputSnapshot: null,
+      priceCacheWriteSnapshot: null,
     };
   }
 
@@ -68,18 +90,23 @@ export function calcularCostoTurno(
   // (dato mal formado), no se factura una cantidad negativa de tokens nuevos.
   const facturables = Math.max(promptTokens - cachedInputTokens, 0);
   const tarifaCache = precios.cachedInput ?? precios.input;
+  // T1: sin tarifa propia de escritura cargada, Anthropic cobra 1.25x el
+  // precio de entrada por escribir al cache — ese es el default, no 0.
+  const tarifaCacheWrite = precios.cacheWrite ?? precios.input.mul(1.25);
 
   const costUsd = new Prisma.Decimal(facturables)
     .mul(precios.input)
     .div(1_000_000)
     .add(new Prisma.Decimal(cachedInputTokens).mul(tarifaCache).div(1_000_000))
-    .add(new Prisma.Decimal(completionTokens).mul(precios.output).div(1_000_000));
+    .add(new Prisma.Decimal(completionTokens).mul(precios.output).div(1_000_000))
+    .add(new Prisma.Decimal(cacheWriteTokens).mul(tarifaCacheWrite).div(1_000_000));
 
   return {
     costUsd,
     priceInputSnapshot: precios.input,
     priceOutputSnapshot: precios.output,
     priceCachedInputSnapshot: tarifaCache,
+    priceCacheWriteSnapshot: cacheWriteTokens > 0 ? tarifaCacheWrite : null,
   };
 }
 
@@ -187,6 +214,10 @@ export interface UsageRecord {
    * los campos opcionales de este registro.
    */
   editMode?: 'full' | 'fragments' | 'fragments_fallback' | null;
+  /** T1 (motor-claude): tokens de escritura de cache de este turno (sólo el
+   *  dialecto `anthropic` los reporta). `undefined`/0 = comportamiento de
+   *  siempre para cualquier otro proveedor. */
+  cacheWriteTokens?: number;
 }
 
 /** odd/tasks/ahorro-tokens.md (T3a): `UsageRecord.editMode` (minúsculas,
@@ -267,6 +298,7 @@ export async function recordUsage(record: UsageRecord): Promise<{ id: string } |
     record.cachedInputTokens,
     record.completionTokens,
     preciosVigentes,
+    record.cacheWriteTokens ?? 0,
   );
 
   // La sede que paga: la del docente EN ESTE MOMENTO, no la que tenía cuando
@@ -287,10 +319,12 @@ export async function recordUsage(record: UsageRecord): Promise<{ id: string } |
       promptTokens: record.promptTokens,
       cachedInputTokens: record.cachedInputTokens,
       completionTokens: record.completionTokens,
+      cacheWriteTokens: record.cacheWriteTokens ?? 0,
       costUsd: costo.costUsd,
       priceInputSnapshot: costo.priceInputSnapshot,
       priceOutputSnapshot: costo.priceOutputSnapshot,
       priceCachedInputSnapshot: costo.priceCachedInputSnapshot,
+      priceCacheWriteSnapshot: costo.priceCacheWriteSnapshot,
       organizationId,
       purpose: record.purpose,
       forNewResource,
