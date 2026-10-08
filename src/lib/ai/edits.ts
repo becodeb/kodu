@@ -32,7 +32,17 @@ export type ApplyEditsFailureReason =
   /** El `find` cae (total o parcialmente) dentro del bloque canónico del kit: el modelo nunca vio ese texto, viaja plegado en el prompt. */
   | 'folded_region'
   /** El `find` empieza en o después del punto en que `MAX_HTML_CHARS` cortó el documento que vio el modelo. */
-  | 'truncated_region';
+  | 'truncated_region'
+  /**
+   * odd/tasks/motor-claude.md (T4 round 3): TODAS las ediciones de la tanda
+   * matchearon y se aplicaron, pero el resultado es BYTE A BYTE igual al
+   * HTML de entrada — típicamente `find === replace`, o un `replace`
+   * equivalente al texto que reemplaza. Medido contra Haiku 5.5 real: ~1 de
+   * 9 turnos de ajuste terminaba así, reportando "Actualicé el recurso." sin
+   * haber tocado nada. Se trata como una falla (no como un éxito vacío) para
+   * que el llamador dispare el mismo reintento-con-pista que `no_match`.
+   */
+  | 'no_op';
 
 export type ApplyEditsResult =
   | { ok: true; html: string }
@@ -113,6 +123,15 @@ export function applyResourceEdits(
   }
   resultado += htmlReal.slice(cursor);
 
+  // T4 round 3: ver el comentario de 'no_op' arriba — todo matcheó, pero el
+  // documento no cambió ni un carácter. `index`/`find` apuntan a la primera
+  // edición de la tanda, sólo para que el mensaje de error pueda citar algo
+  // concreto (no hay un "culpable" único cuando el no-op sale de varias
+  // ediciones que se cancelan entre sí, pero eso no se vio en la práctica).
+  if (resultado === htmlReal) {
+    return { ok: false, reason: 'no_op', index: 0, find: edits[0]!.find };
+  }
+
   return { ok: true, html: resultado };
 }
 
@@ -164,4 +183,5 @@ export const EDIT_FAILURE_MESSAGES: Record<ApplyEditsFailureReason, string> = {
   overlap: 'dos de los cambios pedidos se superponen en el mismo lugar del documento',
   folded_region: 'ese texto pertenece a una parte interna del kit que no viaja en tu contexto',
   truncated_region: 'ese texto está más allá de la parte del documento que se te mostró',
+  no_op: 'ese cambio no modificó nada: el texto de reemplazo quedó igual al original',
 };

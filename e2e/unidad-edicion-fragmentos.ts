@@ -224,6 +224,55 @@ await prueba('applyResourceEdits: sin truncamiento (documento entra entero) no r
 });
 
 // ─────────────────────────────────────────────────────────────
+// no_op (T4 round 3 de motor-claude): un `find === replace` (o una tanda
+// cuyo efecto neto es nulo) nunca puede volver "ok" — ver el bug real
+// reproducido contra Haiku 5.5 en odd/tasks/motor-claude.md.
+// ─────────────────────────────────────────────────────────────
+
+await prueba('applyResourceEdits: find === replace (no_op) se rechaza, nunca "ok"', () => {
+  const r = applyResourceEdits(HTML_SIMPLE, [{ find: 'Título original', replace: 'Título original' }], 200_000);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, 'no_op');
+});
+
+await prueba('applyResourceEdits: una tanda de varias ediciones, todas no_op, se rechaza entera', () => {
+  const r = applyResourceEdits(
+    HTML_SIMPLE,
+    [
+      { find: 'Título original', replace: 'Título original' },
+      { find: '<body>', replace: '<body>' },
+    ],
+    200_000,
+  );
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, 'no_op');
+});
+
+await prueba('applyResourceEdits: con AL MENOS una edición real en la tanda, no es no_op (aunque otra sea un no-op parcial)', () => {
+  const r = applyResourceEdits(
+    HTML_SIMPLE,
+    [
+      { find: 'Título original', replace: 'Título original' },
+      { find: '<body>', replace: '<body class="x">' },
+    ],
+    200_000,
+  );
+  assert.equal(r.ok, true);
+});
+
+await prueba('applyResourceEdits: un replace distinto de find pero no_op (mismo texto final) también se rechaza', () => {
+  // Editorial: find y replace son literalmente distintos como strings, pero
+  // el documento final es idéntico porque el find aparece una vez y su
+  // reemplazo reconstruye el mismo byte a byte (caso de borde real: el
+  // modelo "reescribe" una línea igual con distinto espaciado en el find
+  // que el propio replace no conserva).
+  const html = '<p>  x  </p>';
+  const r = applyResourceEdits(html, [{ find: '  x  ', replace: '  x  ' }], 200_000);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.reason, 'no_op');
+});
+
+// ─────────────────────────────────────────────────────────────
 // textoCercano (T4, round 1 de motor-claude): el texto real alrededor del
 // prefijo más largo de un `find` que falló con "no_match", para el
 // reintento. Round 1 lo verificó a mano; esta es su cobertura automatizada.

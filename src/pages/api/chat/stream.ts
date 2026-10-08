@@ -1307,7 +1307,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
       // más abajo: lo completa `consumir`, una función anidada, y con una
       // variable suelta el análisis de flujo de TypeScript no puede seguirle
       // el tipo de vuelta a través del `await`.
-      const estadoEdicion: { ultimoFallo: { find: string; detalle: string } | null } = { ultimoFallo: null };
+      const estadoEdicion: {
+        ultimoFallo: { find: string; detalle: string; esNoOp: boolean } | null;
+      } = { ultimoFallo: null };
       // Si ya se usó la única oportunidad de recuperación de una edición
       // fallida (ver más abajo), el camino genérico de "no llamó nada" no
       // tiene que disparar un SEGUNDO reintento si esa recuperación terminó
@@ -1398,12 +1400,24 @@ export const POST: APIRoute = async ({ request, locals }) => {
            */
           if (event.type === 'tool' && event.name === EDIT_RESOURCE_CODE) {
             descartarCodeDelta();
+
+            // odd/tasks/motor-claude.md (T4 round 3): temporal, detrás de un
+            // env flag — para ver EXACTAMENTE qué manda el modelo (find/replace
+            // crudos) cuando un turno termina en un no-op silencioso. Quitar
+            // o mantener apagado (default) fuera de esta investigación.
+            if (process.env.KODU_DEBUG_EDITS === '1') {
+              console.log(
+                `[chat/stream] KODU_DEBUG_EDITS tool_use crudo (${event.arguments.length} chars):`,
+                event.arguments,
+              );
+            }
+
             const parsed = parseEditResourceArgs(event.arguments, event.truncated);
 
             if (!parsed.ok) {
               codeProblem = CODE_PROBLEMS[parsed.reason];
               if (parsed.reason === 'truncated') huboTruncado = true;
-              estadoEdicion.ultimoFallo = { find: '', detalle: codeProblem };
+              estadoEdicion.ultimoFallo = { find: '', detalle: codeProblem, esNoOp: false };
               send({ type: 'error', message: codeProblem });
               continue;
             }
@@ -1420,7 +1434,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             } else {
               const detalle = EDIT_FAILURE_MESSAGES[aplicado.reason];
               codeProblem = `No pude aplicar uno de los cambios puntuales: ${detalle}. No toqué el recurso.`;
-              estadoEdicion.ultimoFallo = { find: aplicado.find, detalle };
+              estadoEdicion.ultimoFallo = { find: aplicado.find, detalle, esNoOp: aplicado.reason === 'no_op' };
               send({ type: 'error', message: codeProblem });
             }
           }
@@ -1450,14 +1464,23 @@ export const POST: APIRoute = async ({ request, locals }) => {
             ? ` El "find" que falló fue: ${JSON.stringify(estadoEdicion.ultimoFallo.find.slice(0, 300))}.`
             : '';
 
+          // T4 round 3: un no_op (find === replace, o un replace que no
+          // cambia nada) necesita una instrucción distinta a un no_match —
+          // acá el texto SÍ se encontró, el problema es que el reemplazo no
+          // agrega ni cambia nada. Pedirle "copiá el find exacto" (el texto
+          // genérico de abajo) no ataca la causa: el modelo ya lo copió
+          // bien, lo que falta es que el `replace` INCLUYA contenido nuevo.
+          const instruccion = estadoEdicion.ultimoFallo.esNoOp
+            ? `Esa edición no cambió nada: tu "replace" quedó igual al "find".${pistaFind} El recurso NO se tocó. Si tenés que AGREGAR contenido, el "replace" tiene que contener el texto de "find" MÁS lo nuevo (nunca idéntico a "find"). Volvé a intentarlo con edit_resource_code con un "replace" que de verdad agregue o cambie algo, o usá update_resource_code con el documento completo.`
+            : `No pude aplicar esa edición: ${estadoEdicion.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`;
+
           const reintentoEdicion = await requestCompletionStream({
             messages: [
               ...messages,
               { role: 'assistant', content: assistantText },
               {
                 role: 'user',
-                content:
-                  `No pude aplicar esa edición: ${estadoEdicion.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
+                content: instruccion,
               },
             ],
             provider: proveedorUsado,
@@ -1677,6 +1700,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
             (part): part is string => Boolean(part),
           );
 
+          // T4 round 3: movido antes de `finalText` — un turno NUNCA puede
+          // decir "Actualicé el recurso." si el HTML terminó IGUAL al que
+          // tenía al arrancar. Antes de este cambio, `generatedHtml` solo
+          // (sin comparar contra `htmlAlInicioDelTurno`) alcanzaba para esa
+          // frase: un `edit_resource_code` con `find === replace` (no_op,
+          // ver `edits.ts`) pasaba la validación de `applyResourceEdits` y
+          // volvía "ok" con el documento bit a bit igual — ~1 de 9 turnos
+          // medidos contra Haiku 5.5 terminaba así, mintiéndole al docente.
+          // Con el no_op ya rechazado en `edits.ts`, este chequeo es la red
+          // de seguridad final (cubre también un `update_resource_code`
+          // completo que por lo que sea devolviera el documento sin tocar).
+          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
+
           // T9: el texto fijo manda por encima de lo que haya escrito la
           // versión 1 en el chat — pero sólo si de verdad hubo versión 1
           // (`contenidoMensajeDeVersiones` da `null` si `generatedHtml`
@@ -1687,7 +1723,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             contenidoMensajeDeVersiones(solicitaVersiones && Boolean(generatedHtml)) ??
             (notes.length > 0
               ? notes.join('\n\n')
-              : generatedHtml
+              : cambioElHtml
                 ? 'Actualicé el recurso.'
                 : SILENT_TURN);
 
@@ -1704,13 +1740,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 ]
               : [];
 
-          // T4 ("Deshacer cambios de la IA"): sólo si el turno de verdad
-          // cambió el recurso — comparado contra el HTML con el que arrancó,
-          // no contra si el modelo llamó o no a la herramienta (podría haber
-          // devuelto el documento igual, letra por letra). Calculado ANTES
-          // del `create` de abajo (T5 lo necesita ahí, para la huella).
-          const cambioElHtml = Boolean(generatedHtml && generatedHtml !== htmlAlInicioDelTurno);
-
+          // T4 ("Deshacer cambios de la IA"): `cambioElHtml` ya se calculó
+          // arriba, antes de `finalText` (T4 round 3) — sigue siendo el
+          // mismo valor que necesita el `create` de abajo para la huella.
           const saved = await prisma.chatMessage.create({
             data: {
               threadId: thread.id,
