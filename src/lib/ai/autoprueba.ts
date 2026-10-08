@@ -132,6 +132,60 @@ export function lineaFuente(html: string, linea: number | null, contexto = 1): s
 }
 
 /**
+ * Busca, dentro del HTML real, líneas de origen relacionadas con un
+ * reinicio que no volvió al estado inicial: la función `reiniciar()` y
+ * cualquier línea que mencione un texto o un control citado en el diff
+ * (`diferencias`). A diferencia de `lineaFuente` (línea exacta de un error
+ * con número de línea conocido), acá no hay número de línea — el centinela
+ * (`kit.ts`) no reporta uno para un reinicio incompleto, reporta un diff de
+ * CONTENIDO — así que se ubica por TEXTO, buscando la primera línea que lo
+ * contenga.
+ *
+ * Por qué hace falta (T4, round 1 de motor-claude): sin esto, el único
+ * insumo que tenía el modelo para una corrección de reinicio eran los
+ * textos/etiquetas ya DERIVADOS (qué cambió), nunca una línea real del
+ * recurso — así que inventaba un \`find\` para \`edit_resource_code\` que no
+ * aparecía literal en el HTML, y la edición fallaba con \`no_match\`.
+ *
+ * Best-effort: una búsqueda por texto literal puede no encontrar nada (el
+ * texto viene de interpolación en JS, no aparece igual en el HTML fuente) —
+ * en ese caso esa pista se omite en silencio, nunca rompe el mensaje.
+ */
+export function lineasFuenteReinicio(html: string, diferencias: DiferenciasAutoprueba, tope = 6): string[] {
+  const lineas = html.split('\n');
+
+  function primeraLineaCon(buscar: RegExp | string): number | null {
+    for (let i = 0; i < lineas.length; i++) {
+      const coincide = typeof buscar === 'string' ? lineas[i]!.includes(buscar) : buscar.test(lineas[i]!);
+      if (coincide) return i + 1;
+    }
+    return null;
+  }
+
+  const candidatos: { motivo: string; linea: number }[] = [];
+  const agregar = (motivo: string, buscar: RegExp | string) => {
+    const linea = primeraLineaCon(buscar);
+    if (linea !== null) candidatos.push({ motivo, linea });
+  };
+
+  agregar('función reiniciar()', /function\s+reiniciar\s*\(/);
+  for (const texto of diferencias.textoQueFalta) agregar(`texto "${texto}"`, texto);
+  for (const texto of diferencias.textoQueSobra) agregar(`texto "${texto}"`, texto);
+  for (const control of diferencias.controles) agregar(`control "${control.etiqueta}"`, control.etiqueta);
+
+  const vistas = new Set<number>();
+  const extractos: string[] = [];
+  for (const candidato of candidatos) {
+    if (extractos.length >= tope) break;
+    if (vistas.has(candidato.linea)) continue;
+    vistas.add(candidato.linea);
+    const fuente = lineaFuente(html, candidato.linea, 2);
+    if (fuente) extractos.push(`(${candidato.motivo})\n${fuente}`);
+  }
+  return extractos;
+}
+
+/**
  * Marcador ESTABLE al principio de todo mensaje de corrección: T13
  * (`e2e/mock-proveedor.ts`, `programarRespuestaCondicional`) lo usa para
  * elegir la respuesta "sana" del mock sin tener que matchear contra el
@@ -190,6 +244,19 @@ export function construirMensajeCorreccion(args: {
           .map((c) => `${c.etiqueta} (antes: ${JSON.stringify(c.antes)}, ahora: ${JSON.stringify(c.despues)})`)
           .join('; ')}.`,
       );
+    }
+    // T4 (round 1, motor-claude): sin esto, el modelo sólo tenía el diff
+    // DERIVADO (qué texto/control cambió) para corregir un reinicio — y si
+    // elegía edit_resource_code, inventaba un `find` que nunca aparecía
+    // literal en el HTML. Estas líneas son las reales del recurso.
+    const fuentesReinicio = lineasFuenteReinicio(html, informe.diferencias);
+    if (fuentesReinicio.length > 0) {
+      partes.push(
+        '   Líneas de origen relacionadas (si usás edit_resource_code, copiá el "find" EXACTO de una de estas líneas, con los mismos espacios y saltos de línea):',
+      );
+      for (const fuente of fuentesReinicio) {
+        partes.push(`   ${fuente.replace(/\n/g, '\n   ')}`);
+      }
     }
     indice++;
   }

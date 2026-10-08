@@ -30,7 +30,7 @@ import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { UPDATE_RESOURCE_CODE, EDIT_RESOURCE_CODE, parseUpdateResourceArgs, parseEditResourceArgs } from '../../../lib/ai/tools.ts';
-import { applyResourceEdits, EDIT_FAILURE_MESSAGES } from '../../../lib/ai/edits.ts';
+import { applyResourceEdits, EDIT_FAILURE_MESSAGES, textoCercano } from '../../../lib/ai/edits.ts';
 import { MAX_HTML_CHARS } from '../../../lib/ai/prompt.ts';
 import { fail, readBody } from '../../../lib/http.ts';
 
@@ -323,7 +323,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
         const resultado: {
           htmlFinal: string | null;
           editModeAplicado: 'full' | 'fragments' | 'fragments_fallback' | null;
-          ultimoFallo: { find: string; detalle: string } | null;
+          // T4 (round 1, motor-claude): `reason` sólo se completa para
+          // `no_match` — es el único motivo donde "el texto real más
+          // parecido" (`textoCercano`) tiene sentido como pista; el resto
+          // (JSON roto, recortado, superposición, zona plegada/truncada) no
+          // se corrige mostrando texto cercano.
+          ultimoFallo: { find: string; detalle: string; reason?: 'no_match' } | null;
           huboFalloDeEdicion: boolean;
         } = { htmlFinal: null, editModeAplicado: null, ultimoFallo: null, huboFalloDeEdicion: false };
         // Mismo motivo: capturado ANTES de `consumir` para que la cerradura
@@ -368,7 +373,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 resultado.ultimoFallo = null;
               } else {
                 console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code no se pudo aplicar (${aplicado.reason}).`);
-                resultado.ultimoFallo = { find: aplicado.find, detalle: EDIT_FAILURE_MESSAGES[aplicado.reason] };
+                resultado.ultimoFallo = {
+                  find: aplicado.find,
+                  detalle: EDIT_FAILURE_MESSAGES[aplicado.reason],
+                  reason: aplicado.reason === 'no_match' ? 'no_match' : undefined,
+                };
                 resultado.huboFalloDeEdicion = true;
               }
             }
@@ -393,6 +402,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
           const pistaFind = resultado.ultimoFallo.find
             ? ` El "find" que falló fue: ${JSON.stringify(resultado.ultimoFallo.find.slice(0, 300))}.`
             : '';
+          // T4 (round 1, motor-claude): sólo para no_match — el texto REAL
+          // del recurso más parecido al find que falló, para que el
+          // reintento tenga algo de dónde copiar en vez de inventar otra
+          // vez. Ver el comentario de `textoCercano` (edits.ts).
+          const cercano =
+            resultado.ultimoFallo.reason === 'no_match' && resultado.ultimoFallo.find
+              ? textoCercano(htmlPreCorreccion, resultado.ultimoFallo.find)
+              : null;
+          const pistaCercana = cercano
+            ? ` El texto real del recurso más parecido a ese punto es:\n${cercano}\nCopiá el "find" EXACTO de ahí (mismos espacios y saltos de línea).`
+            : '';
 
           respuesta = await requestCompletionStream({
             messages: [
@@ -400,7 +420,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
               {
                 role: 'user',
                 content:
-                  `No pude aplicar esa edición: ${resultado.ultimoFallo.detalle}.${pistaFind} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
+                  `No pude aplicar esa edición: ${resultado.ultimoFallo.detalle}.${pistaFind}${pistaCercana} El recurso NO se tocó. Volvé a intentarlo con edit_resource_code usando un find corregido (copiado EXACTO del HTML de arriba, mismos espacios y saltos de línea), o si no estás seguro de poder acotarlo, usá update_resource_code con el documento completo.`,
               },
             ],
             provider,

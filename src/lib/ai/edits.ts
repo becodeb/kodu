@@ -116,6 +116,46 @@ export function applyResourceEdits(
   return { ok: true, html: resultado };
 }
 
+/**
+ * Para cuando `applyResourceEdits` devuelve `no_match` (T4, round 1 de
+ * motor-claude): ubica el prefijo MÁS LARGO de `find` que sí aparece
+ * literal en el HTML real (búsqueda binaria sobre la longitud del
+ * prefijo), y devuelve el texto real del recurso alrededor de esa
+ * posición — mismos espacios y saltos de línea — para que un segundo
+ * intento pueda copiar un `find` que sí exista.
+ *
+ * Por qué hace falta: sin esto, el único insumo del reintento era el
+ * `find` que YA había fallado (¿para qué repetirlo?) — el modelo no tenía
+ * ninguna pista de qué texto real había alrededor del punto al que
+ * apuntaba, así que a menudo repetía el mismo `find` inventado o uno
+ * igual de equivocado.
+ *
+ * `null` si ni el primer carácter de `find` aparece en el HTML — no hay
+ * nada cercano para mostrar (p. ej. `find` vacío, ya filtrado antes de
+ * llegar acá, o un texto que no tiene relación alguna con el documento).
+ */
+export function textoCercano(htmlReal: string, find: string, contexto = 150): string | null {
+  let lo = 1;
+  let hi = find.length;
+  let mejor = 0;
+  while (lo <= hi) {
+    const medio = Math.floor((lo + hi) / 2);
+    if (htmlReal.includes(find.slice(0, medio))) {
+      mejor = medio;
+      lo = medio + 1;
+    } else {
+      hi = medio - 1;
+    }
+  }
+  if (mejor === 0) return null;
+
+  const prefijo = find.slice(0, mejor);
+  const posicion = htmlReal.indexOf(prefijo);
+  const desde = Math.max(0, posicion - contexto);
+  const hasta = Math.min(htmlReal.length, posicion + prefijo.length + contexto);
+  return htmlReal.slice(desde, hasta);
+}
+
 /** Mensaje para el docente/el modelo cuando una edición falla, en español, sin tecnicismos para el primero. */
 export const EDIT_FAILURE_MESSAGES: Record<ApplyEditsFailureReason, string> = {
   empty_find: 'uno de los cambios no traía texto para buscar',
