@@ -69,6 +69,10 @@ export interface AiTraceInput {
   selfTestFailed?: number | null;
   correctionRounds?: number | null;
   verifierFindings?: number | null;
+  /** T4 (round 1, motor-claude): qué disparó esta ronda de corrección
+   *  (`necesitaCorreccion`, autoprueba.ts) — un subconjunto no vacío de
+   *  `'errors' | 'reset' | 'tests'`, o `null` fuera de CORRECTION. */
+  correctionTriggers?: readonly ('errors' | 'reset' | 'tests')[] | null;
   /**
    * Sólo GENERATION/ADJUSTMENT (los únicos turnos con una respuesta visible
    * en el chat que vale la pena preguntarle al docente) activan la decisión
@@ -163,6 +167,7 @@ export async function recordAiTrace(input: AiTraceInput): Promise<AiTraceResulta
         selfTestFailed: input.selfTestFailed ?? null,
         correctionRounds: input.correctionRounds ?? null,
         verifierFindings: input.verifierFindings ?? null,
+        correctionTriggers: input.correctionTriggers && input.correctionTriggers.length > 0 ? input.correctionTriggers.join(',') : null,
         inlineQuestionKind: preguntaFeedback,
       },
       select: { id: true },

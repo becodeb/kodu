@@ -978,6 +978,13 @@ model AiTrace {
   /// combinar las pasadas (`unirPasadas`). `NULL` si no corrió o ninguna
   /// pasada dio un JSON parseable.
   verifierFindings          Int?
+  /// T4 (round 1, motor-claude): qué disparó esta ronda de autocorrección
+  /// (`CORRECTION`) — `necesitaCorreccion` (autoprueba.ts) puede disparar
+  /// por más de un motivo a la vez, así que esto es una lista separada por
+  /// comas de un vocabulario cerrado ('errors', 'reset', 'tests'), nunca un
+  /// enum de un solo valor. `NULL` fuera de CORRECTION, o si esta ronda
+  /// corrió antes de que este campo existiera.
+  correctionTriggers        String?
   /// odd/tasks/ahorro-tokens.md (T5): la carita que el docente tocó bajo
   /// esta respuesta. Un segundo tap la cambia; otro tap sobre la misma la
   /// borra (`NULL` de nuevo) — nunca un tercer estado "neutral forzado".

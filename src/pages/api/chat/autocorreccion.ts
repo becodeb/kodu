@@ -462,6 +462,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
           // `selfTestFailed` es `errores.length`, la misma cuenta que ya
           // loguea la línea de arriba.
           const editOutcomeTrace: EditOutcomeLlamador = resultado.editModeAplicado ?? (resultado.htmlFinal ? null : 'failed');
+          // motor-claude (T4, round 1): mismos tres motivos que evalúa
+          // `necesitaCorreccion` (autoprueba.ts), en el MISMO orden — puede
+          // disparar por más de uno a la vez, de ahí la lista.
+          const correctionTriggers: ('errors' | 'reset' | 'tests')[] = [];
+          if (errores.length > 0) correctionTriggers.push('errors');
+          if (reinicioOk === false) correctionTriggers.push('reset');
+          if ((pruebas ?? []).some((prueba) => prueba.ok === false)) correctionTriggers.push('tests');
           await recordAiTrace({
             userId: user.id,
             projectId: project.id,
@@ -477,6 +484,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             selfTestFailed: errores.length,
             selfTestPassed: pruebas ? pruebas.filter((p) => p.ok).length : null,
             correctionRounds: ronda,
+            correctionTriggers,
           });
         }
 
