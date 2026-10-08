@@ -50,6 +50,13 @@ export interface OpcionesCaptura {
    * comportamiento de siempre: bajar el ancho a `SNAPSHOT_WIDTH`.
    */
   altoMax?: number;
+  /**
+   * T5 (motor-claude, revisor visual): ancho al que se normaliza la
+   * captura, en vez del `SNAPSHOT_WIDTH` fijo de la portada de galería. Sin
+   * efecto si `altoMax` también está puesto (`altoMax` manda, mismo orden
+   * que antes). Ignorado si no es un número positivo.
+   */
+  anchoMax?: number;
 }
 
 const BRIDGE = `<script data-kodu-bridge>
@@ -114,7 +121,8 @@ const BRIDGE = `<script data-kodu-bridge>
           if (opciones.altoMax) {
             ratio = canvas.height > opciones.altoMax ? opciones.altoMax / canvas.height : 1;
           } else {
-            ratio = canvas.width ? ${SNAPSHOT_WIDTH} / canvas.width : 1;
+            var anchoObjetivo = opciones.anchoMax > 0 ? opciones.anchoMax : ${SNAPSHOT_WIDTH};
+            ratio = canvas.width ? anchoObjetivo / canvas.width : 1;
           }
 
           var target = document.createElement('canvas');
@@ -136,9 +144,50 @@ const BRIDGE = `<script data-kodu-bridge>
 })();
 <\/script>`;
 
+/**
+ * T5 (motor-claude, revisor visual): un `<canvas>` WebGL puede capturar
+ * negro con `html-to-image` (y con cualquier captura que lea su contenido
+ * después del hecho) — por default el navegador puede limpiar el buffer de
+ * dibujo apenas compone el frame, así que para cuando la captura corre ya
+ * es tarde para pedir que no lo haga. La única forma real de evitarlo es
+ * pedir `preserveDrawingBuffer: true` AL CREAR el contexto — así que este
+ * parche tiene que correr ANTES que cualquier script propio del recurso
+ * pueda llamar a `canvas.getContext('webgl'...)`, nunca en el momento de
+ * capturar. Se inyecta lo más temprano posible (primer hijo de `<head>`, o
+ * de `<body>` si no hay `<head>`) — sólo en la vista previa del editor,
+ * nunca en `/p/[slug]` ni en el HTML que se guarda.
+ *
+ * Límite conocido (documentado, no resuelto acá): si el recurso crea su
+ * contexto WebGL desde una librería que no pasa por
+ * `HTMLCanvasElement.prototype.getContext` (p. ej. una build que cachea el
+ * contexto antes de que este script corra, caso de borde no visto en la
+ * práctica), la captura puede seguir saliendo negra — este parche es la
+ * mitigación práctica, no una garantía para cualquier librería.
+ */
+const WEBGL_PATCH = `<script data-kodu-webgl-patch>
+(function () {
+  if (!window.HTMLCanvasElement) return;
+  var original = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, options) {
+    if (typeof type === 'string' && /^(webgl|webgl2|experimental-webgl)$/i.test(type)) {
+      options = Object.assign({}, options || {}, { preserveDrawingBuffer: true });
+    }
+    return original.call(this, type, options);
+  };
+})();
+<\/script>`;
+
+function conParcheWebgl(html: string): string {
+  if (html.includes('<head>')) return html.replace('<head>', `<head>${WEBGL_PATCH}`);
+  if (/<head[\s>]/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>${WEBGL_PATCH}`);
+  if (/<body[\s>]/i.test(html)) return html.replace(/<body([^>]*)>/i, `<body$1>${WEBGL_PATCH}`);
+  return WEBGL_PATCH + html;
+}
+
 export function buildPreviewDocument(html: string): string {
-  if (html.includes('</body>')) {
-    return html.replace('</body>', `${BRIDGE}</body>`);
+  const conParche = conParcheWebgl(html);
+  if (conParche.includes('</body>')) {
+    return conParche.replace('</body>', `${BRIDGE}</body>`);
   }
-  return html + BRIDGE;
+  return conParche + BRIDGE;
 }

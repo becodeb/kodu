@@ -440,6 +440,29 @@ export function razonamientoVerificador(provider: ProviderConfig): Record<string
 }
 
 /**
+ * T5 (motor-claude): el razonamiento del revisor VISUAL — "low" fijo, a
+ * propósito más bajo que el "medium" de `razonamientoVerificador` de
+ * arriba. Esta pasada tiene una sola mirada muy concreta (lo que se VE en
+ * una captura + el contrato ya resumido en el prompt), no una relectura de
+ * lógica/contenido desde cero como el revisor de sólo texto — y el
+ * presupuesto de tiempo de esta pasada (odd/tasks/motor-claude.md, T5) es
+ * mucho más chico. Mismo dialecto defensivo que el resto del archivo.
+ */
+export function razonamientoRevisorVisual(provider: ProviderConfig): Record<string, unknown> {
+  if (!provider.reasoningEffort) return {};
+
+  if (provider.reasoningParam === 'thinking') {
+    return { thinking: { type: 'enabled' } };
+  }
+
+  if (provider.reasoningParam === 'effort') {
+    return { effort: 'low' };
+  }
+
+  return { reasoning_effort: 'low' };
+}
+
+/**
  * De los niveles que puede tener `AiModel.reasoningEffort` (y el nivel
  * "medium" interno que sólo usa `razonamientoOverride`, T3 del verificador)
  * al vocabulario de `reasoning.effort` en la Responses API. `max` ya no es un

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument } from '../../lib/preview.ts';
+import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCaptura } from '../../lib/preview.ts';
 import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
 import { contarChecklistOk, type ItemChecklistConEstado } from '../../lib/client/checklist.ts';
 import { textoCantidadProblemas, type EstadoPanelVerificador } from '../../lib/client/verificador.ts';
@@ -66,6 +66,17 @@ interface PreviewPanelProps {
   /** "¿Las arreglo?" — sólo se ofrece cuando `verificador.fase === 'resultado'`
    *  y hay al menos un problema accionable. */
   onArreglarVerificador: () => void;
+  /**
+   * T5 (motor-claude, revisor visual): se llama UNA vez, al montar, con una
+   * función que captura el iframe de vista previa VIGENTE (sin tocar el
+   * estado de "Guardar portada"/"Publicar" — totalmente aparte de
+   * `pedirCaptura`, que sí los toca) y devuelve el data URL, o `null` si no
+   * se pudo (iframe no listo, sin respuesta a tiempo, error del
+   * capturador). Workspace.tsx guarda esta función en un ref y la usa para
+   * mandarle una captura al revisor del verificador — nunca dispara nada
+   * visible en este panel.
+   */
+  onCapturadorListo?: (capturar: (opciones?: OpcionesCaptura) => Promise<string | null>) => void;
 }
 
 type Tab = 'preview' | 'code';
@@ -160,6 +171,14 @@ function PreviewPanel(props: PreviewPanelProps) {
   // propia respuesta si hubiera más de un mensaje en el aire.
   const proximoIdCapturaRef = useRef(0);
   const pendingIdRef = useRef<string | null>(null);
+  // T5 (motor-claude, revisor visual): mismo mecanismo de `pedirCaptura`
+  // pero TOTALMENTE aparte — id propio, sin tocar `capturing`/`publicando`
+  // — para que una captura silenciosa para el revisor nunca se confunda
+  // con la del botón de portada, ni le cambie ningún estado visible.
+  const proximoIdRevisorRef = useRef(0);
+  const revisorPendingIdRef = useRef<string | null>(null);
+  const revisorResolverRef = useRef<((dataUrl: string | null) => void) | null>(null);
+  const revisorTimeoutRef = useRef<number | null>(null);
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
   // recarga al tipear en otros campos del panel.
@@ -262,7 +281,68 @@ function PreviewPanel(props: PreviewPanelProps) {
     return () => {
       if (timerParcialRef.current != null) window.clearTimeout(timerParcialRef.current);
       if (swapTimerRef.current != null) window.clearTimeout(swapTimerRef.current);
+      if (revisorTimeoutRef.current != null) window.clearTimeout(revisorTimeoutRef.current);
     };
+  }, []);
+
+  /**
+   * T5 (motor-claude, revisor visual): captura silenciosa del iframe
+   * VIGENTE — `opciones` por defecto manda JPEG ~1280px de ancho, calidad
+   * 0.8 (lo que pide el revisor), pero quien llama puede pedir otra cosa.
+   * `null` si el iframe no está montado, si no contesta en 8s, o si el
+   * capturador reportó un error — nunca tira.
+   */
+  function capturarParaRevisor(opciones?: OpcionesCaptura): Promise<string | null> {
+    return new Promise((resolve) => {
+      const frame = iframeRef.current?.contentWindow;
+      if (!frame) {
+        resolve(null);
+        return;
+      }
+      const id = `revisor-${++proximoIdRevisorRef.current}`;
+      revisorPendingIdRef.current = id;
+      revisorResolverRef.current = resolve;
+      frame.postMessage(
+        { type: CAPTURE_REQUEST, id, opciones: opciones ?? { formato: 'jpeg', calidad: 0.8, anchoMax: 1280 } },
+        '*',
+      );
+      if (revisorTimeoutRef.current != null) window.clearTimeout(revisorTimeoutRef.current);
+      revisorTimeoutRef.current = window.setTimeout(() => {
+        if (revisorPendingIdRef.current === id) {
+          revisorPendingIdRef.current = null;
+          revisorResolverRef.current = null;
+          resolve(null);
+        }
+      }, 8_000);
+    });
+  }
+
+  useEffect(() => {
+    function onMessageRevisor(event: MessageEvent) {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      if (!event.data || event.data.type !== CAPTURE_RESULT) return;
+      if (revisorPendingIdRef.current === null || event.data.id !== revisorPendingIdRef.current) return;
+      revisorPendingIdRef.current = null;
+      if (revisorTimeoutRef.current != null) {
+        window.clearTimeout(revisorTimeoutRef.current);
+        revisorTimeoutRef.current = null;
+      }
+      const resolve = revisorResolverRef.current;
+      revisorResolverRef.current = null;
+      resolve?.(event.data.error ? null : typeof event.data.dataUrl === 'string' ? event.data.dataUrl : null);
+    }
+    window.addEventListener('message', onMessageRevisor);
+    return () => window.removeEventListener('message', onMessageRevisor);
+  }, []);
+
+  // Se avisa UNA sola vez, al montar: `capturarParaRevisor` no depende de
+  // estado propio (lee `iframeRef`/los refs al momento de llamarse), así
+  // que la referencia es estable para toda la vida del componente.
+  const onCapturadorListoRef = useRef(props.onCapturadorListo);
+  onCapturadorListoRef.current = props.onCapturadorListo;
+  useEffect(() => {
+    onCapturadorListoRef.current?.(capturarParaRevisor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**

@@ -13,6 +13,8 @@ import {
 } from '../../lib/client/verificador.ts';
 import { fingerprintHtml } from '../../lib/ai/fingerprint.ts';
 import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
+import type { OpcionesCaptura } from '../../lib/preview.ts';
+import type { Problema } from '../../lib/ai/verificador.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import { estadoDeChecklist } from '../../lib/client/checklist.ts';
 import type { ItemChecklist } from '../../lib/ai/checklist.ts';
@@ -225,6 +227,12 @@ export default function Workspace(props: WorkspaceProps) {
    *  para poder cortarla si el HTML cambia mientras tanto (T4: "abort the
    *  fetch on any of those"). `null` cuando no hay ninguna corriendo. */
   const verificacionRef = useRef<{ fingerprint: string; controller: AbortController } | null>(null);
+
+  /** T5 (motor-claude, revisor visual): la captura silenciosa que
+   *  `PreviewPanel` registra una vez al montar (`onCapturadorListo`). `null`
+   *  hasta que el panel monta — `iniciarVerificacion` lo trata como "no se
+   *  pudo capturar" en ese caso, nunca como un error que avisar. */
+  const capturadorRevisorRef = useRef<((opciones?: OpcionesCaptura) => Promise<string | null>) | null>(null);
 
   /** T4 (item 4, "con no verifier engine ... nada se renderiza"): una vez
    *  que el motor contestó "desactivado" en ESTA sesión, no tiene sentido
@@ -988,7 +996,17 @@ export default function Workspace(props: WorkspaceProps) {
     verificacionRef.current = { fingerprint, controller };
     setVerificador({ fase: 'corriendo' });
 
-    const resultado = await verificarRecurso({ projectId, fingerprint, tipo }, controller.signal);
+    // T5 (motor-claude, revisor visual): captura best-effort del recurso
+    // YA renderizado con `htmlDespues` (el iframe vigente ya lo muestra —
+    // nadie lo toca entre que termina el self-test/corrección y este
+    // punto). Se salta la captura entera para un ajuste tan chico que sólo
+    // parece texto (heurística barata por longitud, documentada acá: no es
+    // un diff estructural real, sólo evita gastar una captura+imagen en un
+    // typo) — el verificador sigue corriendo igual, sólo que sin imagen.
+    const cambioMinimo = tipo === 'ajuste' && Math.abs(htmlDespues.length - htmlAntes.length) < 40;
+    const captura = cambioMinimo ? null : await (capturadorRevisorRef.current?.() ?? Promise.resolve(null));
+
+    const resultado = await verificarRecurso({ projectId, fingerprint, tipo, captura }, controller.signal);
 
     // Si mientras tanto el HTML cambió, `cancelarVerificacion` ya abortó
     // ESTE `controller` y vació `verificacionRef` (o lo reemplazó por el de
@@ -1008,7 +1026,89 @@ export default function Workspace(props: WorkspaceProps) {
     }
 
     const { accionables, contenido } = separarProblemasParaPanel(resultado.problemas);
+
+    /**
+     * T5: el revisor VISUAL (miró la captura de verdad, `usoVision`) arregla
+     * lo accionable (alta/media, no "contenido") en silencio — sin mostrar
+     * el panel con esos hallazgos ni esperar un click del docente. UNA sola
+     * ronda de corrección (`aplicarCorreccionDesdeVerificador`) y UN solo
+     * self-test (nunca otra corrección, nunca se vuelve a llamar al
+     * verificador — "never loop more than once"). El revisor de SÓLO TEXTO
+     * (sin captura, o motor sin visión) sigue el camino de siempre: se
+     * muestra el panel y el docente decide con "¿Las arreglo?".
+     */
+    if (resultado.usoVision && accionables.length > 0) {
+      const controllerArreglo = new AbortController();
+      let htmlCorregido: string | null = null;
+      try {
+        htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controllerArreglo.signal);
+      } catch (error) {
+        if ((error as Error)?.name !== 'AbortError') {
+          console.warn('[verificador] el arreglo automático del revisor visual falló:', error);
+        }
+      }
+      if (htmlCorregido) {
+        try {
+          const resultadoPrueba = await ejecutarAutopruebaEnIframe(htmlCorregido, {
+            signal: new AbortController().signal,
+          });
+          if (resultadoPrueba) {
+            setUltimasPruebas(resultadoPrueba.pruebas);
+            if (necesitaCorreccion(resultadoPrueba)) setAutopruebaAdvertencia(true);
+          }
+        } catch (error) {
+          console.warn('[verificador] el self-test posterior al arreglo automático falló:', error);
+        }
+      }
+      // Quieto: sólo se muestra lo que ya se mostraba antes de T5 (los
+      // problemas de "contenido", nunca auto-arreglados) — nada nuevo.
+      setVerificador(contenido.length > 0 ? { fase: 'resultado', accionables: [], contenido } : { fase: 'inactivo' });
+      return;
+    }
+
     setVerificador({ fase: 'resultado', accionables, contenido });
+  }
+
+  /**
+   * T4/T5: UNA corrección a partir de los problemas ACCIONABLES del
+   * verificador (`streamAutocorreccion` con `problemasVerificador`, en vez
+   * del informe de la autoprueba) — compartida por el botón manual
+   * ("¿Las arreglo?") y por el arreglo automático del revisor visual (T5):
+   * las dos corren esto UNA sola vez por ronda de verificación. `null` si
+   * no se aplicó nada (el endpoint no devolvió código, huella vencida).
+   * Puede tirar `AbortError`: quien llama decide qué hacer con eso.
+   */
+  async function aplicarCorreccionDesdeVerificador(
+    problemas: Problema[],
+    signal: AbortSignal,
+  ): Promise<string | null> {
+    let htmlCorregido: string | null = null;
+    for await (const event of streamAutocorreccion(
+      {
+        projectId,
+        fingerprint: fingerprintHtml(html),
+        ronda: 1,
+        errores: [],
+        reinicioOk: null,
+        exitoVisibleAlInicio: true,
+        diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
+        pruebas: null,
+        problemasVerificador: problemas,
+      },
+      signal,
+    )) {
+      if (event.type === 'code') {
+        // Mismo tratamiento que un "code" de la autoprueba: la vista
+        // previa cambia, sin pasar por el chat.
+        setHtml(event.html);
+        htmlCorregido = event.html;
+        codeEditedByTeacher.current = false;
+        if (screenshotUrl) setPortadaVieja(true);
+      } else if (event.type === 'error') {
+        console.warn('[verificador] la corrección respondió con un error:', event.message);
+      }
+    }
+    return htmlCorregido;
   }
 
   /**
@@ -1035,31 +1135,7 @@ export default function Workspace(props: WorkspaceProps) {
 
     let htmlCorregido: string | null = null;
     try {
-      for await (const event of streamAutocorreccion(
-        {
-          projectId,
-          fingerprint: fingerprintHtml(html),
-          ronda: 1,
-          errores: [],
-          reinicioOk: null,
-          exitoVisibleAlInicio: true,
-          diferencias: { textoQueFalta: [], textoQueSobra: [], controles: [] },
-          pruebas: null,
-          problemasVerificador: accionables,
-        },
-        controller.signal,
-      )) {
-        if (event.type === 'code') {
-          // Mismo tratamiento que un "code" de la autoprueba: la vista
-          // previa cambia, sin pasar por el chat.
-          setHtml(event.html);
-          htmlCorregido = event.html;
-          codeEditedByTeacher.current = false;
-          if (screenshotUrl) setPortadaVieja(true);
-        } else if (event.type === 'error') {
-          console.warn('[verificador] la corrección respondió con un error:', event.message);
-        }
-      }
+      htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controller.signal);
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') {
         setVerificador({ fase: 'inactivo' });
@@ -1496,6 +1572,9 @@ export default function Workspace(props: WorkspaceProps) {
         checklist={checklistConEstado}
         verificador={verificador}
         onArreglarVerificador={() => void handleArreglarVerificador()}
+        onCapturadorListo={(capturar) => {
+          capturadorRevisorRef.current = capturar;
+        }}
       />
       </div>
       </div>

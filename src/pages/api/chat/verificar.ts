@@ -7,15 +7,17 @@ import { desenvolverPruebas } from '../../../lib/ai/kit.ts';
 import { motorVerificador } from '../../../lib/ai/catalogo.ts';
 import {
   razonamientoVerificador,
+  razonamientoRevisorVisual,
   readCompletionStream,
   requestCompletionStream,
+  supportsVision,
   type ChatMessage,
   type ProviderConfig,
   type TokenUsage as MotorTokenUsage,
 } from '../../../lib/ai/provider.ts';
 import {
+  construirContenidoUsuarioVerificador,
   construirSistemaVerificador,
-  construirUsuarioVerificador,
   pedidoDocente,
   parsearVerificacion,
   reglasDelArnes,
@@ -59,6 +61,17 @@ const schema = z.object({
    *  `/api/chat/autocorreccion`. */
   fingerprint: z.string().min(1).max(32),
   tipo: z.enum(['nuevo', 'ajuste']),
+  /**
+   * T5 (motor-claude, revisor visual): data URL JPEG opcional de la vista
+   * previa renderizada, mandada best-effort por el cliente
+   * (`PreviewPanel`/`Workspace.tsx`). El servidor la usa SÓLO si el motor
+   * `isVerifier` configurado soporta visión (`supportsVision`) — con
+   * cualquier otro motor, o sin esto, el comportamiento es EXACTAMENTE el
+   * de antes de T5. Tope generoso (~1.5MB en base64): nunca un vector de
+   * tamaño libre, pero de sobra para un JPEG de 1280px de ancho a calidad
+   * 0.8.
+   */
+  captura: z.string().max(2_000_000).nullish(),
 });
 
 /** 150 s por pasada (la tarea lo fija así): un revisor que relee el HTML
@@ -89,6 +102,11 @@ async function ejecutarPasada(args: {
   userId: string;
   projectId: string;
   signalExterno: AbortSignal;
+  /** T5: "low" para la pasada del revisor VISUAL en vez del "medium" fijo
+   *  de siempre — ver `razonamientoRevisorVisual` en `provider.ts`. Sin
+   *  esto (como todas las pasadas de antes de T5), el "medium" de
+   *  `razonamientoVerificador` sigue siendo el default. */
+  razonamiento?: Record<string, unknown>;
 }): Promise<ResultadoPasada> {
   const controlador = new AbortController();
   const timeout = setTimeout(() => controlador.abort(), TIMEOUT_PASADA_MS);
@@ -101,7 +119,7 @@ async function ejecutarPasada(args: {
       provider: args.provider,
       signal: controlador.signal,
       sinHerramientas: true,
-      razonamientoOverride: razonamientoVerificador(args.provider),
+      razonamientoOverride: args.razonamiento ?? razonamientoVerificador(args.provider),
       maxTokensOverride: Math.min(MAX_TOKENS_PASADA, args.provider.maxTokens),
     });
 
@@ -166,7 +184,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
-  const { projectId, fingerprint, tipo } = parsed.data;
+  const { projectId, fingerprint, tipo, captura } = parsed.data;
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -214,26 +232,46 @@ export const POST: APIRoute = async ({ request, locals }) => {
   }
 
   const pedido = pedidoDocente(primerMensaje?.content ?? '', mensajeDeAjuste);
-  const sistema = construirSistemaVerificador(reglasDelArnes());
   // T4 (round 2, motor-claude): mismo fix que `autocorreccion.ts`/`stream.ts`
   // — `project.currentHtml` ya llega con el checklist envuelto en
   // `try{eval("...")}`; el revisor sólo LEE el HTML (no edita nada acá), pero
   // mostrarle el texto escapado igual lo confunde sobre qué es código real.
   const htmlParaRevisor = desenvolverPruebas(project.currentHtml);
-  const mensajeUsuario = construirUsuarioVerificador(pedido, htmlParaRevisor);
+
+  /**
+   * T5 (motor-claude, revisor visual): el único motor que corre acá es el
+   * `isVerifier` del catálogo — ya puede ser cualquier `apiFormat`,
+   * incluido `'anthropic'` (T1 lo dejó genérico, ver `catalogo.ts`). Con
+   * `captura` presente Y el motor soportando visión, se corre UNA sola
+   * pasada (nunca 2, aunque sea un recurso nuevo: cuesta el doble de
+   * tokens de imagen y el presupuesto de esta pasada es chico) con
+   * `razonamientoRevisorVisual` ("low") y el `image_url` de la captura. Sin
+   * eso — CUALQUIER motor de antes de T5, o un motor con visión al que el
+   * cliente no le mandó captura — el camino es EXACTAMENTE el de siempre:
+   * 2 pasadas en paralelo para "nuevo", 1 para "ajuste", "medium" fijo, sin
+   * imagen.
+   */
+  const usaVision = Boolean(captura) && supportsVision(provider);
+  const sistema = construirSistemaVerificador(reglasDelArnes(), { conCaptura: usaVision });
+  const contenidoUsuario = construirContenidoUsuarioVerificador(pedido, htmlParaRevisor, usaVision ? captura : null);
 
   const messages: ChatMessage[] = [
     { role: 'system', content: sistema },
-    { role: 'user', content: mensajeUsuario },
+    { role: 'user', content: contenidoUsuario },
   ];
 
-  // Un recurso NUEVO corre 2 pasadas en paralelo (se combinan con
-  // `unirPasadas`); un ajuste, 1 sola.
-  const cantidadPasadas = tipo === 'nuevo' ? 2 : 1;
+  const cantidadPasadas = usaVision ? 1 : tipo === 'nuevo' ? 2 : 1;
   const arranque = Date.now();
   const resultados = await Promise.all(
     Array.from({ length: cantidadPasadas }, () =>
-      ejecutarPasada({ messages, provider, userId: user.id, projectId: project.id, signalExterno: request.signal }),
+      ejecutarPasada({
+        messages,
+        provider,
+        userId: user.id,
+        projectId: project.id,
+        signalExterno: request.signal,
+        razonamiento: usaVision ? razonamientoRevisorVisual(provider) : undefined,
+      }),
     ),
   );
 
@@ -274,5 +312,5 @@ export const POST: APIRoute = async ({ request, locals }) => {
     verifierFindings: problemas.length,
   });
 
-  return ok({ estado: 'ok', problemas, pasadas: cantidadPasadas, fallidas });
+  return ok({ estado: 'ok', problemas, pasadas: cantidadPasadas, fallidas, usoVision: usaVision });
 };

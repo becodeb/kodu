@@ -26,6 +26,7 @@
 
 import { plegarKit } from './kit.ts';
 import { reglasDelArnes } from './prompt.ts';
+import type { ContentPart } from './provider.ts';
 
 // ─────────────────────────────────────────────────────────────
 // El problema: tipo + validación/normalización de lo que devuelve el modelo
@@ -129,9 +130,27 @@ export function pedidoDocente(pedidoOriginal: string, ajuste: string | null): st
 // El prompt: sistema + usuario (redacción verbatim del experimento)
 // ─────────────────────────────────────────────────────────────
 
-/** Puerto verbatim de `sistema()` en `experimentos/razonamiento/verificar.ts`. */
-export function construirSistemaVerificador(reglas: string): string {
-  return `Sos un revisor experto de recursos didácticos interactivos para escuelas argentinas. Un docente pidió un recurso y otra IA lo generó como un único documento HTML. Tu trabajo: encontrar los problemas CONCRETOS que un alumno o el docente se van a encontrar al usarlo en clase.
+/**
+ * T5 (motor-claude, revisor visual): sección extra del sistema SÓLO cuando
+ * la pasada manda una captura de pantalla (`construirContenidoUsuarioVerificador`
+ * con `capturaDataUrl`). Nunca reemplaza nada de la redacción verbatim de
+ * arriba — se agrega al final, así una pasada sin imagen (el camino de
+ * siempre, gpt-6-luna-style) queda byte a byte igual.
+ */
+const SECCION_REVISOR_VISUAL = `
+
+Además del código, tenés una CAPTURA de cómo se ve el recurso renderizado de verdad. Mirala con atención y agregá a tu lista cualquiera de estos problemas que encuentres (mismo tope de 6, mismo orden por gravedad):
+- Defectos visibles de layout o render: elementos superpuestos, texto cortado o ilegible, zonas vacías que no deberían estarlo, una ilustración rota o que no cargó.
+- El pedido del docente no se cumplió, a simple vista (algo que pidió y no está, o se ve distinto a lo pedido).
+- Mala calidad visual contra las reglas de "Diseño visual" del contrato de arriba: una ilustración plana o vacía en vez de tener profundidad tonal real, colores lavados, o un layout que no usa el espacio.
+Si la captura se ve bien y coincide con el código, no inventes un problema visual sólo para tener algo que decir.`;
+
+/** Puerto verbatim de `sistema()` en `experimentos/razonamiento/verificar.ts`,
+ *  con la sección visual de T5 agregada al final cuando `conCaptura` es
+ *  `true` — por default `false` (sin segundo argumento, el texto es
+ *  idéntico al de antes de T5). */
+export function construirSistemaVerificador(reglas: string, opciones?: { conCaptura?: boolean }): string {
+  const base = `Sos un revisor experto de recursos didácticos interactivos para escuelas argentinas. Un docente pidió un recurso y otra IA lo generó como un único documento HTML. Tu trabajo: encontrar los problemas CONCRETOS que un alumno o el docente se van a encontrar al usarlo en clase.
 
 Qué buscar, en este orden:
 1. Lógica rota o casos borde: cálculos mal hechos, estados que no se reinician, logros o puntajes que se pueden trabar o inflar, acciones que se disparan cuando no deberían (doble clic, teclado durante una pausa o transición), pantallas a las que se llega de forma incorrecta.
@@ -151,6 +170,8 @@ ${reglas}
 
 Respondé SOLO con JSON, sin texto antes ni después:
 {"problemas":[{"gravedad":"alta|media|baja","tipo":"logica|contenido|pedido|uso","que":"...","como_reproducir":"...","arreglo":"..."}]}`;
+
+  return opciones?.conCaptura ? `${base}${SECCION_REVISOR_VISUAL}` : base;
 }
 
 /** Puerto verbatim de `usuario()` en `experimentos/razonamiento/verificar.ts`
@@ -158,6 +179,27 @@ Respondé SOLO con JSON, sin texto antes ni después:
  *  secas (T3 pliega además las pruebas, ver más arriba). */
 export function construirUsuarioVerificador(pedido: string, html: string): string {
   return `## Pedido del docente\n${pedido}\n\n## Recurso generado\n\`\`\`html\n${htmlParaVerificador(html)}\n\`\`\``;
+}
+
+/**
+ * T5 (motor-claude, revisor visual): el contenido del mensaje "user" para
+ * una pasada con captura — un bloque de texto (`construirUsuarioVerificador`,
+ * sin cambios) seguido del `image_url` de la captura, mismo vocabulario
+ * `ContentPart` que ya usa `stream.ts` para adjuntos del docente. Sin
+ * `capturaDataUrl`, devuelve el `string` de siempre (ningún motor sin
+ * visión ve jamás un array de partes).
+ */
+export function construirContenidoUsuarioVerificador(
+  pedido: string,
+  html: string,
+  capturaDataUrl?: string | null,
+): string | ContentPart[] {
+  const texto = construirUsuarioVerificador(pedido, html);
+  if (!capturaDataUrl) return texto;
+  return [
+    { type: 'text', text: texto },
+    { type: 'image_url', image_url: { url: capturaDataUrl } },
+  ];
 }
 
 /** `reglasDelArnes` vive en `prompt.ts` (T3 la agregó ahí, ver ese archivo);

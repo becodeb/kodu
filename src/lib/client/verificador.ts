@@ -97,7 +97,7 @@ export function decidirTipoVerificacion(args: {
 // ─────────────────────────────────────────────────────────────
 
 export type ResultadoVerificar =
-  | { estado: 'ok'; problemas: Problema[]; pasadas: number; fallidas: number }
+  | { estado: 'ok'; problemas: Problema[]; pasadas: number; fallidas: number; usoVision: boolean }
   | { estado: 'desactivado' }
   | { estado: 'sin-cupo' }
   | { estado: 'error' };
@@ -109,9 +109,14 @@ export type ResultadoVerificar =
  * trata IGUAL que `'error'` — nunca hay nada que avisarle al docente por
  * esto, mismo criterio de diseño que el propio endpoint (ver el comentario
  * grande de `src/pages/api/chat/verificar.ts`).
+ *
+ * `captura` (T5, motor-claude): data URL JPEG opcional de la vista previa
+ * renderizada — se manda best-effort cuando se pudo capturar; el servidor
+ * la IGNORA sola si el motor verificador configurado no soporta visión (el
+ * comportamiento de un motor sin visión queda sin cambios).
  */
 export async function verificarRecurso(
-  payload: { projectId: string; fingerprint: string; tipo: TipoVerificacion },
+  payload: { projectId: string; fingerprint: string; tipo: TipoVerificacion; captura?: string | null },
   signal?: AbortSignal,
 ): Promise<ResultadoVerificar | null> {
   let response: Response;
@@ -119,7 +124,7 @@ export async function verificarRecurso(
     response = await fetch('/api/chat/verificar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payload.captura ? payload : { projectId: payload.projectId, fingerprint: payload.fingerprint, tipo: payload.tipo }),
       signal,
     });
   } catch {
@@ -138,6 +143,7 @@ export async function verificarRecurso(
       problemas: data.problemas as Problema[],
       pasadas: typeof data.pasadas === 'number' ? data.pasadas : 0,
       fallidas: typeof data.fallidas === 'number' ? data.fallidas : 0,
+      usoVision: data.usoVision === true,
     };
   }
   return null;
