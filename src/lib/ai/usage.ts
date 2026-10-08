@@ -88,7 +88,15 @@ export function calcularCostoTurno(
 
   // Defensivo: si algún día un proveedor reporta cachedTokens > promptTokens
   // (dato mal formado), no se factura una cantidad negativa de tokens nuevos.
-  const facturables = Math.max(promptTokens - cachedInputTokens, 0);
+  //
+  // T1 (motor-claude): también se resta `cacheWriteTokens` acá — a diferencia
+  // de `cachedInputTokens` (subconjunto de `promptTokens`, dialecto OpenAI),
+  // en Anthropic `promptTokens` es la SUMA de input nuevo + cache_read +
+  // cache_creation (ver el comentario de `cacheWriteTokens` en
+  // `provider.ts`). Sin restar los dos, `facturables` termina cobrando los
+  // tokens de escritura de cache DOS VECES: una acá a precio de entrada
+  // normal, y otra en el término de `cacheWriteTokens` más abajo.
+  const facturables = Math.max(promptTokens - cachedInputTokens - cacheWriteTokens, 0);
   const tarifaCache = precios.cachedInput ?? precios.input;
   // T1: sin tarifa propia de escritura cargada, Anthropic cobra 1.25x el
   // precio de entrada por escribir al cache — ese es el default, no 0.
