@@ -485,3 +485,198 @@ wraps the capture+correction+self-test sequence, only the capture's own
 sample but isn't guarded; `AiTrace` still has no `usedVision` column, so
 a future admin-facing report can't tell a vision pass from a text-only
 one without re-deriving it the way the runner's response listener does.
+
+## T4 round 3 notes (2026-10-08) — silent no-op turns, and why the vision reviewer never acted
+
+Two problems this round, both root-caused against real Haiku 5.5 traffic
+and fixed; a third, related bug was found investigating problem 2 and
+fixed too.
+
+### Problem 1 — silent no-op adjustment turns
+
+**Root cause (confirmed with `KODU_DEBUG_EDITS=1`, logged raw
+`edit_resource_code` tool_use input against a live Haiku call,
+D3-media-mediana-moda turn 3):** the model did NOT send an empty
+`edits` array (already rejected as `'empty'` by `parseEditResourceArgs`)
+and did NOT send a `find` that failed to match. What happened, captured
+verbatim: turn 3's first attempt sent a batch of several real edits plus
+one whose `find` didn't match (`no_match` — most likely the same
+wrapped-checklist escaping class as round 1b/2, see `c6`'s `prueba`
+block in the logged batch, though this one's `find === replace` too,
+a second independent no-op baked into the SAME failed batch). That
+failure triggered the existing one-shot `edit_resource_code` retry
+(`stream.ts`, "se da una oportunidad de corregirlo"). On the retry, the
+model sent exactly ONE edit — `find` and `replace` BYTE-IDENTICAL (the
+`<h1>` line, the one edit from the first batch that HAD matched)  — and
+gave up on the actual new content silently instead of retrying the part
+that failed or saying so. `applyResourceEdits` had no concept of "all
+edits matched but nothing changed": it returned `ok: true` with a
+byte-identical document, `editOutcome: 'fragments'`, and `stream.ts`'s
+final-message branch only checked `generatedHtml` (truthy) before
+saying "Actualicé el recurso." — never comparing it against
+`htmlAlInicioDelTurno`. Confirmed against the existing measured sample
+too: `resultados/v1-haiku-low/H5-sorprendeme-r1/corrida.json` turn 2
+(3.3s, 126 completion tokens, `htmlChars` unchanged) and
+`resultados/smoke-revisor/H2-ciclo-del-agua-r1/corrida.json` turn 3
+(2.4s, `htmlChars` unchanged) are the same bug, pre-existing in data
+collected before this round even started.
+
+This answers the task's open questions directly: it is neither "empty
+edits" nor a bare `no_match` reported as success — it's a successful,
+all-matched `applyResourceEdits` call whose NET EFFECT is zero, which
+the harness had no way to distinguish from a real edit. Didn't need a
+forced `tool_choice: auto` vs `any` experiment to explain it (the model
+DID call the tool correctly both times; the problem was downstream, in
+what counted as "the tool call worked"), so that specific comparison
+was not run this round — out of scope once the real mechanism was
+found, and running it for its own sake would have spent real-model
+budget without changing the fix.
+
+**Fix:**
+- `edits.ts`: `applyResourceEdits` now returns a new failure reason,
+  `'no_op'`, whenever the edited result is byte-identical to the input
+  (covers `find === replace` on every edit in the batch, and any other
+  combination that nets to zero change) — returned instead of `ok:
+  true`. New `EDIT_FAILURE_MESSAGES.no_op` message.
+- `stream.ts`: a `no_op` failure feeds the SAME one-shot retry path
+  `no_match` already used, now with a `no_op`-specific instruction
+  (`esNoOp` on `estadoEdicion.ultimoFallo`) telling the model its
+  `replace` has to contain `find`'s text PLUS the new content, never be
+  identical to `find`. If the retry also fails (no_op again, or
+  anything else), the existing honest-failure path already in place
+  (`codeProblem` joined into `notes`) reports it truthfully instead of
+  claiming success.
+- `stream.ts`: defense-in-depth — the final "Actualicé el recurso."
+  branch now requires `generatedHtml !== htmlAlInicioDelTurno` (not just
+  `generatedHtml` truthy), covering any OTHER no-op path (e.g. a full
+  `update_resource_code` rewrite that happens to return the document
+  unchanged) that isn't `edit_resource_code`-specific.
+- `autocorreccion.ts` gets the same protection for free: it calls the
+  same `applyResourceEdits`, and its own one-shot retry loop already
+  branches on `EDIT_FAILURE_MESSAGES[reason]` generically — confirmed
+  live (see Problem 2 below): "`edit_resource_code` no se pudo aplicar
+  (no_op)" fired and recovered correctly during the final real run.
+
+New tests (`e2e/unidad-edicion-fragmentos.ts`): `find === replace` on a
+single edit, on a whole batch, a batch with ONE real edit among no-op
+ones (not rejected — only an all-around-zero batch is), and a
+same-net-effect-different-string edge case.
+
+### Problem 2 — the vision reviewer never acted (plus a bug found along the way)
+
+**Root cause (confirmed with `KODU_DEBUG_VERIFICADOR=1`, logged raw
+findings against real Haiku calls, and inspected
+`resultados/smoke-revisor/*/turno-*-1280.png` by eye):**
+`SECCION_REVISOR_VISUAL` told the model WHAT to look for but never
+defined what `alta`/`media`/`baja` MEANT — the base prompt's "del más
+grave al menos grave" is the only gravedad guidance anywhere, and it's
+about ordering, not thresholds. Combined with "no reportes gustos de
+estilo" (correctly conservative for things that AREN'T bugs), the model
+defaulted every visual observation to `baja`, even looking at H2's
+"ciclo del agua" screenshot — flat single-color shapes with no shading,
+unlabeled dots standing in for vapor/rain/drops, genuinely matching the
+task's own "illustration flat or empty compared to the request"
+example. D3's screenshot (a clean data-point plot) correctly had
+nothing wrong — useful contrast confirming the OLD zero-alta/media
+result wasn't just an unlucky sample.
+
+**Fix:** added explicit severity bands to `SECCION_REVISOR_VISUAL` ONLY
+(never touched the base system prompt, which the file's own header
+documents as a verbatim port not to be "improved" here) — tied to what
+a teacher would notice projecting the resource, with the three example
+classes from the task spelled out as `alta`/`media` by name: a
+flat/empty illustration against the request, cut-off/overlapping
+content, a missing requested item. `baja` is now explicitly reserved
+for genuinely minor stuff, not a default for uncertainty. `MAX_PROBLEMAS`
+stayed at 6 (not dropped to ~5): it's a shared constant with the
+non-vision path, the task's "~5" was a soft target, and 6 already does
+the job of capping runaway lists — changing it risked an unrelated
+regression for no measured benefit.
+
+**Verified against real Haiku 5.5 calls:** 12 `alta` + 15 `media`
+findings across 9 reviewed turns this round (`v3-smoke` first pass +
+`v3-fix-espera`), versus ZERO in round 2's sample of the same size.
+
+**Bug found investigating this (not part of the original brief, but
+directly blocked "make sure the correction actually changes the
+resource"):** even with real `alta`/`media` findings now flowing, EVERY
+automatic correction the visual reviewer triggered failed with 409
+("El recurso cambió después de la autoprueba") — not occasionally,
+essentially always (8 of 9 attempts across two runs). Root cause:
+`Workspace.tsx#aplicarCorreccionDesdeVerificador` computed its
+conflict-detection fingerprint from the `html` React state via closure
+instead of an explicit parameter. `iniciarVerificacion` (a plain,
+non-memoized function, recreated every render) is called synchronously
+from `handleSend` right after `setHtml(htmlTrasAutoprueba)` but BEFORE
+React re-renders — so its closure, and the
+`aplicarCorreccionDesdeVerificador` it calls from inside the same
+render's scope, still saw the PREVIOUS turn's `html`. The fingerprint
+sent to `POST /api/chat/autocorreccion` could never match
+`project.currentHtml` (already the NEW turn's html, written by
+`stream.ts`) — an always-reproducing bug, not a timing race. Fixed by
+threading the known-correct html explicitly into
+`aplicarCorreccionDesdeVerificador` as a parameter (`htmlDespues` from
+`iniciarVerificacion`'s own argument; `html` state from the manual
+"¿Las arreglo?" handler, where the closure IS fresh — user-triggered
+well after the previous render settled). `e2e/verificador-editor.ts`'s
+manual-button scenario (escena 3) still passes unchanged.
+
+A related harness-only bug surfaced alongside it: `correr.ts`'s
+`esperarRevisor` returned as soon as the `VERIFICATION` `AiTrace` row
+appeared — which `recordAiTrace` writes BEFORE the client even decides
+whether to call the correction (fire-and-forget by T5 design) — so the
+runner advanced to the NEXT turn while the correction was still in
+flight, and the correction's own `TokenUsage` row landed too late to be
+counted as the revisor's cost. Fixed with a bounded extra poll
+(`ESPERA_CORRECCION_MS`, 20s) for a `CORRECTION` trace newer than the
+`VERIFICATION` one before reading `project.currentHtml`/`TokenUsage`.
+
+**Final verification (after both fixes, `v3-smoke`, live dev server on
+this worktree):** H2-ciclo-del-agua, 3 turns, isVerifier ON for the
+`v3-smoke` model: `corrigió el HTML: true` on all 3 turns (6, 3, 4
+findings respectively), `htmlChars` changed every turn (78850 → 81095 →
+84455), zero `409`/`no_match`/`no_op` failures in the server log for
+this run, turn times 36.6s / 20.9s / 29.1s (generation) + 21.6s / 14.1s
+/ 30.7s (reviewer, now including the correction's own round-trip since
+it's observed end-to-end). D1-fracciones-equivalentes and
+D3-media-mediana-moda were exercised earlier this same round (etiquetas
+`r3-repro-pre`, and the first `v3-smoke` pass before the Workspace.tsx
+fix — see `resultados/v3-smoke/` git history and `r3-repro-pre/` for
+that evidence) but not re-run after the Workspace.tsx fix specifically,
+to stay inside the round's USD 0.12 hard spend limit — open follow-up
+for next round if a broader multi-case confirmation is wanted.
+
+`isVerifier` left ON for the `v3-smoke` model (`e56fe49a-b2cb-47bb-9b6b-
+6d596afd9780`) at the end of this round, as asked, for the next
+measured round. Turned OFF only transiently to let
+`e2e/verificador-endpoint.ts`/`e2e/verificador-editor.ts` create their
+own test model without hitting the `AiModel_un_solo_verificador` unique
+constraint, then re-enabled immediately after.
+
+**Checks run:** `npm run check` (clean after every commit); `npx tsx
+e2e/unidad-kit.ts e2e/unidad.ts e2e/unidad-pruebas-aisladas.ts
+e2e/unidad-edicion-fragmentos.ts e2e/navegador-kit.ts
+e2e/unidad-verificador.ts e2e/unidad-preview.ts` (all pass, including
+the new no_op cases); `KODU_BASE_URL=http://localhost:3400 npx tsx
+e2e/t11-autoprueba.ts e2e/verificador-endpoint.ts
+e2e/verificador-editor.ts` (all pass against the live dev server on
+this worktree, including the manual-correction and conflict-409
+scenarios, unchanged).
+
+**Spend this round:** USD 0.0989 of the USD 0.12 hard limit (confirmed
+via `experimentos/motor-claude/gasto.json`, delta from this round's
+starting total of USD 0.2826); project ledger grand total USD 0.3815.
+
+**Debug logging:** `KODU_DEBUG_EDITS=1` (raw `edit_resource_code`
+tool_use input, `stream.ts`) and `KODU_DEBUG_VERIFICADOR=1` (raw
+verifier findings, `verificar.ts`) are left in place behind their env
+flags (default off) rather than removed — both were useful for this
+investigation and cost nothing when unset; remove in a future round if
+they're not needed again.
+
+**Open for a future round:** the `tool_choice: auto` vs `any` A/B this
+task proposed was not run — the no-op mechanism turned out to be
+downstream of tool selection, not caused by it (see Problem 1 above). A
+broader multi-case real-model confirmation of the Workspace.tsx fix
+(beyond H2) is still open, budget-gated this round. `AiTrace` still has
+no `usedVision` column (same gap noted in round 2).
