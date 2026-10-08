@@ -119,3 +119,89 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
   carry a cache-write price (no preset defines one yet); vision was
   implemented (base64 image blocks) but not exercised by the smoke test —
   worth a real image call before relying on it for teacher attachments.
+
+## T4 round 1 notes (2026-10-08)
+
+Read-only input: base-haiku-low baseline (8 cases × 3 turns). 4/8 cases
+(H4, H5, D1, D3) triggered the correction loop on most turns with
+`errores=0` and ended in a final warning; D3 had 13-65 identical SVG
+`<circle> attribute cx: Expected length, "NaN".` console errors per turn
+that the self-test never saw at all.
+
+What changed:
+
+- `src/lib/ai/kit.ts` (commit `fix(kit): make the reset self-test robust
+  to legitimate randomization`): `indicesVolatiles` only sampled two
+  points (initial load, first reset) to decide which lines/controls are
+  "random content". When `reiniciar()` re-rolls something random, those
+  two samples can coincide by chance, wrongly marking the index stable —
+  a later, genuinely different roll then reads as a real defect. Added a
+  second consecutive reset sample (no interaction in between) and union
+  its volatile indices with the first pair's. Also added
+  `escanearGeometriaSvgInvalida` (scans the DOM for geometry attributes
+  whose value is literally `"NaN"` — the browser's SVG renderer emits
+  those warnings directly to devtools, never through the page's
+  `console.error`, so overriding it can't catch them) and
+  `depurarErrores` (dedupe + cap at 15) before any `errores` array is
+  sent in the self-test result. `BASE_B` is shared between the live
+  `SCRIPT_CENTINELA` and the frozen `SCRIPT_CENTINELA_PRE_VERIFICADOR`
+  (byte-exact reproduction of the sentinel already saved in older
+  resources), so it was split into a new frozen `BASE_B_ANTERIOR` (old
+  text, untouched) and the live `BASE_B` (with the fix) — same pattern
+  the file already used for `PRUEBAS_ANTERIOR`/`PRUEBAS`.
+- `src/lib/ai/autoprueba.ts` + `src/lib/ai/edits.ts` +
+  `src/pages/api/chat/autocorreccion.ts` (commit `fix(autoprueba): quote
+  real source lines in correction messages`): `lineasFuenteReinicio`
+  locates, by text search, the `reiniciar()` handler and any line
+  mentioning a control/text named in the reset diff, and quotes those
+  real source lines in the correction message (telling the model to copy
+  its `edit_resource_code` `find` verbatim from there — before, only
+  DERIVED text was available, so the model invented a `find` that never
+  matched). `textoCercano` (binary search over the failed `find`'s
+  prefix length) gives the no_match retry the real text around the
+  closest match, so a second attempt has something to anchor on.
+- `prisma/schema.prisma` + migration `20261028000000_correction_triggers`
+  + `src/lib/ai/trace.ts` + `autocorreccion.ts` (commit `feat(trace):
+  record which self-test trigger fired a correction round`):
+  `AiTrace.correctionTriggers`, additive nullable TEXT, a comma-separated
+  subset of `errors`/`reset`/`tests` computed with the exact same three
+  conditions `necesitaCorreccion` checks. Applied to `koduedu_claude` via
+  `prisma migrate deploy` + `prisma generate`.
+- `src/lib/ai/prompt.ts` (commit `feat(prompt): make content illustration
+  the star of new resources`): new "El contenido es la estrella"
+  subsection (~128 words) — layered/tonal-depth content illustration,
+  ambient motion for processes/scenes, lighting/background/camera for 3D,
+  and "bigger for the projector" scales the whole layout, not just font
+  size. Kept the existing "no degradados" UI rule (it's about UI chrome
+  backgrounds/text; the new rule is discrete tonal steps for the
+  content's own color, explicitly not a gradient — no real conflict, just
+  noted the adjacency).
+- `src/lib/ai/provider.ts` (`razonamientoCorreccion` →
+  `anthropicRazonamientoBody`): checked, NOT changed. For
+  `reasoningParam === 'effort'` it already returns `{effort: 'low'}`
+  (never `'none'`), which `anthropicRazonamientoBody` already maps to
+  `{thinking: {type: 'adaptive'}, output_config: {effort: 'low'}}` on
+  every model including Haiku — only the checklist call
+  (`razonamientoNulo`, `'none'` → `thinking: disabled` on Haiku) hits the
+  disabled-thinking path, and that one is explicitly meant to stay as is.
+
+Checks run: `npm run check` (clean after every commit); `npx tsx
+e2e/unidad-kit.ts` (all pass, including the pinned legacy-block hash);
+`npx tsx e2e/navegador-kit.ts` (all pass, including the existing
+"contenido al azar" and "reinicio parcial" cases — no flake this run);
+`KODU_BASE_URL=http://localhost:3400 npx tsx e2e/t11-autoprueba.ts` (all
+scenes pass against the live dev server on this worktree, including the
+reset-mismatch scene that now cites the sourced line). A standalone
+one-off check of `lineasFuenteReinicio`/`textoCercano` confirmed both
+helpers locate/quote real text correctly.
+
+Open risks / not done this round: the double-reset-sample hypothesis for
+H4/H5/D1/D3 is argued from the sentinel's own logic and the static HTML
+of those turns (none of their `reiniciar()` functions showed obvious
+randomization, though options could be shuffled elsewhere) — it was not
+re-run against the real baseline resources with real API calls, per the
+no-real-model-spend rule for this round. No new automated test covers
+the double-reset sample, the SVG-NaN scan, or the errors dedupe/cap
+specifically (existing suites pass unchanged, which only proves no
+regression, not that the new paths are exercised). `correctionTriggers`
+is not yet surfaced anywhere (export, admin UI) — only recorded.
