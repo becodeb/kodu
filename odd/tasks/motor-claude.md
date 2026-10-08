@@ -68,6 +68,8 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 |---|---|---|
 | Key smoke test (2026-10-07) | <0.01 | <0.01 |
 | T1 `scripts/sonda-anthropic.ts`, two runs (2026-10-08) | <0.05 | ~0.003 total (both runs combined; second run's cache hit made costs even smaller than the first) |
+| T4 round 1b real-model verification (2026-10-08) | 0.10 | 0.0540 |
+| T5 smoke test, vision reviewer, 2 cases (2026-10-08) | 0.08 | 0.021782 (gasto.json `smoke-revisor`; project ledger total now 0.2826 of the 15.00 global cap) |
 
 ## T1 notes (2026-10-08)
 
