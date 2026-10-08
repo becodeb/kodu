@@ -45,7 +45,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 - [ ] T2 Experiment tooling and teacher prompt set on `exp/motor-claude` (delegated)
 - [ ] T3 Haiku 5.5 baseline run + blind evaluation
 - [ ] T4 Harness improvement rounds on Haiku (up to 5)
-- [ ] T5 Verifier with screenshots (Haiku), replacing gpt-6-luna
+- [x] T5 Verifier with screenshots (Haiku), replacing gpt-6-luna
 - [ ] T6 Sonnet 5.5, Opus 5.5 and Haiku + Opus advisor on the hard prompts
 - [ ] T7 Credit-aware engine policy
 - [ ] T8 Report: cost and time per resource per model, when to use each, pending tests
@@ -307,3 +307,179 @@ in `stream.ts`'s ordinary adjustment turns (not just the self-test
 correction loop) — not fixed here, out of scope for this task's target
 file. `correctionTriggers` is still not surfaced in any export/admin UI
 (same gap round 1 left open).
+
+## T4 round 2 notes (2026-10-08) — same escaping bug outside correction turns
+
+Fixed the round-1b bug's sibling: `stream.ts` (ordinary adjustment
+turns) and `verificar.ts` (the verifier's view of the HTML) both showed
+`project.currentHtml` to the model RAW — still wrapped in
+`try{eval(JSON.stringify(...))}` by `aislarPruebasKit` from the previous
+turn's save. `stream.ts` now computes `htmlParaModelo =
+desenvolverPruebas(htmlAlInicioDelTurno)` once per turn and uses it for
+both `buildCurrentResourceBlock` and `applyResourceEdits` (the edited
+result still flows through `aplicarKitAlTurno` → `aislarPruebasKit`
+before saving, same re-wrap guarantee as round 1b); `htmlAlInicioDelTurno`
+itself stays untouched for the undo/compare logic that needs the REAL
+saved bytes. `verificar.ts` does the same for the text the reviewer
+reads (it never edits, so just one `desenvolverPruebas` call).
+
+Test added: `e2e/unidad-edicion-fragmentos.ts` gained two cases that
+reproduce the bug against a real wrapped checklist (`applyResourceEdits`
+fails `no_match` on the wrapped form, succeeds after
+`desenvolverPruebas`, and the edited result re-wraps through
+`aislarPruebasKit`).
+
+Checks: `npm run check`; `npx tsx e2e/unidad-kit.ts
+e2e/unidad.ts e2e/unidad-pruebas-aisladas.ts
+e2e/unidad-edicion-fragmentos.ts e2e/navegador-kit.ts` (all pass);
+`KODU_BASE_URL=http://localhost:3400 npx tsx e2e/t11-autoprueba.ts` (live
+dev server on this worktree, all scenes pass).
+
+## T5 notes (2026-10-08) — vision reviewer replacing gpt-6-luna
+
+`AiModel.isVerifier` was already provider-agnostic since T1
+(`catalogo.ts` builds a `ProviderConfig` regardless of `apiFormat`), so
+pointing it at an Anthropic model needed no catalog change. What T5
+actually added:
+
+- `preview.ts`: `anchoMax` capture option (JPEG ~1280px wide for the
+  reviewer, independent of the 900px gallery-cover default), and an
+  early `preserveDrawingBuffer` monkey-patch on
+  `HTMLCanvasElement.prototype.getContext` injected as the FIRST thing
+  in `<head>`/`<body>` — before any resource script can request its own
+  WebGL context — so a game canvas doesn't capture black. Documented
+  limitation: a library that caches its GL context before this patch
+  runs (not seen in practice) would still capture black; this is a
+  mitigation, not a guarantee.
+- `PreviewPanel.tsx`: `onCapturadorListo` registers a capture function
+  with Workspace.tsx that is COMPLETELY separate from the gallery-cover
+  capture state (own id namespace, own timeout, never touches
+  `capturing`/`publicando`) — a silent capture for the reviewer never
+  shows anything in the UI.
+- `Workspace.tsx`: `iniciarVerificacion` captures a screenshot of the
+  already-rendered turn (skipped for a tiny text-only edit — cheap
+  length-delta heuristic, documented inline, not a real structural diff)
+  and sends it to `/api/chat/verificar`. When the server actually used
+  vision (`resultado.usoVision`) and found `alta`/`media` non-"contenido"
+  problems, it runs ONE correction round
+  (`aplicarCorreccionDesdeVerificador`, extracted and shared with the
+  existing manual "¿Las arreglo?" button) and ONE self-test pass
+  (`ejecutarAutopruebaEnIframe` directly, not the up-to-2-round
+  `ejecutarAutopruebaYCorreccion` the manual button uses) — never loops,
+  never re-calls the verifier, never shows the auto-fixed findings (only
+  leftover "contenido" findings, if any, still show — same panel as
+  before T5).
+- `verificador.ts`/`provider.ts`: `construirContenidoUsuarioVerificador`
+  builds a `ContentPart[]` (text + `image_url`) only when a screenshot is
+  passed; a new system-prompt section (visible layout defects, unmet
+  request, "Diseño visual" quality) is appended only then too — a
+  verifier without a screenshot sees byte-identical prompts to before T5.
+  `razonamientoRevisorVisual` fixes effort "low" (vs. the legacy "medium"
+  fixed effort).
+- `verificar.ts`: optional `captura` in the request body; used only when
+  `supportsVision(provider)` — runs exactly 1 pass (not the legacy
+  2-for-"nuevo"/1-for-"ajuste") with the vision prompt/effort. Any
+  verifier without vision, or a request without a screenshot, is
+  byte-for-byte the pre-T5 path — verified against
+  `e2e/verificador-endpoint.ts` and `e2e/verificador-editor.ts`
+  (unmodified assertions, including the fixed "medium" effort check for
+  the legacy pass, both passed against the live dev server).
+- No new `AiTrace`/`TokenUsage` columns: usage already carries image
+  tokens through the existing `recordUsage` call: Anthropic bills image
+  tokens as part of `promptTokens`, same path as any other call.
+
+New test: `e2e/unidad-preview.ts` (buildPreviewDocument/WebGL patch
+placement, pure string checks).
+
+### Runner tweak (claude-exp worktree, `exp/motor-claude`)
+
+`experimentos/motor-claude/correr.ts`: `iniciarVerificacion` is
+fire-and-forget from `handleSend`'s point of view, so its
+`AiTrace`/`TokenUsage` land well after the 300ms wait the runner already
+used to snapshot a turn's generation cost — with `isVerifier` pointing at
+a vision model, those rows would bleed into the NEXT turn's reported
+cost. Added `esperarRevisor` (polls up to 40s for the project's newest
+`VERIFICATION` `AiTrace` row, attributes the `TokenUsage` since the
+turn's own snapshot to the reviewer, advances the shared cursor) and a
+`POST /api/chat/verificar` response listener that captures the real
+`usoVision` flag. `costoTotalUsd` (what feeds the budget ledger) now
+includes the reviewer's cost. Also fixed an unrelated drift: `comun.ts`'s
+`asegurarDocente` still referenced the removed `primeAccess` column
+(blocked ANY run of this runner until fixed).
+
+### Real-model smoke test (Haiku 5.5, low effort, live dev server on this
+worktree)
+
+Provisioned the Anthropic provider+model the runner creates
+(`claude-haiku-5-5`, `esfuerzo: low`, label `Motor Claude · smoke-revisor
+· claude-haiku-5-5 · low`) and set `isVerifier: true` on it directly via
+the admin API (same model plays generator AND verifier — nothing stops
+that, `isVerifier` is an independent flag) BEFORE running the runner, so
+both real cases exercised the vision path from turn 1. Turned
+`isVerifier` back OFF afterward (hygiene — nothing in this worktree's
+dev DB should silently spend real money on a later manual test).
+
+Two cases, `H2-ciclo-del-agua` and `D3-media-mediana-moda`, 1 repetición
+each (the runner's own per-case budget estimate — $0.05 generic,
+ignoring the much smaller real cost — cut the first invocation off after
+H2 at `--tope 0.06`; re-running the identical command skipped H2 via its
+existing `corrida.json` and ran D3 fresh with the per-run counter reset):
+
+- `usoVision: true` on every turn that qualified for a review (turn 1 of
+  both cases; turn 2 of H2 — turns that only changed text, or weren't
+  structural per `decidirTipoVerificacion`, correctly skipped the
+  reviewer, same as before T5) — direct proof the screenshot reached the
+  model: `usoVision` is computed server-side from
+  `supportsVision(provider) && Boolean(captura)`, so `true` means a real
+  `image_url` content block was sent.
+- Findings: 4 problems per reviewed turn (H2 turn 1, H2 turn 2, D3 turn
+  1) — none severe enough (`alta`/`media`, non-"contenido") to trigger
+  the automatic fix in this sample: `corrigioHtml: false` on all of them.
+  **Open risk**: the automatic correction branch itself
+  (`aplicarCorreccionDesdeVerificador` + one self-test pass, gated on
+  `usoVision && accionables.length > 0`) was exercised functionally
+  through `e2e/verificador-editor.ts`'s existing Playwright scenes
+  (shared helper, manual button path) but NOT end-to-end with a real
+  vision call that actually found something severe enough to auto-fix —
+  this sample didn't produce one, and the budget didn't allow hunting
+  for a case that would.
+- Reviewer wall time: ~11.6–12.6s per reviewed turn (comfortably inside
+  the ~25s budget in the task, with no auto-fix round added in this
+  sample).
+- Reviewer cost per turn: USD 0.0020–0.0023.
+- Per-turn seconds vs. `resultados/v1-haiku-low/*/corrida.json`
+  (generation only vs. generation+reviewer; turn-to-turn generation time
+  is noisy on its own, not a controlled A/B — context, not a clean
+  measurement of the reviewer's overhead):
+  - H2 turn 1: 30.4s (v1) → 37.0s + 11.6s = 48.6s.
+  - H2 turn 2: 7.6s (v1) → 17.5s + 12.6s = 30.0s.
+  - D3 turn 1: 60.9s (v1) → 45.0s + 11.6s = 56.5s (net FASTER despite the
+    reviewer — generation variance between runs dominates).
+- Spend: USD 0.013941 (H2) + USD 0.007841 (D3) = **USD 0.021782** of the
+  USD 0.08 hard limit for this task (confirmed via
+  `experimentos/motor-claude/gasto.json`); project ledger grand total
+  USD 0.2826 of the USD 15.00 global hard cap.
+
+Checks run (mock provider where applicable): `npm run check`; `npx tsx
+e2e/unidad-kit.ts e2e/navegador-kit.ts e2e/unidad.ts
+e2e/unidad-pruebas-aisladas.ts e2e/unidad-edicion-fragmentos.ts
+e2e/unidad-verificador.ts e2e/unidad-verificador-cliente.ts
+e2e/unidad-preview.ts` (all pass); `KODU_BASE_URL=http://localhost:3400
+npx tsx e2e/t11-autoprueba.ts e2e/verificador-endpoint.ts
+e2e/verificador-editor.ts` (all pass against the live dev server on this
+worktree — the legacy/no-vision assertions in the last two, including
+the fixed "medium" effort check, are unchanged). Noted but NOT caused by
+this round: `e2e/selector-y-verificador-opcional.ts` failed on an
+unrelated default-model/"repunteo" assertion — looks like cross-test DB
+pollution from running several integration suites back-to-back against
+the same dev DB (none of this round's diff touches model-selection/
+repunteo logic); not investigated further given budget.
+
+Open for a future round: the automatic-fix branch needs a real end-to-end
+exercise with a vision finding severe enough to trigger it (see above);
+the ~25s total time budget is not enforced in code (no hard timeout
+wraps the capture+correction+self-test sequence, only the capture's own
+8s timeout and the endpoint's 150s-per-pass cap) — it held in this
+sample but isn't guarded; `AiTrace` still has no `usedVision` column, so
+a future admin-facing report can't tell a vision pass from a text-only
+one without re-deriving it the way the runner's response listener does.
