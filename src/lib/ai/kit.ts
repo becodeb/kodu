@@ -1229,7 +1229,18 @@ const SCRIPT_CENTINELA_PRUEBAS = `  // ── window.__koduPruebas (round 4, T14
     return paso(0).then(function (r) { accionActual = 'al cargar'; return r; });
   }
 `;
-const SCRIPT_CENTINELA_BASE_B = `
+/**
+ * T4 (round 1, motor-claude): copia EXACTA de `SCRIPT_CENTINELA_BASE_B` tal
+ * como estaba ANTES de esta tarea (un solo reinicio de muestra para la
+ * detección de volátiles) — mismo criterio que `SCRIPT_CENTINELA_PRUEBAS_ANTERIOR`:
+ * `BASE_B` la comparten `SCRIPT_CENTINELA` (actual) y
+ * `SCRIPT_CENTINELA_PRE_VERIFICADOR` (congelado, para los recursos guardados
+ * por `feat/arnes-robustez`), así que tocar `BASE_B` sin este duplicado
+ * cambiaría TAMBIÉN el texto que `bloqueKitPreVerificador` tiene que
+ * reproducir byte a byte. Nunca se edita a mano: si hace falta otra versión
+ * más adelante, se agrega una constante nueva, ésta no se toca.
+ */
+const SCRIPT_CENTINELA_BASE_B_ANTERIOR = `
   function compararSnapshots(referencia, actual, volLineas, volControles) {
     var dl = diffConjuntos(filtrarPorIndice(referencia.lineas, volLineas), filtrarPorIndice(actual.lineas, volLineas));
 
@@ -1401,6 +1412,284 @@ const SCRIPT_CENTINELA_BASE_B = `
 })();`;
 
 /**
+ * Versión ACTUAL de `SCRIPT_CENTINELA_BASE_B` (T4, round 1, motor-claude):
+ * único cambio contra `SCRIPT_CENTINELA_BASE_B_ANTERIOR` — una segunda
+ * muestra de reinicio consecutivo, sin ninguna interacción de por medio,
+ * antes de tomar `snapshotBase` (ver el comentario dentro de
+ * `ejecutarAutoprueba`, más abajo, para el motivo completo: un recurso cuyo
+ * `reiniciar()` sortea algo al azar — una pregunta, un desafío, una
+ * posición inicial — podía reportar `reinicioOk: false` por casualidad, sin
+ * que hubiera ningún defecto real).
+ */
+const SCRIPT_CENTINELA_BASE_B = `
+  // T4 (round 1, motor-claude): algunos errores NUNCA pasan por
+  // console.error — el motor de renderizado de SVG emite sus propios
+  // mensajes ("<circle> attribute cx: Expected length, "NaN".") directo a
+  // la consola del navegador, sin llamar a la función console.error de la
+  // página (pisarla, como ya hace el centinela más arriba, no alcanza para
+  // verlos). En vez de intentar interceptar la consola nativa (no se
+  // puede), se escanea el DOM por la causa de fondo: un atributo de
+  // geometría SVG cuyo valor serializado es literalmente "NaN" (lo que el
+  // navegador reporta como ese error). \`indexOf('NaN')\` y no un parseo
+  // numérico: "50%", "12.5" o "" nunca deben contarlo, y el navegador sólo
+  // llega a serializar "NaN" cuando el valor de verdad lo es.
+  var ATRIBUTOS_GEOMETRIA_SVG = ['cx', 'cy', 'r', 'rx', 'ry', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'width', 'height', 'd', 'points'];
+
+  function escanearGeometriaSvgInvalida() {
+    var vistos = {};
+    var nodos;
+    try { nodos = document.querySelectorAll('svg, svg *'); } catch (e) { return; }
+    for (var i = 0; i < nodos.length; i++) {
+      var el = nodos[i];
+      for (var j = 0; j < ATRIBUTOS_GEOMETRIA_SVG.length; j++) {
+        var nombre = ATRIBUTOS_GEOMETRIA_SVG[j];
+        if (!el.hasAttribute || !el.hasAttribute(nombre)) continue;
+        var valor = el.getAttribute(nombre);
+        if (!valor || valor.indexOf('NaN') === -1) continue;
+        var clave = String(el.tagName) + ':' + nombre;
+        if (vistos[clave]) continue;
+        vistos[clave] = true;
+        registrar('consola', 'geometría SVG inválida: <' + String(el.tagName).toLowerCase() + ' ' + nombre + '="' + valor + '">', null, null);
+      }
+    }
+  }
+
+  // T4: tope de lo que de verdad importa en el informe — mismo criterio que
+  // \`capar()\` ya usa para los diffs. Un \`console.error\` (o una geometría
+  // SVG rota) dentro de un loop de animación puede repetirse decenas de
+  // veces por el mismo motivo exacto; de-duplicar por "tipo + mensaje" y
+  // topear la lista evita que \`construirMensajeCorreccion\` (autoprueba.ts)
+  // le mande al modelo 60 líneas idénticas en vez de UNA.
+  var TOPE_ERRORES_INFORME = 15;
+
+  function depurarErrores(lista, tope) {
+    var vistos = {};
+    var salida = [];
+    for (var i = 0; i < lista.length; i++) {
+      var entrada = lista[i];
+      var clave = entrada.tipo + '|' + entrada.mensaje;
+      if (vistos[clave]) continue;
+      vistos[clave] = true;
+      salida.push(entrada);
+      if (salida.length >= tope) break;
+    }
+    return salida;
+  }
+
+  function compararSnapshots(referencia, actual, volLineas, volControles) {
+    var dl = diffConjuntos(filtrarPorIndice(referencia.lineas, volLineas), filtrarPorIndice(actual.lineas, volLineas));
+
+    var controlesDiff = [];
+    var n = Math.max(referencia.controles.length, actual.controles.length);
+    for (var i = 0; i < n; i++) {
+      if (volControles[i]) continue;
+      var antes = referencia.controles[i];
+      var despues = actual.controles[i];
+      var valorAntes = antes ? antes.valor : undefined;
+      var valorDespues = despues ? despues.valor : undefined;
+      if (valorAntes !== valorDespues) {
+        controlesDiff.push({
+          etiqueta: (despues && despues.etiqueta) || (antes && antes.etiqueta) || ('control #' + (i + 1)),
+          antes: valorAntes === undefined ? null : valorAntes,
+          despues: valorDespues === undefined ? null : valorDespues
+        });
+      }
+    }
+
+    var faltanCap = capar(dl.faltan, 5);
+    var sobranCap = capar(dl.sobran, 5);
+    var controlesCap = capar(controlesDiff, 5);
+
+    return {
+      igual: dl.faltan.length === 0 && dl.sobran.length === 0 && controlesDiff.length === 0,
+      diferencias: {
+        textoQueFalta: faltanCap.items,
+        textoQueSobra: sobranCap.items,
+        controles: controlesCap.items,
+        truncado: { textoQueFalta: faltanCap.truncado, textoQueSobra: sobranCap.truncado, controles: controlesCap.truncado }
+      }
+    };
+  }
+
+  function finAutoprueba() {
+    if (contadorAutoprueba > 0) contadorAutoprueba--;
+  }
+
+  function ejecutarAutoprueba(id, numBotones) {
+    contadorAutoprueba++;
+    var inicio = ahora();
+    var incompleta = false;
+    function tiempoAgotado() { return ahora() - inicio > 20000; }
+
+    function esperarCarga() {
+      if (document.readyState === 'complete') return Promise.resolve();
+      return new Promise(function (resolve) {
+        window.addEventListener('load', function () { resolve(); }, { once: true });
+      });
+    }
+
+    var snapshotInicial, exitoInicial, botonReinicioInicial, snapshotBase;
+    var volLineas = {}, volControles = {};
+    var rangosMovidos = [], botonesTocados = [], reinicioOk = null, detalleReinicio = 'sin boton';
+    var diferencias = { textoQueFalta: [], textoQueSobra: [], controles: [], truncado: { textoQueFalta: false, textoQueSobra: false, controles: false } };
+    var pruebas = null;
+
+    return esperarCarga()
+      .then(function () { return esperarMs(800); })
+      .then(function () {
+        accionActual = 'al cargar';
+        snapshotInicial = tomarSnapshot();
+        exitoInicial = detectarExito();
+        botonReinicioInicial = buscarBotonReinicio();
+        if (!botonReinicioInicial) { snapshotBase = snapshotInicial; return; }
+        accionActual = 'al reiniciar';
+        clicSecuencia(botonReinicioInicial);
+        return esperarMs(1200).then(function () {
+          var snapshotReset1 = tomarSnapshot();
+          var volLineas1 = indicesVolatiles(snapshotInicial.lineas, snapshotReset1.lineas);
+          var volControles1 = indicesVolatiles(
+            snapshotInicial.controles.map(function (c) { return c.valor; }),
+            snapshotReset1.controles.map(function (c) { return c.valor; })
+          );
+          // T4 (round 1, motor-claude): segunda muestra, un segundo
+          // reinicio consecutivo sin ninguna interacción de por medio. Si
+          // reiniciar() sortea algo al azar (una pregunta, un desafío, una
+          // posición inicial), comparar SÓLO carga-inicial-contra-primer-
+          // reinicio puede acertar por casualidad (el sorteo de la carga
+          // coincidió con el del primer reinicio) y dejar ese índice AFUERA
+          // del volátil — un sorteo DISTINTO más adelante (este segundo
+          // reinicio contra el de más abajo, snapshotBase) se reportaría
+          // entonces como un defecto real que no lo es. Esta segunda
+          // muestra, consecutiva y sin interacción del medio, amplía el
+          // índice volátil con lo que también cambie acá. Sin botón de
+          // reinicio en esta segunda pasada (no debería pasar si ya lo
+          // encontró la primera, pero sin tirar si pasa), se sigue con una
+          // sola muestra, como antes.
+          var botonReinicio2 = buscarBotonReinicio();
+          if (!botonReinicio2) {
+            snapshotBase = snapshotReset1;
+            volLineas = volLineas1;
+            volControles = volControles1;
+            return;
+          }
+          accionActual = 'al reiniciar';
+          clicSecuencia(botonReinicio2);
+          return esperarMs(1200).then(function () {
+            accionActual = 'al cargar';
+            snapshotBase = tomarSnapshot();
+            var volLineas2 = indicesVolatiles(snapshotReset1.lineas, snapshotBase.lineas);
+            var volControles2 = indicesVolatiles(
+              snapshotReset1.controles.map(function (c) { return c.valor; }),
+              snapshotBase.controles.map(function (c) { return c.valor; })
+            );
+            volLineas = {};
+            for (var k1 in volLineas1) volLineas[k1] = true;
+            for (var k2 in volLineas2) volLineas[k2] = true;
+            volControles = {};
+            for (var k3 in volControles1) volControles[k3] = true;
+            for (var k4 in volControles2) volControles[k4] = true;
+          });
+        });
+      })
+      .then(function () {
+        accionActual = 'al cargar';
+        if (tiempoAgotado()) { incompleta = true; return; }
+        rangosMovidos = moverRangos();
+        escanearGeometriaSvgInvalida();
+      })
+      .then(function () {
+        if (incompleta || tiempoAgotado()) { incompleta = true; return; }
+        return clicarBotones(numBotones).then(function (tocados) { botonesTocados = tocados; });
+      })
+      .then(function () {
+        escanearGeometriaSvgInvalida();
+      })
+      .then(function () {
+        accionActual = 'al cargar';
+        if (incompleta) return;
+        return esperarMs(1200);
+      })
+      .then(function () {
+        if (tiempoAgotado()) incompleta = true;
+        var botonFinal = buscarBotonReinicio();
+        if (!botonFinal) {
+          if (botonReinicioInicial) { reinicioOk = false; detalleReinicio = 'quedan restos'; }
+          else { reinicioOk = null; detalleReinicio = 'sin boton'; }
+          return;
+        }
+        accionActual = 'al reiniciar';
+        clicSecuencia(botonFinal);
+        return esperarMs(1200).then(function () {
+          accionActual = 'al cargar';
+          var snapshotFinal = tomarSnapshot();
+          var comparacion = compararSnapshots(snapshotBase, snapshotFinal, volLineas, volControles);
+          diferencias = comparacion.diferencias;
+          reinicioOk = comparacion.igual;
+          detalleReinicio = comparacion.igual ? 'vuelve al inicio' : 'quedan restos';
+        });
+      })
+      .then(function () {
+        // Presupuesto propio (no cuenta contra tiempoAgotado(), que sigue
+        // midiendo sólo las verificaciones de base): hasta 8 pruebas × 3s.
+        return correrPruebas().then(function (r) { pruebas = r; });
+      })
+      .then(function () {
+        // T24: se libera ANTES de postear el resultado — cualquier reacción
+        // sincrónica al postMessage (el padre podría, por ejemplo, disparar
+        // un clic real) ya encuentra kodu.ocupado() en su estado normal.
+        escanearGeometriaSvgInvalida();
+        finAutoprueba();
+        var resultado = {
+          kodu: 'autoprueba:resultado',
+          id: id,
+          errores: depurarErrores(errores, TOPE_ERRORES_INFORME),
+          reinicioOk: reinicioOk,
+          exitoVisibleAlInicio: !!exitoInicial,
+          pruebas: pruebas,
+          detalles: {
+            botonesTocados: botonesTocados,
+            rangosMovidos: rangosMovidos,
+            reinicio: detalleReinicio,
+            diferencias: diferencias,
+            volatiles: { lineas: Object.keys(volLineas).length, controles: Object.keys(volControles).length },
+            duracionMs: Math.round(ahora() - inicio),
+            incompleta: incompleta
+          }
+        };
+        try { window.parent.postMessage(resultado, '*'); } catch (e) {}
+      })
+      .catch(function () {
+        // T24: mismo motivo que arriba — también hay que liberarla si la
+        // cadena falla (cualquier error no atrapado en algún paso).
+        finAutoprueba();
+        try {
+          window.parent.postMessage({
+            kodu: 'autoprueba:resultado', id: id, errores: depurarErrores(errores, TOPE_ERRORES_INFORME),
+            reinicioOk: null, exitoVisibleAlInicio: false,
+            pruebas: pruebas,
+            detalles: {
+              botonesTocados: botonesTocados, rangosMovidos: rangosMovidos, reinicio: 'sin boton',
+              diferencias: diferencias, volatiles: { lineas: 0, controles: 0 },
+              duracionMs: Math.round(ahora() - inicio), incompleta: true
+            }
+          }, '*');
+        } catch (e2) {}
+      });
+  }
+
+  window.addEventListener('message', function (evento) {
+    if (evento.source !== window.parent) return;
+    var datos = evento.data;
+    if (!datos || datos.kodu !== 'autoprueba') return;
+    var id = datos.id;
+    if (id === undefined || id === null || ejecutadas[id]) return;
+    ejecutadas[id] = true;
+    var n = typeof datos.botones === 'number' && datos.botones > 0 ? datos.botones : 8;
+    ejecutarAutoprueba(id, n);
+  });
+})();`;
+
+/**
  * SCRIPT_CENTINELA se arma en tres pedazos (T1, verificador) en vez de un
  * único template literal, sólo para poder congelar
  * SCRIPT_CENTINELA_PRE_VERIFICADOR sin duplicar las ~550 líneas que NO
@@ -1411,9 +1700,12 @@ const SCRIPT_CENTINELA_BASE_B = `
  */
 const SCRIPT_CENTINELA = SCRIPT_CENTINELA_BASE_A + SCRIPT_CENTINELA_PRUEBAS + SCRIPT_CENTINELA_BASE_B;
 
-/** Ver el comentario de SCRIPT_CENTINELA_PRUEBAS_ANTERIOR. */
+/** Ver el comentario de SCRIPT_CENTINELA_PRUEBAS_ANTERIOR y el de
+ *  SCRIPT_CENTINELA_BASE_B_ANTERIOR: ninguno de los dos pedazos "anterior"
+ *  se toca nunca — son la reconstrucción byte a byte del centinela que ya
+ *  viajaba en recursos guardados antes de esta tarea. */
 const SCRIPT_CENTINELA_PRE_VERIFICADOR =
-  SCRIPT_CENTINELA_BASE_A + SCRIPT_CENTINELA_PRUEBAS_ANTERIOR + SCRIPT_CENTINELA_BASE_B;
+  SCRIPT_CENTINELA_BASE_A + SCRIPT_CENTINELA_PRUEBAS_ANTERIOR + SCRIPT_CENTINELA_BASE_B_ANTERIOR;
 
 /**
  * `window.kodu`: helpers que el modelo puede llamar desde el JS que escribe
