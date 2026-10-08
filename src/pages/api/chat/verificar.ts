@@ -301,6 +301,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const problemas = unirPasadas(listasOk.map((r) => r.problemas));
 
+  // odd/tasks/motor-claude.md (T4 round 3): temporal, detrás de un env flag
+  // — para calibrar la gravedad del revisor visual (¿por qué nunca sale
+  // "alta"/"media" con un defecto visual a simple vista?). Quitar o
+  // mantener apagado (default) fuera de esta investigación.
+  if (process.env.KODU_DEBUG_VERIFICADOR === '1') {
+    console.log(
+      `[chat/verificar] KODU_DEBUG_VERIFICADOR usoVision=${usaVision} problemas=${problemas.length}:`,
+      JSON.stringify(problemas, null, 1),
+    );
+  }
+
   await recordAiTrace({
     userId: user.id,
     projectId: project.id,

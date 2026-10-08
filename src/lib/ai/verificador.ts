@@ -136,6 +136,22 @@ export function pedidoDocente(pedidoOriginal: string, ajuste: string | null): st
  * con `capturaDataUrl`). Nunca reemplaza nada de la redacción verbatim de
  * arriba — se agrega al final, así una pasada sin imagen (el camino de
  * siempre, gpt-6-luna-style) queda byte a byte igual.
+ *
+ * T4 round 3 (motor-claude): calibración de gravedad. Medido contra Haiku
+ * 5.5 real (smoke-revisor, round 2): 4 problemas por pasada revisada, CERO
+ * en 'alta'/'media' — ni con una ilustración visiblemente chata (H2, "ciclo
+ * del agua": formas lisas de un solo color, sin textura ni profundidad,
+ * gotitas sin forma reconocible) ni con layouts correctos (D3, "media
+ * mediana moda": un gráfico de puntos prolijo, sin problema real). El
+ * contrato de arriba nunca definía bandas de gravedad con ejemplos —
+ * "del más grave al menos grave" deja la banda entera a criterio del
+ * modelo, y un modelo conservador por diseño ("no reportes gustos de
+ * estilo") termina metiendo cualquier defecto visual en 'baja' por default.
+ * Las bandas de abajo son ESPECÍFICAS de esta sección (no tocan la
+ * redacción verbatim de la base): atadas a qué notaría un docente
+ * proyectando el recurso en el aula, con los tres defectos que
+ * `separarProblemasParaPanel`/`problemasAccionables` (gravedad != 'baja')
+ * necesitan para disparar la corrección automática.
  */
 const SECCION_REVISOR_VISUAL = `
 
@@ -143,6 +159,12 @@ Además del código, tenés una CAPTURA de cómo se ve el recurso renderizado de
 - Defectos visibles de layout o render: elementos superpuestos, texto cortado o ilegible, zonas vacías que no deberían estarlo, una ilustración rota o que no cargó.
 - El pedido del docente no se cumplió, a simple vista (algo que pidió y no está, o se ve distinto a lo pedido).
 - Mala calidad visual contra las reglas de "Diseño visual" del contrato de arriba: una ilustración plana o vacía en vez de tener profundidad tonal real, colores lavados, o un layout que no usa el espacio.
+
+Cómo definir la GRAVEDAD de un problema visual — pensá en el docente proyectándolo en el pizarrón, no en el código:
+- alta: lo que pidió el docente falta directamente en la captura, o el recurso se ve notoriamente roto al proyectarlo. Ejemplos: una etapa/elemento que el pedido pide y no aparece en absoluto; texto o un control clave cortado o tapado por otro elemento; una zona que debería tener contenido y está lisa/vacía.
+- media: se puede usar, pero un docente notaría la falla de un vistazo. Ejemplos: una ilustración CHATA comparada con lo pedido (formas de un solo color plano, sin sombreado ni profundidad, donde el pedido esperaba una escena ilustrada — no una ilustración "fea", una que no es ilustración de verdad); dos elementos que se solapan parcialmente sin perder legibilidad; un ítem del pedido que está pero muy reducido o fuera de foco.
+- baja: un detalle que casi nadie notaría proyectándolo (un margen levemente chico, un tono de color opinable). Reservá 'baja' para esto, NUNCA como default de "no estoy seguro de la gravedad".
+Un defecto visual claro (ilustración chata o vacía contra lo pedido, contenido cortado o solapado, un ítem del pedido que falta) es tan accionable como un bug de lógica: va en 'alta' o 'media', nunca se degrada a 'baja' sólo porque el recurso "funciona".
 Si la captura se ve bien y coincide con el código, no inventes un problema visual sólo para tener algo que decir.`;
 
 /** Puerto verbatim de `sistema()` en `experimentos/razonamiento/verificar.ts`,
