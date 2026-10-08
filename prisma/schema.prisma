@@ -844,6 +844,11 @@ model TokenUsage {
   completionTokens         Int                 @default(0)
   /// Subconjunto de promptTokens, NO un adicional (ver src/lib/ai/provider.ts).
   cachedInputTokens        Int                 @default(0)
+  /// T1 (motor-claude): tokens de ESCRITURA al cache (Anthropic
+  /// `cache_creation_input_tokens`). NO es subconjunto de promptTokens —
+  /// cuenta aparte (ver el comentario de `promptTokens` en provider.ts).
+  /// Siempre 0 para los dialectos OpenAI (chat/responses).
+  cacheWriteTokens         Int                 @default(0)
   /// A que recurso perteneceio el turno. NULL en todo lo historico: nunca se
   /// backfillea, es dato que no existia antes de esta columna.
   projectId                String?
@@ -855,6 +860,11 @@ model TokenUsage {
   priceInputSnapshot       Decimal?            @db.Decimal(12, 6)
   priceOutputSnapshot      Decimal?            @db.Decimal(12, 6)
   priceCachedInputSnapshot Decimal?            @db.Decimal(12, 6)
+  /// T1 (motor-claude): la tarifa de escritura de cache REALMENTE aplicada
+  /// (mismo criterio que priceCachedInputSnapshot — si el motor no tenía
+  /// `priceCacheWritePerMToken` cargado, acá queda el 1.25x que se usó en su
+  /// lugar). NULL cuando cacheWriteTokens es 0.
+  priceCacheWriteSnapshot  Decimal?            @db.Decimal(12, 6)
   createdAt                DateTime            @default(now())
   /// odd/tasks/organizaciones.md (T1): la sede CONGELADA al momento de la
   /// llamada (decisión del dueño — "costo congelado por organización"). Si el
@@ -1258,6 +1268,12 @@ model AiModel {
   /// Entrada que el proveedor ya tenia cacheada. Suele costar bastante menos.
   priceCachedInputPerMToken Decimal? @db.Decimal(12, 6)
   priceOutputPerMToken      Decimal? @db.Decimal(12, 6)
+  /// T1 (motor-claude): precio de ESCRIBIR al cache (Anthropic cobra ~1.25x
+  /// el precio de entrada por esto). NULL = sin cargar — `calcularCostoTurno`
+  /// cae al 1.25x de `priceInputPerMToken` como default, nunca inventa un
+  /// precio de la nada. Sólo lo usa el dialecto `anthropic`; el resto de los
+  /// proveedores nunca reporta `cacheWriteTokens` > 0.
+  priceCacheWritePerMToken  Decimal? @db.Decimal(12, 6)
 
   /// odd/tasks/ahorro-tokens.md (T1): time-of-day pricing. NULL = no schedule,
   /// exactly today's behavior (flat price, no matter when the call happens).

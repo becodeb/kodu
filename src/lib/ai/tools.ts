@@ -39,6 +39,12 @@ export const RESOURCE_TOOLS: AiTool[] = [
           },
         },
         required: ['html'],
+        // T1 (motor-claude): `additionalProperties:false` + `required` es lo
+        // que exige el `strict:true` de tool-use (OpenAI y Anthropic) para
+        // garantizar que el argumento valide exacto. No cambia nada para los
+        // dialectos que no piden modo estricto (chat/responses sin
+        // `strict`): es metadata de schema inerte sin ese flag.
+        additionalProperties: false,
       },
     },
   },
@@ -86,10 +92,13 @@ export const EDIT_RESOURCE_TOOL: AiTool = {
               },
             },
             required: ['find', 'replace'],
+            // Ver el comentario en RESOURCE_TOOLS: habilita strict:true.
+            additionalProperties: false,
           },
         },
       },
       required: ['edits'],
+      additionalProperties: false,
     },
   },
 };
