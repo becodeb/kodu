@@ -6,7 +6,7 @@ import { htmlParaVerificador, type Problema } from '../ai/verificador.ts';
  * Tres cosas, cada una testeable por separado sin DOM ni servidor (salvo
  * `verificarRecurso`, la única función de acá con `fetch`):
  *  - CUÁNDO corresponde llamar a `POST /api/chat/verificar`
- *    (`decidirTipoVerificacion`/`cambioElScriptPropio`);
+ *    (`decidirTipoVerificacion`/`cambioElDocumentoPropio`);
  *  - la llamada en sí (`verificarRecurso`), con `AbortSignal` — Workspace.tsx
  *    la corre en segundo plano, sin bloquear el chat, y la corta si el HTML
  *    cambia mientras tanto;
@@ -62,13 +62,45 @@ function scriptPropioNormalizado(html: string): string {
 
 /**
  * `true` si el `<script>` propio del recurso (nunca el kit, nunca
- * `data-kodu-pruebas`) cambió entre dos HTML — la señal que decide un
- * `tipo:'ajuste'` (T4: sólo un ajuste que tocó lógica de verdad amerita
- * gastar una pasada del verificador; un cambio de texto, de estilos o sólo
- * del bloque de pruebas no).
+ * `data-kodu-pruebas`) cambió entre dos HTML. Ya NO es la señal que decide
+ * un `tipo:'ajuste'` (ver `cambioElDocumentoPropio` y el comentario de T4
+ * round 4 más abajo) — se deja exportada porque sigue siendo una noción
+ * útil en sí misma (y las pruebas existentes la ejercitan por separado),
+ * sólo que acotada a lógica, no a "cambió algo que al docente le importa".
  */
 export function cambioElScriptPropio(htmlAntes: string, htmlDespues: string): boolean {
   return scriptPropioNormalizado(htmlAntes) !== scriptPropioNormalizado(htmlDespues);
+}
+
+/** El documento propio del recurso, normalizado para comparar: el kit
+ *  canónico y cualquier `<script data-kodu-pruebas>` plegados (misma noción
+ *  que usa el propio verificador, `htmlParaVerificador`), y TODO el espacio
+ *  en blanco afuera — un cambio de indentación o de saltos de línea no
+ *  cuenta como "cambió el documento" (mismo criterio que
+ *  `scriptPropioNormalizado`, pero sobre el documento entero, no sólo los
+ *  `<script>`). */
+function documentoPropioNormalizado(html: string): string {
+  return htmlParaVerificador(html).replace(/\s+/g, '');
+}
+
+/**
+ * `true` si CUALQUIER parte del documento que el docente puede notar
+ * (markup, texto, clases/CSS, o el `<script>` propio) cambió entre dos
+ * HTML — nunca el bloque del kit ni `data-kodu-pruebas` (plegados los dos
+ * antes de comparar), nunca un cambio de sólo espacios en blanco.
+ *
+ * T4 round 4 (motor-claude): antes, `decidirTipoVerificacion` sólo llamaba
+ * al verificador cuando `cambioElScriptPropio` daba `true` — un ajuste que
+ * sólo tocó markup/CSS (agregar una sección "al final", agrandar una
+ * ilustración vía clases o estilos, actualizar un texto de contador) nunca
+ * disparaba una revisión, justo la clase de pedido que la evaluación ciega
+ * de Haiku 5.5 mostró incumplido a medias con más frecuencia. Esta función
+ * reemplaza a `cambioElScriptPropio` como gate de `decidirTipoVerificacion`
+ * — sigue sin gastar una pasada en un ajuste que de verdad no cambió nada
+ * que el docente pueda ver (sólo indentación, o sólo el kit/las pruebas).
+ */
+export function cambioElDocumentoPropio(htmlAntes: string, htmlDespues: string): boolean {
+  return documentoPropioNormalizado(htmlAntes) !== documentoPropioNormalizado(htmlDespues);
 }
 
 /**
@@ -89,7 +121,7 @@ export function decidirTipoVerificacion(args: {
   htmlDespues: string;
 }): TipoVerificacion | null {
   if (args.esRecursoInicialAlEmpezar) return 'nuevo';
-  return cambioElScriptPropio(args.htmlAntes, args.htmlDespues) ? 'ajuste' : null;
+  return cambioElDocumentoPropio(args.htmlAntes, args.htmlDespues) ? 'ajuste' : null;
 }
 
 // ─────────────────────────────────────────────────────────────

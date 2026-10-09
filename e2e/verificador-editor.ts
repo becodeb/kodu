@@ -30,10 +30,11 @@ import type { BrowserContext, Page, Request } from 'playwright';
  *  3 — "¿Las arreglo?": el pedido de autocorrección (docente → servidor)
  *      lleva `problemasVerificador` sin el de contenido, la vista previa
  *      cambia, y NO hay una segunda verificación (sin loop).
- *  4 — un ajuste que sólo cambia texto: CERO pedidos nuevos a
- *      `/api/chat/verificar` (el helper de "cuándo verificar" ya lo probó
- *      puro en `unidad-verificador-cliente.ts`; acá se confirma que
- *      Workspace.tsx lo respeta de punta a punta).
+ *  4 — un ajuste que sólo cambia texto (T4 round 4, motor-claude: gate
+ *      ampliado): SÍ dispara 1 pedido a `/api/chat/verificar` (el helper de
+ *      "cuándo verificar" ya lo probó puro en
+ *      `unidad-verificador-cliente.ts`; acá se confirma que Workspace.tsx
+ *      lo respeta de punta a punta).
  *  5 — a 390px de ancho, el panel no desborda.
  *
  * Requiere la pila de desarrollo levantada (`docker compose up -d db`,
@@ -461,8 +462,12 @@ async function main(): Promise<void> {
     console.log('✔ escena 3 (4/4): sin loop — ninguna verificación nueva tras aplicar el arreglo');
 
     // ───────────────────────────────────────────────────────────
-    // Escena 4 — ajuste que sólo cambia texto visible (mismo <script>):
-    // cero pedidos nuevos a /api/chat/verificar.
+    // Escena 4 (T4 round 4, motor-claude) — ajuste que sólo cambia texto
+    // visible (mismo <script>): el gate ampliado (`cambioElDocumentoPropio`)
+    // YA NO lo saltea — un contador o total que el docente puede notar
+    // puede cambiar sin tocar el <script>, así que esto ahora SÍ dispara
+    // una pasada del verificador (antes: cero pedidos; ver
+    // `unidad-verificador-cliente.ts` para el cambio puro de la regla).
     // ───────────────────────────────────────────────────────────
     mock.llamadas.length = 0;
     pedidosAVerificar = 0;
@@ -472,21 +477,21 @@ async function main(): Promise<void> {
       chunkDelayMs: 5,
       chunkBytes: 20_000,
     });
+    mock.programarRespuestaResponses({ texto: JSON.stringify({ problemas: [] }) });
 
     await campoB.click();
     await campoB.pressSequentially('Cambiale el título nada más (T4-ESCENA-4)', { delay: 10 });
     await enviarB.click();
     await enviarB.waitFor({ state: 'visible', timeout: 45_000 });
-    await esperar(1_000); // margen: si algo llamara, tiene tiempo de sobra para hacerlo.
+    await esperar(1_000); // margen: para que la pasada (única, "ajuste") termine de contestar.
 
-    assert.equal(pedidosAVerificar, 0, 'un ajuste de sólo texto (mismo <script>) nunca llama al verificador');
+    assert.equal(pedidosAVerificar, 1, 'un ajuste de sólo texto SÍ llama al verificador (gate ampliado)');
     assert.equal(
       mock.llamadas.filter((l) => esPedidoResponses(l.body)).length,
-      0,
-      'tampoco llega ningún pedido nuevo al motor verificador',
+      1,
+      'una sola pasada (tipo "ajuste"), aunque el <script> no haya cambiado',
     );
-    assert.equal(await docentePage.getByText('Revisando el recurso…').count(), 0, 'el panel nunca arranca para este ajuste');
-    console.log('✔ escena 4: ajuste de sólo texto → cero pedidos a /api/chat/verificar');
+    console.log('✔ escena 4: ajuste de sólo texto → 1 pedido a /api/chat/verificar (gate ampliado, T4 round 4)');
 
     // ───────────────────────────────────────────────────────────
     // Escena 5 — a 390px de ancho, el panel no desborda.

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { aplicarKit, type TemaId } from '../src/lib/ai/kit.ts';
 import {
+  cambioElDocumentoPropio,
   cambioElScriptPropio,
   decidirTipoVerificacion,
   problemasAccionablesParaPanel,
@@ -91,42 +92,67 @@ await prueba('decidirTipoVerificacion: ajuste con el <script> propio cambiado (l
   );
 });
 
-await prueba('decidirTipoVerificacion: ajuste que sólo tocó texto/clases → null (sin llamar)', () => {
-  const antes = documento('pizarron', `<h1 class="text-lg">Practicá</h1>\n${SCRIPT_A}`);
-  const despues = documento('pizarron', `<h1 class="text-2xl">Practicá fracciones</h1>\n${SCRIPT_A}`);
-  assert.equal(cambioElScriptPropio(antes, despues), false);
-  assert.equal(
-    decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
-    null,
-  );
-});
+await prueba(
+  'decidirTipoVerificacion (T4 round 4): ajuste que sólo tocó texto/clases → "ajuste" (ya no se salta)',
+  () => {
+    const antes = documento('pizarron', `<h1 class="text-lg">Practicá</h1>\n${SCRIPT_A}`);
+    const despues = documento('pizarron', `<h1 class="text-2xl">Practicá fracciones</h1>\n${SCRIPT_A}`);
+    // El <script> propio no cambió — eso sigue siendo cierto y es lo que
+    // prueba `cambioElScriptPropio` por separado — pero el gate de
+    // `decidirTipoVerificacion` ya no es ese: un cambio de texto/clases SÍ
+    // es algo que el docente pidió y puede notar (un contador, un "más
+    // grande" vía clases), así que ahora SÍ corresponde revisar.
+    assert.equal(cambioElScriptPropio(antes, despues), false);
+    assert.equal(cambioElDocumentoPropio(antes, despues), true);
+    assert.equal(
+      decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
+      'ajuste',
+    );
+  },
+);
 
 await prueba('decidirTipoVerificacion: sólo cambió el bloque <script data-kodu-pruebas> → null', () => {
   const antes = documento('pizarron', SCRIPT_A, PRUEBAS_1);
   const despues = documento('pizarron', SCRIPT_A, PRUEBAS_2);
   assert.equal(cambioElScriptPropio(antes, despues), false);
+  assert.equal(cambioElDocumentoPropio(antes, despues), false, 'las pruebas plegadas no cuentan para el gate ampliado');
   assert.equal(
     decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
     null,
   );
 });
 
-await prueba('decidirTipoVerificacion: el bloque del kit se ignora (cambiar de tema no cuenta solo)', () => {
-  const antes = documento('pizarron', SCRIPT_A);
-  const despues = documento('cuaderno', SCRIPT_A); // mismo script propio, kit canónico distinto de verdad.
-  assert.notEqual(antes, despues, 'los dos documentos tienen que ser de verdad distintos byte a byte (kit distinto)');
-  assert.equal(cambioElScriptPropio(antes, despues), false);
-  assert.equal(
-    decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
-    null,
-  );
-});
+await prueba(
+  'decidirTipoVerificacion (T4 round 4): cambiar de TEMA (meta + comentario plegado nombran el tema) → "ajuste"',
+  () => {
+    const antes = documento('pizarron', SCRIPT_A);
+    const despues = documento('cuaderno', SCRIPT_A); // mismo script propio, kit canónico distinto de verdad.
+    assert.notEqual(
+      antes,
+      despues,
+      'los dos documentos tienen que ser de verdad distintos byte a byte (kit distinto)',
+    );
+    assert.equal(cambioElScriptPropio(antes, despues), false);
+    // El tema SÍ cambia algo que el docente puede notar (paleta entera del
+    // recurso) — el `<meta name="kodu-tema">` y el comentario plegado del
+    // kit nombran el tema, así que un cambio de tema real ya no se salta.
+    // El contenido del BLOQUE del kit en sí (el Tailwind/íconos que agrega
+    // el sistema) sigue plegado e ignorado — lo que cambia acá es la
+    // elección de tema del docente, no boilerplate.
+    assert.equal(cambioElDocumentoPropio(antes, despues), true);
+    assert.equal(
+      decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
+      'ajuste',
+    );
+  },
+);
 
 await prueba('decidirTipoVerificacion: cambio de sólo espacios en blanco en el script propio → null', () => {
   const antes = documento('pizarron', SCRIPT_A);
   const despues = documento('pizarron', SCRIPT_A_OTRA_INDENTACION);
   assert.notEqual(antes, despues, 'los dos documentos tienen que ser de verdad distintos byte a byte (indentación)');
   assert.equal(cambioElScriptPropio(antes, despues), false);
+  assert.equal(cambioElDocumentoPropio(antes, despues), false, 'sólo espacios: tampoco cuenta para el gate ampliado');
   assert.equal(
     decidirTipoVerificacion({ esRecursoInicialAlEmpezar: false, htmlAntes: antes, htmlDespues: despues }),
     null,
