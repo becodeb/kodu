@@ -212,26 +212,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   // El pedido del docente: el primer mensaje "user" no deshecho del
   // proyecto (en cualquier hilo, mismo alcance que `checklistActual`), y —
-  // sólo para un ajuste— el ÚLTIMO, si es distinto del primero.
+  // sólo para un ajuste— el ÚLTIMO y, si lo hay, el ANTERIOR a ese (T4
+  // round 4: para que el revisor pueda juzgar si ESTE turno dejó sin
+  // resolver, o deshizo, lo que el docente pidió en el turno previo).
   const primerMensaje = await prisma.chatMessage.findFirst({
     where: { thread: { projectId: project.id }, role: 'user', undoneAt: null },
     orderBy: { createdAt: 'asc' },
     select: { content: true },
   });
 
-  let mensajeDeAjuste: string | null = null;
+  let mensajeActual: string | null = null;
+  let mensajeAnterior: string | null = null;
   if (tipo === 'ajuste') {
-    const ultimoMensaje = await prisma.chatMessage.findFirst({
+    const ultimosDos = await prisma.chatMessage.findMany({
       where: { thread: { projectId: project.id }, role: 'user', undoneAt: null },
       orderBy: { createdAt: 'desc' },
+      take: 2,
       select: { content: true },
     });
+    const [ultimoMensaje, penultimoMensaje] = ultimosDos;
     if (ultimoMensaje && ultimoMensaje.content !== primerMensaje?.content) {
-      mensajeDeAjuste = ultimoMensaje.content;
+      mensajeActual = ultimoMensaje.content;
+    }
+    if (penultimoMensaje && penultimoMensaje.content !== primerMensaje?.content) {
+      mensajeAnterior = penultimoMensaje.content;
     }
   }
 
-  const pedido = pedidoDocente(primerMensaje?.content ?? '', mensajeDeAjuste);
+  const pedido = pedidoDocente(primerMensaje?.content ?? '', mensajeActual, mensajeAnterior);
   // T4 (round 2, motor-claude): mismo fix que `autocorreccion.ts`/`stream.ts`
   // — `project.currentHtml` ya llega con el checklist envuelto en
   // `try{eval("...")}`; el revisor sólo LEE el HTML (no edita nada acá), pero

@@ -115,6 +115,17 @@ await prueba('construirSistemaVerificador: lleva las reglas y pide el JSON de "p
   assert.ok(/revisor experto/i.test(sistema), 'redacción verbatim del experimento: "revisor experto"');
 });
 
+await prueba('construirSistemaVerificador (T4 round 4): el chequeo explícito del pedido va SIEMPRE, con o sin captura', () => {
+  const sinCaptura = construirSistemaVerificador('REGLAS');
+  const conCaptura = construirSistemaVerificador('REGLAS', { conCaptura: true });
+  assert.ok(sinCaptura.includes('PUNTO POR PUNTO'), 'sin captura también chequea el pedido explícitamente');
+  assert.ok(conCaptura.includes('PUNTO POR PUNTO'), 'con captura sigue estando, además de la sección visual');
+  assert.ok(
+    conCaptura.indexOf('PUNTO POR PUNTO') < conCaptura.indexOf('Además del código, tenés una CAPTURA'),
+    'el chequeo del pedido va ANTES de la sección visual',
+  );
+});
+
 await prueba('construirUsuarioVerificador: pedido + HTML plegado (sin pruebas en claro)', () => {
   const mensaje = construirUsuarioVerificador('Un simulador de fracciones', HTML_CON_PRUEBAS);
   assert.ok(mensaje.includes('## Pedido del docente'));
@@ -137,6 +148,30 @@ await prueba('pedidoDocente: con ajuste, agrega el último pedido etiquetado', (
   assert.ok(texto.startsWith('Armame un quiz de tablas'));
   assert.ok(texto.includes('## Último pedido (ajuste)'));
   assert.ok(texto.endsWith('Agregale un cronómetro'));
+});
+
+await prueba('pedidoDocente (T4 round 4): con anterior distinto, va entre el original y el actual', () => {
+  const texto = pedidoDocente('Armame un quiz de tablas', 'Agregale sonido', 'Agregale un cronómetro');
+  const iOriginal = texto.indexOf('Armame un quiz de tablas');
+  const iAnterior = texto.indexOf('## Pedido del turno anterior');
+  const iActual = texto.indexOf('## Último pedido (ajuste)');
+  assert.ok(iOriginal >= 0 && iAnterior > iOriginal && iActual > iAnterior, 'orden cronológico: original, anterior, actual');
+  assert.ok(texto.includes('Agregale un cronómetro') && texto.includes('Agregale sonido'));
+});
+
+await prueba('pedidoDocente (T4 round 4): sin anterior (undefined), igual que antes', () => {
+  const texto = pedidoDocente('Armame un quiz de tablas', 'Agregale sonido');
+  assert.ok(!texto.includes('## Pedido del turno anterior'));
+});
+
+await prueba('pedidoDocente (T4 round 4): anterior igual al original (turno 2) no se repite', () => {
+  const texto = pedidoDocente('Armame un quiz de tablas', 'Agregale sonido', 'Armame un quiz de tablas');
+  assert.ok(!texto.includes('## Pedido del turno anterior'));
+});
+
+await prueba('pedidoDocente (T4 round 4): anterior igual al actual no se repite', () => {
+  const texto = pedidoDocente('Armame un quiz de tablas', 'Agregale sonido', 'Agregale sonido');
+  assert.ok(!texto.includes('## Pedido del turno anterior'));
 });
 
 // ─────────────────────────────────────────────────────────────

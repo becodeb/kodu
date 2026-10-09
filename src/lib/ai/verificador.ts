@@ -114,16 +114,31 @@ export function htmlParaVerificador(html: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// El pedido del docente: el primer pedido + (si es un ajuste) el último
+// El pedido del docente: el primero + (si es un ajuste) el anterior + el último
 // ─────────────────────────────────────────────────────────────
 
-/** Arma el texto de "pedido del docente" para el prompt: el pedido
- *  ORIGINAL siempre, y — sólo para un ajuste — el ÚLTIMO pedido aparte,
- *  etiquetado. `ajuste` en `null` (turno de creación, o un ajuste cuyo
- *  último mensaje ES el mismo que el original) deja el pedido tal cual. */
-export function pedidoDocente(pedidoOriginal: string, ajuste: string | null): string {
-  if (!ajuste) return pedidoOriginal;
-  return `${pedidoOriginal}\n\n## Último pedido (ajuste)\n${ajuste}`;
+/**
+ * Arma el texto de "pedido del docente" para el prompt: el pedido ORIGINAL
+ * siempre, y — sólo para un ajuste — el pedido del TURNO ANTERIOR (si lo hay
+ * y es distinto del original y del actual) y el ÚLTIMO pedido, cada uno
+ * aparte y etiquetado, en orden cronológico. `actual` en `null` (turno de
+ * creación, o un ajuste cuyo último mensaje ES el mismo que el original) deja
+ * el pedido tal cual, sin mirar `anterior`.
+ *
+ * T4 round 4 (motor-claude): antes sólo viajaba el original + el último —
+ * sin el pedido anterior, el revisor no podía juzgar si ESTE turno dejó sin
+ * resolver (o directamente deshizo) lo que el docente pidió en el turno
+ * previo, uno de los defectos más frecuentes de la evaluación ciega de
+ * Haiku 5.5 (regresiones turno a turno).
+ */
+export function pedidoDocente(pedidoOriginal: string, actual: string | null, anterior?: string | null): string {
+  if (!actual) return pedidoOriginal;
+  const partes = [pedidoOriginal];
+  if (anterior && anterior !== pedidoOriginal && anterior !== actual) {
+    partes.push(`## Pedido del turno anterior\n${anterior}`);
+  }
+  partes.push(`## Último pedido (ajuste)\n${actual}`);
+  return partes.join('\n\n');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -167,10 +182,29 @@ Cómo definir la GRAVEDAD de un problema visual — pensá en el docente proyect
 Un defecto visual claro (ilustración chata o vacía contra lo pedido, contenido cortado o solapado, un ítem del pedido que falta) es tan accionable como un bug de lógica: va en 'alta' o 'media', nunca se degrada a 'baja' sólo porque el recurso "funciona".
 Si la captura se ve bien y coincide con el código, no inventes un problema visual sólo para tener algo que decir.`;
 
+/**
+ * T4 round 4 (motor-claude): el contrato de abajo ya pide "incumplimientos
+ * del pedido del docente" como punto 3, pero nada lo obligaba a chequear el
+ * ÚLTIMO pedido PUNTO POR PUNTO, ni a tratar un cumplimiento PARCIAL (un
+ * contador o total que quedó apuntando a la cantidad vieja, una escena que
+ * no escaló aunque pedían agrandarla) tan en serio como si faltara entero.
+ * Evidencia de la evaluación ciega de Haiku 5.5: el defecto más frecuente no
+ * era "no hizo nada", era "hizo la mitad y lo dio por terminado" — justo lo
+ * que una banda de gravedad conservadora (ver `SECCION_REVISOR_VISUAL`)
+ * tiende a bajar a 'baja'. Se agrega SIEMPRE (con o sin captura, "nuevo" o
+ * "ajuste"): no depende de la visión, un contador desactualizado se ve en
+ * el código solo.
+ */
+const SECCION_PEDIDO_EXPLICITO = `
+
+Antes de devolver tu lista, repasá el ÚLTIMO pedido del docente (la sección "## Último pedido (ajuste)", si existe) PUNTO POR PUNTO: para cada cosa concreta que pidió, confirmá en el código (y en la captura, si la tenés) que está hecha por completo. Si el pedido anterior aparece también ("## Pedido del turno anterior"), fijate además que este turno no lo haya dejado sin resolver o deshecho.
+Un pedido cumplido a MEDIAS cuenta como no cumplido: un contador, total o mensaje final que sigue apuntando a la cantidad vieja después de agregar o quitar algo; una escena, ilustración o layout que no escaló aunque pedían "más grande" o "para proyectar"; cualquier otra parte del pedido ausente o a medio hacer. Eso es tipo "pedido" y gravedad "alta" — nunca "baja": a un docente que pidió algo y recibió la mitad no le sirve una devolución optimista.`;
+
 /** Puerto verbatim de `sistema()` en `experimentos/razonamiento/verificar.ts`,
- *  con la sección visual de T5 agregada al final cuando `conCaptura` es
- *  `true` — por default `false` (sin segundo argumento, el texto es
- *  idéntico al de antes de T5). */
+ *  con `SECCION_PEDIDO_EXPLICITO` (T4 round 4) agregada siempre al final, y
+ *  la sección visual de T5 agregada DESPUÉS de esa cuando `conCaptura` es
+ *  `true` — por default `false`. Ninguna de las dos toca la redacción
+ *  verbatim de `base`. */
 export function construirSistemaVerificador(reglas: string, opciones?: { conCaptura?: boolean }): string {
   const base = `Sos un revisor experto de recursos didácticos interactivos para escuelas argentinas. Un docente pidió un recurso y otra IA lo generó como un único documento HTML. Tu trabajo: encontrar los problemas CONCRETOS que un alumno o el docente se van a encontrar al usarlo en clase.
 
@@ -193,7 +227,8 @@ ${reglas}
 Respondé SOLO con JSON, sin texto antes ni después:
 {"problemas":[{"gravedad":"alta|media|baja","tipo":"logica|contenido|pedido|uso","que":"...","como_reproducir":"...","arreglo":"..."}]}`;
 
-  return opciones?.conCaptura ? `${base}${SECCION_REVISOR_VISUAL}` : base;
+  const sistema = `${base}${SECCION_PEDIDO_EXPLICITO}`;
+  return opciones?.conCaptura ? `${sistema}${SECCION_REVISOR_VISUAL}` : sistema;
 }
 
 /** Puerto verbatim de `usuario()` en `experimentos/razonamiento/verificar.ts`
