@@ -680,3 +680,117 @@ downstream of tool selection, not caused by it (see Problem 1 above). A
 broader multi-case real-model confirmation of the Workspace.tsx fix
 (beyond H2) is still open, budget-gated this round. `AiTrace` still has
 no `usedVision` column (same gap noted in round 2).
+
+## T4 round 4 notes (2026-10-09/10) — explicit request checklist, wider reviewer gate
+
+Three changes, aimed at the recurring Haiku 5.5 defects from the blind
+evaluation (stale counters/totals after adding items, "bigger for the
+projector" only touching font-size, layout overlaps, partial/silent
+non-compliance, dead conditions):
+
+- `src/lib/ai/prompt.ts`: new `BASE_PROMPT` section "Al ajustar un
+  recurso" — update every counter/total/final-message that depends on
+  an added/removed item; "más grande para proyectar" scales the WHOLE
+  composition (scene, camera, labels, controls), never just the font;
+  "al final" means after the last existing section; "más corto" means
+  actually removing/merging content; never undo a previous turn; never
+  leave a dead condition (`* 0`, `&& false`, `|| true`). Plus a short
+  layout rule (overlays above a full-screen canvas need an explicit
+  `z-index`, labels must not overlap, the main visual fits at 1280×800
+  without scroll). Removed the now-redundant standalone "Hacelo más
+  grande…" line from the "contenido es la estrella" section (merged into
+  the new checklist).
+- `src/lib/ai/verificador.ts` (+ `src/pages/api/chat/verificar.ts`):
+  `SECCION_PEDIDO_EXPLICITO`, appended to the reviewer's system prompt
+  ALWAYS (nuevo/ajuste, con o sin visión — a stale counter is visible in
+  the code alone) — tells the model to check the ÚLTIMO pedido point by
+  point and flag a partially-done request (stale counter, scene that
+  didn't scale) as tipo `pedido`/gravedad `alta`, never `baja`.
+  `pedidoDocente` now also carries the PREVIOUS turn's request (when it
+  differs from both the original and the current one), so the reviewer
+  can tell whether this turn left the prior one unresolved or undid it.
+- `src/lib/client/verificador.ts`: `decidirTipoVerificacion`'s gate was
+  `cambioElScriptPropio` (only the resource's own `<script>` changing
+  triggered a review) — relaxed to the new `cambioElDocumentoPropio`
+  (any part of the folded document the teacher can notice: markup, CSS,
+  text, or script; kit/tests blocks and whitespace-only changes still
+  excluded). A markup/CSS-only adjustment (exactly the kind of "bigger"
+  or "add a section" request that doesn't touch JS) now gets reviewed
+  too. Updated `e2e/unidad-verificador-cliente.ts` and the live
+  `e2e/verificador-editor.ts` escena 4 to match (both asserted the OLD
+  skip behavior on purpose; now assert the call happens).
+
+Checks run: `npm run check` (clean after every commit); `npx tsx
+e2e/unidad-kit.ts e2e/unidad.ts e2e/unidad-pruebas-aisladas.ts
+e2e/unidad-edicion-fragmentos.ts e2e/unidad-preview.ts
+e2e/unidad-verificador.ts e2e/unidad-verificador-cliente.ts` (all pass,
+new cases included); `KODU_BASE_URL=http://localhost:3400 npx tsx
+e2e/t11-autoprueba.ts e2e/verificador-endpoint.ts
+e2e/verificador-editor.ts` (all pass against the live dev server on this
+worktree, after a `npx astro dev stop` + fresh `PORT=3400 npm run dev`
+restart). The pre-existing `v3-smoke` model's `isVerifier` flag (left ON
+since round 3) had to be toggled OFF temporarily to run
+`verificador-endpoint.ts`/`verificador-editor.ts` cleanly (the DB-wide
+`AiModel_un_solo_verificador` constraint means any OTHER `isVerifier`
+model blocks those tests' own "sin motor verificador" scene) — restored
+to ON immediately after, unchanged from round 3.
+
+### Real-model run (`v4-haiku-low`, claude-haiku-5-5, low effort)
+
+`experimentos/motor-claude/correr.ts --etiqueta v4-haiku-low --motor
+claude-haiku-5-5 --esfuerzo low --casos all --repeticiones 1 --tope
+0.15`, against the live dev server on this worktree after the restart
+above. Clean budget cutoff: 6 of the planned cases ran
+(H1-sistema-solar-3d, H2-ciclo-del-agua, H3-juego-fracciones,
+H4-plano-inclinado, H5-sorprendeme, D1-fracciones-equivalentes) before
+the 7th case's USD 0.05 estimate would have pushed past the USD 0.15
+cap for this task. **Spend: USD 0.114002745** of the 0.15 limit
+(`experimentos/motor-claude/gasto.json`); project ledger grand total
+now USD 7.1595666 of the USD 15.00 global cap.
+
+Compared against `resultados/v3-haiku-low/*-r1/` (same 6 cases, turns 2
+and 3 — the adjustment turns — judged by reading each turn's request,
+diffing `turno-N.html`, and looking at the screenshots), via a read-only
+sub-agent:
+
+- **Placement fixed**: the "al final" misplacement class the task set
+  out to fix did not reproduce in this sample — content asked for "at
+  the end" landed after the last existing section in v4.
+- **Still broken, same shape as before**: H1-sistema-solar-3d's scene
+  still shrinks instead of scaling on the "más grande para proyectar"
+  turn — the new checklist line didn't change Haiku's actual behavior
+  for that case. "Más corto" requests still don't shorten anything in
+  this sample either — the checklist asks for it, but asking isn't
+  enough on its own.
+- **New defect surfaced, not previously seen**: H2-ciclo-del-agua turn 3
+  left an empty quiz container in the DOM — a layout/completeness gap
+  the wider reviewer gate (change C) should have had a shot at catching
+  (an ajuste that changed markup, not just script) but didn't flag as
+  actionable in this run.
+- **The no_op fix (round 3) did its job once**: D1-fracciones-equivalentes
+  turn 3 — an append request — got `find === replace` from Haiku twice
+  (first attempt and the one-shot retry) and ended in the honest
+  "ese cambio no modificó nada" message instead of a false "listo"; the
+  underlying inability to turn an append into a correct edit remains
+  open, but the harness no longer lies about it.
+
+**Takeaway**: the prompt/reviewer changes measurably fixed the placement
+class and correctly surfaced (as an honest failure, not a false
+success) a no-op append, but did NOT fix scene-scaling or
+"shorten content" compliance, and the wider reviewer gate missed at
+least one real layout defect it was aimed at (H2's empty container) —
+open for a round 5 if one runs: investigate why `SECCION_PEDIDO_EXPLICITO`
+didn't flag H1's non-scaling or H2's empty container as `alta`/`pedido`
+(reviewer may need a concrete "did the composition's bounding box/camera
+change" check, not just a text instruction), and why the new checklist
+line in `BASE_PROMPT` didn't change Haiku's generation behavior for
+scaling/shortening (a checklist the model can read but routinely ignores
+under low effort may need to move into the per-turn edit-guidance block
+instead of the system prompt, or be reinforced by the self-test).
+
+Full per-turn table (fulfilled yes/partial/no, seconds, cost) was
+produced by the comparison sub-agent and relayed in this session's
+report; not duplicated here to keep this file from growing past what a
+future session needs to resume work (the raw artifacts — `corrida.json`,
+`turno-N.html`, `turno-N-*.png` — are the source of truth, committed in
+`claude-exp` on `exp/motor-claude`, commit `f4ce021`).
