@@ -455,6 +455,37 @@ export const POST: APIRoute = async ({ request, locals }) => {
           });
 
           await consumir(respuesta);
+
+          /**
+           * odd/tasks/motor-claude.md (T4 round 5): mismo refuerzo que
+           * `/api/chat/stream.ts` — si la recuperación de arriba (DOS
+           * herramientas ofrecidas) también termina sin código, se fuerza
+           * `update_resource_code` POR NOMBRE (única herramienta, ya no una
+           * opción) antes de dar la ronda por perdida.
+           */
+          if (resultado.ultimoFallo && !resultado.htmlFinal) {
+            console.warn(
+              `[chat/autocorreccion] ronda ${ronda}: la recuperación también falló (${resultado.ultimoFallo.detalle}); se intenta una reescritura completa.`,
+            );
+            const detalleFallo = resultado.ultimoFallo.detalle;
+
+            respuesta = await requestCompletionStream({
+              messages: [
+                ...messages,
+                {
+                  role: 'user',
+                  content: `Los cambios puntuales no se pudieron aplicar (${detalleFallo}). Devolvé AHORA el documento HTML COMPLETO con la corrección ya aplicada, partiendo del HTML actual (el bloque de arriba) y respetando todo lo demás.`,
+                },
+              ],
+              provider,
+              signal: request.signal,
+              forzarHerramienta: true,
+              razonamientoOverride: razonamientoCorreccion(provider),
+              editsEnabled: false,
+            });
+
+            await consumir(respuesta);
+          }
         }
 
         if (totales.usage) {

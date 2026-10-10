@@ -76,7 +76,7 @@ interface PreviewPanelProps {
    * mandarle una captura al revisor del verificador — nunca dispara nada
    * visible en este panel.
    */
-  onCapturadorListo?: (capturar: (opciones?: OpcionesCaptura) => Promise<string | null>) => void;
+  onCapturadorListo?: (capturar: (opciones?: OpcionesCaptura) => Promise<string[] | null>) => void;
 }
 
 type Tab = 'preview' | 'code';
@@ -177,7 +177,7 @@ function PreviewPanel(props: PreviewPanelProps) {
   // con la del botón de portada, ni le cambie ningún estado visible.
   const proximoIdRevisorRef = useRef(0);
   const revisorPendingIdRef = useRef<string | null>(null);
-  const revisorResolverRef = useRef<((dataUrl: string | null) => void) | null>(null);
+  const revisorResolverRef = useRef<((dataUrls: string[] | null) => void) | null>(null);
   const revisorTimeoutRef = useRef<number | null>(null);
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
@@ -291,8 +291,13 @@ function PreviewPanel(props: PreviewPanelProps) {
    * 0.8 (lo que pide el revisor), pero quien llama puede pedir otra cosa.
    * `null` si el iframe no está montado, si no contesta en 8s, o si el
    * capturador reportó un error — nunca tira.
+   *
+   * T4 round 5 (motor-claude): devuelve un ARRAY (1 elemento salvo
+   * `opciones.paginaCompleta` con un documento alto, ver `preview.ts`) —
+   * el bridge manda `dataUrls` con eso puesto, o el `dataUrl` único de
+   * siempre en cualquier otro caso (se envuelve en un array de 1 acá).
    */
-  function capturarParaRevisor(opciones?: OpcionesCaptura): Promise<string | null> {
+  function capturarParaRevisor(opciones?: OpcionesCaptura): Promise<string[] | null> {
     return new Promise((resolve) => {
       const frame = iframeRef.current?.contentWindow;
       if (!frame) {
@@ -329,7 +334,15 @@ function PreviewPanel(props: PreviewPanelProps) {
       }
       const resolve = revisorResolverRef.current;
       revisorResolverRef.current = null;
-      resolve?.(event.data.error ? null : typeof event.data.dataUrl === 'string' ? event.data.dataUrl : null);
+      if (event.data.error) {
+        resolve?.(null);
+      } else if (Array.isArray(event.data.dataUrls)) {
+        resolve?.(event.data.dataUrls.filter((u: unknown): u is string => typeof u === 'string'));
+      } else if (typeof event.data.dataUrl === 'string') {
+        resolve?.([event.data.dataUrl]);
+      } else {
+        resolve?.(null);
+      }
     }
     window.addEventListener('message', onMessageRevisor);
     return () => window.removeEventListener('message', onMessageRevisor);

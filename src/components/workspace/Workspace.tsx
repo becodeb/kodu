@@ -232,7 +232,7 @@ export default function Workspace(props: WorkspaceProps) {
    *  `PreviewPanel` registra una vez al montar (`onCapturadorListo`). `null`
    *  hasta que el panel monta — `iniciarVerificacion` lo trata como "no se
    *  pudo capturar" en ese caso, nunca como un error que avisar. */
-  const capturadorRevisorRef = useRef<((opciones?: OpcionesCaptura) => Promise<string | null>) | null>(null);
+  const capturadorRevisorRef = useRef<((opciones?: OpcionesCaptura) => Promise<string[] | null>) | null>(null);
 
   /** T4 (item 4, "con no verifier engine ... nada se renderiza"): una vez
    *  que el motor contestó "desactivado" en ESTA sesión, no tiene sentido
@@ -1004,7 +1004,13 @@ export default function Workspace(props: WorkspaceProps) {
     // un diff estructural real, sólo evita gastar una captura+imagen en un
     // typo) — el verificador sigue corriendo igual, sólo que sin imagen.
     const cambioMinimo = tipo === 'ajuste' && Math.abs(htmlDespues.length - htmlAntes.length) < 40;
-    const captura = cambioMinimo ? null : await (capturadorRevisorRef.current?.() ?? Promise.resolve(null));
+    // T4 round 5 (motor-claude): página completa, no sólo el primer
+    // viewport — un "agregá X al final" puede caer fuera de 1280×800 y el
+    // revisor nunca lo vería (ver el defecto de H2 en la ronda 4).
+    const captura = cambioMinimo
+      ? null
+      : await (capturadorRevisorRef.current?.({ formato: 'jpeg', calidad: 0.8, anchoMax: 1280, paginaCompleta: true }) ??
+          Promise.resolve(null));
 
     const resultado = await verificarRecurso({ projectId, fingerprint, tipo, captura }, controller.signal);
 

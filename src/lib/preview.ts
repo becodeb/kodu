@@ -57,7 +57,26 @@ export interface OpcionesCaptura {
    * que antes). Ignorado si no es un número positivo.
    */
   anchoMax?: number;
+  /**
+   * T4 round 5 (motor-claude): captura la página ENTERA (alto real del
+   * documento, `scrollHeight` — no sólo lo que entra en el viewport) en vez
+   * del alto de ventana de siempre. Nace porque un pedido "agregá X al
+   * final" puede quedar fuera del primer viewport (1280×800) y el revisor
+   * nunca lo ve. Con esto puesto, el resultado llega SIEMPRE como
+   * `dataUrls` (array, nunca `dataUrl`): 1 elemento si el documento entra
+   * en `ALTO_TOPE_PAGINA_COMPLETA` px, 2 ("arriba"/"abajo", recortados del
+   * mismo render sin re-renderizar) si es más alto — nunca más de 2, para
+   * no disparar el costo de tokens de imagen sin límite. Sin esto, el
+   * comportamiento es BYTE A BYTE el de siempre (`dataUrl` único, alto de
+   * ventana).
+   */
+  paginaCompleta?: boolean;
 }
+
+/** Tope de alto (del render original, antes de escalar) para la captura de
+ *  página completa. Por encima de esto se reparte en dos imágenes en vez de
+ *  una sola cada vez más angosta/ilegible al escalar a `anchoMax`. */
+const ALTO_TOPE_PAGINA_COMPLETA = 3000;
 
 const BRIDGE = `<script data-kodu-bridge>
 (function () {
@@ -88,8 +107,13 @@ const BRIDGE = `<script data-kodu-bridge>
       // Capturamos el alto de la ventana, no el del contenido: si el recurso es
       // corto, una imagen de 900x70 recortada en la tarjeta de la galería queda
       // con un zoom absurdo. Esto es "lo que se ve en pantalla".
+      // T4 round 5: con 'paginaCompleta', en cambio, se quiere justo lo
+      // contrario — el alto REAL del documento, aunque sea más que la
+      // ventana, para no perder contenido agregado más abajo del fold.
       var width = document.documentElement.clientWidth || document.body.scrollWidth;
-      var height = Math.max(document.documentElement.clientHeight || 0, 1);
+      var height = opciones.paginaCompleta
+        ? Math.max(document.documentElement.scrollHeight || 0, document.body.scrollHeight || 0, 1)
+        : Math.max(document.documentElement.clientHeight || 0, 1);
 
       // El fondo real del recurso, NO blanco fijo. Forzar blanco daba capturas
       // con los colores cambiados en todo recurso de fondo oscuro: el body suele
@@ -113,6 +137,37 @@ const BRIDGE = `<script data-kodu-bridge>
           style: { margin: '0', width: width + 'px', height: height + 'px' },
         })
         .then(function (canvas) {
+          var formato = opciones.formato === 'jpeg' ? 'image/jpeg' : 'image/webp';
+          var calidad = typeof opciones.calidad === 'number' ? opciones.calidad : 0.85;
+          var anchoObjetivo = opciones.anchoMax > 0 ? opciones.anchoMax : ${SNAPSHOT_WIDTH};
+
+          function recortarYEscalar(sy, sh) {
+            // Recorta del MISMO canvas ya renderizado (sin volver a pedirle
+            // nada al DOM) y lo escala a 'anchoObjetivo' de ancho.
+            var ratioEscala = canvas.width ? anchoObjetivo / canvas.width : 1;
+            var target = document.createElement('canvas');
+            target.width = Math.max(1, Math.round(canvas.width * ratioEscala));
+            target.height = Math.max(1, Math.round(sh * ratioEscala));
+            target
+              .getContext('2d')
+              .drawImage(canvas, 0, sy, canvas.width, sh, 0, 0, target.width, target.height);
+            return target.toDataURL(formato, calidad);
+          }
+
+          // T4 round 5: página completa — 1 imagen si entra en el tope de
+          // alto, 2 ("arriba"/"abajo") si no, siempre como 'dataUrls'.
+          if (opciones.paginaCompleta) {
+            var tope = ${ALTO_TOPE_PAGINA_COMPLETA};
+            if (canvas.height <= tope) {
+              post({ type: '${CAPTURE_RESULT}', id: id, dataUrls: [recortarYEscalar(0, canvas.height)] });
+              return;
+            }
+            var arriba = recortarYEscalar(0, tope);
+            var abajo = recortarYEscalar(Math.max(0, canvas.height - tope), tope);
+            post({ type: '${CAPTURE_RESULT}', id: id, dataUrls: [arriba, abajo] });
+            return;
+          }
+
           // T8: con altoMax puesto, el ancho NO se toca -- solo se achica
           // si hace falta para respetar el tope de ALTO (conservando la
           // proporcion). Sin altoMax (portada de galeria, de siempre), se
@@ -121,7 +176,6 @@ const BRIDGE = `<script data-kodu-bridge>
           if (opciones.altoMax) {
             ratio = canvas.height > opciones.altoMax ? opciones.altoMax / canvas.height : 1;
           } else {
-            var anchoObjetivo = opciones.anchoMax > 0 ? opciones.anchoMax : ${SNAPSHOT_WIDTH};
             ratio = canvas.width ? anchoObjetivo / canvas.width : 1;
           }
 
@@ -130,8 +184,6 @@ const BRIDGE = `<script data-kodu-bridge>
           target.height = Math.max(1, Math.round(canvas.height * ratio));
           target.getContext('2d').drawImage(canvas, 0, 0, target.width, target.height);
 
-          var formato = opciones.formato === 'jpeg' ? 'image/jpeg' : 'image/webp';
-          var calidad = typeof opciones.calidad === 'number' ? opciones.calidad : 0.85;
           post({ type: '${CAPTURE_RESULT}', id: id, dataUrl: target.toDataURL(formato, calidad) });
         })
         .catch(function (error) {

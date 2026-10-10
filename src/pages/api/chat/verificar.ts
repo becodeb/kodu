@@ -71,7 +71,13 @@ const schema = z.object({
    * tamaño libre, pero de sobra para un JPEG de 1280px de ancho a calidad
    * 0.8.
    */
-  captura: z.string().max(2_000_000).nullish(),
+  /**
+   * T4 round 5 (motor-claude): también acepta un array (hasta 2 — página
+   * larga partida "arriba"/"abajo", ver `OpcionesCaptura.paginaCompleta` en
+   * `preview.ts`) para no perder contenido agregado "al final" que cae
+   * fuera del primer viewport. Un string único sigue andando igual.
+   */
+  captura: z.union([z.string().max(2_000_000), z.array(z.string().max(2_000_000)).max(2)]).nullish(),
 });
 
 /** 150 s por pasada (la tarea lo fija así): un revisor que relee el HTML
@@ -259,7 +265,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * 2 pasadas en paralelo para "nuevo", 1 para "ajuste", "medium" fijo, sin
    * imagen.
    */
-  const usaVision = Boolean(captura) && supportsVision(provider);
+  // T4 round 5: `captura` puede ser un array (página larga partida); un
+  // array vacío es truthy en JS, así que `Boolean` solo no alcanza.
+  const hayCaptura = Array.isArray(captura) ? captura.length > 0 : Boolean(captura);
+  const usaVision = hayCaptura && supportsVision(provider);
   const sistema = construirSistemaVerificador(reglasDelArnes(), { conCaptura: usaVision });
   const contenidoUsuario = construirContenidoUsuarioVerificador(pedido, htmlParaRevisor, usaVision ? captura : null);
 

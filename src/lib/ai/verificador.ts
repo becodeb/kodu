@@ -241,21 +241,27 @@ export function construirUsuarioVerificador(pedido: string, html: string): strin
 /**
  * T5 (motor-claude, revisor visual): el contenido del mensaje "user" para
  * una pasada con captura — un bloque de texto (`construirUsuarioVerificador`,
- * sin cambios) seguido del `image_url` de la captura, mismo vocabulario
+ * sin cambios) seguido del/los `image_url` de la captura, mismo vocabulario
  * `ContentPart` que ya usa `stream.ts` para adjuntos del docente. Sin
  * `capturaDataUrl`, devuelve el `string` de siempre (ningún motor sin
  * visión ve jamás un array de partes).
+ *
+ * T4 round 5 (motor-claude): ahora acepta UNA captura (string, de siempre) o
+ * VARIAS (array — hasta 2, página larga partida en "arriba"/"abajo" por
+ * `preview.ts`, ver `OpcionesCaptura.paginaCompleta`) — cada una se agrega
+ * como su propio bloque `image_url`, en el mismo orden en que llegaron.
  */
 export function construirContenidoUsuarioVerificador(
   pedido: string,
   html: string,
-  capturaDataUrl?: string | null,
+  capturaDataUrl?: string | string[] | null,
 ): string | ContentPart[] {
   const texto = construirUsuarioVerificador(pedido, html);
-  if (!capturaDataUrl) return texto;
+  const capturas = Array.isArray(capturaDataUrl) ? capturaDataUrl.filter(Boolean) : capturaDataUrl ? [capturaDataUrl] : [];
+  if (capturas.length === 0) return texto;
   return [
     { type: 'text', text: texto },
-    { type: 'image_url', image_url: { url: capturaDataUrl } },
+    ...capturas.map((url): ContentPart => ({ type: 'image_url', image_url: { url } })),
   ];
 }
 

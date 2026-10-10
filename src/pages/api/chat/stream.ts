@@ -1496,6 +1496,47 @@ export const POST: APIRoute = async ({ request, locals }) => {
           recuperacionDeEdicionIntentada = true;
           reintentosRealizados += 1;
           await consumir(reintentoEdicion);
+
+          /**
+           * odd/tasks/motor-claude.md (T4 round 5): la recuperación de
+           * arriba ya le dio al modelo la chance de corregir el
+           * `edit_resource_code` o caer a `update_resource_code` por su
+           * propia cuenta (`soloEdicion: false`, `tool_choice: 'required'`)
+           * — pero un modelo bajo esfuerzo bajo puede repetir el mismo
+           * fragmento fallido (ej. un `find === replace`, ver round 3/4) en
+           * vez de elegir la reescritura. Si DESPUÉS de esa recuperación
+           * seguimos sin código, se intenta UNA vez más forzando
+           * `update_resource_code` POR NOMBRE (`editsEnabled: false`, única
+           * herramienta ofrecida) — ya no es una opción, es la única salida.
+           * Recién si esto también falla se reporta el fallo honestamente
+           * (abajo, `editOutcome`).
+           */
+          if (estadoEdicion.ultimoFallo && !generatedHtml) {
+            console.warn(
+              `[chat/stream] la recuperación de edición también falló (${estadoEdicion.ultimoFallo.detalle}); se intenta una reescritura completa a los ${transcurrido()}`,
+            );
+            reiniciarCodeDelta();
+            send({ type: 'notice', message: 'Tampoco se pudo aplicar como cambio puntual. Reescribo el recurso completo…' });
+
+            const detalleFallo = estadoEdicion.ultimoFallo.detalle;
+            const reescrituraCompleta = await requestCompletionStream({
+              messages: [
+                ...messages,
+                { role: 'assistant', content: assistantText },
+                {
+                  role: 'user',
+                  content: `Los cambios puntuales no se pudieron aplicar (${detalleFallo}). Devolvé AHORA el documento HTML COMPLETO con el pedido del docente ya aplicado, partiendo del HTML actual (el bloque de arriba) y respetando todo lo demás que no pediste cambiar.`,
+                },
+              ],
+              provider: proveedorUsado,
+              signal: turnoAbort.signal,
+              forzarHerramienta: true,
+              editsEnabled: false,
+            });
+
+            reintentosRealizados += 1;
+            await consumir(reescrituraCompleta);
+          }
         }
 
         /**

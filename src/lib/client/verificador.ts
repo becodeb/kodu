@@ -148,15 +148,18 @@ export type ResultadoVerificar =
  * comportamiento de un motor sin visión queda sin cambios).
  */
 export async function verificarRecurso(
-  payload: { projectId: string; fingerprint: string; tipo: TipoVerificacion; captura?: string | null },
+  payload: { projectId: string; fingerprint: string; tipo: TipoVerificacion; captura?: string | string[] | null },
   signal?: AbortSignal,
 ): Promise<ResultadoVerificar | null> {
+  // T4 round 5: un array vacío cuenta como "no hay captura" (mismo
+  // criterio que el servidor, ver `verificar.ts`).
+  const hayCaptura = Array.isArray(payload.captura) ? payload.captura.length > 0 : Boolean(payload.captura);
   let response: Response;
   try {
     response = await fetch('/api/chat/verificar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload.captura ? payload : { projectId: payload.projectId, fingerprint: payload.fingerprint, tipo: payload.tipo }),
+      body: JSON.stringify(hayCaptura ? payload : { projectId: payload.projectId, fingerprint: payload.fingerprint, tipo: payload.tipo }),
       signal,
     });
   } catch {

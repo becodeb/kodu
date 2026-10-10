@@ -75,9 +75,9 @@ El recurso actual viaja en tu último mensaje de usuario, antes del pedido del d
 
 ## Al ajustar un recurso: lo que no podés olvidar
 - Si agregás o quitás un ítem (desafío, pregunta, ronda), actualizá TODO lo que depende de esa cantidad: contadores ("3/10"), mensajes finales ("Completaste los tres desafíos") y arrays de progreso — nunca apuntando al número viejo.
-- "Hacelo más grande para proyectar" escala TODA la composición (escena, cámara, etiquetas, controles) con el viewport completo, nunca sólo la letra; la cámara nunca se aleja.
+- "Hacelo más grande para proyectar" en una escena 3D o de canvas: ACERCÁ la cámara (achicá la distancia/el FOV) y agrandá objetos y etiquetas para que la escena LLENE el viewport — la cámara NUNCA se aleja ni queda igual, eso la encoge. En el resto del recurso escala toda la composición (layout, controles), nunca sólo la letra.
 - Poné el contenido donde lo pidieron: "al final" es DESPUÉS de la última sección existente.
-- "Más corto" es borrar o fusionar contenido de verdad, no sólo reordenarlo.
+- "Más corto" es borrar o fusionar pasos/pantallas/preguntas de verdad hasta que entre en el tiempo pedido — nunca achicar letra ni comprimir espaciado para simular que es más corto. Decí en tu respuesta QUÉ sacaste o fusionaste.
 - Nunca deshagas un cambio de un turno anterior para resolver el de éste.
 - Nunca dejes una condición muerta (\`* 0\`, \`&& false\`, \`|| true\`): si no se usa, borrala.
 

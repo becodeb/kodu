@@ -71,7 +71,7 @@ export const EDIT_RESOURCE_TOOL: AiTool = {
   function: {
     name: EDIT_RESOURCE_CODE,
     description:
-      'Edita el HTML actual del recurso aplicando una lista de reemplazos de texto puntuales, sin reescribir el documento entero. Preferila para cambios localizados (un texto, un color, una función). Usá update_resource_code cuando el pedido reestructura el recurso o cuando el cambio toca más o menos un tercio del documento o más. Cada "find" tiene que ser una copia EXACTA (mismos espacios y saltos de línea) de un fragmento que aparece UNA SOLA VEZ en el HTML actual: si alguno no matchea exactamente una vez, no se aplica NINGÚN cambio.',
+      'Edita el HTML actual del recurso aplicando una lista de reemplazos de texto puntuales, sin reescribir el documento entero. Preferila para cambios localizados (un texto, un color, una función). Usá update_resource_code cuando el pedido reestructura el recurso o cuando el cambio toca más o menos un tercio del documento o más. Cada "find" tiene que ser una copia EXACTA (mismos espacios y saltos de línea) de un fragmento que aparece UNA SOLA VEZ en el HTML actual: si alguno no matchea exactamente una vez, no se aplica NINGÚN cambio. Para AGREGAR contenido nuevo (por ejemplo "al final" o después de una sección existente), el "find" es el ancla (el texto exacto después del cual va lo nuevo) y el "replace" tiene que contener ESE MISMO texto del "find" MÁS el contenido agregado a continuación — "replace" nunca puede quedar idéntico a "find", eso no agrega nada.',
     parameters: {
       type: 'object',
       properties: {
@@ -88,7 +88,8 @@ export const EDIT_RESOURCE_TOOL: AiTool = {
               },
               replace: {
                 type: 'string',
-                description: 'Texto que reemplaza al find encontrado.',
+                description:
+                  'Texto que reemplaza al find encontrado. Para agregar algo nuevo, incluí el texto del find COMPLETO más lo agregado (nunca igual al find).',
               },
             },
             required: ['find', 'replace'],
