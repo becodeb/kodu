@@ -1458,3 +1458,119 @@ only disabled it temporarily to get a clean test read, then restored it).
 - The per-turn raw export (`/admin/trazas`, pseudonymized) now also carries
   `generationMode`/`turnRole`/`parentChatMessageId`/`selfTestDurationMs`/
   `redFlags`/`redFlagsFixed` for anyone who wants to re-aggregate by hand.
+
+## Pre-deploy review fixes (2026-10-13)
+
+An independent production review of this branch raised 9 findings. Each was
+verified against the code before changing anything; 8 were real and fixed,
+one was not (see below). No schema/migration changes were needed for any of
+these — all fixes used existing columns, preset-level data, or were purely
+client/server logic.
+
+- **#1 (claimed HIGH, empty-assistant-message 400) — NOT reproducible,
+  reverted.** The finding claimed that `stream.ts`'s three retry paths
+  (`{role:'assistant', content: assistantText}` with `assistantText === ''`)
+  produce an empty-content assistant message that Anthropic's Messages API
+  rejects with 400 for a non-final turn, killing Haiku turns before the
+  no-op/round-5 fallback can run. Implemented the suggested fix
+  (`aAnthropicMessages` substitutes a placeholder instead of `''`), then
+  ran a real verification against `claude-haiku-5-5`
+  (`set -a; . ~/.credentials/anthropic-kodu.env; set +a`) reproducing the
+  EXACT message shape `stream.ts` builds (bare empty-string assistant
+  content, with/without tools, with/without forced `tool_choice`, with
+  `thinking: adaptive` and `thinking: disabled`, streaming and
+  non-streaming): every variant completed without a 400. Anthropic's API
+  does reject an explicit empty **text block** inside a content array
+  (`"text content blocks must be non-empty"`) and a dangling `tool_use`
+  without a following `tool_result` — neither of which this codebase's
+  `aAnthropicMessages` can produce (it only ever emits a bare string when
+  there are no blocks, and `ChatMessage` never carries `tool_calls` at
+  these synthetic call sites) — but a bare empty string, or an empty
+  array, are both accepted. Reverted the code change and the test
+  addition; left `aAnthropicMessages` byte-for-byte as it was. Real spend
+  for this investigation: well under $0.01 (several tiny Haiku probes,
+  `max_tokens` 16-4096, most hit the cap or finished in a few dozen
+  tokens) — not logged to `gasto.json` (same convention as the T11
+  accidental-spend note above: a throwaway probe script, not a
+  `correr.ts` run).
+- **#2 (MEDIUM, vision reviewer manual setup)**: `presets.ts` gained
+  `defaultSupportsVision`/`defaultSelectableByTeacher`-style defaults —
+  Haiku 5.5 now defaults `supportsVision: true` on creation (admin can
+  still uncheck it). `POST /api/admin/models` gained `isVerifier` in its
+  schema (it was silently dropped before — the form's checkbox had no
+  effect on a brand-new model) and auto-sets `isVerifier: true` on the
+  first model created from the Haiku preset when no verifier exists yet,
+  respecting "at most one" via the same transaction pattern the PATCH
+  route already used. `/admin/generacion` shows an amber warning with a
+  one-click "Usar Haiku 5.5 como revisor" button when `motorVerificador()`
+  returns null, PATCHing the existing admin models endpoint.
+- **#3 (MEDIUM, silent auto-fix races)**: the reviewer's silent auto-fix
+  (T5, `usoVision`/`banderaDeterministica`) used an untracked
+  `AbortController` — `cancelarVerificacion` (new message/undo/manual
+  edit) had no reference to cut it. Added `correccionSilenciosaRef`,
+  aborted/cleared alongside the main verification controller, plus a
+  `signal.aborted` guard right before `setHtml` inside
+  `aplicarCorreccionDesdeVerificador` (closes the race between a server
+  event arriving and the abort taking effect — safe because JS has no
+  true preemption). `autocorreccion.ts`'s write is now
+  `updateMany({where: {id, currentHtml: htmlPreCorreccion}})`: a 0-count
+  no-op skips the `{type:'code'}` SSE event instead of overwriting a
+  newer edit with a stale result.
+- **#4 (MEDIUM)**: `new Anthropic({..., maxRetries: 0})` — the SDK's own
+  retries were stacking under `stream.ts`'s existing retry/fallback loop.
+- **#5 (MEDIUM, premium defaults + spend cutoff)**: Sonnet/Opus presets
+  default `selectableByTeacher: false` (Haiku stays `true`); both defaults
+  live only at creation time (`ModeloForm.tsx`'s preset picker, and
+  `POST /api/admin/models` when the field is omitted), never forced over
+  an explicit value. Closed the gap where `engineChosenByTeacher` bypassed
+  `modoEfectivo`'s premium-spend cutoff entirely: `motorDeGeneracion` now
+  takes a lazy `presupuestoPremiumAgotado` callback and falls back to the
+  base role for a teacher-chosen Sonnet/Opus engine once the cycle's
+  premium budget is exhausted (logged once per model+role). The callback
+  is only invoked when the chosen engine is actually premium (name match,
+  same convention as `provider.ts`'s `model.includes('haiku')`), so a
+  teacher-chosen Haiku engine never pays the extra (cached, 60s TTL)
+  spend query.
+- **#6 (LOW, oversized capture / upscale / disabled cache)**: split
+  `verificar.ts`'s capture bound into an abuse ceiling (20MB, schema-level)
+  and a usable ceiling (2MB, same as before) — over the usable bound the
+  capture is dropped and the review continues text-only, instead of 422
+  for the whole request. `preview.ts`'s page-complete capture no longer
+  upscales a narrower resource past its natural width before downscaling.
+  The "skip capture when the verifier is known-disabled" part was already
+  correctly implemented (`verificadorDesactivadoRef`, checked as the
+  very first line of `iniciarVerificacion`, before any capture) — verified
+  against the code, no change needed there.
+- **#7 (LOW, Haiku long-context tier)**: `Precios.longContext` (threshold
+  + 4 tier rates) wired into `calcularCostoTurno` and the Haiku 5.5 preset
+  (100K tokens, 5x: 0.50/0.05/0.625/2.50) — before this, `provider.ts` only
+  logged a warning past 100K prompt tokens; the cost was still computed at
+  the short-context rate.
+- **#8 (LOW, unconditional preserveDrawingBuffer patch)**:
+  `buildPreviewDocument` takes an optional `conRevisor` flag (wired from
+  `PreviewPanel`/`Workspace`'s `verificadorActivo`); the WebGL patch is
+  only injected when a verifier is actually configured for the project.
+  Gallery/published views were already unaffected (confirmed: `/p/[slug]`
+  serves the saved HTML directly, `buildPreviewDocument` is only reachable
+  from the editor's `PreviewPanel`).
+- **#9 (LOW, KODU_DEBUG_* flags)**: added `debugFlagActivo()` (env.ts,
+  `"1"`/`"true"` only) and applied it to all four `KODU_DEBUG_*` checks —
+  `autocorreccion.ts`'s two checks previously enabled on ANY non-empty
+  value, including `"0"`/`"false"` set by mistake.
+
+**Verification run**: `npm run check` clean after every commit; all
+`e2e/unidad*.ts` (26 files) pass. Live, against this worktree's dev server
+(restarted fresh after all code changes) with the dev DB's 24 enabled real
+Anthropic `AiProvider` rows temporarily disabled for the run (same T11
+mitigation, restored to `enabled: true` immediately after — confirmed 24/24
+restored, and zero new real-API `TokenUsage` rows in the 20 minutes around
+the run): `t11-autoprueba.ts`, `verificador-endpoint.ts`,
+`verificador-editor.ts`, `m2-catalogo.ts` — all pass. No migration was added,
+so no fresh-DB migration check was needed. `gasto.json` (claude-exp
+worktree) untouched (confirmed by mtime/checksum, last written before this
+session). Total real API spend this session: under $0.01, all from the
+disproven finding #1's investigation — well under the $0.08 task cap.
+
+**Commits** (`feat/motor-claude`, not pushed): `c4742bd` (#4),
+`83818b2` (#9), `95fbd29` (#7), `142fce9` (#5), `db89689` (#6/#8),
+`58a3940` (#3), `0534f6c` (#2).
