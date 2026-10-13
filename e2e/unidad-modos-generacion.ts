@@ -13,7 +13,7 @@ import {
   finDelCiclo,
   proyeccionDeCierre,
 } from '../src/lib/ai/modos-generacion.ts';
-import { invalidarCatalogo, motorParaRol, motorDeGeneracion } from '../src/lib/ai/catalogo.ts';
+import { invalidarCatalogo, motorParaRol, motorDeGeneracion, type FilaConProveedor } from '../src/lib/ai/catalogo.ts';
 
 /**
  * T7 (motor-claude): pruebas de `src/lib/ai/modos-generacion.ts` (puras,
@@ -172,7 +172,7 @@ async function limpiar(): Promise<void> {
 
 try {
   providerId = randomUUID();
-  await prisma.aiProvider.create({
+  const provider = await prisma.aiProvider.create({
     data: {
       id: providerId,
       kind: `test-modos-${SUFIJO}`,
@@ -241,6 +241,16 @@ try {
 
   invalidarCatalogo();
 
+  // Catálogo en memoria con SÓLO las tres filas de esta prueba (sin ningún
+  // motor de Opus) — para las dos pruebas de respaldo más abajo, que
+  // necesitan que NINGÚN motor satisfaga el preset "claude-opus-5-5". El
+  // catálogo real (`filasDelCatalogo()`) es de toda la instancia a propósito
+  // (ver comentario de `motorPorPresetKey`), así que no se puede garantizar
+  // eso contra la base compartida sin apagar una fila real que esta prueba
+  // no creó — exactamente lo que esta tarea prohíbe. `filasOverride` deja
+  // probar la función pura con un catálogo fijo, sin ese problema.
+  const filasPropias: FilaConProveedor[] = [haiku, sonnet, personalizado].map((fila) => ({ ...fila, provider }));
+
   await prueba('motorParaRol: "base"/creation resuelve al motor enlazado al preset de Haiku, esfuerzo "low"', async () => {
     const config = await motorParaRol('base', 'creation', { creationModelId: null, adjustmentModelId: null });
     assert.equal(config?.id, haikuId);
@@ -265,8 +275,12 @@ try {
   });
 
   await prueba('motorParaRol: "todo-opus"/creation sin ningún motor de Opus habilitado cae a "base" (nunca null)', async () => {
-    const config = await motorParaRol('todo-opus', 'creation', { creationModelId: null, adjustmentModelId: null });
-    assert.equal(config?.id, haikuId, 'ningún motor con presetKey claude-opus-5-5 está habilitado en esta prueba');
+    // `filasPropias` (ver arriba): un catálogo en memoria SIN ningún motor
+    // de Opus, para no depender de que la base compartida no tenga una fila
+    // real enlazada a "claude-opus-5-5" habilitada (otras rondas de este
+    // mismo task sí la dejaron, legítimamente, encendida).
+    const config = await motorParaRol('todo-opus', 'creation', { creationModelId: null, adjustmentModelId: null }, filasPropias);
+    assert.equal(config?.id, haikuId, 'ningún motor con presetKey claude-opus-5-5 está habilitado en este catálogo de prueba');
   });
 
   await prueba('motorParaRol: "personalizado" con un motor elegido devuelve ESE motor tal cual (esfuerzo propio, sin pisar)', async () => {
@@ -321,28 +335,28 @@ try {
   await prueba(
     'motorDeGeneracion: si NI el modo pedido NI "base" tienen su preset configurado, respeta el motor que YA tenía el proyecto (nunca el default global)',
     async () => {
-      // "todo-opus" no tiene motor de Opus habilitado en esta prueba, y
-      // tampoco hay NADA enlazado al preset de Haiku en este sub-catálogo
-      // artificial (se simula apagando momentáneamente el único motor
-      // Haiku de la prueba) — el respaldo tiene que ser el propio
-      // `project.aiModelId` (el motor "personalizado", sin presetKey, que
+      // "todo-opus" no tiene motor de Opus habilitado, y tampoco hay NADA
+      // enlazado al preset de Haiku (`'base'`) en este sub-catálogo
+      // artificial (`filasSinPresets`: sólo el motor "personalizado", sin
+      // `presetKey` — ni haiku ni sonnet ni opus) — el respaldo tiene que
+      // ser el propio `project.aiModelId` (el motor "personalizado", que
       // representa cualquier proyecto ajeno al sistema de modos), nunca
-      // `motorPorDefecto()` de toda la instalación.
-      await prisma.aiModel.update({ where: { id: haikuId! }, data: { enabled: false } });
-      invalidarCatalogo();
-      try {
-        const config = await motorDeGeneracion({
-          modelIdExplicitoDelPedido: null,
-          project: { aiModelId: personalizadoId, engineChosenByTeacher: false },
-          esCreacion: true,
-          settings: { generationMode: 'todo-opus', creationModelId: null, adjustmentModelId: null },
-        });
-        assert.equal(config?.id, personalizadoId);
-        assert.equal(config?.reasoningEffort, 'high', 'el respaldo es normalizarMotor: no pisa el esfuerzo del motor');
-      } finally {
-        await prisma.aiModel.update({ where: { id: haikuId! }, data: { enabled: true } });
-        invalidarCatalogo();
-      }
+      // `motorPorDefecto()` de toda la instalación. Antes esto se probaba
+      // apagando la fila real de Haiku de esta prueba, pero eso no alcanza
+      // contra la base compartida: otras filas reales con el mismo preset
+      // (de rondas anteriores de esta misma tarea) seguirían resolviendo
+      // "base" igual — de ahí el catálogo en memoria, sin tocar ninguna fila
+      // real.
+      const filasSinPresets: FilaConProveedor[] = [personalizado].map((fila) => ({ ...fila, provider }));
+      const config = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: null,
+        project: { aiModelId: personalizadoId, engineChosenByTeacher: false },
+        esCreacion: true,
+        settings: { generationMode: 'todo-opus', creationModelId: null, adjustmentModelId: null },
+        filasOverride: filasSinPresets,
+      });
+      assert.equal(config?.id, personalizadoId);
+      assert.equal(config?.reasoningEffort, 'high', 'el respaldo es normalizarMotor: no pisa el esfuerzo del motor');
     },
   );
 

@@ -8,7 +8,7 @@ import { presetByKey, preciosDePreset } from './presets.ts';
 import { MODES, MODO_PERSONALIZADO_KEY, modeByKey, type RoleSpec } from './modos-generacion.ts';
 
 /** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
-type FilaConProveedor = AiModel & { provider: AiProvider };
+export type FilaConProveedor = AiModel & { provider: AiProvider };
 
 /**
  * El catálogo de motores, leído desde `AiModel` (design.md §5).
@@ -320,13 +320,27 @@ const modosDeRespaldoLogueados = new Set<string>();
  *     una vez la primera vez que pasa esto para esa combinación modo+rol).
  *  4. `null` si ni el modo pedido ni `'base'` tienen un motor habilitado
  *     con ese preset — el llamador decide el respaldo final.
+ *
+ * `filasOverride` (unidad-modos-generacion.ts): el catálogo es
+ * INSTANCIA-WIDE a propósito (ver el comentario de `motorPorPresetKey`) —
+ * cualquier motor real habilitado en OTRA cuenta/experimento, con el mismo
+ * `presetKey` que pide un modo, entra en el mismo `.find()` que un motor de
+ * prueba. Eso hace que una prueba que afirma "ningún motor de Opus
+ * habilitado" deje de ser verdad en cuanto una ronda real (`crea-opus`,
+ * `todo-opus`) deja un motor Opus habilitado en la base de dev — no es un
+ * dato que la prueba deba (ni pueda, sin apagar una fila real que no creó)
+ * controlar. Este parámetro opcional, nunca usado por los llamadores reales
+ * (`stream.ts`/`autocorreccion.ts` jamás lo pasan), deja a una prueba fijar
+ * el catálogo entero en memoria para probar la función pura sin depender
+ * del estado de la base compartida.
  */
 async function resolverRolDeModo(
   modeKey: string,
   role: 'creation' | 'adjustment',
   opts: { creationModelId: string | null; adjustmentModelId: string | null },
+  filasOverride?: FilaConProveedor[],
 ): Promise<ProviderConfig | null> {
-  const filas = await filasDelCatalogo();
+  const filas = filasOverride ?? (await filasDelCatalogo());
 
   if (modeKey === MODO_PERSONALIZADO_KEY) {
     const elegidoId = role === 'creation' ? opts.creationModelId : opts.adjustmentModelId;
@@ -335,7 +349,7 @@ async function resolverRolDeModo(
       const config = construirConfig(fila);
       if (tieneClaveUtilizable(config)) return config;
     }
-    return resolverRolDeModo('base', role, opts);
+    return resolverRolDeModo('base', role, opts, filasOverride);
   }
 
   const modo = modeByKey(modeKey) ?? MODES.base!;
@@ -371,8 +385,9 @@ export async function motorParaRol(
   modeKey: string,
   role: 'creation' | 'adjustment',
   opts: { creationModelId: string | null; adjustmentModelId: string | null },
+  filasOverride?: FilaConProveedor[],
 ): Promise<ProviderConfig | null> {
-  const resuelto = await resolverRolDeModo(modeKey, role, opts);
+  const resuelto = await resolverRolDeModo(modeKey, role, opts, filasOverride);
   return resuelto ?? motorPorDefecto();
 }
 
@@ -400,15 +415,22 @@ export async function motorDeGeneracion(params: {
   project: { aiModelId: string | null; engineChosenByTeacher: boolean };
   esCreacion: boolean;
   settings: { generationMode: string; creationModelId: string | null; adjustmentModelId: string | null };
+  /** Ver el comentario de `resolverRolDeModo` — sólo para pruebas unitarias. */
+  filasOverride?: FilaConProveedor[];
 }): Promise<ProviderConfig | null> {
   if (params.project.engineChosenByTeacher) {
     return normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
   }
 
-  const porModo = await resolverRolDeModo(params.settings.generationMode, params.esCreacion ? 'creation' : 'adjustment', {
-    creationModelId: params.settings.creationModelId,
-    adjustmentModelId: params.settings.adjustmentModelId,
-  });
+  const porModo = await resolverRolDeModo(
+    params.settings.generationMode,
+    params.esCreacion ? 'creation' : 'adjustment',
+    {
+      creationModelId: params.settings.creationModelId,
+      adjustmentModelId: params.settings.adjustmentModelId,
+    },
+    params.filasOverride,
+  );
 
   return porModo ?? normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
 }
