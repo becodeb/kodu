@@ -158,7 +158,16 @@ export type ResultadoVerificar =
  * comportamiento de un motor sin visión queda sin cambios).
  */
 export async function verificarRecurso(
-  payload: { projectId: string; fingerprint: string; tipo: TipoVerificacion; captura?: string | string[] | null },
+  payload: {
+    projectId: string;
+    fingerprint: string;
+    tipo: TipoVerificacion;
+    captura?: string | string[] | null;
+    /** T11 (motor-claude): cuánto tardó la autoprueba del navegador en este
+     *  turno, si se pudo medir (`ejecutarAutopruebaYCorreccion` en
+     *  Workspace.tsx) — mismo round-trip, ningún viaje de red nuevo. */
+    selfTestDurationMs?: number | null;
+  },
   signal?: AbortSignal,
 ): Promise<ResultadoVerificar | null> {
   // T4 round 5: un array vacío cuenta como "no hay captura" (mismo
@@ -169,7 +178,13 @@ export async function verificarRecurso(
     response = await fetch('/api/chat/verificar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(hayCaptura ? payload : { projectId: payload.projectId, fingerprint: payload.fingerprint, tipo: payload.tipo }),
+      body: JSON.stringify({
+        projectId: payload.projectId,
+        fingerprint: payload.fingerprint,
+        tipo: payload.tipo,
+        ...(hayCaptura ? { captura: payload.captura } : {}),
+        ...(typeof payload.selfTestDurationMs === 'number' ? { selfTestDurationMs: payload.selfTestDurationMs } : {}),
+      }),
       signal,
     });
   } catch {

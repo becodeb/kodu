@@ -1700,6 +1700,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
           durationMs: Date.now() - arranque,
           considerarPreguntaFeedback: true,
           esPrimeraGeneracion: recursoInicial,
+          // T11 (motor-claude): el modo EFECTIVO con el que corrió ESTE
+          // turno (ya calculado arriba para elegir `provider`) y el rol que
+          // jugó — GENERATION/CHECKLIST sólo llegan acá como `recursoInicial`
+          // (checklist es su propio turnKind, no pasa por este bloque).
+          generationMode: modoEfectivoActivo ?? settings.generationMode,
+          turnRole: recursoInicial ? 'creation' : 'adjustment',
         });
 
         /**

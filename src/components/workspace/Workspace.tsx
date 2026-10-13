@@ -228,6 +228,14 @@ export default function Workspace(props: WorkspaceProps) {
    *  fetch on any of those"). `null` cuando no hay ninguna corriendo. */
   const verificacionRef = useRef<{ fingerprint: string; controller: AbortController } | null>(null);
 
+  /** T11 (motor-claude): cuánto tardó la ÚLTIMA autoprueba del navegador en
+   *  este turno (`resultado.detalles.duracionMs`, medida con
+   *  `performance.now()` dentro del iframe sandboxeado) — `iniciarVerificacion`
+   *  la lee y la manda en el mismo pedido a `/api/chat/verificar` (ningún
+   *  viaje de red nuevo), y la vacía después de leerla para que un turno sin
+   *  self-test medible nunca reuse el valor de uno anterior. */
+  const ultimoSelfTestDuracionRef = useRef<number | null>(null);
+
   /** T5 (motor-claude, revisor visual): la captura silenciosa que
    *  `PreviewPanel` registra una vez al montar (`onCapturadorListo`). `null`
    *  hasta que el panel monta — `iniciarVerificacion` lo trata como "no se
@@ -893,6 +901,11 @@ export default function Workspace(props: WorkspaceProps) {
 
       if (!resultado) return htmlActual; // timeout o "Detener": no se pudo probar, nada que avisar.
 
+      // T11 (motor-claude): se guarda la duración de ESTA pasada de la
+      // autoprueba (la última ronda gana, si hubo más de una) — ver el
+      // comentario del ref.
+      ultimoSelfTestDuracionRef.current = resultado.detalles.duracionMs ?? null;
+
       // T17: se guarda ANTES de decidir si hace falta corregir — así, si
       // esta era la última ronda (sana o no), T18 tiene el resultado real
       // de ESTE recurso, no el de una ronda anterior.
@@ -1012,7 +1025,13 @@ export default function Workspace(props: WorkspaceProps) {
       : await (capturadorRevisorRef.current?.({ formato: 'jpeg', calidad: 0.8, anchoMax: 1280, paginaCompleta: true }) ??
           Promise.resolve(null));
 
-    const resultado = await verificarRecurso({ projectId, fingerprint, tipo, captura }, controller.signal);
+    // T11 (motor-claude): se lee y se vacía ACÁ (no al final): si esta
+    // verificación se aborta más abajo y una posterior arranca sin haber
+    // corrido un self-test nuevo, no hay que dejarle un valor viejo.
+    const selfTestDurationMs = ultimoSelfTestDuracionRef.current;
+    ultimoSelfTestDuracionRef.current = null;
+
+    const resultado = await verificarRecurso({ projectId, fingerprint, tipo, captura, selfTestDurationMs }, controller.signal);
 
     // Si mientras tanto el HTML cambió, `cancelarVerificacion` ya abortó
     // ESTE `controller` y vació `verificacionRef` (o lo reemplazó por el de

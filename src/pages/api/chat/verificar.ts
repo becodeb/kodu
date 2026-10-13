@@ -28,7 +28,8 @@ import {
 } from '../../../lib/ai/verificador.ts';
 import { computarDiffTurno, detectarBanderasRojas, resumenDiffParaRevisor } from '../../../lib/ai/turno-diff.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
-import { recordAiTrace } from '../../../lib/ai/trace.ts';
+import { recordAiTrace, ultimoChatMessageIdDelProyecto, vincularUsosALaRonda } from '../../../lib/ai/trace.ts';
+import { modoEfectivo, gastoDelCicloActual } from '../../../lib/ai/modos-generacion.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
@@ -81,6 +82,17 @@ const schema = z.object({
    * fuera del primer viewport. Un string único sigue andando igual.
    */
   captura: z.union([z.string().max(2_000_000), z.array(z.string().max(2_000_000)).max(2)]).nullish(),
+  /**
+   * T11 (motor-claude): cuánto tardó la autoprueba del navegador en ESTE
+   * turno, medida del lado del CLIENTE (`performance.now()` dentro del
+   * iframe sandboxeado — `kit.ts#ejecutarAutopruebaEnIframe`). Viaja acá (y
+   * no en un endpoint nuevo) porque `/api/chat/verificar` ya corre SIEMPRE
+   * justo después de la autoprueba, pase lo que pase con ella (ver
+   * Workspace.tsx) — es el primer round-trip existente disponible, no uno
+   * agregado para esto. Opcional/nullable: un cliente viejo, o un turno sin
+   * medición, simplemente no lo manda.
+   */
+  selfTestDurationMs: z.number().int().min(0).max(600_000).nullish(),
 });
 
 /** 150 s por pasada (la tarea lo fija así): un revisor que relee el HTML
@@ -96,6 +108,11 @@ interface ResultadoPasada {
   /** `null` = la pasada falló (red, timeout, abort) o no dio un JSON
    *  parseable — las dos cuentan como "pasada fallida" para el llamador. */
   problemas: Problema[] | null;
+  /** T11 (motor-claude): el id de la fila `TokenUsage` que esta pasada
+   *  logueó (si hubo `usage`) — para vincularla a la traza de la ronda
+   *  entera una vez que exista (`vincularUsosALaRonda`). `null` sin uso
+   *  registrado, o si `recordUsage` falló. */
+  tokenUsageId: string | null;
 }
 
 /**
@@ -139,8 +156,9 @@ async function ejecutarPasada(args: {
       else if (event.type === 'usage') usage = event.usage;
     }
 
+    let tokenUsageId: string | null = null;
     if (usage) {
-      await recordUsage({
+      const registroDeUso = await recordUsage({
         userId: args.userId,
         projectId: args.projectId,
         aiModelId: args.provider.id,
@@ -152,7 +170,11 @@ async function ejecutarPasada(args: {
         precios: args.provider.precios,
         schedule: args.provider.schedule,
         purpose: 'VERIFICATION',
-      }).catch((error) => console.error('[chat/verificar] no se pudo registrar el consumo de una pasada:', error));
+      }).catch((error) => {
+        console.error('[chat/verificar] no se pudo registrar el consumo de una pasada:', error);
+        return null;
+      });
+      tokenUsageId = registroDeUso?.id ?? null;
     }
 
     const parseado = parsearVerificacion(texto);
@@ -160,12 +182,12 @@ async function ejecutarPasada(args: {
       console.warn(
         `[chat/verificar] proyecto=${args.projectId}: pasada sin JSON parseable (${texto.length} caracteres recibidos)`,
       );
-      return { problemas: null };
+      return { problemas: null, tokenUsageId };
     }
-    return { problemas: parseado.problemas };
+    return { problemas: parseado.problemas, tokenUsageId };
   } catch (error) {
     console.error(`[chat/verificar] proyecto=${args.projectId}: pasada falló:`, error);
-    return { problemas: null };
+    return { problemas: null, tokenUsageId: null };
   } finally {
     clearTimeout(timeout);
     args.signalExterno.removeEventListener('abort', onAbortExterno);
@@ -193,7 +215,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   if (!parsed.success) {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
-  const { projectId, fingerprint, tipo, captura } = parsed.data;
+  const { projectId, fingerprint, tipo, captura, selfTestDurationMs } = parsed.data;
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -315,20 +337,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const cantidadPasadas = usaVision ? 1 : tipo === 'nuevo' ? 2 : 1;
   const arranque = Date.now();
-  const resultados = await Promise.all(
-    Array.from({ length: cantidadPasadas }, () =>
-      ejecutarPasada({
-        messages,
-        provider,
-        userId: user.id,
-        projectId: project.id,
-        signalExterno: request.signal,
-        razonamiento: usaVision ? razonamientoRevisorVisual(provider) : undefined,
-      }),
-    ),
-  );
 
-  const listasOk = resultados.filter((r): r is { problemas: Problema[] } => r.problemas !== null);
+  // T11 (motor-claude): el modo EFECTIVO activo ahora (mismo criterio que
+  // `stream.ts`/`autocorreccion.ts`) y el `chatMessageId` del turno que
+  // disparó esta verificación (ninguno de los dos cambia el camino real del
+  // verificador — `motorVerificador()` sigue mandando — son sólo lo que se
+  // guarda en la traza).
+  const [modoEfectivoActivo, parentChatMessageId, resultados] = await Promise.all([
+    project.engineChosenByTeacher
+      ? Promise.resolve(null)
+      : gastoDelCicloActual(settings.billingCycleDay).then((gasto) =>
+          modoEfectivo(settings.generationMode, gasto, settings.premiumUntilUsd.toNumber()),
+        ),
+    ultimoChatMessageIdDelProyecto(project.id),
+    Promise.all(
+      Array.from({ length: cantidadPasadas }, () =>
+        ejecutarPasada({
+          messages,
+          provider,
+          userId: user.id,
+          projectId: project.id,
+          signalExterno: request.signal,
+          razonamiento: usaVision ? razonamientoRevisorVisual(provider) : undefined,
+        }),
+      ),
+    ),
+  ]);
+
+  const listasOk = resultados.filter((r): r is ResultadoPasada & { problemas: Problema[] } => r.problemas !== null);
   const fallidas = resultados.length - listasOk.length;
 
   // T4 round 6: los problemas sintéticos de las banderas rojas determinísticas
@@ -343,7 +379,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     // parseable. Cada pasada ya registró su propia fila de `TokenUsage`
     // (dentro de `ejecutarPasada`) — acá no hay un `tokenUsageId` único que
     // vincular, se deja sin vincular (ver el comentario de `trace.ts`).
-    await recordAiTrace({
+    const trazaFallida = await recordAiTrace({
       userId: user.id,
       projectId: project.id,
       turnKind: 'VERIFICATION',
@@ -352,7 +388,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
       requestText: pedido,
       durationMs: Date.now() - arranque,
       verifierFindings: problemasDeterministicos.length > 0 ? problemasDeterministicos.length : null,
+      generationMode: modoEfectivoActivo ?? settings.generationMode,
+      parentChatMessageId,
+      selfTestDurationMs: selfTestDurationMs ?? null,
+      redFlags: banderasRojas.length > 0 ? banderasRojas.map((bandera) => bandera.motivo) : null,
     });
+    if (trazaFallida) {
+      void vincularUsosALaRonda(trazaFallida.id, resultados.map((r) => r.tokenUsageId).filter((id): id is string => id !== null));
+    }
     // T4 round 6: aunque las pasadas del modelo fallaron todas, la bandera
     // determinística no depende del modelo — si disparó, sigue siendo
     // evidencia accionable; sin eso, nada que reportar (como siempre).
@@ -377,7 +420,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     );
   }
 
-  await recordAiTrace({
+  const traza = await recordAiTrace({
     userId: user.id,
     projectId: project.id,
     turnKind: 'VERIFICATION',
@@ -386,7 +429,14 @@ export const POST: APIRoute = async ({ request, locals }) => {
     requestText: pedido,
     durationMs: Date.now() - arranque,
     verifierFindings: problemas.length,
+    generationMode: modoEfectivoActivo ?? settings.generationMode,
+    parentChatMessageId,
+    selfTestDurationMs: selfTestDurationMs ?? null,
+    redFlags: banderasRojas.length > 0 ? banderasRojas.map((bandera) => bandera.motivo) : null,
   });
+  if (traza) {
+    void vincularUsosALaRonda(traza.id, resultados.map((r) => r.tokenUsageId).filter((id): id is string => id !== null));
+  }
 
   return ok({
     estado: 'ok',
