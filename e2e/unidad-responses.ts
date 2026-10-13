@@ -282,7 +282,7 @@ await prueba('readCompletionStream (responses): response.output_text.delta produ
   );
   assert.deepEqual(
     eventos.find((e) => e.type === 'usage'),
-    { type: 'usage', usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1 } },
+    { type: 'usage', usage: { promptTokens: 10, completionTokens: 2, cachedTokens: 1, cacheWriteTokens: 0 } },
   );
   assert.deepEqual(eventos.find((e) => e.type === 'finish'), { type: 'finish', reason: 'stop' });
 });
@@ -402,7 +402,7 @@ await prueba('mock-proveedor /v1/responses: round trip completo con requestCompl
     });
 
     let texto = '';
-    let usage: { promptTokens: number; completionTokens: number; cachedTokens: number } | null = null;
+    let usage: { promptTokens: number; completionTokens: number; cachedTokens: number; cacheWriteTokens: number } | null = null;
     let finishReason = '';
     for await (const event of readCompletionStream(respuesta, provider.apiFormat)) {
       if (event.type === 'text') texto += event.delta;
@@ -411,7 +411,7 @@ await prueba('mock-proveedor /v1/responses: round trip completo con requestCompl
     }
 
     assert.equal(texto, 'hola verificador');
-    assert.deepEqual(usage, { promptTokens: 42, completionTokens: 7, cachedTokens: 0 });
+    assert.deepEqual(usage, { promptTokens: 42, completionTokens: 7, cachedTokens: 0, cacheWriteTokens: 0 });
     assert.equal(finishReason, 'stop');
     assert.equal(mock.llamadas.length, 1);
     assert.equal((mock.llamadas[0]!.body as Record<string, unknown>).model, provider.model);
