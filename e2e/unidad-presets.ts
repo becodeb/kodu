@@ -79,6 +79,15 @@ await prueba('claude-sonnet-5-5/opus-5-5: sin tramo largo cargado (no es parte d
   assert.equal(preciosDePreset(PRESETS['claude-opus-5-5']!).longContext, undefined);
 });
 
+await prueba('Hallazgo de revisión: defaultSupportsVision — sólo Haiku 5.5 (el revisor visual designado) en true', () => {
+  assert.equal(PRESETS['claude-haiku-5-5']!.defaultSupportsVision, true);
+  assert.equal(PRESETS['claude-sonnet-5-5']!.defaultSupportsVision, false);
+  assert.equal(PRESETS['claude-opus-5-5']!.defaultSupportsVision, false);
+  assert.equal(PRESETS['deepseek-flash']!.defaultSupportsVision, false);
+  assert.equal(PRESETS['deepseek-v4-pro']!.defaultSupportsVision, false);
+  assert.equal(PRESETS['openai-gpt-6-luna']!.defaultSupportsVision, false);
+});
+
 await prueba('Hallazgo de revisión: defaultSelectableByTeacher — Sonnet/Opus en false, el resto en true', () => {
   assert.equal(PRESETS['claude-sonnet-5-5']!.defaultSelectableByTeacher, false);
   assert.equal(PRESETS['claude-opus-5-5']!.defaultSelectableByTeacher, false);

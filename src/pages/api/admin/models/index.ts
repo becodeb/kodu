@@ -40,6 +40,12 @@ const crearMotorSchema = z.object({
   priceCacheWritePerMToken: precioSchema,
   selectableByTeacher: z.boolean().optional(),
   supportsVision: z.boolean().optional(),
+  /** Hallazgo de revisión (motor-claude, pre-deploy): antes esta clave no
+   *  existía en el schema de ALTA — `ModeloForm.tsx` ya la mandaba en el
+   *  `payload` del checkbox "Es el verificador", pero zod la descartaba en
+   *  silencio (clave desconocida) y el motor nuevo nacía SIEMPRE con
+   *  `isVerifier: false`, sin importar el checkbox. */
+  isVerifier: z.boolean().optional(),
   maxOutputTokens: z.coerce.number().int().positive().max(1_000_000).optional(),
   reasoningEffort: z.enum(['none', 'low', 'medium', 'high']).nullable().optional(),
   reasoningParam: z.enum(['reasoning_effort', 'thinking', 'effort']).nullable().optional(),
@@ -84,6 +90,23 @@ export const POST: APIRoute = async ({ request }) => {
   const ultimo = await prisma.aiModel.findFirst({ orderBy: { sortOrder: 'desc' }, select: { sortOrder: true } });
   const sortOrder = (ultimo?.sortOrder ?? -1) + 1;
 
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): el revisor visual (T5)
+   * quedaba inerte hasta que el admin se acordara de prender
+   * `isVerifier` a mano en una pantalla aparte — un paso fácil de pasar
+   * por alto, sobre todo recién llegando de instalar el preset de Claude.
+   * El PRIMER motor creado desde el preset de Haiku 5.5 se marca
+   * `isVerifier` AUTOMÁTICAMENTE si todavía no hay NINGÚN verificador
+   * configurado — nunca pisa un `isVerifier` EXPLÍCITO en el pedido (el
+   * admin puede seguir creando un Haiku sin marcarlo, o marcando otro
+   * motor distinto), y sólo dispara esta UNA vez: la próxima vez que haya
+   * un motor con `isVerifier: true` (sea cual sea), esto no vuelve a
+   * disparar.
+   */
+  const yaHayVerificador = (await prisma.aiModel.count({ where: { isVerifier: true } })) > 0;
+  const primerHaikuComoVerificador = datos.presetKey === 'claude-haiku-5-5' && datos.isVerifier === undefined && !yaHayVerificador;
+  const subeVerificador = datos.isVerifier === true || primerHaikuComoVerificador;
+
   const data: Prisma.AiModelUncheckedCreateInput = {
     id,
     providerId: datos.providerId,
@@ -101,7 +124,10 @@ export const POST: APIRoute = async ({ request }) => {
     // manda, así que el interruptor del formulario sigue siendo la última
     // palabra (`ModeloForm.tsx` siempre lo manda explícito).
     selectableByTeacher: datos.selectableByTeacher ?? presetByKey(datos.presetKey)?.defaultSelectableByTeacher ?? true,
-    supportsVision: datos.supportsVision ?? false,
+    // Mismo criterio: `true` por default sólo para el preset de Haiku 5.5
+    // (el revisor visual designado), nunca forzado sobre un valor explícito.
+    supportsVision: datos.supportsVision ?? presetByKey(datos.presetKey)?.defaultSupportsVision ?? false,
+    isVerifier: subeVerificador,
     maxOutputTokens: datos.maxOutputTokens ?? 131_072,
     reasoningEffort: datos.reasoningEffort ?? null,
     reasoningParam: datos.reasoningParam ?? null,
@@ -118,7 +144,17 @@ export const POST: APIRoute = async ({ request }) => {
   };
 
   try {
-    const creado = await prisma.aiModel.create({ data, include: { provider: true } });
+    // T3 (verificador): mismo patrón que el PATCH de `[id].ts` — "a lo sumo
+    // un isVerifier" lo exige un índice único parcial, así que cualquier
+    // otro motor marcado tiene que bajarse DENTRO de la misma transacción,
+    // antes de crear este. Sin `subeVerificador`, una creación normal (el
+    // caso de siempre) ni abre una transacción.
+    const creado = subeVerificador
+      ? await prisma.$transaction(async (tx) => {
+          await tx.aiModel.updateMany({ where: { isVerifier: true }, data: { isVerifier: false } });
+          return tx.aiModel.create({ data, include: { provider: true } });
+        })
+      : await prisma.aiModel.create({ data, include: { provider: true } });
     invalidarCatalogo();
     return ok({ motor: serializarMotor(creado) });
   } catch (error) {

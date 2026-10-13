@@ -171,6 +171,10 @@ export default function ModeloForm(props: ModeloFormProps) {
     // elegir el preset — el admin sigue pudiendo tocar el interruptor antes
     // de guardar, igual que con cualquier otro campo de este formulario.
     setSelectableByTeacher(preset.defaultSelectableByTeacher);
+    // Hallazgo de revisión (motor-claude, pre-deploy): mismo criterio de
+    // "sólo un default" — Haiku 5.5 es el revisor visual designado (T5), así
+    // que arranca con "Admite imágenes" tildado; el admin lo puede destildar.
+    setSupportsVision(preset.defaultSupportsVision);
 
     // Sugiere la cuenta de proveedor que ya coincide en baseUrl, si existe
     // una. Si no hay ninguna, el campo de clave de más abajo (T9) permite

@@ -1,6 +1,7 @@
 import { prisma } from '../db.ts';
 import { leerAppSettings } from '../settings.ts';
 import { presetByKey } from '../ai/presets.ts';
+import { motorVerificador } from '../ai/catalogo.ts';
 import {
   MODES,
   MODO_PERSONALIZADO_KEY,
@@ -52,6 +53,21 @@ export interface ResumenGeneracion {
    *  Y con cuenta habilitada (lo mismo que `catalogo.ts#utilizable`). */
   modelosHabilitados: ModeloParaSelector[];
   ciclo: CicloActualUI;
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): si HAY un motor
+   * verificador USABLE ahora mismo (`catalogo.ts#motorVerificador` —
+   * habilitado, cuenta habilitada, con clave; no sólo "algún `AiModel` con
+   * `isVerifier: true` en la base", que podría estar apagado). `false` es
+   * lo que dispara el aviso + el botón de abajo en `GeneracionPanel.tsx`.
+   */
+  hayVerificadorUsable: boolean;
+  /**
+   * El primer motor HABILITADO (cuenta habilitada también) enlazado al
+   * preset de Haiku 5.5, si hay uno — lo que necesita el botón "Usar Haiku
+   * 5.5 como revisor". `null` si el admin todavía no cargó ese preset (ahí
+   * el aviso señala a `/admin/motores` en vez de ofrecer el botón).
+   */
+  haikuParaVerificador: ModeloParaSelector | null;
 }
 
 /**
@@ -94,6 +110,16 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
   const gastoUsd = await gastoDelCicloActual(settings.billingCycleDay, ahora);
   const efectivo = modoEfectivo(settings.generationMode, gastoUsd, settings.premiumUntilUsd.toNumber());
 
+  // Hallazgo de revisión (motor-claude, pre-deploy): el aviso + botón "Usar
+  // Haiku 5.5 como revisor" de `GeneracionPanel.tsx` necesitan saber (a) si
+  // el revisor está EFECTIVAMENTE apagado ahora mismo (no sólo "sin ninguna
+  // fila marcada" — `motorVerificador` ya cubre motor/cuenta apagados y
+  // clave faltante) y (b) a qué motor apuntar el botón: `filas` arriba ya
+  // viene filtrada a habilitado+cuenta habilitada, así que basta buscar el
+  // preset de Haiku ahí.
+  const verificadorUsable = await motorVerificador();
+  const haikuHabilitado = filas.find((fila) => fila.presetKey === 'claude-haiku-5-5') ?? null;
+
   return {
     versionsForAll: settings.versionsForAll,
     generationMode: settings.generationMode,
@@ -111,5 +137,7 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
       modoEfectivo: efectivo,
       proyeccionUsd: proyeccionDeCierre(gastoUsd, inicio, fin, ahora),
     },
+    hayVerificadorUsable: verificadorUsable !== null,
+    haikuParaVerificador: haikuHabilitado ? { id: haikuHabilitado.id, displayName: haikuHabilitado.displayName } : null,
   };
 }

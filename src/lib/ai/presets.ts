@@ -82,6 +82,16 @@ export interface ModelPreset {
    * del docente invita a un gasto que el dueño todavía no decidió ofrecer.
    */
   defaultSelectableByTeacher: boolean;
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): el valor que
+   * `supportsVision` toma al CREAR un motor desde este preset — mismo
+   * criterio de "default, no forzado" que `defaultSelectableByTeacher`. El
+   * texto de la tarea sólo pide esto para Haiku 5.5 (el revisor visual
+   * designado, T5) — Sonnet/Opus también pueden ver imágenes en la
+   * realidad, pero nadie pidió eso todavía, así que quedan en `false` como
+   * cualquier preset que no sea Haiku.
+   */
+  defaultSupportsVision: boolean;
   /** `null` = no time-of-day discount (flat `prices` always apply), same
    *  convention as `AiModel.priceOffPeakFactor` being unset. */
   schedule: PriceSchedule | null;
@@ -149,6 +159,7 @@ const DEEPSEEK_FLASH: ModelPreset = {
   prices: { inputPerMToken: 0.3, cachedInputPerMToken: 0.006, outputPerMToken: 1.2 },
   reasoning: { param: 'reasoning_effort', defaultEffort: 'low' },
   defaultSelectableByTeacher: true,
+  defaultSupportsVision: false,
   // DeepSeek allows up to 384K; kept at 131072 because that's what
   // production uses today (see the `AiModel.maxOutputTokens` column
   // comment) — not a provider limit.
@@ -166,6 +177,7 @@ const DEEPSEEK_V4_PRO: ModelPreset = {
   prices: { inputPerMToken: 1.32, cachedInputPerMToken: 0.044, outputPerMToken: 3.96 },
   reasoning: { param: 'reasoning_effort', defaultEffort: 'low' },
   defaultSelectableByTeacher: true,
+  defaultSupportsVision: false,
   maxOutputTokens: 131_072,
   schedule: ESQUEMA_DEEPSEEK,
   pricesVerifiedAt: '2026-10-01',
@@ -185,6 +197,7 @@ const OPENAI_GPT_6_LUNA: ModelPreset = {
   // Verifier use (T3, odd/tasks/verificador.md): "medium" by default.
   reasoning: { param: 'reasoning_effort', defaultEffort: 'medium' },
   defaultSelectableByTeacher: true,
+  defaultSupportsVision: false,
   maxOutputTokens: 131_072,
   schedule: null,
   pricesVerifiedAt: '2026-10-01',
@@ -229,6 +242,10 @@ const CLAUDE_HAIKU_5_5: ModelPreset = {
   // Hallazgo de revisión: Haiku puede quedar seleccionable por el
   // docente — es el motor de todos los días, barato.
   defaultSelectableByTeacher: true,
+  // Hallazgo de revisión: Haiku es el revisor visual designado (T5) —
+  // un motor creado desde este preset tiene que poder ver la captura
+  // sin que el admin se acuerde de tildar "Admite imágenes" a mano.
+  defaultSupportsVision: true,
   maxOutputTokens: 32_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',
@@ -245,6 +262,7 @@ const CLAUDE_SONNET_5_5: ModelPreset = {
   // Hallazgo de revisión: premium — no aparece por defecto en el
   // selector del docente, el dueño lo prende a mano si quiere ofrecerlo.
   defaultSelectableByTeacher: false,
+  defaultSupportsVision: false,
   maxOutputTokens: 32_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',
@@ -260,6 +278,7 @@ const CLAUDE_OPUS_5_5: ModelPreset = {
   reasoning: { param: 'effort', defaultEffort: 'medium' },
   // Hallazgo de revisión: premium — mismo criterio que Sonnet arriba.
   defaultSelectableByTeacher: false,
+  defaultSupportsVision: false,
   maxOutputTokens: 32_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',

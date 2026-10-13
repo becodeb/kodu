@@ -40,6 +40,32 @@ export default function GeneracionPanel({ initial }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): "Usar Haiku 5.5 como
+   * revisor" — reusa el PATCH de admin de motores que ya existe
+   * (`/api/admin/models/[id]`, el mismo que `ModeloForm.tsx`), nunca una
+   * ruta nueva. Esa ruta ya respeta "a lo sumo un verificador" (baja
+   * cualquier otro ANTES, en la misma transacción) — este botón sólo
+   * decide A CUÁL motor apuntarle, con el candidato que ya trae el
+   * resumen (`haikuParaVerificador`).
+   */
+  const [activandoVerificador, setActivandoVerificador] = useState(false);
+
+  async function usarHaikuComoRevisor() {
+    if (!resumen.haikuParaVerificador) return;
+    setError(null);
+    setActivandoVerificador(true);
+    const result = await apiRequest(`/api/admin/models/${resumen.haikuParaVerificador.id}`, 'PATCH', {
+      isVerifier: true,
+    });
+    setActivandoVerificador(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    await refrescarCiclo();
+  }
+
   async function patchSettings(datos: Record<string, unknown>): Promise<boolean> {
     setError(null);
     setGuardando(true);
@@ -106,6 +132,34 @@ export default function GeneracionPanel({ initial }: Props) {
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </p>
+      )}
+
+      {!resumen.hayVerificadorUsable && (
+        <div className="kodu-card space-y-2 border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">No hay ningún revisor visual activo</p>
+          <p className="text-sm text-amber-800">
+            Sin un motor marcado como verificador (o con el motor marcado apagado, o sin clave), los recursos se crean
+            sin que nadie los revise después de la autoprueba.
+          </p>
+          {resumen.haikuParaVerificador ? (
+            <button
+              type="button"
+              onClick={() => void usarHaikuComoRevisor()}
+              disabled={activandoVerificador}
+              className="kodu-btn-primary text-sm"
+            >
+              {activandoVerificador ? 'Activando…' : 'Usar Haiku 5.5 como revisor'}
+            </button>
+          ) : (
+            <p className="text-sm text-amber-800">
+              Cargá el preset de Claude Haiku 5.5 desde{' '}
+              <a href="/admin/motores" className="underline">
+                /admin/motores
+              </a>{' '}
+              para poder activarlo como revisor desde acá.
+            </p>
+          )}
+        </div>
       )}
 
       <section className="space-y-3">

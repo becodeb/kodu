@@ -26,6 +26,10 @@ export interface PresetUI {
   /** Hallazgo de revisión (motor-claude, pre-deploy): el default de
    *  `selectableByTeacher` al elegir este preset (`ModeloForm.tsx`). */
   defaultSelectableByTeacher: boolean;
+  /** Hallazgo de revisión (motor-claude, pre-deploy): el default de
+   *  `supportsVision` al elegir este preset (`ModeloForm.tsx`) — `true`
+   *  sólo en Haiku 5.5, el revisor visual designado. */
+  defaultSupportsVision: boolean;
   pricesVerifiedAt: string;
   sourceUrl: string;
 }
@@ -42,6 +46,7 @@ export function presetsParaUI(): PresetUI[] {
     maxOutputTokens: preset.maxOutputTokens,
     hasSchedule: preset.schedule !== null,
     defaultSelectableByTeacher: preset.defaultSelectableByTeacher,
+    defaultSupportsVision: preset.defaultSupportsVision,
     pricesVerifiedAt: preset.pricesVerifiedAt,
     sourceUrl: preset.sourceUrl,
   }));
