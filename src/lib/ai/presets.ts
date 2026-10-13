@@ -48,6 +48,21 @@ export interface ModelPreset {
      *  `calcularCostoTurno` (usage.ts) falls back to 1.25x the input price,
      *  never invents a number here. */
     cacheWritePerMToken?: number;
+    /**
+     * Hallazgo de revisión (motor-claude, pre-deploy): el tramo largo de
+     * Claude Haiku 5.5 — Anthropic cobra 5x las cuatro tarifas de arriba una
+     * vez que el PROMPT de un turno supera `thresholdTokens` (hoy 100K).
+     * `undefined` = sin tramo largo (todo preset no-Haiku hoy) — mismo
+     * criterio que `cacheWritePerMToken`: nunca se inventa, sólo se aplica
+     * cuando el preset lo trae.
+     */
+    longContext?: {
+      thresholdTokens: number;
+      inputPerMToken: number;
+      cachedInputPerMToken: number;
+      outputPerMToken: number;
+      cacheWritePerMToken?: number;
+    };
   };
   reasoning: {
     /** `null` = this provider dialect doesn't take a reasoning parameter.
@@ -175,15 +190,28 @@ const FUENTE_ANTHROPIC = 'https://docs.claude.com/en/docs/about-claude/pricing';
  * la clave de una vez (ver `ModeloForm.tsx`).
  *
  * Haiku 5.5 tiene precio de prompts ≤100K tokens; por encima de eso Anthropic
- * cobra 5x (ver el warning log existente en `usage.ts`/`provider.ts` — no se
- * modela acá, mismo criterio que el preset de gpt-6-luna con su tramo largo).
+ * cobra 5x. Hallazgo de revisión (motor-claude, pre-deploy): SÍ se modela
+ * acá (`prices.longContext`, abajo) — antes sólo había un warning log
+ * (`readAnthropicStream`, `provider.ts`) que detectaba el tramo pero nunca
+ * ajustaba el costo, así que el gasto del ciclo quedaba subestimado en
+ * cualquier turno que cruzara los 100K de prompt. `gpt-6-luna` (arriba) SÍ
+ * sigue sin modelar su propio tramo largo — nadie reportó que un turno real
+ * de ese motor cruce su umbral (272K), así que no hay evidencia de que
+ * subestime nada hoy; el de Haiku sí tiene esa evidencia (motor-claude T4/T7
+ * ya corrió turnos con prompts largos).
  */
 const CLAUDE_HAIKU_5_5: ModelPreset = {
   key: 'claude-haiku-5-5',
   label: 'Claude Haiku 5.5',
   provider: { baseUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
   providerModel: 'claude-haiku-5-5',
-  prices: { inputPerMToken: 0.1, cachedInputPerMToken: 0.01, outputPerMToken: 0.5, cacheWritePerMToken: 0.125 },
+  prices: {
+    inputPerMToken: 0.1,
+    cachedInputPerMToken: 0.01,
+    outputPerMToken: 0.5,
+    cacheWritePerMToken: 0.125,
+    longContext: { thresholdTokens: 100_000, inputPerMToken: 0.5, cachedInputPerMToken: 0.05, outputPerMToken: 2.5, cacheWritePerMToken: 0.625 },
+  },
   reasoning: { param: 'effort', defaultEffort: 'low' },
   maxOutputTokens: 32_000,
   schedule: null,
@@ -240,6 +268,17 @@ export function preciosDePreset(preset: ModelPreset): {
   output: Prisma.Decimal;
   cachedInput: Prisma.Decimal;
   cacheWrite?: Prisma.Decimal;
+  // Hallazgo de revisión (motor-claude, pre-deploy): el tramo largo de
+  // Haiku 5.5 (`prices.longContext`), en Decimal — mismo tipo que
+  // `Precios.longContext` (usage.ts). `undefined` cuando el preset no lo
+  // trae, igual criterio que `cacheWrite` más arriba.
+  longContext?: {
+    thresholdTokens: number;
+    input: Prisma.Decimal;
+    output: Prisma.Decimal;
+    cachedInput: Prisma.Decimal;
+    cacheWrite?: Prisma.Decimal;
+  };
 } {
   return {
     input: new Prisma.Decimal(preset.prices.inputPerMToken),
@@ -247,6 +286,19 @@ export function preciosDePreset(preset: ModelPreset): {
     cachedInput: new Prisma.Decimal(preset.prices.cachedInputPerMToken),
     ...(preset.prices.cacheWritePerMToken !== undefined
       ? { cacheWrite: new Prisma.Decimal(preset.prices.cacheWritePerMToken) }
+      : {}),
+    ...(preset.prices.longContext
+      ? {
+          longContext: {
+            thresholdTokens: preset.prices.longContext.thresholdTokens,
+            input: new Prisma.Decimal(preset.prices.longContext.inputPerMToken),
+            output: new Prisma.Decimal(preset.prices.longContext.outputPerMToken),
+            cachedInput: new Prisma.Decimal(preset.prices.longContext.cachedInputPerMToken),
+            ...(preset.prices.longContext.cacheWritePerMToken !== undefined
+              ? { cacheWrite: new Prisma.Decimal(preset.prices.longContext.cacheWritePerMToken) }
+              : {}),
+          },
+        }
       : {}),
   };
 }

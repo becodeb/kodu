@@ -1514,9 +1514,16 @@ async function* readAnthropicStream(stream: AnthropicRawStream): AsyncGenerator<
           const cachedTokens = Number(usage.cache_read_input_tokens ?? 0);
           const cacheWriteTokens = Number(usage.cache_creation_input_tokens ?? 0);
 
-          // motor-claude: guardia de prompt largo en Haiku — sólo logueo,
-          // nunca corta el turno. El tope (100K) es el punto a partir del
-          // cual Haiku 5.5 pasa a cobrar 5x.
+          // motor-claude: aviso de prompt largo en Haiku — nunca corta el
+          // turno, sólo logueo operativo. El tope (100K) es el punto a
+          // partir del cual Haiku 5.5 pasa a cobrar 5x. Hallazgo de
+          // revisión (pre-deploy): hasta acá esto era SÓLO el aviso — el
+          // costo seguía calculándose a la tarifa normal. El ajuste real de
+          // costo vive en `calcularCostoTurno` (`usage.ts`), que lee el
+          // mismo `promptTokens` que se calcula abajo y el tramo
+          // `Precios.longContext` que trae el preset del motor (`presets.ts`)
+          // — este log queda como señal operativa, redundante a propósito
+          // con ese cálculo, no como la única fuente de verdad del costo.
           if (modeloDeEsteTurno.includes('haiku') && promptTokens > 100_000) {
             console.warn(
               `[provider] turno de Haiku con prompt de ${promptTokens} tokens (>100K): a partir de ahí el motor cobra 5x.`,

@@ -64,6 +64,21 @@ await prueba('claude-haiku-5-5: precios + cache-write verificados (0.10 / 0.01 /
   assert.equal(preset.schedule, null, 'Anthropic no tiene horario de pico');
 });
 
+await prueba('claude-haiku-5-5: hallazgo de revisión — tramo largo cargado (100K, 5x las cuatro tarifas)', () => {
+  const precios = preciosDePreset(PRESETS['claude-haiku-5-5']!);
+  assert.ok(precios.longContext, 'Haiku 5.5 tiene que traer el tramo largo');
+  assert.equal(precios.longContext!.thresholdTokens, 100_000);
+  assert.equal(precios.longContext!.input.toString(), '0.5');
+  assert.equal(precios.longContext!.cachedInput.toString(), '0.05');
+  assert.equal(precios.longContext!.output.toString(), '2.5');
+  assert.equal(precios.longContext!.cacheWrite?.toString(), '0.625');
+});
+
+await prueba('claude-sonnet-5-5/opus-5-5: sin tramo largo cargado (no es parte de este hallazgo)', () => {
+  assert.equal(preciosDePreset(PRESETS['claude-sonnet-5-5']!).longContext, undefined);
+  assert.equal(preciosDePreset(PRESETS['claude-opus-5-5']!).longContext, undefined);
+});
+
 await prueba('claude-sonnet-5-5: precios + cache-write verificados (2 / 0.10 / 10, escritura 2.50)', () => {
   const preset = PRESETS['claude-sonnet-5-5']!;
   const precios = preciosDePreset(preset);

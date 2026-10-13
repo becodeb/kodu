@@ -298,6 +298,60 @@ await prueba('calcularCostoTurno: un turno gratis da costo 0, no null', () => {
   assert.ok(resultado.costUsd!.isZero());
 });
 
+// Hallazgo de revisión (motor-claude, pre-deploy, T7): el tramo largo de
+// Haiku 5.5 — 5x las tarifas una vez que `promptTokens` supera
+// `thresholdTokens` del preset (`Precios.longContext`, `usage.ts`/
+// `presets.ts`). Antes de este fix el aviso en `provider.ts` sólo logueaba:
+// el costo seguía calculándose a la tarifa corta sin importar el tamaño real
+// del prompt.
+await prueba('calcularCostoTurno: por debajo del umbral de tramo largo, usa la tarifa corta', () => {
+  const base = precios('0.1', '0.5', '0.01');
+  const conTramoLargo = { ...base, longContext: { ...precios('0.5', '2.5', '0.05'), thresholdTokens: 100_000 } };
+
+  const resultado = calcularCostoTurno(100_000, 0, 1_000, conTramoLargo);
+  // 100.000 (no > 100.000, el umbral es estrictamente "supera") a la tarifa
+  // corta: 100.000 × 0.1/1e6 + 1.000 × 0.5/1e6 = 0.01 + 0.0005 = 0.0105
+  const correcto = new Prisma.Decimal('0.0105');
+  assert.ok(resultado.costUsd!.equals(correcto), `esperaba ${correcto.toString()}, dio ${resultado.costUsd!.toString()}`);
+  assert.ok(resultado.priceInputSnapshot!.equals(new Prisma.Decimal('0.1')), 'a 100.000 exactos todavía no cruzó el umbral');
+});
+
+await prueba('calcularCostoTurno: por encima del umbral, factura las CUATRO tarifas al tramo largo', () => {
+  const base = precios('0.1', '0.5', '0.01');
+  const conTramoLargo = {
+    ...base,
+    cacheWrite: new Prisma.Decimal('0.125'),
+    longContext: {
+      thresholdTokens: 100_000,
+      input: new Prisma.Decimal('0.5'),
+      output: new Prisma.Decimal('2.5'),
+      cachedInput: new Prisma.Decimal('0.05'),
+      cacheWrite: new Prisma.Decimal('0.625'),
+    },
+  };
+
+  // 150.000 prompt (10.000 cacheados, 5.000 de escritura de cache), 2.000 de
+  // salida — todo al tramo largo (5x la tarifa corta):
+  //   facturables: 150.000 − 10.000 − 5.000 = 135.000 × 0.5/1e6 = 0.0675
+  //   cache_read:  10.000 × 0.05/1e6         = 0.0005
+  //   salida:      2.000 × 2.5/1e6           = 0.005
+  //   cache_write: 5.000 × 0.625/1e6         = 0.003125
+  //   total: 0.076125
+  const resultado = calcularCostoTurno(150_000, 10_000, 2_000, conTramoLargo, 5_000);
+  const correcto = new Prisma.Decimal('0.076125');
+  assert.ok(resultado.costUsd!.equals(correcto), `esperaba ${correcto.toString()}, dio ${resultado.costUsd!.toString()}`);
+  assert.ok(resultado.priceInputSnapshot!.equals(new Prisma.Decimal('0.5')), 'el snapshot tiene que guardar la tarifa REALMENTE aplicada (tramo largo), no la corta');
+  assert.ok(resultado.priceCacheWriteSnapshot!.equals(new Prisma.Decimal('0.625')));
+});
+
+await prueba('calcularCostoTurno: sin tramo largo cargado, un prompt enorme sigue a la tarifa corta (comportamiento de siempre)', () => {
+  const resultado = calcularCostoTurno(500_000, 0, 1_000, precios('0.1', '0.5', '0.01'));
+  // Sin `longContext`, nunca hay tramo que aplicar — mismo cálculo de
+  // siempre sin importar qué tan grande sea el prompt.
+  const correcto = new Prisma.Decimal(500_000).mul('0.1').div(1_000_000).add(new Prisma.Decimal(1_000).mul('0.5').div(1_000_000));
+  assert.ok(resultado.costUsd!.equals(correcto), `esperaba ${correcto.toString()}, dio ${resultado.costUsd!.toString()}`);
+});
+
 await prueba('calcularCostoTurno: sin tarifa de caché propia, cae a la de entrada (y lo registra así)', () => {
   const resultado = calcularCostoTurno(1_000, 1_000, 0, precios('2', '5', null));
   // Los 1.000 tokens son todos cacheados y no hay tarifa de caché cargada:

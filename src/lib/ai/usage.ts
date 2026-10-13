@@ -28,6 +28,24 @@ export interface Precios {
    * aditivo.
    */
   cacheWrite?: Prisma.Decimal | null;
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): Claude Haiku 5.5 cobra
+   * un tramo largo — 5x las cuatro tarifas — una vez que el PROMPT de un
+   * turno supera `thresholdTokens` (hoy 100K, ver el aviso en
+   * `readAnthropicStream`, `provider.ts`, que ya detectaba el tramo pero
+   * sólo para loguearlo — nunca ajustaba el costo). `undefined`/`null` =
+   * sin tramo largo cargado, mismo criterio que `cacheWrite`: el cálculo de
+   * abajo sigue exactamente igual que antes para cualquier motor sin esto.
+   * Se carga desde el preset (`presets.ts`), nunca desde columnas de
+   * `AiModel` — "Personalizado" (sin preset) no tiene tramo largo hoy.
+   */
+  longContext?: {
+    thresholdTokens: number;
+    input: Prisma.Decimal;
+    output: Prisma.Decimal;
+    cachedInput: Prisma.Decimal | null;
+    cacheWrite?: Prisma.Decimal | null;
+  } | null;
 }
 
 export interface CostoCalculado {
@@ -86,6 +104,14 @@ export function calcularCostoTurno(
     };
   }
 
+  // Hallazgo de revisión (motor-claude, pre-deploy): `promptTokens` ya viene
+  // como el total del turno (ver el comentario de `cacheWriteTokens` abajo),
+  // así que es exactamente el número contra el que Anthropic decide el tramo
+  // largo de Haiku 5.5 — se compara ACÁ, antes de tocar ninguna tarifa, para
+  // que el resto de la función no sepa ni le importe si hay tramo largo o
+  // no: sólo lee `tarifas.*` de ahora en más, nunca `precios.*` directo.
+  const tarifas = precios.longContext && promptTokens > precios.longContext.thresholdTokens ? precios.longContext : precios;
+
   // Defensivo: si algún día un proveedor reporta cachedTokens > promptTokens
   // (dato mal formado), no se factura una cantidad negativa de tokens nuevos.
   //
@@ -97,22 +123,24 @@ export function calcularCostoTurno(
   // tokens de escritura de cache DOS VECES: una acá a precio de entrada
   // normal, y otra en el término de `cacheWriteTokens` más abajo.
   const facturables = Math.max(promptTokens - cachedInputTokens - cacheWriteTokens, 0);
-  const tarifaCache = precios.cachedInput ?? precios.input;
+  const tarifaCache = tarifas.cachedInput ?? tarifas.input;
   // T1: sin tarifa propia de escritura cargada, Anthropic cobra 1.25x el
-  // precio de entrada por escribir al cache — ese es el default, no 0.
-  const tarifaCacheWrite = precios.cacheWrite ?? precios.input.mul(1.25);
+  // precio de entrada por escribir al cache — ese es el default, no 0. Usa
+  // `tarifas.input` (ya resuelto al tramo que corresponda), no `precios.input`
+  // directo, para que el default del tramo largo también sea 5x, no 1x.
+  const tarifaCacheWrite = tarifas.cacheWrite ?? tarifas.input.mul(1.25);
 
   const costUsd = new Prisma.Decimal(facturables)
-    .mul(precios.input)
+    .mul(tarifas.input)
     .div(1_000_000)
     .add(new Prisma.Decimal(cachedInputTokens).mul(tarifaCache).div(1_000_000))
-    .add(new Prisma.Decimal(completionTokens).mul(precios.output).div(1_000_000))
+    .add(new Prisma.Decimal(completionTokens).mul(tarifas.output).div(1_000_000))
     .add(new Prisma.Decimal(cacheWriteTokens).mul(tarifaCacheWrite).div(1_000_000));
 
   return {
     costUsd,
-    priceInputSnapshot: precios.input,
-    priceOutputSnapshot: precios.output,
+    priceInputSnapshot: tarifas.input,
+    priceOutputSnapshot: tarifas.output,
     priceCachedInputSnapshot: tarifaCache,
     priceCacheWriteSnapshot: cacheWriteTokens > 0 ? tarifaCacheWrite : null,
   };
