@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
+import { debugFlagActivo } from '../../../lib/env.ts';
 import { buildCurrentResourceBlock, buildSystemPrompt, TURNOS_TEMPRANOS } from '../../../lib/ai/prompt.ts';
 import { aplicarKitAlTurno } from './stream.ts';
 import { temaDe, desenvolverPruebas } from '../../../lib/ai/kit.ts';
@@ -284,7 +285,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   });
 
   const informe: InformeAutoprueba = { errores, reinicioOk, exitoVisibleAlInicio, diferencias, pruebas };
-  if (process.env.KODU_DEBUG_AUTOCORRECCION) {
+  if (debugFlagActivo(process.env.KODU_DEBUG_AUTOCORRECCION)) {
     console.log(`[debug/autocorreccion] ronda=${ronda} informe=${JSON.stringify(informe)}`);
   }
   // T17: el checklist VIGENTE lo carga el SERVIDOR (nunca lo que mande el
@@ -421,7 +422,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
                 resultado.ultimoFallo = null;
               } else {
                 console.warn(`[chat/autocorreccion] ronda ${ronda}: edit_resource_code no se pudo aplicar (${aplicado.reason}).`);
-                if (process.env.KODU_DEBUG_AUTOCORRECCION) {
+                if (debugFlagActivo(process.env.KODU_DEBUG_AUTOCORRECCION)) {
                   console.log(
                     `[debug/autocorreccion] find fallido (${aplicado.reason}): ${JSON.stringify(aplicado.find)}`,
                   );

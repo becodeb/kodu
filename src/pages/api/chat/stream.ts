@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { DEFAULT_HTML, findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
+import { debugFlagActivo } from '../../../lib/env.ts';
 import {
   buildCurrentResourceBlock,
   buildSystemPrompt,
@@ -1431,7 +1432,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
             // env flag — para ver EXACTAMENTE qué manda el modelo (find/replace
             // crudos) cuando un turno termina en un no-op silencioso. Quitar
             // o mantener apagado (default) fuera de esta investigación.
-            if (process.env.KODU_DEBUG_EDITS === '1') {
+            if (debugFlagActivo(process.env.KODU_DEBUG_EDITS)) {
               console.log(
                 `[chat/stream] KODU_DEBUG_EDITS tool_use crudo (${event.arguments.length} chars):`,
                 event.arguments,

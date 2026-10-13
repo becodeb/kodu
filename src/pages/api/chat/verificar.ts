@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../../../lib/db.ts';
 import { findProjectForActor, marcarSiActuaAdmin } from '../../../lib/projects.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
+import { debugFlagActivo } from '../../../lib/env.ts';
 import { desenvolverPruebas } from '../../../lib/ai/kit.ts';
 import { motorVerificador } from '../../../lib/ai/catalogo.ts';
 import {
@@ -413,7 +414,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // — para calibrar la gravedad del revisor visual (¿por qué nunca sale
   // "alta"/"media" con un defecto visual a simple vista?). Quitar o
   // mantener apagado (default) fuera de esta investigación.
-  if (process.env.KODU_DEBUG_VERIFICADOR === '1') {
+  if (debugFlagActivo(process.env.KODU_DEBUG_VERIFICADOR)) {
     console.log(
       `[chat/verificar] KODU_DEBUG_VERIFICADOR usoVision=${usaVision} problemas=${problemas.length}:`,
       JSON.stringify(problemas, null, 1),

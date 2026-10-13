@@ -364,3 +364,16 @@ export function getAdminEmails(): string[] {
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean);
 }
+
+/**
+ * Hallazgo de revisión (motor-claude, pre-deploy): los flags `KODU_DEBUG_*`
+ * (logging extra en desarrollo, nunca pensados para producción) se leían con
+ * `process.env.KODU_DEBUG_X` a secas en algunos puntos — cualquier string no
+ * vacío lo prendía, incluyendo `"0"` o `"false"` puestos a mano por error. No
+ * son variables validadas por `envSchema` (son interruptores de debug ad hoc,
+ * nunca pensados para persistir en `.env` de producción), así que esta
+ * función se usa directo sobre `process.env`, sin pasar por `getEnv()`.
+ */
+export function debugFlagActivo(valor: string | undefined): boolean {
+  return valor === '1' || valor === 'true';
+}
