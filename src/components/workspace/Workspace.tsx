@@ -934,7 +934,14 @@ export default function Workspace(props: WorkspaceProps) {
         return htmlActual;
       }
 
-      if (rondasUsadas >= MAX_RONDAS_CORRECCION) {
+      // motor-claude: when the ONLY failure is the model's own checklist tests
+      // (no runtime errors, reset OK), a second round rarely helps — measured
+      // on Haiku 5.5 the tests themselves are usually what's wrong — so cap it
+      // at one round to save ~30 s and a full rewrite.
+      const soloPruebasFallan =
+        resultado.errores.length === 0 && resultado.reinicioOk !== false;
+      const maxRondas = soloPruebasFallan ? 1 : MAX_RONDAS_CORRECCION;
+      if (rondasUsadas >= maxRondas) {
         setAutopruebaAdvertencia(true);
         return htmlActual;
       }
