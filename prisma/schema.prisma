@@ -919,13 +919,23 @@ model TokenUsage {
   /// facturó, si se pudo registrar. 1:1 opcional, FK del lado de AiTrace
   /// (`tokenUsageId` es `@unique` ahí) — esta fila ya existe (`recordUsage`
   /// la crea primero) cuando `recordAiTrace` arma la traza y la referencia.
-  aiTrace                  AiTrace?
+  aiTrace                  AiTrace?            @relation("AiTraceTokenUsagePrincipal")
+  /// odd/tasks/motor-claude.md (T11): a qué `AiTrace` pertenece ESTA fila,
+  /// para cuando una sola traza paga VARIAS filas de `TokenUsage` — el
+  /// verificador corre hasta 2 pasadas en paralelo y cada una ya logueaba su
+  /// propio consumo (ver el comentario de `AiTrace.tokenUsagesDeLaRonda`).
+  /// Relación 1:N aparte de `aiTrace`/`tokenUsageId` (esa sigue siendo 1:1,
+  /// para GENERATION/ADJUSTMENT/CORRECTION). `NULL` para cualquier fila que
+  /// ya se vincula por `tokenUsageId`, o que no se pudo vincular.
+  aiTraceId                String?
+  aiTraceDeLaRonda         AiTrace?            @relation("TokenUsageDeLaRondaDeLaTraza", fields: [aiTraceId], references: [id], onDelete: SetNull)
 
   @@index([userId, provider])
   @@index([createdAt])
   @@index([projectId])
   @@index([userId, createdAt])
   @@index([organizationId, createdAt])
+  @@index([aiTraceId])
 }
 
 /// odd/tasks/ahorro-tokens.md (T4): una fila por turno de IA que tocó (o
@@ -949,7 +959,15 @@ model TokenUsage {
 model AiTrace {
   id                        String            @id @default(uuid())
   tokenUsageId              String?           @unique
-  tokenUsage                TokenUsage?       @relation(fields: [tokenUsageId], references: [id], onDelete: SetNull)
+  tokenUsage                TokenUsage?       @relation("AiTraceTokenUsagePrincipal", fields: [tokenUsageId], references: [id], onDelete: SetNull)
+  /// odd/tasks/motor-claude.md (T11): filas de `TokenUsage` ADICIONALES que
+  /// pagaron esta misma traza — el caso del verificador, que corre hasta 2
+  /// pasadas EN PARALELO y cada una ya logueaba su propio `TokenUsage` sin
+  /// un `tokenUsageId` único que las sume (ver el comentario de
+  /// `tokenUsageId` arriba). Relación 1:N aparte (nunca la misma que
+  /// `tokenUsageId`, que sigue siendo 1:1 para GENERATION/ADJUSTMENT/
+  /// CORRECTION) — ver `TokenUsage.aiTraceId`.
+  tokenUsagesDeLaRonda      TokenUsage[]      @relation("TokenUsageDeLaRondaDeLaTraza")
   projectId                 String?
   project                   Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   /// El mensaje "assistant" que cerró este turno, cuando lo hay (el Taller
@@ -1009,6 +1027,52 @@ model AiTrace {
   /// enum de un solo valor. `NULL` fuera de CORRECTION, o si esta ronda
   /// corrió antes de que este campo existiera.
   correctionTriggers        String?
+  /// odd/tasks/motor-claude.md (T11): el modo de generación EFECTIVO
+  /// (`modoEfectivo`, modos-generacion.ts) activo cuando corrió este turno —
+  /// snapshot de lectura, mismo criterio que `planAtCall`, nunca se
+  /// recalcula después. `NULL` en todo lo histórico (de antes de T7/T11).
+  generationMode            String?
+  /// odd/tasks/motor-claude.md (T11): 'creation' | 'adjustment' — el ROL
+  /// (en el sentido de `modos-generacion.ts`, no el `turnKind`) que jugó
+  /// este turno. GENERATION/CHECKLIST/EXTRA_VERSION -> 'creation';
+  /// ADJUSTMENT/CORRECTION -> 'adjustment'; VERIFICATION/IDEATION quedan en
+  /// `NULL` (el rol `reviewer` es informativo y ya lo distingue `turnKind`).
+  turnRole                  String?
+  /// odd/tasks/motor-claude.md (T11): el `chatMessageId` del turno de
+  /// creación/ajuste que disparó esta ronda — CORRECTION/VERIFICATION nunca
+  /// crean su propio `ChatMessage` (son discretas, T12/T3), así que su
+  /// propio `chatMessageId` queda `NULL` para siempre; esto es lo que
+  /// permite sumar el costo COMPLETO de un turno (su fila + cada
+  /// corrección/verificación que generó). A diferencia de `chatMessageId`
+  /// (único, 1:1), ESTE campo NO es único: varias rondas pueden compartir el
+  /// mismo turno padre. `NULL` en GENERATION/ADJUSTMENT/EXTRA_VERSION/
+  /// IDEATION — esas filas SON el turno, no una ronda que cuelga de otro.
+  parentChatMessageId       String?
+  /// odd/tasks/motor-claude.md (T11): cuánto tardó la autoprueba del
+  /// navegador en ESTE turno, medida del lado del CLIENTE
+  /// (`performance.now()` dentro del iframe sandboxeado, `kit.ts` —
+  /// `ejecutarAutopruebaEnIframe`). El servidor no puede medirla (corre en
+  /// el navegador del docente, antes de cualquier pedido); viaja en el
+  /// mismo body que ya manda `POST /api/chat/verificar` (nunca un viaje de
+  /// red nuevo — ver Workspace.tsx). `NULL` si no se pudo medir, o fuera de
+  /// GENERATION/ADJUSTMENT.
+  selfTestDurationMs        Int?
+  /// odd/tasks/motor-claude.md (T11): las banderas rojas determinísticas
+  /// (`detectarBanderasRojas`, turno-diff.ts) que dispararon en este pasaje
+  /// del verificador — lista separada por comas de un vocabulario cerrado
+  /// ('agregar_trivial', 'acortar_sin_achicar',
+  /// 'comentario_promesa_sin_contenido'), mismo criterio que
+  /// `correctionTriggers`. `NULL` fuera de VERIFICATION, o si ninguna
+  /// disparó.
+  redFlags                  String?
+  /// odd/tasks/motor-claude.md (T11): en la CORRECCIÓN que siguió a una
+  /// VERIFICATION con `redFlags` no nulo (misma `parentChatMessageId`), si
+  /// esa corrección terminó en un `editOutcome` distinto de `FAILED` —
+  /// heurística honesta: mide que la edición se aplicó, NO que el contenido
+  /// agregado sea de verdad lo pedido (eso requeriría releer el HTML).
+  /// `NULL` cuando esta ronda no vino de una bandera roja, o fuera de
+  /// CORRECTION.
+  redFlagsFixed             Boolean?
   /// odd/tasks/ahorro-tokens.md (T5): la carita que el docente tocó bajo
   /// esta respuesta. Un segundo tap la cambia; otro tap sobre la misma la
   /// borra (`NULL` de nuevo) — nunca un tercer estado "neutral forzado".
@@ -1044,6 +1108,7 @@ model AiTrace {
   @@index([projectId])
   @@index([userId, createdAt])
   @@index([organizationId, createdAt])
+  @@index([parentChatMessageId])
 }
 
 /// odd/tasks/ahorro-tokens.md (T4): resultado de aplicar el código de un
