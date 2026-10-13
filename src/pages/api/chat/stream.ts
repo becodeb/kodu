@@ -28,7 +28,8 @@ import {
   type TokenUsage as MotorTokenUsage,
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
-import { cadenaDeMotores, normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { cadenaDeMotores, motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
+import { modoEfectivo, gastoDelCicloActual } from '../../../lib/ai/modos-generacion.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import {
   contenidoMensajeDeVersiones,
@@ -95,8 +96,9 @@ const schema = z.object({
     .min(1, 'Escribí un mensaje')
     .max(MAX_MESSAGE_CHARS, 'El mensaje es demasiado largo para procesarlo.'),
   attachmentUrls: z.array(z.string().max(500)).max(10).optional(),
-  /** El `id` de un `AiModel`. Cualquier valor que no resuelva a uno habilitado
-   *  cae al default — ver `normalizarMotor` en `lib/ai/catalogo.ts`. */
+  /** El `id` de un `AiModel`. Sólo se USA tal cual cuando el proyecto tiene
+   *  un motor elegido explícitamente por el docente — ver `motorDeGeneracion`
+   *  en `lib/ai/catalogo.ts` (T7, motor-claude). */
   model: z.string().min(1).optional(),
   /** El docente tocó el código a mano desde la última respuesta de la IA. */
   codeEditedByTeacher: z.boolean().optional(),
@@ -685,12 +687,36 @@ export const POST: APIRoute = async ({ request, locals }) => {
   /**
    * El motor lo decide el catálogo, no el pedido a ciegas.
    *
-   * Lo que llega en el body —o lo que quedó guardado en el proyecto— se
-   * normaliza contra `AiModel`: si el id no existe o el motor está apagado,
-   * cae al default vigente. Async porque el catálogo vive en la base, con
-   * caché de 30s (ver `lib/ai/catalogo.ts`).
+   * T7 (motor-claude): si el docente tocó el selector alguna vez en este
+   * proyecto (`engineChosenByTeacher`), se respeta esa elección tal cual
+   * (lo que llega en el body, o lo que quedó guardado, normalizado contra
+   * `AiModel` — comportamiento de siempre). En cualquier otro caso, el modo
+   * de generación activo decide según si ESTE turno crea o ajusta
+   * (`recursoInicial`, calculado más arriba) — con el recorte premium
+   * aplicado primero: si el gasto del ciclo ya llegó a `premiumUntilUsd`,
+   * cualquier modo que no sea `'base'` se trata como `'base'` para este
+   * turno (se loguea la primera vez, `catalogo.ts#motorParaRol`). La
+   * consulta de gasto sólo se hace cuando hace falta — un proyecto con
+   * motor explícito no paga esa consulta en cada turno.
    */
-  const provider = await normalizarMotor(model ?? project.aiModelId);
+  const modoEfectivoActivo = project.engineChosenByTeacher
+    ? null
+    : modoEfectivo(
+        settings.generationMode,
+        await gastoDelCicloActual(settings.billingCycleDay),
+        settings.premiumUntilUsd.toNumber(),
+      );
+
+  const provider = await motorDeGeneracion({
+    modelIdExplicitoDelPedido: model ?? null,
+    project: { aiModelId: project.aiModelId, engineChosenByTeacher: project.engineChosenByTeacher },
+    esCreacion: recursoInicial,
+    settings: {
+      generationMode: modoEfectivoActivo ?? settings.generationMode,
+      creationModelId: settings.creationModelId,
+      adjustmentModelId: settings.adjustmentModelId,
+    },
+  });
   if (!provider) {
     return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);
   }

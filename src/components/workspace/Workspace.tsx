@@ -1530,7 +1530,11 @@ export default function Workspace(props: WorkspaceProps) {
         motoresDisponibles={props.motoresDisponibles}
         onModelChange={(value) => {
           setModel(value);
-          void patchProject({ aiModelId: value }, true);
+          // T7 (motor-claude): esto SÍ es el docente tocando el selector —
+          // marca `engineChosenByTeacher` para que el modo de generación
+          // activo deje de reencaminar este proyecto. El swap automático de
+          // respaldo (`onUseFallback`, arriba) deliberadamente NO manda esto.
+          void patchProject({ aiModelId: value, engineChosenByTeacher: true }, true);
         }}
         threads={threads}
         activeThreadId={activeThreadId}

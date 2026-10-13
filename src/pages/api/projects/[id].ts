@@ -11,6 +11,12 @@ const updateSchema = z.object({
   currentHtml: z.string().min(20).max(400_000).optional(),
   /** El `id` de un `AiModel` que esta persona podría elegir en el selector. */
   aiModelId: z.string().min(1).optional(),
+  /** T7 (motor-claude): sólo lo manda el handler REAL del selector
+   *  (`Workspace.tsx#onModelChange`) — nunca el swap automático de respaldo
+   *  (`onUseFallback`), que cambia `aiModelId` sin marcar esto. Gatea si el
+   *  modo de generación activo puede reencaminar este proyecto o si hay que
+   *  respetar la elección del docente (`catalogo.ts#motorDeGeneracion`). */
+  engineChosenByTeacher: z.boolean().optional(),
   isInGallery: z.boolean().optional(),
   /** odd/tasks/generacion-simple-y-reanudable.md (T2): opt-in por proyecto
    *  para "3 versiones por pedido". El dueño del proyecto lo prende o apaga
@@ -72,6 +78,7 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
       slug: true,
       isInGallery: true,
       aiModelId: true,
+      engineChosenByTeacher: true,
       screenshotUrl: true,
       screenshotAt: true,
       updatedAt: true,

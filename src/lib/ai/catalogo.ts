@@ -5,6 +5,7 @@ import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
 import { scheduleFromAiModel } from './pricing.ts';
 import { presetByKey, preciosDePreset } from './presets.ts';
+import { MODES, MODO_PERSONALIZADO_KEY, modeByKey, type RoleSpec } from './modos-generacion.ts';
 
 /** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
 type FilaConProveedor = AiModel & { provider: AiProvider };
@@ -270,4 +271,107 @@ export async function motoresParaDocente(): Promise<MotorPublico[]> {
       description: fila.description,
       supportsVision: fila.supportsVision,
     }));
+}
+
+/**
+ * T7 (motor-claude): el motor enlazado a `presetKey` que juega este rol,
+ * con el esfuerzo que pide el MODO (no el `reasoningEffort` default que
+ * quedó guardado al enlazar la fila al preset — un modo puede pedir un
+ * esfuerzo distinto del default, ej. Sonnet "low" de revisor en
+ * `revisor-sonnet` vs. "medium" de creador en `crea-sonnet`). `null` si no
+ * hay ningún motor habilitado con ese preset, o si no tiene clave
+ * utilizable — nunca inventa uno.
+ */
+function motorPorPresetKey(filas: FilaConProveedor[], spec: RoleSpec): ProviderConfig | null {
+  const fila = filas.find((candidata) => candidata.presetKey === spec.presetKey && utilizable(candidata));
+  if (!fila) return null;
+
+  const config = construirConfig(fila);
+  if (!tieneClaveUtilizable(config)) return null;
+
+  return { ...config, reasoningEffort: spec.effort };
+}
+
+/** Una combinación modo+rol se loguea UNA SOLA VEZ por proceso — un modo mal
+ *  configurado no tiene por qué llenar el log turno a turno. */
+const modosDeRespaldoLogueados = new Set<string>();
+
+/**
+ * El motor que corresponde a un ROL (`creation`/`adjustment`) bajo el modo
+ * de generación activo (`AppSettings.generationMode`, T7). Nunca hace
+ * fallar un turno porque el modo está mal configurado:
+ *
+ *  1. `'personalizado'`: el motor elegido a mano por el admin para ese rol
+ *     (`opts.creationModelId`/`adjustmentModelId`). Sin elegir, apagado o
+ *     sin clave → cae al modo `'base'` (paso 2), nunca a un error.
+ *  2. Un modo conocido (o `'base'` si la clave no existe más): el motor
+ *     enlazado al preset de ese rol, con el esfuerzo del modo.
+ *  3. Si el paso 2 no encontró nada Y el modo pedido no era ya `'base'`:
+ *     se reintenta con el preset/esfuerzo del rol en `'base'` (se loguea
+ *     una vez la primera vez que pasa esto para esa combinación modo+rol).
+ *  4. Último recurso, igual que `normalizarMotor`/`cadenaDeMotores`: el
+ *     motor por defecto de siempre. Nunca `null` si hay AL MENOS un motor
+ *     habilitado en el catálogo.
+ */
+export async function motorParaRol(
+  modeKey: string,
+  role: 'creation' | 'adjustment',
+  opts: { creationModelId: string | null; adjustmentModelId: string | null },
+): Promise<ProviderConfig | null> {
+  const filas = await filasDelCatalogo();
+
+  if (modeKey === MODO_PERSONALIZADO_KEY) {
+    const elegidoId = role === 'creation' ? opts.creationModelId : opts.adjustmentModelId;
+    const fila = elegidoId ? filas.find((candidata) => candidata.id === elegidoId && utilizable(candidata)) : undefined;
+    if (fila) {
+      const config = construirConfig(fila);
+      if (tieneClaveUtilizable(config)) return config;
+    }
+    return motorParaRol('base', role, opts);
+  }
+
+  const modo = modeByKey(modeKey) ?? MODES.base!;
+  const spec = modo.roles[role];
+  const directo = motorPorPresetKey(filas, spec);
+  if (directo) return directo;
+
+  if (modo.key !== 'base') {
+    const clave = `${modo.key}:${role}`;
+    if (!modosDeRespaldoLogueados.has(clave)) {
+      modosDeRespaldoLogueados.add(clave);
+      console.warn(
+        `[catalogo] modo "${modo.key}" sin motor habilitado para el rol "${role}" (preset "${spec.presetKey}") — se usa el modo base en su lugar`,
+      );
+    }
+    const baseDirecto = motorPorPresetKey(filas, MODES.base!.roles[role]);
+    if (baseDirecto) return baseDirecto;
+  }
+
+  return motorPorDefecto();
+}
+
+/**
+ * El motor con el que corre ESTE turno: si el proyecto tiene un motor
+ * elegido EXPLÍCITAMENTE por el docente (`Project.engineChosenByTeacher`,
+ * T7 — nunca la asignación silenciosa inicial ni el swap automático de
+ * respaldo), se lo respeta tal cual, igual que siempre
+ * (`normalizarMotor(modelIdExplicito ?? project.aiModelId)`). En cualquier
+ * otro caso, el modo de generación activo decide según si el turno es de
+ * creación o de ajuste — nunca al revés: un docente que tocó el selector
+ * dejó clarísimo qué motor quiere, y eso pesa más que el modo.
+ */
+export async function motorDeGeneracion(params: {
+  modelIdExplicitoDelPedido: string | null;
+  project: { aiModelId: string | null; engineChosenByTeacher: boolean };
+  esCreacion: boolean;
+  settings: { generationMode: string; creationModelId: string | null; adjustmentModelId: string | null };
+}): Promise<ProviderConfig | null> {
+  if (params.project.engineChosenByTeacher) {
+    return normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
+  }
+
+  return motorParaRol(params.settings.generationMode, params.esCreacion ? 'creation' : 'adjustment', {
+    creationModelId: params.settings.creationModelId,
+    adjustmentModelId: params.settings.adjustmentModelId,
+  });
 }
