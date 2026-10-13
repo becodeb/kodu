@@ -675,7 +675,19 @@ function aAnthropicUserContent(content: string | ContentPart[]): string | Conten
  * render de la API es `tools` → `system` → `messages`: un breakpoint en el
  * bloque de `system` ya cachea los `tools` que vinieron antes.
  */
-function aAnthropicMessages(messages: ChatMessage[]): {
+/**
+ * T7 (motor-claude, nota "cross-model"): exportada SOLO para
+ * `e2e/unidad-mensajes-anthropic.ts` — confirma que un historial con un turno
+ * `assistant` nunca produce un bloque `thinking` hacia la Messages API. No
+ * hay ningún camino de código que PUEDA hacerlo: `ChatMessage` (el tipo
+ * intermedio que arma esta función) no tiene ningún campo para guardar un
+ * bloque de razonamiento, y `readCompletionStream` (más abajo, dialecto
+ * Anthropic) ignora `thinking_delta`/`signature_delta`/`citations_delta` al
+ * leer la respuesta — nunca llegan a guardarse en el historial de
+ * `ChatMessage` de la base, así que cambiar de modelo entre turnos (T7,
+ * modos de generación) nunca reenvía el razonamiento de OTRO modelo.
+ */
+export function aAnthropicMessages(messages: ChatMessage[]): {
   system?: Array<{ type: 'text'; text: string; cache_control: { type: 'ephemeral' } }>;
   messages: MessageParam[];
 } {
