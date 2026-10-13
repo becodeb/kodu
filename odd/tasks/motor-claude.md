@@ -47,8 +47,9 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 - [ ] T4 Harness improvement rounds on Haiku (up to 5)
 - [x] T5 Verifier with screenshots (Haiku), replacing gpt-6-luna
 - [ ] T6 Sonnet 5.5, Opus 5.5 and Haiku + Opus advisor on the hard prompts
-- [ ] T7 Credit-aware engine policy
+- [x] T7 Credit-aware engine policy
 - [ ] T8 Report: cost and time per resource per model, when to use each, pending tests
+- [x] T9 Anthropic presets (Haiku/Sonnet/Opus 5.5) + create-provider-from-preset admin flow
 
 ## Acceptance criteria
 
@@ -72,6 +73,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 | T5 smoke test, vision reviewer, 2 cases (2026-10-08) | 0.08 | 0.021782 (gasto.json `smoke-revisor`; project ledger total now 0.2826 of the 15.00 global cap) |
 | T4 round 5, `v5-haiku-low` + `v5-haiku-ajuste-medium` (2026-10-10) | 0.25 | 0.1151 (gasto.json; project ledger total now 7.2747 of the 15.00 global cap) |
 | T4 round 6, `v6-haiku-low` (2026-10-13) | 0.30 | 0.3030 (gasto.json; 1% over the per-run `--tope` because the runner's own budget guard estimates USD 0.05/case before starting it, not real cost — same guard every prior round used; project ledger grand total now 7.5777 of the 15.00 global cap) |
+| T7 smoke: `--modo base` + `--modo crea-sonnet`, H2-ciclo-del-agua, 1 rep each (2026-10-13) | 0.40 (task hard limit) | 0.1473 (0.0266 base + 0.1207 crea-sonnet; gasto.json; project ledger grand total now 7.7251 of the 15.00 global cap) |
 
 ## T1 notes (2026-10-08)
 
@@ -998,4 +1000,261 @@ goal B's effect is unmeasured in isolation; `AiTrace` still has no
 `usedVision`/`banderaDeterministica` column (same class of gap noted since
 round 2) so a future admin report can't tell which auto-fixes came from
 vision vs. the deterministic check without re-deriving it.
+
+## T9 notes (2026-10-13) — Anthropic presets, cache-write price, create-account-inline
+
+- `src/lib/ai/presets.ts`: `claude-haiku-5-5` (0.10/0.01/0.50, cache-write
+  0.125, effort `low`, 32K max output), `claude-sonnet-5-5` (2/0.10/2.50/10,
+  effort `medium`), `claude-opus-5-5` (4/0.20/5/20, effort `medium`) — prices
+  verified against the real `providerModel` strings and cache-write prices
+  already live in the dev DB from T1-T6's manual (non-preset) models before
+  writing the preset, not invented. `ModelPreset.provider.apiFormat` and
+  `reasoning.param` types extended to include `'anthropic'`/`'effort'`
+  (T1 already used those values at runtime; the preset TYPE just hadn't
+  caught up). `ModelPreset.prices.cacheWritePerMToken` is new — `undefined`
+  on every non-Anthropic preset, same "never invent a price" convention as
+  the DB column it mirrors.
+- Closed the exact gap T1 left open ("no preset defines a cache-write
+  price yet"): `preciosDePreset` now returns `cacheWrite` when the preset
+  has one; `catalogo.ts#construirConfig`'s preset branch already passed
+  `precios` straight through, so this was the one missing piece —
+  previously a preset-linked Anthropic model always billed cache writes at
+  the generic 1.25x-of-input fallback instead of the real provider rate.
+  `camposDePreset` (`lib/admin/modelos.ts`) now also writes
+  `priceCacheWritePerMToken` into the stored row (mirror only — runtime
+  reads the preset directly — but `/admin/motores` reads the stored
+  columns to DISPLAY the price, so it was showing blank before this).
+- `ModeloForm.tsx`: picking a preset now also fills/locks "Escritura de
+  caché". Bigger change: when no existing provider account matches the
+  preset's `baseUrl` (the `sinProveedores`/empty-match case — exactly a
+  fresh deploy with zero providers), the form stops requiring an
+  already-created account and instead shows an inline "Cuenta nueva para
+  este preset" fieldset (account name + API key). On submit, if a new
+  account is needed, `POST /api/admin/providers` runs FIRST (its returned
+  `id` becomes the model's `providerId`); only on success does
+  `POST /api/admin/models` run — never a half-created motor without an
+  account. This is the one-step "pick the preset, paste the key, save"
+  path the production deploy note asks for.
+- Verification: extended `e2e/unidad-presets.ts` with the three new
+  presets' prices/cache-write/effort/schedule assertions (all pass, `npx
+  tsx e2e/unidad-presets.ts`). Live, against the real dev server
+  (`KODU_BASE_URL=http://localhost:3400`): a throwaway Playwright script
+  (not committed) confirmed selecting "Claude Haiku 5.5" in a real
+  `/admin/motores` "Nuevo motor" dialog fills `precioEscrituraCache` =
+  `0.125`, and — since this dev DB already has a real Anthropic provider
+  account from earlier rounds — correctly auto-selects it instead of
+  offering to create a new one (the create-new-account branch itself was
+  exercised functionally through the T7 `--modo` experiment-runner smoke
+  run below, which calls the exact same `POST /api/admin/providers` →
+  `POST /api/admin/models` sequence with a brand-new account each time).
+  No dedicated preset e2e existed to extend for a second live run, per the
+  task's "if an e2e for presets exists" clause.
+
+## T7 notes (2026-10-13) — generation modes, role→model routing, credit policy
+
+**Schema** (additive migration `20261029000000_modo_generacion_y_credito`,
+applied to `koduedu_claude` via `prisma migrate deploy`): `AppSettings`
+gained `generationMode` (default `'base'`), `creationModelId`/
+`adjustmentModelId` (nullable FK to `AiModel`, "personalizado" only),
+`monthlyCreditUsd` (default 200), `premiumUntilUsd` (default 100),
+`billingCycleDay` (1-28, default 1, DB `CHECK` as defense in depth beyond
+the zod range). `Project` gained `engineChosenByTeacher` (default
+`false`) — see "explicit engine" below.
+
+**Modes in code** (`src/lib/ai/modos-generacion.ts`, mirrors `presets.ts`'s
+"defined in code, keyed by a string stored in the DB" convention): `base`,
+`revisor-sonnet`, `crea-sonnet`, `crea-opus`, `todo-sonnet`, `todo-opus`,
+each mapping `creation`/`adjustment`/`reviewer` roles to a `presetKey` +
+effort (exact mapping per the task's own table — `revisor-sonnet` only
+changes the reviewer role, `todo-*` use the same premium model for both
+productive roles). `'personalizado'` lives OUTSIDE `MODES`: its roles are
+real `AiModel` ids the admin picked, not presets.
+
+**The reviewer role is informational only** — deliberately did NOT touch
+`motorVerificador()`/`AiModel.isVerifier` (T3's existing single-verifier
+mechanism, untouched since T5). A mode's `reviewer` field only drives the
+"preset missing" warning in `/admin/generacion` (see below); the model
+that actually reviews a turn is still whichever row has `isVerifier: true`,
+exactly as before T7. This was an explicit reading of "keep that
+mechanism" in the task, not an oversight.
+
+**Routing** (`catalogo.ts#motorDeGeneracion`, called from `stream.ts` in
+place of the old direct `normalizarMotor(model ?? project.aiModelId)`):
+
+1. If `Project.engineChosenByTeacher` is `true`, behave exactly like
+   before T7 (`normalizarMotor(explicit ?? project.aiModelId)`) — the mode
+   never gets consulted.
+2. Otherwise, resolve the active mode's role (`creation` when
+   `esRecursoInicial`, else `adjustment`) to the enabled `AiModel` linked to
+   that preset, with the mode's effort OVERRIDING whatever `reasoningEffort`
+   is stored on that row (`motorPorPresetKey`) — a model can play different
+   roles at different efforts depending on which mode is active.
+3. If that preset has no enabled model, retry with `'base'`'s preset for
+   the same role (logged once per mode+role combination, never per turn).
+4. **If NEITHER the requested mode nor `'base'` has its preset configured,
+   fall back to `normalizarMotor(explicit ?? project.aiModelId)` — the
+   project's OWN pre-T7 engine, not the installation-wide default.** This
+   was a real bug caught by my own live e2e sweep, not a design I got right
+   the first time: an earlier version fell straight to `motorPorDefecto()`
+   (the catalog-wide default), which converged EVERY project without an
+   explicit engine onto whatever that happened to be — breaking
+   `m2-catalogo.ts`, `t11-autoprueba.ts`, `verificador-endpoint.ts`, and
+   `verificador-editor.ts` the moment `generationMode` defaulted to `'base'`
+   with no `claude-haiku-5-5`-preset model enabled in the dev DB (true for
+   every test fixture that assigns its own mock model directly, and true
+   for the real production DB on the first deploy, before the owner does
+   the one-time preset setup). Falling back to the PROJECT's own engine
+   instead means every project unrelated to Claude modes keeps behaving
+   exactly as it did before T7 existed, and mode routing only visibly
+   activates once its preset is actually configured — see
+   `e2e/unidad-modos-generacion.ts`'s last test for the regression case.
+
+**"Explicit teacher engine" is a new boolean, not inferred from
+`aiModelId` being non-null** — every project already has `aiModelId` set
+by the silent default assignment in `project/[id].astro` well before any
+chat turn, so that alone can't distinguish "teacher picked this" from
+"system assigned this". `Project.engineChosenByTeacher` is set `true` in
+exactly one place: `Workspace.tsx`'s `onModelChange` (the real
+`SelectorDeMotor` click), via a new optional field on `PATCH
+/api/projects/:id`. The automatic fallback-notice swap (`onUseFallback`)
+and the silent initial assignment both leave it `false` on purpose.
+
+**Credit policy** (`modos-generacion.ts`, pure functions, DB-touching sum
+separate): `inicioDelCiclo`/`finDelCiclo` compute the UTC cycle window from
+`billingCycleDay` (clamped 1-28 even if a stray write ever got past the
+`CHECK`); `gastoDelCicloActual` sums `TokenUsage.costUsd` for
+`apiFormat: "anthropic"` models since the cycle start, 60s-cached
+(`CACHE_TTL_MS`, same pattern as `catalogo.ts`/`settings.ts`), keyed by the
+cycle's own start timestamp so a cycle rollover or a `billingCycleDay`
+change invalidates it for free. `modoEfectivo`: any mode other than
+`'base'` (including `'personalizado'` — the admin could have picked Sonnet/
+Opus there too) behaves as `'base'` once `gastoDelCicloUsd >=
+premiumUntilUsd`; an unknown mode key always resolves to `'base'`
+regardless of spend. `monthlyCreditUsd` has no separate code gate — with
+the task's defaults (`premiumUntilUsd` 100 < `monthlyCreditUsd` 200) the
+premium cutoff already forces `'base'` well before the harder monthly
+limit, so reaching `monthlyCreditUsd` is purely an admin-facing alert
+(`/admin/generacion`'s red box), never a second code path.
+
+**Cross-model thinking-block note**: verified, not just asserted. Read
+`provider.ts#aAnthropicMessages` end to end — `ChatMessage` (the
+intermediate history type every dialect translates from) has no field
+that could hold a reasoning/thinking block, and `readCompletionStream`'s
+Anthropic branch explicitly ignores `thinking_delta`/`signature_delta`/
+`citations_delta` while parsing a response. Exported the function (it was
+private) for one direct unit test
+(`e2e/unidad-mensajes-anthropic.ts`) confirming an `assistant` turn with
+both text and a tool call never produces a `thinking` content block —
+switching models between turns under a mode can't resend another model's
+reasoning, because none is ever captured into history in the first place.
+
+**Admin UI** (`/admin/generacion`, `GeneracionPanel.tsx` +
+`lib/admin/generacion.ts` + new `GET /api/admin/generacion`): mode
+`<select>` with description + measured cost/time per mode (figures lifted
+verbatim from this doc's own T4 round notes — advisory only, never read by
+routing code) and an inline amber warning + link to `/admin/motores`
+naming which preset(s) the selected mode is missing; the two
+"personalizado" selects (enabled `AiModel`s only); the three credit
+number inputs (saved on blur); a live box — "Gastado este ciclo… modo
+efectivo… proyección al cierre" — that polls `GET /api/admin/generacion`
+every 20s and also refreshes right after any save, so the numbers don't
+need a page reload to catch up with real traffic. `PATCH
+/api/admin/settings` validates the new fields: `generationMode` against
+`esClaveDeModoConocida`, `creationModelId`/`adjustmentModelId` against a
+real `AiModel` row, `billingCycleDay` 1-28.
+
+**Experiment runner** (`claude-exp` worktree, `exp/motor-claude`,
+`experimentos/motor-claude/correr.ts`): added `--modo <key>`, mutually
+exclusive with `--motor`. Provisions one shared Anthropic provider account
+per `--etiqueta` plus one preset-linked `AiModel` per DISTINCT preset the
+mode's creation/adjustment roles need (`POST /api/admin/models` with
+`presetKey` set — the server fills in `providerModel`/prices/reasoning
+from the preset, same mechanism `/admin/motores` uses); sets
+`AppSettings.generationMode`; deliberately skips the `PATCH
+.../aiModelId` step so `motorDeGeneracion` routes each turn by role;
+restores the previous mode in a `finally` (covers a budget cutoff or a
+thrown error, not just the happy path). Needed its own
+`ESTIMADO_USD_POR_CASO_MODO` pre-flight budget table — reusing the
+existing single-motor estimate (keyed by the creation role's model) rated
+`crea-sonnet` at USD 0.80/case as if all three turns used Sonnet, when
+only one does; the first real invocation hit exactly this and aborted
+before spending anything (harmless, but would have forced an
+unnecessarily high `--tope`).
+
+**Real smoke run** (H2-ciclo-del-agua, 1 rep each, live dev server on this
+worktree): `--modo base` — all three turns' `TokenUsage`/`AiTrace` rows
+point at the mode's `claude-haiku-5-5`-preset model, USD 0.0266, 207.8s
+total (turn 1: 74.7s/$0.0064 + reviewer 16.1s/$0.0035; turn 2: 73.4s/
+$0.0056 + reviewer 16.1s/$0.0035; turn 3: 59.7s/$0.0036 + reviewer 17.1s/
+$0.0039 — every turn's self-test triggered 2 corrections and ended in the
+harness's own "aviso final", unrelated to T7, same shape as prior rounds'
+H2 runs). `--modo crea-sonnet` — confirmed via direct `TokenUsage` query:
+the creation turn (GENERATION) used the `claude-sonnet-5-5`-preset model
+(USD 0.0595), both adjustment turns used a `claude-haiku-5-5`-preset model
+(USD 0.0017 + 0.0014) — exactly the mode's role mapping, with the SAME
+model id resolving across the two separate `--modo` runs' own provisioned
+Haiku rows (expected: preset-based routing matches by `presetKey`, not by
+which run created the row). Total case cost USD 0.1207, 108.2s. Combined
+smoke spend **USD 0.1473** of the USD 0.40 task limit (`gasto.json`;
+project ledger grand total now USD 7.7251 of the USD 15.00 global cap).
+`AppSettings.generationMode` confirmed back at `'base'` in the DB after
+both runs (not just trusting the runner's own log line).
+
+**Checks run**: `npm run check` (clean after every commit, both
+worktrees — `claude-exp`'s has pre-existing unrelated errors from its
+stale `src/` snapshot, none in the edited `correr.ts`); every
+`e2e/unidad*.ts` (26 files) — all pass except one PRE-EXISTING, unrelated
+failure found by this sweep: `e2e/unidad-responses.ts`'s `mock-proveedor
+/v1/responses` round-trip assertion compares against a literal object
+missing the `cacheWriteTokens` key that T1 (2026-10-08) already added to
+every dialect's usage shape — a stale test fixture, not a T7/T9 defect
+(not fixed: out of scope for this task). New `e2e/unidad-modos-generacion.ts`
+(modes/clave-efectiva/ventana-del-ciclo/proyección, all pure, plus
+`motorParaRol`/`motorDeGeneracion` against a real temporary `AiModel`
+fixture — including the fallback-to-project-engine regression case) and
+`e2e/unidad-mensajes-anthropic.ts` (no `thinking` block ever reaches
+history), both new, all pass. Live, against this worktree's dev server
+(restarted after the schema migration, per the lesson from T4 round 1b):
+`t11-autoprueba.ts`, `verificador-endpoint.ts`, `verificador-editor.ts`
+(the usual `v3-smoke` `isVerifier` toggle-off/toggle-on dance around the
+last two, restored to ON — confirmed still the sole verifier afterward),
+`m2-catalogo.ts`, `generacion-reanudable.ts`, `t9-varias-versiones.ts` —
+all pass. `m3-motores.ts` — 30 of 31 scenarios pass; the one failure
+("ArrowDown debería poder llegar a la opción del motor recién creado") is
+the SAME class of pre-existing cross-test dev-DB pollution T4 round 4
+already documented (23 `selectableByTeacher`+enabled leftover experiment
+models clutter the docente selector's keyboard-nav ordinal position) —
+not caused by T7/T9, not fixed here (same reasoning prior rounds used).
+Along the way, found and fixed TWO pieces of pre-existing dev-DB drift
+that were blocking a clean baseline for this sweep (neither a T7/T9
+defect): `AiModel.isDefault` had drifted onto a leftover "Mock local
+(T3+)" row instead of the seeded MiniMax M3 (restored); `v3-smoke`'s
+`isVerifier` had been left OFF from an earlier interrupted session
+(restored to ON, matching the state every prior round documented leaving
+it in).
+
+**Fresh-DB deploy check**: created `koduedu_claude_fresh` in the
+`kodu_db_dev` container, ran `prisma migrate deploy` against it from zero
+(`DATABASE_URL` override on the command only) — all 52 migrations applied
+cleanly; `AppSettings` row 1 confirmed with every T7 default
+(`generationMode='base'`, both model ids `NULL`, `monthlyCreditUsd=200.00`,
+`premiumUntilUsd=100.00`, `billingCycleDay=1`); `Project.engineChosenByTeacher`
+confirmed present, `NOT NULL DEFAULT false`. Dropped afterward.
+
+**Open for a future round**: T6 (Sonnet/Opus/Haiku+Opus advisor
+measurement) is still open, so `/admin/generacion`'s per-mode "measured"
+figures for `revisor-sonnet`/`crea-opus`/`todo-sonnet`/`todo-opus` are
+taken directly from this doc's task brief, not independently re-measured
+by T7 itself (only `base` and `crea-sonnet` got a real smoke run here).
+The dev DB currently has NO `claude-haiku-5-5`-preset model enabled at
+all (every Claude experiment model from T1-T6 was created before T9
+added presets, so none has `presetKey` set) — `/admin/generacion`
+correctly shows "Falta configurar: Claude Haiku 5.5" and the fallback
+chain correctly keeps projects on their own engines until that's fixed;
+worth linking an existing experiment model to the preset (or creating a
+fresh one via the new create-from-preset flow) before relying on `'base'`
+mode in this dev DB for anything beyond this round's smoke test. Project
+titles from the two `--modo` smoke runs read "… — null/none" (fixed in
+`correr.ts` for future runs; the two existing rows are harmless leftover
+data, not corrected retroactively).
 
