@@ -67,6 +67,15 @@ interface PreviewPanelProps {
    *  y hay al menos un problema accionable. */
   onArreglarVerificador: () => void;
   /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): si HAY un motor
+   * verificador configurado (lo que el servidor ya sabía al cargar la
+   * página — `project/[id].astro`) — decide si `buildPreviewDocument`
+   * inyecta el parche de `preserveDrawingBuffer` en esta vista previa. Sin
+   * esto, el parche se inyectaba SIEMPRE, en todo proyecto, aunque nunca se
+   * le fuera a pedir una captura.
+   */
+  verificadorActivo: boolean;
+  /**
    * T5 (motor-claude, revisor visual): se llama UNA vez, al montar, con una
    * función que captura el iframe de vista previa VIGENTE (sin tocar el
    * estado de "Guardar portada"/"Publicar" — totalmente aparte de
@@ -182,7 +191,10 @@ function PreviewPanel(props: PreviewPanelProps) {
 
   // El srcdoc se recalcula sólo cuando cambia el HTML: así el iframe no se
   // recarga al tipear en otros campos del panel.
-  const srcDoc = useMemo(() => buildPreviewDocument(props.html), [props.html]);
+  const srcDoc = useMemo(
+    () => buildPreviewDocument(props.html, { conRevisor: props.verificadorActivo }),
+    [props.html, props.verificadorActivo],
+  );
 
   // ───────────────────────────────────────────────────────────
   // T3: vista previa que se arma mientras la IA escribe ("Progresivo" en

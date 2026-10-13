@@ -1623,6 +1623,15 @@ export default function Workspace(props: WorkspaceProps) {
         portadaVieja={portadaVieja}
         saving={saving}
         notice={notice}
+        // Hallazgo de revisión (motor-claude, pre-deploy): el valor de
+        // CONFIGURACIÓN (lo que el servidor ya sabía al cargar la página,
+        // no `verificadorDesactivadoRef` — eso es un ref mutable, no
+        // reactivo, y recién se sabe DESPUÉS del primer intento). Con esto
+        // en `false`, `PreviewPanel` nunca inyecta el parche de WebGL: no
+        // tiene sentido pagar ese parche en ninguna vista previa de un
+        // proyecto sin verificador configurado, nunca se le va a pedir una
+        // captura.
+        verificadorActivo={props.verificadorActivo}
         autopruebaAdvertencia={autopruebaAdvertencia}
         checklist={checklistConEstado}
         verificador={verificador}

@@ -60,6 +60,21 @@ import { fail, ok, readBody } from '../../../lib/http.ts';
  * consumo, igual que la autoprueba/autocorrección discretas de T12.
  */
 
+/**
+ * Hallazgo de revisión (motor-claude, pre-deploy): dos topes DISTINTOS a
+ * propósito.
+ *  - `CAPTURA_TOPE_USABLE_BYTES` (2MB, el valor original de T5/T4 round 5):
+ *    de sobra para un JPEG de 1280px de ancho a calidad 0.8 — por encima de
+ *    esto, la imagen se DESCARTA (la revisión sigue de puro texto, como si
+ *    el cliente nunca hubiera mandado nada).
+ *  - `CAPTURA_TOPE_ABSOLUTO_BYTES` (20MB): sólo para rechazar un payload
+ *    abusivo en el schema — nunca debería alcanzarse con el cliente real
+ *    (`preview.ts` nunca manda algo así de grande), pero evita aceptar un
+ *    string de tamaño arbitrario en el body.
+ */
+const CAPTURA_TOPE_USABLE_BYTES = 2_000_000;
+const CAPTURA_TOPE_ABSOLUTO_BYTES = 20_000_000;
+
 const schema = z.object({
   projectId: z.string().min(1),
   /** `fingerprintHtml` del HTML que se va a verificar — mismo criterio que
@@ -72,9 +87,20 @@ const schema = z.object({
    * (`PreviewPanel`/`Workspace.tsx`). El servidor la usa SÓLO si el motor
    * `isVerifier` configurado soporta visión (`supportsVision`) — con
    * cualquier otro motor, o sin esto, el comportamiento es EXACTAMENTE el
-   * de antes de T5. Tope generoso (~1.5MB en base64): nunca un vector de
-   * tamaño libre, pero de sobra para un JPEG de 1280px de ancho a calidad
-   * 0.8.
+   * de antes de T5.
+   *
+   * Hallazgo de revisión (motor-claude, pre-deploy): el tope de ACÁ
+   * (`CAPTURA_TOPE_ABSOLUTO_BYTES`, sólo para no aceptar un payload
+   * absurdo/abusivo) es mucho más generoso que el tope ÚTIL
+   * (`CAPTURA_TOPE_USABLE_BYTES`, ver más abajo) — antes los dos eran el
+   * mismo número (2MB) y vivían ACÁ, en el schema: una captura
+   * `paginaCompleta` de un recurso con mucho contenido (una página larga de
+   * verdad, nada abusivo) podía superar 2MB y tirar la verificación ENTERA
+   * con 422, cuando lo correcto es sólo descartar la imagen y seguir con la
+   * revisión de puro texto — exactamente lo que ya hace el camino "sin
+   * captura" de toda la vida. Separar los dos topes deja que el schema
+   * rechace sólo lo verdaderamente abusivo; el recorte real pasa DESPUÉS de
+   * parsear (ver `capturaUtilizable` más abajo).
    */
   /**
    * T4 round 5 (motor-claude): también acepta un array (hasta 2 — página
@@ -82,7 +108,7 @@ const schema = z.object({
    * `preview.ts`) para no perder contenido agregado "al final" que cae
    * fuera del primer viewport. Un string único sigue andando igual.
    */
-  captura: z.union([z.string().max(2_000_000), z.array(z.string().max(2_000_000)).max(2)]).nullish(),
+  captura: z.union([z.string().max(CAPTURA_TOPE_ABSOLUTO_BYTES), z.array(z.string().max(CAPTURA_TOPE_ABSOLUTO_BYTES)).max(2)]).nullish(),
   /**
    * T11 (motor-claude): cuánto tardó la autoprueba del navegador en ESTE
    * turno, medida del lado del CLIENTE (`performance.now()` dentro del
@@ -319,15 +345,33 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * 2 pasadas en paralelo para "nuevo", 1 para "ajuste", "medium" fijo, sin
    * imagen.
    */
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): una captura (o
+   * cualquiera de sus hasta 2 partes) por encima del tope ÚTIL se
+   * DESCARTA ACÁ, nunca tira la verificación entera — el schema ya dejó
+   * pasar hasta `CAPTURA_TOPE_ABSOLUTO_BYTES` (20MB) a propósito para que
+   * esta rama sea la que decide "demasiado grande para usar", no un 422.
+   * `capturaUtilizable` es lo único que el resto de la función lee de acá
+   * en más — `captura` (la variable original, del parseo) no se vuelve a
+   * usar.
+   */
+  const capturaDemasiadoGrande = Array.isArray(captura)
+    ? captura.some((parte) => parte.length > CAPTURA_TOPE_USABLE_BYTES)
+    : (captura?.length ?? 0) > CAPTURA_TOPE_USABLE_BYTES;
+  if (capturaDemasiadoGrande) {
+    console.warn(`[chat/verificar] captura descartada por tamaño (proyecto ${project.id}) — la revisión sigue de puro texto.`);
+  }
+  const capturaUtilizable = capturaDemasiadoGrande ? null : captura;
+
   // T4 round 5: `captura` puede ser un array (página larga partida); un
   // array vacío es truthy en JS, así que `Boolean` solo no alcanza.
-  const hayCaptura = Array.isArray(captura) ? captura.length > 0 : Boolean(captura);
+  const hayCaptura = Array.isArray(capturaUtilizable) ? capturaUtilizable.length > 0 : Boolean(capturaUtilizable);
   const usaVision = hayCaptura && supportsVision(provider);
   const sistema = construirSistemaVerificador(reglasDelArnes(), { conCaptura: usaVision });
   const contenidoUsuario = construirContenidoUsuarioVerificador(
     pedido,
     htmlParaRevisor,
-    usaVision ? captura : null,
+    usaVision ? capturaUtilizable : null,
     resumenDiff,
   );
 

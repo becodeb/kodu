@@ -143,8 +143,17 @@ const BRIDGE = `<script data-kodu-bridge>
 
           function recortarYEscalar(sy, sh) {
             // Recorta del MISMO canvas ya renderizado (sin volver a pedirle
-            // nada al DOM) y lo escala a 'anchoObjetivo' de ancho.
-            var ratioEscala = canvas.width ? anchoObjetivo / canvas.width : 1;
+            // nada al DOM) y lo escala a 'anchoObjetivo' de ancho — pero
+            // NUNCA para arriba (hallazgo de revisión, motor-claude,
+            // pre-deploy): un recurso angosto (ej. pensado para celular)
+            // tiene canvas.width < anchoObjetivo (1280 para el revisor), y
+            // sin este tope la imagen salía estirada (borrosa, más pesada en
+            // base64 para nada) en vez de mandarse a su resolución real.
+            // Sólo esta rama (página completa, exclusiva del revisor) lo
+            // necesita: la portada de galería (más abajo, sin
+            // 'paginaCompleta') normaliza a propósito un recurso chico al
+            // ancho fijo de la tarjeta, eso no cambia.
+            var ratioEscala = canvas.width ? Math.min(1, anchoObjetivo / canvas.width) : 1;
             var target = document.createElement('canvas');
             target.width = Math.max(1, Math.round(canvas.width * ratioEscala));
             target.height = Math.max(1, Math.round(sh * ratioEscala));
@@ -209,6 +218,15 @@ const BRIDGE = `<script data-kodu-bridge>
  * de `<body>` si no hay `<head>`) — sólo en la vista previa del editor,
  * nunca en `/p/[slug]` ni en el HTML que se guarda.
  *
+ * Hallazgo de revisión (motor-claude, pre-deploy): además, SÓLO cuando
+ * `buildPreviewDocument` recibe `conRevisor: true` (`PreviewPanel.tsx`, a
+ * partir de si el proyecto tiene un motor verificador configurado) — antes
+ * de esto se inyectaba en CUALQUIER vista previa del editor, aunque el
+ * proyecto no tuviera ningún verificador y nunca se le fuera a pedir una
+ * captura de revisor. "nunca en /p/[slug] ni en el HTML que se guarda"
+ * (arriba) ya era cierto de antes: esto achica el alcance TODAVÍA más,
+ * dentro de la vista previa misma.
+ *
  * Límite conocido (documentado, no resuelto acá): si el recurso crea su
  * contexto WebGL desde una librería que no pasa por
  * `HTMLCanvasElement.prototype.getContext` (p. ej. una build que cachea el
@@ -236,8 +254,16 @@ function conParcheWebgl(html: string): string {
   return WEBGL_PATCH + html;
 }
 
-export function buildPreviewDocument(html: string): string {
-  const conParche = conParcheWebgl(html);
+export interface OpcionesPreviewDocument {
+  /** Hallazgo de revisión (motor-claude, pre-deploy): `true` sólo cuando el
+   *  proyecto tiene un motor verificador configurado — ver el comentario de
+   *  `WEBGL_PATCH` arriba. Default `false`: un llamador que no lo pasa
+   *  nunca paga el parche (nadie le va a pedir una captura de todos modos). */
+  conRevisor?: boolean;
+}
+
+export function buildPreviewDocument(html: string, opciones?: OpcionesPreviewDocument): string {
+  const conParche = opciones?.conRevisor ? conParcheWebgl(html) : html;
   if (conParche.includes('</body>')) {
     return conParche.replace('</body>', `${BRIDGE}</body>`);
   }
