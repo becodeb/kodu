@@ -45,6 +45,50 @@ await prueba('PRESETS: las tres claves verificadas por la tarea están cargadas'
   assert.ok(PRESETS['openai-gpt-6-luna']);
 });
 
+await prueba('PRESETS: los tres presets de Anthropic (T9, motor-claude) están cargados', () => {
+  assert.ok(PRESETS['claude-haiku-5-5']);
+  assert.ok(PRESETS['claude-sonnet-5-5']);
+  assert.ok(PRESETS['claude-opus-5-5']);
+});
+
+await prueba('claude-haiku-5-5: precios + cache-write verificados (0.10 / 0.01 / 0.50, escritura 0.125)', () => {
+  const preset = PRESETS['claude-haiku-5-5']!;
+  const precios = preciosDePreset(preset);
+  assert.equal(precios.input.toString(), '0.1');
+  assert.equal(precios.cachedInput.toString(), '0.01');
+  assert.equal(precios.output.toString(), '0.5');
+  assert.equal(precios.cacheWrite?.toString(), '0.125');
+  assert.equal(preset.provider.apiFormat, 'anthropic');
+  assert.equal(preset.reasoning.param, 'effort');
+  assert.equal(preset.reasoning.defaultEffort, 'low');
+  assert.equal(preset.schedule, null, 'Anthropic no tiene horario de pico');
+});
+
+await prueba('claude-sonnet-5-5: precios + cache-write verificados (2 / 0.10 / 10, escritura 2.50)', () => {
+  const preset = PRESETS['claude-sonnet-5-5']!;
+  const precios = preciosDePreset(preset);
+  assert.equal(precios.input.toString(), '2');
+  assert.equal(precios.cachedInput.toString(), '0.1');
+  assert.equal(precios.output.toString(), '10');
+  assert.equal(precios.cacheWrite?.toString(), '2.5');
+  assert.equal(preset.reasoning.defaultEffort, 'medium');
+});
+
+await prueba('claude-opus-5-5: precios + cache-write verificados (4 / 0.20 / 20, escritura 5)', () => {
+  const preset = PRESETS['claude-opus-5-5']!;
+  const precios = preciosDePreset(preset);
+  assert.equal(precios.input.toString(), '4');
+  assert.equal(precios.cachedInput.toString(), '0.2');
+  assert.equal(precios.output.toString(), '20');
+  assert.equal(precios.cacheWrite?.toString(), '5');
+  assert.equal(preset.reasoning.defaultEffort, 'medium');
+});
+
+await prueba('preciosDePreset: un preset sin cacheWritePerMToken (gpt-6-luna) no inventa uno', () => {
+  const precios = preciosDePreset(PRESETS['openai-gpt-6-luna']!);
+  assert.equal(precios.cacheWrite, undefined);
+});
+
 await prueba('deepseek-flash: precios PEAK verificados (input 0.30, cached 0.006, output 1.20)', () => {
   const precios = preciosDePreset(PRESETS['deepseek-flash']!);
   assert.equal(precios.input.toString(), '0.3');

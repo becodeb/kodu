@@ -14,9 +14,11 @@ import { presetByKey, PRESETS } from '../ai/presets.ts';
 export interface PresetUI {
   key: string;
   label: string;
-  provider: { baseUrl: string; apiFormat: 'chat' | 'responses' };
+  provider: { baseUrl: string; apiFormat: 'chat' | 'responses' | 'anthropic' };
   providerModel: string;
-  prices: { inputPerMToken: number; cachedInputPerMToken: number; outputPerMToken: number };
+  /** T9 (motor-claude): `cacheWritePerMToken` sólo viene en los presets de
+   *  Anthropic — `undefined` en los demás, mismo criterio que la columna. */
+  prices: { inputPerMToken: number; cachedInputPerMToken: number; outputPerMToken: number; cacheWritePerMToken?: number };
   reasoningDefaultEffort: string;
   reasoningParam: string;
   maxOutputTokens: number;
@@ -187,6 +189,15 @@ export function camposDePreset(presetKey: string | null | undefined): Partial<Pr
     priceInputPerMToken: new Prisma.Decimal(preset.prices.inputPerMToken),
     priceCachedInputPerMToken: new Prisma.Decimal(preset.prices.cachedInputPerMToken),
     priceOutputPerMToken: new Prisma.Decimal(preset.prices.outputPerMToken),
+    // T9 (motor-claude): antes de esto, elegir un preset de Anthropic desde
+    // `/admin/motores` dejaba `priceCacheWritePerMToken` en NULL — el panel
+    // (que SÍ lee esta columna para mostrarla, ver `serializarMotor`) no
+    // podía mostrar el precio real del preset, aunque `catalogo.ts` ya lo
+    // leyera bien en tiempo de ejecución (directo de `presets.ts`, nunca de
+    // esta columna con un preset enlazado). `null` para todo preset que no
+    // trae `cacheWritePerMToken` (DeepSeek, gpt-6-luna) — nunca se inventa.
+    priceCacheWritePerMToken:
+      preset.prices.cacheWritePerMToken !== undefined ? new Prisma.Decimal(preset.prices.cacheWritePerMToken) : null,
     priceOffPeakFactor: preset.schedule ? preset.schedule.offPeakFactor : null,
     peakWindowsUtc: preset.schedule ? (preset.schedule.peakWindows as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,
     offPeakDatesUtc: preset.schedule ? (preset.schedule.offPeakDates as unknown as Prisma.InputJsonValue) : Prisma.JsonNull,

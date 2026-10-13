@@ -88,6 +88,11 @@ function construirConfig(fila: FilaConProveedor): ProviderConfig {
   // camino que `presetKey: null`: las columnas de la fila, nunca un crash.
   const preset = presetByKey(fila.presetKey);
 
+  // T9 (motor-claude): `preciosDePreset` ya trae `cacheWrite` cuando el
+  // preset lo define (los tres de Anthropic) — antes de T9 esta rama nunca
+  // pasaba `cacheWrite`, así que un motor Anthropic enlazado a un preset
+  // facturaba su escritura de cache al 1.25x genérico de `calcularCostoTurno`
+  // en vez del precio real del proveedor.
   const precios = preset
     ? preciosDePreset(preset)
     : fila.priceInputPerMToken !== null && fila.priceOutputPerMToken !== null

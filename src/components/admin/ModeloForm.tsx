@@ -69,6 +69,20 @@ function parsearVentanasPico(texto: string): Array<{ weekday: number; startHour:
     .filter((v): v is { weekday: number; startHour: number; endHour: number } => v !== null);
 }
 
+/** T9 (motor-claude): un `kind` de cuenta razonable a partir del `baseUrl`
+ *  del preset — el admin puede cambiarlo antes de guardar. No intenta ser
+ *  exhaustivo, sólo evitar que el campo arranque vacío. */
+function kindDesdeBaseUrl(baseUrl: string): string {
+  try {
+    const host = new URL(baseUrl).hostname;
+    const partes = host.split('.');
+    const marca = partes.length >= 2 ? partes[partes.length - 2]! : host;
+    return marca.toLowerCase().replace(/[^a-z0-9-]/g, '-') || 'proveedor';
+  } catch {
+    return 'proveedor';
+  }
+}
+
 function parsearFeriados(texto: string): string[] {
   return texto
     .split(',')
@@ -91,6 +105,12 @@ export default function ModeloForm(props: ModeloFormProps) {
   const presetElegido = props.presets.find((p) => p.key === presetKey) ?? null;
 
   const [providerId, setProviderId] = useState(motor?.providerId ?? '');
+  // T9 (motor-claude): si el preset elegido no tiene ninguna cuenta que
+  // coincida en `baseUrl`, el admin puede crearla de una sola vez pegando la
+  // clave acá mismo — nunca obliga a pasar primero por /admin/proveedores.
+  // Prefijado con un nombre legible; el admin puede cambiarlo.
+  const [nuevaCuentaLabel, setNuevaCuentaLabel] = useState('');
+  const [nuevaCuentaClave, setNuevaCuentaClave] = useState('');
   const [providerModel, setProviderModel] = useState(motor?.providerModel ?? '');
   const [displayName, setDisplayName] = useState(motor?.displayName ?? '');
   const [description, setDescription] = useState(motor?.description ?? '');
@@ -141,27 +161,68 @@ export default function ModeloForm(props: ModeloFormProps) {
     setPrecioEntrada(String(preset.prices.inputPerMToken));
     setPrecioCacheada(String(preset.prices.cachedInputPerMToken));
     setPrecioSalida(String(preset.prices.outputPerMToken));
+    // T9 (motor-claude): los tres presets de Anthropic traen precio de
+    // escritura de cache — "" (vacío) para cualquier otro preset, igual que
+    // quedaba antes de T9 (nunca se inventa un valor que el preset no trae).
+    setPrecioEscrituraCache(
+      preset.prices.cacheWritePerMToken !== undefined ? String(preset.prices.cacheWritePerMToken) : '',
+    );
 
     // Sugiere la cuenta de proveedor que ya coincide en baseUrl, si existe
-    // una — "reusar", nunca crea una cuenta nueva (eso sigue siendo un paso
-    // manual en /admin/proveedores, el flujo de clave no cambia con T7).
+    // una. Si no hay ninguna, el campo de clave de más abajo (T9) permite
+    // crearla de una sola vez, sin pasar por /admin/proveedores.
     const proveedorQueCoincide = props.proveedores.find((p) => p.baseUrl === preset.provider.baseUrl);
-    if (proveedorQueCoincide) setProviderId(proveedorQueCoincide.id);
+    setProviderId(proveedorQueCoincide?.id ?? '');
+    if (!proveedorQueCoincide) setNuevaCuentaLabel((actual) => actual || preset.label);
   }
+
+  // T9 (motor-claude): con un preset elegido y ninguna cuenta que coincida
+  // en `baseUrl`, el formulario deja de pedir una cuenta YA creada y pide la
+  // clave en su lugar — la cuenta se crea en el mismo submit.
+  const creandoCuentaNueva = presetElegido !== null && providerId === '';
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError(null);
 
-    if (!providerId || !providerModel.trim() || !displayName.trim()) {
+    if (creandoCuentaNueva) {
+      if (!nuevaCuentaClave.trim()) {
+        setError('Pegá la clave de la API para crear la cuenta de este preset.');
+        return;
+      }
+    } else if (!providerId) {
+      setError('Completá la cuenta, el identificador y el nombre.');
+      return;
+    }
+    if (!providerModel.trim() || !displayName.trim()) {
       setError('Completá la cuenta, el identificador y el nombre.');
       return;
     }
 
     setPending(true);
 
+    // La cuenta se crea PRIMERO (si hace falta): el motor necesita su `id`
+    // como `providerId`. Si esto falla, nada de lo de abajo se manda — no
+    // queda un motor a medio crear sin cuenta.
+    let providerIdFinal = providerId;
+    if (creandoCuentaNueva && presetElegido) {
+      const creado = await apiRequest<{ proveedor: ProveedorAdmin }>('/api/admin/providers', 'POST', {
+        kind: kindDesdeBaseUrl(presetElegido.provider.baseUrl),
+        label: nuevaCuentaLabel.trim() || presetElegido.label,
+        baseUrl: presetElegido.provider.baseUrl,
+        apiFormat: presetElegido.provider.apiFormat,
+        apiKey: nuevaCuentaClave.trim(),
+      });
+      if (!creado.ok) {
+        setPending(false);
+        setError(creado.error);
+        return;
+      }
+      providerIdFinal = creado.data.proveedor.id;
+    }
+
     const payload: Record<string, unknown> = {
-      providerId,
+      providerId: providerIdFinal,
       providerModel: providerModel.trim(),
       displayName: displayName.trim(),
       description: description.trim() === '' ? null : description.trim(),
@@ -218,7 +279,7 @@ export default function ModeloForm(props: ModeloFormProps) {
           <button
             type="submit"
             form={`${idBase}-form`}
-            disabled={pending || sinProveedores}
+            disabled={pending || (sinProveedores && !presetElegido)}
             className="kodu-btn-primary text-sm"
           >
             {pending ? 'Guardando…' : 'Guardar'}
@@ -227,9 +288,9 @@ export default function ModeloForm(props: ModeloFormProps) {
       }
     >
       <form id={`${idBase}-form`} onSubmit={submit} className="space-y-4">
-        {sinProveedores && (
+        {sinProveedores && !presetElegido && (
           <div className="kodu-card space-y-2 p-4 text-sm text-ink-700">
-            <p>Todavía no hay ninguna cuenta de proveedor. Cargá una y volvé a crear el motor.</p>
+            <p>Todavía no hay ninguna cuenta de proveedor. Cargá una, o elegí un preset de arriba para crearla acá mismo.</p>
             <a href="/admin/proveedores" className="kodu-btn-primary inline-block text-sm">
               Ir a Proveedores
             </a>
@@ -270,10 +331,12 @@ export default function ModeloForm(props: ModeloFormProps) {
               value={providerId}
               onChange={(event) => setProviderId(event.target.value)}
               className="kodu-input"
-              required
-              disabled={sinProveedores}
+              required={!creandoCuentaNueva}
+              disabled={sinProveedores && !presetElegido}
             >
-              <option value="">— Elegí una cuenta —</option>
+              <option value="">
+                {presetElegido ? '— Crear cuenta nueva con la clave de abajo —' : '— Elegí una cuenta —'}
+              </option>
               {props.proveedores.map((proveedor) => (
                 <option key={proveedor.id} value={proveedor.id}>
                   {proveedor.label}
@@ -297,6 +360,44 @@ export default function ModeloForm(props: ModeloFormProps) {
             />
           </div>
         </div>
+
+        {creandoCuentaNueva && presetElegido && (
+          <fieldset className="space-y-2 rounded-[10px] border border-linea p-3">
+            <legend className="px-1 text-sm font-medium text-ink-700">Cuenta nueva para este preset</legend>
+            <p className="text-xs text-ink-500">
+              No hay ninguna cuenta con la URL base de este preset ({presetElegido.provider.baseUrl}). Se crea al
+              guardar, con la clave de abajo.
+            </p>
+            <div>
+              <label className="kodu-label text-xs" htmlFor={`${idBase}-nuevaCuentaLabel`}>
+                Nombre de la cuenta
+              </label>
+              <input
+                id={`${idBase}-nuevaCuentaLabel`}
+                value={nuevaCuentaLabel}
+                onChange={(event) => setNuevaCuentaLabel(event.target.value)}
+                placeholder={presetElegido.label}
+                className="kodu-input"
+              />
+            </div>
+            <div>
+              <label className="kodu-label text-xs" htmlFor={`${idBase}-nuevaCuentaClave`}>
+                Clave de la API
+              </label>
+              <input
+                id={`${idBase}-nuevaCuentaClave`}
+                type="password"
+                autoComplete="new-password"
+                value={nuevaCuentaClave}
+                onChange={(event) => setNuevaCuentaClave(event.target.value)}
+                placeholder="sk-ant-…"
+                className="kodu-input"
+                required
+              />
+              <p className="mt-1 text-xs text-ink-500">Nunca se vuelve a mostrar después de guardarla.</p>
+            </div>
+          </fieldset>
+        )}
 
         <div>
           <label className="kodu-label" htmlFor={`${idBase}-displayName`}>

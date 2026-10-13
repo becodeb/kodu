@@ -32,7 +32,7 @@ export interface ModelPreset {
    *  for the same `baseUrl`/`apiFormat`). */
   provider: {
     baseUrl: string;
-    apiFormat: 'chat' | 'responses';
+    apiFormat: 'chat' | 'responses' | 'anthropic';
   };
   /** The exact string the provider's API expects as the model id. */
   providerModel: string;
@@ -42,10 +42,17 @@ export interface ModelPreset {
     inputPerMToken: number;
     cachedInputPerMToken: number;
     outputPerMToken: number;
+    /** T9 (motor-claude): cache-WRITE price — only Anthropic presets set
+     *  this (`apiFormat: 'anthropic'`). `undefined` for every other
+     *  provider, same as `AiModel.priceCacheWritePerMToken` being unset:
+     *  `calcularCostoTurno` (usage.ts) falls back to 1.25x the input price,
+     *  never invents a number here. */
+    cacheWritePerMToken?: number;
   };
   reasoning: {
-    /** `null` = this provider dialect doesn't take a reasoning parameter. */
-    param: 'reasoning_effort' | 'thinking' | null;
+    /** `null` = this provider dialect doesn't take a reasoning parameter.
+     *  `'effort'` (T1/T9, motor-claude): Anthropic — `thinking` + `output_config.effort`. */
+    param: 'reasoning_effort' | 'thinking' | 'effort' | null;
     /** The level a brand-new model gets when linked to this preset. */
     defaultEffort: string;
   };
@@ -156,10 +163,67 @@ const OPENAI_GPT_6_LUNA: ModelPreset = {
   sourceUrl: 'https://developers.openai.com/api/docs/pricing',
 };
 
+const FUENTE_ANTHROPIC = 'https://docs.claude.com/en/docs/about-claude/pricing';
+
+/**
+ * T9 (motor-claude): los tres presets de Anthropic — `odd/tasks/motor-claude.md`
+ * §T9 trae los precios tal cual los pasó el dueño (verificados contra la
+ * página oficial de precios). Los tres van al mismo `provider` (una sola
+ * cuenta Anthropic, igual que DeepSeek comparte `https://api.deepseek.com`
+ * entre sus dos presets) — `/admin/motores` reutiliza la cuenta existente si
+ * ya hay una con ese `baseUrl`+`apiFormat`, o deja que el admin la cree con
+ * la clave de una vez (ver `ModeloForm.tsx`).
+ *
+ * Haiku 5.5 tiene precio de prompts ≤100K tokens; por encima de eso Anthropic
+ * cobra 5x (ver el warning log existente en `usage.ts`/`provider.ts` — no se
+ * modela acá, mismo criterio que el preset de gpt-6-luna con su tramo largo).
+ */
+const CLAUDE_HAIKU_5_5: ModelPreset = {
+  key: 'claude-haiku-5-5',
+  label: 'Claude Haiku 5.5',
+  provider: { baseUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
+  providerModel: 'claude-haiku-5-5',
+  prices: { inputPerMToken: 0.1, cachedInputPerMToken: 0.01, outputPerMToken: 0.5, cacheWritePerMToken: 0.125 },
+  reasoning: { param: 'effort', defaultEffort: 'low' },
+  maxOutputTokens: 32_000,
+  schedule: null,
+  pricesVerifiedAt: '2026-10-13',
+  sourceUrl: FUENTE_ANTHROPIC,
+};
+
+const CLAUDE_SONNET_5_5: ModelPreset = {
+  key: 'claude-sonnet-5-5',
+  label: 'Claude Sonnet 5.5',
+  provider: { baseUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
+  providerModel: 'claude-sonnet-5-5',
+  prices: { inputPerMToken: 2, cachedInputPerMToken: 0.1, outputPerMToken: 10, cacheWritePerMToken: 2.5 },
+  reasoning: { param: 'effort', defaultEffort: 'medium' },
+  maxOutputTokens: 32_000,
+  schedule: null,
+  pricesVerifiedAt: '2026-10-13',
+  sourceUrl: FUENTE_ANTHROPIC,
+};
+
+const CLAUDE_OPUS_5_5: ModelPreset = {
+  key: 'claude-opus-5-5',
+  label: 'Claude Opus 5.5',
+  provider: { baseUrl: 'https://api.anthropic.com', apiFormat: 'anthropic' },
+  providerModel: 'claude-opus-5-5',
+  prices: { inputPerMToken: 4, cachedInputPerMToken: 0.2, outputPerMToken: 20, cacheWritePerMToken: 5 },
+  reasoning: { param: 'effort', defaultEffort: 'medium' },
+  maxOutputTokens: 32_000,
+  schedule: null,
+  pricesVerifiedAt: '2026-10-13',
+  sourceUrl: FUENTE_ANTHROPIC,
+};
+
 export const PRESETS: Record<string, ModelPreset> = {
   [DEEPSEEK_FLASH.key]: DEEPSEEK_FLASH,
   [DEEPSEEK_V4_PRO.key]: DEEPSEEK_V4_PRO,
   [OPENAI_GPT_6_LUNA.key]: OPENAI_GPT_6_LUNA,
+  [CLAUDE_HAIKU_5_5.key]: CLAUDE_HAIKU_5_5,
+  [CLAUDE_SONNET_5_5.key]: CLAUDE_SONNET_5_5,
+  [CLAUDE_OPUS_5_5.key]: CLAUDE_OPUS_5_5,
 };
 
 export function presetByKey(key: string | null | undefined): ModelPreset | null {
@@ -168,11 +232,21 @@ export function presetByKey(key: string | null | undefined): ModelPreset | null 
 }
 
 /** `Precios` (ver `usage.ts`) desde un preset, en Decimal — mismo tipo que
- *  ya espera `precioVigente`/`recordUsage`. */
-export function preciosDePreset(preset: ModelPreset): { input: Prisma.Decimal; output: Prisma.Decimal; cachedInput: Prisma.Decimal } {
+ *  ya espera `precioVigente`/`recordUsage`. `cacheWrite` es `undefined`
+ *  cuando el preset no lo trae (todo preset no-Anthropic) — mismo criterio
+ *  que la columna `AiModel.priceCacheWritePerMToken` sin cargar. */
+export function preciosDePreset(preset: ModelPreset): {
+  input: Prisma.Decimal;
+  output: Prisma.Decimal;
+  cachedInput: Prisma.Decimal;
+  cacheWrite?: Prisma.Decimal;
+} {
   return {
     input: new Prisma.Decimal(preset.prices.inputPerMToken),
     output: new Prisma.Decimal(preset.prices.outputPerMToken),
     cachedInput: new Prisma.Decimal(preset.prices.cachedInputPerMToken),
+    ...(preset.prices.cacheWritePerMToken !== undefined
+      ? { cacheWrite: new Prisma.Decimal(preset.prices.cacheWritePerMToken) }
+      : {}),
   };
 }
