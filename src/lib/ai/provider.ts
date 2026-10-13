@@ -876,9 +876,20 @@ async function intentarUnaAnthropic(options: {
 }): Promise<AnthropicRawStream> {
   const { provider } = options;
 
+  // Hallazgo de revisión (motor-claude, pre-deploy): el SDK reintenta por su
+  // cuenta (default `maxRetries: 2`, 408/409/429/5xx + errores de red) ANTES
+  // de que el error llegue hasta el `catch` de abajo — pero `stream.ts` ya
+  // tiene su propio bucle de reintentos (429/529 se re-lanzan como
+  // `ProviderError` con `status: 429` para ESE bucle, más arriba en este
+  // archivo). Con el SDK reintentando también, una saturación sostenida
+  // multiplica la espera (reintentos del SDK × reintentos de la app) sin que
+  // ninguno de los dos lados lo sepa. `maxRetries: 0` deja el reintento
+  // enteramente del lado de la app, que es el único que decide cuándo pasar
+  // al siguiente proveedor de la cadena.
   const client = new Anthropic({
     apiKey: provider.apiKey,
     baseURL: provider.baseUrl || undefined,
+    maxRetries: 0,
   });
 
   const body = aAnthropicBody({
