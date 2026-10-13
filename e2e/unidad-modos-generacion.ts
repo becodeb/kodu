@@ -317,6 +317,34 @@ try {
     });
     assert.equal(ajuste?.id, haikuId);
   });
+
+  await prueba(
+    'motorDeGeneracion: si NI el modo pedido NI "base" tienen su preset configurado, respeta el motor que YA tenía el proyecto (nunca el default global)',
+    async () => {
+      // "todo-opus" no tiene motor de Opus habilitado en esta prueba, y
+      // tampoco hay NADA enlazado al preset de Haiku en este sub-catálogo
+      // artificial (se simula apagando momentáneamente el único motor
+      // Haiku de la prueba) — el respaldo tiene que ser el propio
+      // `project.aiModelId` (el motor "personalizado", sin presetKey, que
+      // representa cualquier proyecto ajeno al sistema de modos), nunca
+      // `motorPorDefecto()` de toda la instalación.
+      await prisma.aiModel.update({ where: { id: haikuId! }, data: { enabled: false } });
+      invalidarCatalogo();
+      try {
+        const config = await motorDeGeneracion({
+          modelIdExplicitoDelPedido: null,
+          project: { aiModelId: personalizadoId, engineChosenByTeacher: false },
+          esCreacion: true,
+          settings: { generationMode: 'todo-opus', creationModelId: null, adjustmentModelId: null },
+        });
+        assert.equal(config?.id, personalizadoId);
+        assert.equal(config?.reasoningEffort, 'high', 'el respaldo es normalizarMotor: no pisa el esfuerzo del motor');
+      } finally {
+        await prisma.aiModel.update({ where: { id: haikuId! }, data: { enabled: true } });
+        invalidarCatalogo();
+      }
+    },
+  );
 } finally {
   await limpiar();
 }

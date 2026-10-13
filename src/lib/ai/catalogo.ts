@@ -297,9 +297,18 @@ function motorPorPresetKey(filas: FilaConProveedor[], spec: RoleSpec): ProviderC
 const modosDeRespaldoLogueados = new Set<string>();
 
 /**
- * El motor que corresponde a un ROL (`creation`/`adjustment`) bajo el modo
- * de generación activo (`AppSettings.generationMode`, T7). Nunca hace
- * fallar un turno porque el modo está mal configurado:
+ * El corazón de la resolución modo→rol, SIN el respaldo final al motor por
+ * defecto global — eso lo decide cada llamador (`motorParaRol` y
+ * `motorDeGeneracion`, los dos más abajo), porque el respaldo correcto no
+ * es el mismo en los dos casos: en aislamiento (sin un proyecto concreto a
+ * mano) el default global es lo único que queda; CON un proyecto, lo que
+ * corresponde primero es el motor que ESE proyecto ya tenía ANTES de que
+ * este modo existiera (`normalizarMotor(project.aiModelId)`) — así un
+ * proyecto que no tiene nada que ver con los presets de Claude (p. ej. un
+ * motor de prueba sin `presetKey`, de antes de T7) sigue funcionando
+ * exactamente igual que siempre mientras el modo activo no tenga su motor
+ * configurado, en vez de converger de golpe en el default global de toda
+ * la instalación.
  *
  *  1. `'personalizado'`: el motor elegido a mano por el admin para ese rol
  *     (`opts.creationModelId`/`adjustmentModelId`). Sin elegir, apagado o
@@ -309,11 +318,10 @@ const modosDeRespaldoLogueados = new Set<string>();
  *  3. Si el paso 2 no encontró nada Y el modo pedido no era ya `'base'`:
  *     se reintenta con el preset/esfuerzo del rol en `'base'` (se loguea
  *     una vez la primera vez que pasa esto para esa combinación modo+rol).
- *  4. Último recurso, igual que `normalizarMotor`/`cadenaDeMotores`: el
- *     motor por defecto de siempre. Nunca `null` si hay AL MENOS un motor
- *     habilitado en el catálogo.
+ *  4. `null` si ni el modo pedido ni `'base'` tienen un motor habilitado
+ *     con ese preset — el llamador decide el respaldo final.
  */
-export async function motorParaRol(
+async function resolverRolDeModo(
   modeKey: string,
   role: 'creation' | 'adjustment',
   opts: { creationModelId: string | null; adjustmentModelId: string | null },
@@ -327,7 +335,7 @@ export async function motorParaRol(
       const config = construirConfig(fila);
       if (tieneClaveUtilizable(config)) return config;
     }
-    return motorParaRol('base', role, opts);
+    return resolverRolDeModo('base', role, opts);
   }
 
   const modo = modeByKey(modeKey) ?? MODES.base!;
@@ -347,18 +355,45 @@ export async function motorParaRol(
     if (baseDirecto) return baseDirecto;
   }
 
-  return motorPorDefecto();
+  return null;
 }
 
 /**
- * El motor con el que corre ESTE turno: si el proyecto tiene un motor
- * elegido EXPLÍCITAMENTE por el docente (`Project.engineChosenByTeacher`,
- * T7 — nunca la asignación silenciosa inicial ni el swap automático de
- * respaldo), se lo respeta tal cual, igual que siempre
- * (`normalizarMotor(modelIdExplicito ?? project.aiModelId)`). En cualquier
- * otro caso, el modo de generación activo decide según si el turno es de
- * creación o de ajuste — nunca al revés: un docente que tocó el selector
- * dejó clarísimo qué motor quiere, y eso pesa más que el modo.
+ * T7 (motor-claude): `resolverRolDeModo` EN AISLAMIENTO, para quien no tiene
+ * un proyecto concreto a mano (pruebas, un futuro llamador sin contexto de
+ * proyecto) — el respaldo final es el motor por defecto de toda la
+ * instalación, igual que `normalizarMotor`/`cadenaDeMotores`. Nunca `null`
+ * si hay AL MENOS un motor habilitado en el catálogo. El camino real de un
+ * turno (`motorDeGeneracion`, abajo) usa `resolverRolDeModo` directo, con
+ * un respaldo distinto — ver su comentario.
+ */
+export async function motorParaRol(
+  modeKey: string,
+  role: 'creation' | 'adjustment',
+  opts: { creationModelId: string | null; adjustmentModelId: string | null },
+): Promise<ProviderConfig | null> {
+  const resuelto = await resolverRolDeModo(modeKey, role, opts);
+  return resuelto ?? motorPorDefecto();
+}
+
+/**
+ * El motor con el que corre ESTE turno.
+ *
+ * Si el proyecto tiene un motor elegido EXPLÍCITAMENTE por el docente
+ * (`Project.engineChosenByTeacher`, T7 — nunca la asignación silenciosa
+ * inicial ni el swap automático de respaldo), se lo respeta tal cual,
+ * igual que siempre (`normalizarMotor(modelIdExplicito ?? project.aiModelId)`).
+ *
+ * En cualquier otro caso, el modo de generación activo decide según si el
+ * turno es de creación o de ajuste — PERO si ni el modo pedido ni `'base'`
+ * tienen un motor habilitado para ese rol (`resolverRolDeModo` devuelve
+ * `null`: típicamente, el admin todavía no cargó el preset de Claude), el
+ * respaldo es el motor que este proyecto YA tenía (`project.aiModelId`),
+ * no el default global de toda la instalación — un proyecto ajeno al modo
+ * de generación (de antes de T7, o de otra parte de la app que asigna su
+ * propio motor directo) sigue funcionando exactamente igual que siempre
+ * mientras el modo activo no tenga su motor configurado, en vez de
+ * converger de golpe en lo que sea el default de turno.
  */
 export async function motorDeGeneracion(params: {
   modelIdExplicitoDelPedido: string | null;
@@ -370,8 +405,10 @@ export async function motorDeGeneracion(params: {
     return normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
   }
 
-  return motorParaRol(params.settings.generationMode, params.esCreacion ? 'creation' : 'adjustment', {
+  const porModo = await resolverRolDeModo(params.settings.generationMode, params.esCreacion ? 'creation' : 'adjustment', {
     creationModelId: params.settings.creationModelId,
     adjustmentModelId: params.settings.adjustmentModelId,
   });
+
+  return porModo ?? normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
 }
