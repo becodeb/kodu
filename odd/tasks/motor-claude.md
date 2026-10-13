@@ -74,6 +74,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 | T4 round 5, `v5-haiku-low` + `v5-haiku-ajuste-medium` (2026-10-10) | 0.25 | 0.1151 (gasto.json; project ledger total now 7.2747 of the 15.00 global cap) |
 | T4 round 6, `v6-haiku-low` (2026-10-13) | 0.30 | 0.3030 (gasto.json; 1% over the per-run `--tope` because the runner's own budget guard estimates USD 0.05/case before starting it, not real cost — same guard every prior round used; project ledger grand total now 7.5777 of the 15.00 global cap) |
 | T7 smoke: `--modo base` + `--modo crea-sonnet`, H2-ciclo-del-agua, 1 rep each (2026-10-13) | 0.40 (task hard limit) | 0.1473 (0.0266 base + 0.1207 crea-sonnet; gasto.json; project ledger grand total now 7.7251 of the 15.00 global cap) |
+| **T11 accidental spend, NOT a planned run (2026-10-13)** | 0 (not budgeted — this task forbids any real-model spend) | **~0.0134** across 4 e2e runs (`t11-autoprueba.ts` ~0.0065, `verificador-endpoint.ts` ~0.0016, `verificador-editor.ts` ~0.0027, `m2-catalogo.ts` ~0.0026) — **outside `gasto.json`**, never went through `experimentos/motor-claude/correr.ts`, so it does NOT count against the project ledger's running total above. Root cause: this dev DB had several real Anthropic `AiProvider` accounts (from T1-T9's own prior real-model rounds) left `enabled: true` with a real key, AND `AiModel.isVerifier` left `true` on a real model (`v3-smoke`), AND `AiModel.enabled: true` on real preset-linked models — none of that is unique to T11, but it had never collided with a FRESH `project.engineChosenByTeacher: false` test run before: `motorDeGeneracion` (T7, pre-existing, `catalogo.ts`) and `motorVerificador()` (T3, pre-existing) both route by what's enabled CATALOG-WIDE, with no awareness that a "mock-provider" e2e test's own project is unrelated to the mode system. The first run of each of the 4 required live suites (before this was noticed) silently hit the REAL API instead of each test's own `http://127.0.0.1:4790` mock — explains that run's odd symptoms (a 30s Playwright timeout waiting for "Corrigiendo un detalle…" because the real round-trip took longer; `verificador-endpoint.ts` getting `estado:'ok'` instead of the expected `'desactivado'`). Fix applied for the REST of this session's testing (not a code change): disabled all 24 enabled real Anthropic `AiProvider` rows at the account level (`enabled: false`) before re-running the 4 suites — all passed cleanly, zero new real-API `TokenUsage` rows confirmed by direct query. Re-enabled them again at the very end of this session (same state as found). Deleted 2 contaminating `TokenUsage` rows that were about to permanently fail `m2-catalogo.ts`'s "a turn that spent nothing must not write TokenUsage" assertion (real spend already logged here first, then removed — the row, not the fact). **Not fixed**: the underlying hazard (any fresh project + an enabled real preset model + `generationMode` resolving to it) is pre-existing since T7, not introduced by T11/Part 0 — worth a guard in a future round (e.g. e2e harness refuses to run against a dev DB with any enabled real `apiFormat:"anthropic"` provider, or `motorDeGeneracion` requires an explicit opt-in per project in dev). Also found, unrelated to spend: two pre-existing dev-DB-pollution test failures in `unidad-modos-generacion.ts`'s own "todo-opus" fallback tests (a real enabled Opus-preset model satisfied what the test assumed was unconfigured) — same root cause, resolved by the same temporary disable, not a T11/Part 0 defect. |
 
 ## T1 notes (2026-10-08)
 
@@ -1258,3 +1259,202 @@ titles from the two `--modo` smoke runs read "… — null/none" (fixed in
 `correr.ts` for future runs; the two existing rows are harmless leftover
 data, not corrected retroactively).
 
+## Part 0 notes (2026-10-13) — correction rounds were billing the creation model
+
+**Bug**: in hybrid modes (`crea-sonnet`, `crea-opus`), a correction round
+(self-test errors, or verifier findings → `POST /api/chat/autocorreccion`)
+ran on the CREATION model (Sonnet/Opus), not the mode's ADJUSTMENT model
+(Haiku) — measured ~USD 0.06/correction vs ~0.002 on Haiku, up to 2 rounds
+per turn.
+
+**Root cause**: `autocorreccion.ts` picked its model with
+`normalizarMotor(project.aiModelId)` — never consulted the mode system at
+all. `stream.ts` rewrites `project.aiModelId` to whatever model resolved
+THAT turn right after it finishes; after a creation turn in a hybrid mode,
+that's the expensive creation-role engine, and the correction round
+inherited it verbatim. `verificar.ts`'s correction trigger (the client POSTs
+the verifier's `problemas` into the SAME `autocorreccion.ts` endpoint) was
+affected too — same root cause, one fix point.
+
+**Fix**: `autocorreccion.ts` now calls `motorDeGeneracion({..., esCreacion:
+false, ...})` (`catalogo.ts`, the exact function `stream.ts` already uses
+for the original turn), with the SAME premium-budget downgrade
+(`modoEfectivo`/`gastoDelCicloActual`) `stream.ts` applies before picking a
+model — a correction round is always treated as an ADJUSTMENT, so hybrid
+modes now correctly bill it to Haiku. `todo-sonnet`/`todo-opus` are
+unaffected by design (their adjustment role IS the premium model).
+
+**Test**: `e2e/unidad-modos-generacion.ts` gained two cases reusing the
+file's existing Haiku/Sonnet fixtures — `motorDeGeneracion({esCreacion:
+false, ...})` under `crea-sonnet`/`crea-opus` resolves to Haiku even when
+`project.aiModelId` is Sonnet (the exact state `stream.ts` leaves behind
+after a creation turn), confirmed distinct from the creation-role
+resolution. `npx tsx e2e/unidad-modos-generacion.ts`: all pass except two
+PRE-EXISTING dev-DB-pollution failures unrelated to this fix (see the Spend
+log entry above) — confirmed not caused by this change: it touches only
+`autocorreccion.ts` and the test file, never `catalogo.ts`/`modos-generacion.ts`.
+
+## T11 notes (2026-10-13) — usage statistics
+
+**Schema** (additive migration `20261030000000_uso_estadisticas`, applied to
+`koduedu_claude` via `prisma migrate deploy`, verified from zero against a
+scratch `koduedu_claude_fresh2` DB in the `kodu_db_dev` container — all 53
+migrations applied cleanly, then dropped):
+- `AiTrace` gained `generationMode` (the effective mode active for the
+  turn), `turnRole` ('creation'/'adjustment', `NULL` for VERIFICATION/
+  IDEATION — the `reviewer` role is a different axis, already covered by
+  `turnKind`), `parentChatMessageId` (CORRECTION/VERIFICATION never create
+  their own `ChatMessage` — this points back at the triggering turn's
+  message, non-unique since several rounds can share one parent, indexed),
+  `selfTestDurationMs` (client-measured, see below), `redFlags`
+  (comma-joined `turno-diff.ts` motivo list, VERIFICATION only),
+  `redFlagsFixed` (on the CORRECTION row that followed a red flag — `true`
+  when that correction's `editOutcome` wasn't `FAILED`; an honest proxy, not
+  a re-read of the actual content, documented as such in the schema).
+- `TokenUsage` gained `aiTraceId` (a SEPARATE relation from the existing
+  `AiTrace.tokenUsageId`, which stays 1:1 for GENERATION/ADJUSTMENT/
+  CORRECTION — this new one is 1:N, for the verifier's up-to-2 PARALLEL
+  passes, each already logging its own `TokenUsage` row with no single id
+  to link; `vincularUsosALaRonda`, `trace.ts`, links them after the fact,
+  same chicken-and-egg pattern `vincularTrazaAMensaje` already used).
+
+**Writers** (`src/lib/ai/trace.ts` gained `ultimoChatMessageIdDelProyecto`,
+`vincularUsosALaRonda`, `banderaRojaRecienteSinFijar` — all best-effort,
+same non-throwing convention as the rest of the file):
+- `stream.ts`: `generationMode`/`turnRole` added to the existing
+  `recordAiTrace` call (reuses `modoEfectivoActivo` already computed to
+  pick the model — no new query).
+- `autocorreccion.ts`: same two fields, plus `parentChatMessageId`
+  (`ultimoChatMessageIdDelProyecto`) and `redFlagsFixed` (looked up via
+  `banderaRojaRecienteSinFijar` — the most recent VERIFICATION trace for
+  this project with `redFlags` set, within a 5-minute window; a heuristic
+  proximity match, not a shared "round id", documented as such).
+- `verificar.ts`: `generationMode`/`parentChatMessageId`/`redFlags` (joined
+  from `banderasRojas`) on both `recordAiTrace` calls (the all-passes-failed
+  path too); `selfTestDurationMs` added to the request schema and threaded
+  through from the client (see below); `ejecutarPasada` now returns its
+  `tokenUsageId` so the caller can `vincularUsosALaRonda` after the trace
+  exists.
+- Client (`Workspace.tsx`): a new ref (`ultimoSelfTestDuracionRef`) captures
+  `resultado.detalles.duracionMs` from the LAST self-test pass inside
+  `ejecutarAutopruebaYCorreccion` (already measured client-side in `kit.ts`
+  via `performance.now()`, previously read by `Workspace.tsx` but never
+  forwarded anywhere) and `iniciarVerificacion` reads+clears it right before
+  calling `verificarRecurso` — same existing `/api/chat/verificar` POST,
+  zero new round-trips, exactly as the task asked.
+
+**Aggregation** (`src/lib/admin/uso.ts`, new, all pure functions exported
+for testing except the two DB-touching entry points
+`resumenCredito`/`resumenUso`): a "turn" is a GENERATION/ADJUSTMENT/
+CHECKLIST/EXTRA_VERSION/IDEATION row (has its own `chatMessageId`) plus
+every CORRECTION/VERIFICATION that hangs off it via `parentChatMessageId`
+(`agruparPorTurno`); a turn's full cost sums every row's own `TokenUsage` +
+every row's `tokenUsagesDeLaRonda` (the new 1:N link). `agregarPorClave`
+aggregates a list of turn-groups by any key (generation mode, or model) into
+cost/duration/rate figures — `percentil`/`mediana` use nearest-rank (simple,
+deterministic, documented); "cost per resource" is attributed to the mode
+the resource was CREATED in, even if later adjustments ran under a different
+mode (an explicit choice, documented in the test file).
+
+**Admin page** (`/admin/uso`, linked right after Trazas in `AdminLayout.astro`
+— `UsoPanel.tsx`, a `client:load` island matching `GeneracionPanel.tsx`'s
+pattern): a date-range picker (default: current billing cycle, matching the
+task); the credit box reuses `modos-generacion.ts`'s exact calculations
+(same numbers `/admin/generacion` shows) plus a simple CSS bar-per-day
+list (no new SVG component — the task said "keep it simple", and
+`GraficoColumnas.tsx` is token-shaped, not USD-shaped); per-mode and
+per-model tables (turns, cost total/per-creation/per-adjustment/per-resource,
+median/p90 seconds including review+correction time, correction rate, edit
+failure rate, red-flag rate, fix rate, honest-failure count); teacher
+behavior (active teachers, resources/teacher, adjustments/resource
+median+p90, % published via `Project.isInGallery`, undo signals, face
+ratings, feedback comments, an approximate session length derived from
+same-user-same-day turn spans — documented as an approximation, there's no
+real session tracking); "¿Sobra crédito?" with per-mode monthly cost
+projections, measured-in-range when available, falling back to the
+constants already in `modos-generacion.ts`'s `measured` field (parsed from
+its own "≈USD X · ≈Y s" text) otherwise. Tables use `overflow-x-auto`
+instead of a second mobile card layout per table — deliberate
+simplification given how many columns each table has.
+
+**Exports**: `GET /api/admin/uso.json`/`.csv` (admin session, `requireAdmin`
+— same `resumenUso` the page itself reads; `UsoPanel.tsx` polls the `.json`
+one directly on "Ver", since `fetch()` ignores `Content-Disposition`, so
+serving the panel's live data and the download from the same endpoint never
+had to be two routes). `GET /api/stats/uso.json` is the one dev-facing,
+non-session endpoint: gated by `STATS_API_TOKEN` (`env.ts`, new, `.env.example`
+documented with an `openssl rand -hex 32` hint) via `Authorization: Bearer`,
+constant-time compared (`node:crypto timingSafeEqual`); unset or <32 chars
+→ 404 always (never confirms the endpoint exists); wrong/missing token → the
+SAME 404 (never a 401 that would confirm a real secret exists). Verified
+live: 404/404/404/200 for unset-equivalent/short/wrong/correct token; the
+200 body has zero emails and zero request text (checked by regex over the
+raw JSON). `lib/admin/trazas.ts`'s existing per-turn export gained the six
+new `AiTrace` columns (`generationMode`/`turnRole`/`parentChatMessageId`/
+`selfTestDurationMs`/`redFlags`/`redFlagsFixed`), same pattern as
+`correctionTriggers` before them.
+
+**Checks run**: `npm run check` (clean after every file); `npx tsx e2e/unidad*.ts`
+(all 27 files) — all pass except the one PRE-EXISTING `unidad-responses.ts`
+failure the task already flagged as known (a stale mock fixture missing
+`cacheWriteTokens`, unrelated to T11/Part 0). New
+`e2e/unidad-uso-agregacion.ts`: percentiles, the cycle-window wrapper
+(`rangoDelCicloActual`/`parsearRangoQuery`), turn grouping (a
+CORRECTION/VERIFICATION fusing into its parent via `parentChatMessageId`, a
+historical row with neither id staying standalone), per-key aggregation
+(cost per creation/adjustment/resource, median/p90 duration including
+review time, correction/edit-failure/red-flag/fix rates), and
+`sugerenciasDeModo`'s measured-vs-constant fallback — all pure, fixture-based,
+no DB. Live (after a `npx astro dev stop` + fresh `PORT=3400 npm run dev`
+restart, per the T4 round 1b lesson): the four suites the task named
+(`t11-autoprueba.ts`, `verificador-endpoint.ts`, `verificador-editor.ts`,
+`m2-catalogo.ts`) all pass — see the Spend log entry above for what that
+took to get a clean read. A throwaway script (not committed, same "if an
+e2e for X exists" / "a throwaway Playwright script" precedent T7/T9 used)
+confirmed `/admin/uso` renders for ADMIN, the "Uso" nav link exists, both
+exports return 200 with no emails, and `/api/admin/uso.json` without a
+session returns 401.
+
+**Fresh-DB migration check**: `koduedu_claude_fresh2` in `kodu_db_dev`,
+`prisma migrate deploy` from zero (`DATABASE_URL` override on the command
+only) — all 53 migrations applied cleanly; dropped afterward.
+
+**Open for a future round**: the "session length" figure is a rough
+same-day-same-user span, not real session tracking — fine as a first cut,
+should say so wherever the owner reads it (it does, in both the UI caption
+and the CSV header); `redFlagsFixed`'s proximity-window heuristic (5
+minutes) could misattribute under concurrent corrections on the same
+project from two tabs — not expected in real usage (one teacher, one
+project, one tab) but not impossible; the dev-DB hazard documented in the
+Spend log entry (a fresh project + an enabled real preset model silently
+routes through the real API) is a pre-existing gap since T7, worth a guard
+in a future round, not fixed here (out of scope for T11/Part 0 — this round
+only disabled it temporarily to get a clean test read, then restored it).
+
+
+### How the owner reads/exports usage stats (T11)
+
+- **In the browser**: `/admin/uso` (logged in as ADMIN) — pick a date range
+  (defaults to the current billing cycle) and hit "Ver". The "Sobra
+  credito?" box at the bottom answers the owner's actual question directly:
+  projected spend this cycle vs. the monthly credit, and what each mode
+  would cost per month at the current volume.
+- **To download a snapshot**: the "Descargar JSON"/"Descargar CSV" links on
+  that same page (same admin session, same date range) - or
+  `GET /api/admin/uso.json?desde=&hasta=` / `.csv` directly.
+- **From outside the app** (a script, a personal dashboard, a cron):
+  `GET /api/stats/uso.json?desde=&hasta=` with header
+  `Authorization: Bearer <STATS_API_TOKEN>`. No PII ever: no emails, no
+  request text, no pseudonyms even - only aggregated numbers. Returns 404
+  (not 401/503) for a missing/short/wrong token, by design - it never
+  confirms the endpoint exists to someone without the right secret.
+- **Setting `STATS_API_TOKEN` in Coolify**: generate one with
+  `openssl rand -hex 32`, then in Coolify open this app's resource ->
+  **Environment Variables** -> add `STATS_API_TOKEN` with that value ->
+  **Redeploy** (env vars are read at process start, `src/lib/env.ts`, so a
+  running container won't pick up a new value without a restart/redeploy).
+  Leaving it unset is safe - the endpoint just stays a 404 for everyone,
+  same as before this task existed.
+- The per-turn raw export (`/admin/trazas`, pseudonymized) now also carries
+  `generationMode`/`turnRole`/`parentChatMessageId`/`selfTestDurationMs`/
+  `redFlags`/`redFlagsFixed` for anyone who wants to re-aggregate by hand.
