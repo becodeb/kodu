@@ -345,6 +345,48 @@ try {
       }
     },
   );
+
+  await prueba(
+    'T11 Parte 0: una ronda de corrección (esCreacion: false) en un modo híbrido resuelve al motor de AJUSTE (Haiku), nunca al de creación (Sonnet) que haya quedado en project.aiModelId',
+    async () => {
+      // Reproduce el estado real tras un turno de creación en "crea-sonnet":
+      // `stream.ts` ya reescribió `project.aiModelId` con el motor que
+      // resolvió ESE turno de creación (Sonnet) — `autocorreccion.ts` recibe
+      // el proyecto en ese mismo estado al pedir la corrección posterior.
+      const proyectoTrasCreacion = { aiModelId: sonnetId, engineChosenByTeacher: false };
+
+      const paraCorreccion = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: null,
+        project: proyectoTrasCreacion,
+        esCreacion: false, // la corrección es siempre un ajuste, nunca una creación
+        settings: { generationMode: 'crea-sonnet', creationModelId: null, adjustmentModelId: null },
+      });
+      assert.equal(paraCorreccion?.id, haikuId, 'la corrección debe resolver al motor de AJUSTE del modo, no heredar el de creación');
+
+      // El motor de CREACIÓN, para contraste directo: distinto del de
+      // corrección, y es justo el que `project.aiModelId` tiene guardado —
+      // confirma que el bug (reusar `project.aiModelId` tal cual) habría
+      // devuelto Sonnet en vez de Haiku.
+      const paraCreacion = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: null,
+        project: proyectoTrasCreacion,
+        esCreacion: true,
+        settings: { generationMode: 'crea-sonnet', creationModelId: null, adjustmentModelId: null },
+      });
+      assert.equal(paraCreacion?.id, sonnetId);
+      assert.notEqual(paraCorreccion?.id, paraCreacion?.id);
+    },
+  );
+
+  await prueba('T11 Parte 0: en "crea-opus", la corrección también cae en Haiku (el modo "todo-*" sigue usando el mismo motor caro)', async () => {
+    const paraCorreccion = await motorDeGeneracion({
+      modelIdExplicitoDelPedido: null,
+      project: { aiModelId: sonnetId, engineChosenByTeacher: false },
+      esCreacion: false,
+      settings: { generationMode: 'crea-opus', creationModelId: null, adjustmentModelId: null },
+    });
+    assert.equal(paraCorreccion?.id, haikuId);
+  });
 } finally {
   await limpiar();
 }

@@ -14,7 +14,8 @@ import {
   type TokenUsage as MotorTokenUsage,
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
-import { normalizarMotor } from '../../../lib/ai/catalogo.ts';
+import { motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
+import { modoEfectivo, gastoDelCicloActual } from '../../../lib/ai/modos-generacion.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
 import {
@@ -25,7 +26,12 @@ import {
 } from '../../../lib/ai/verificador.ts';
 import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
-import { recordAiTrace, type EditOutcomeLlamador } from '../../../lib/ai/trace.ts';
+import {
+  recordAiTrace,
+  ultimoChatMessageIdDelProyecto,
+  banderaRojaRecienteSinFijar,
+  type EditOutcomeLlamador,
+} from '../../../lib/ai/trace.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
 import { consumoDeLaDemo } from '../../../lib/demo.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
@@ -173,7 +179,36 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail('El recurso cambió después de la autoprueba. Volvé a intentarlo.', 409);
   }
 
-  const provider = await normalizarMotor(project.aiModelId);
+  // T11 (motor-claude, Parte 0): una ronda de autocorrección es SIEMPRE un
+  // AJUSTE de un recurso que ya existe — nunca la creación que pudo haber
+  // generado ese recurso. Antes de este fix se reusaba sin más
+  // `normalizarMotor(project.aiModelId)`, que en los modos híbridos
+  // (`crea-sonnet`/`crea-opus`) todavía apunta al motor de CREACIÓN
+  // (Sonnet/Opus): `stream.ts` recién reescribe `project.aiModelId` con el
+  // motor que resolvió ESE turno, y para un turno de creación eso es el
+  // motor caro — la corrección posterior (hasta 2 rondas por turno) heredaba
+  // ese mismo motor caro en vez de caer al de ajuste (Haiku), medido en USD
+  // 0,06/corrección contra ~0,002 en Haiku. `motorDeGeneracion` con
+  // `esCreacion: false` resuelve el rol de AJUSTE del modo activo —mismo
+  // mecanismo y mismo recorte premium que usa `stream.ts` para el turno
+  // original—, y sigue cayendo al motor propio del proyecto
+  // (`project.aiModelId`) si ni el modo pedido ni "base" tienen su preset
+  // configurado (nunca al default global), exactamente como cualquier otro
+  // turno de ajuste.
+  const modoEfectivoActivo = project.engineChosenByTeacher
+    ? null
+    : modoEfectivo(settings.generationMode, await gastoDelCicloActual(settings.billingCycleDay), settings.premiumUntilUsd.toNumber());
+
+  const provider = await motorDeGeneracion({
+    modelIdExplicitoDelPedido: null,
+    project: { aiModelId: project.aiModelId, engineChosenByTeacher: project.engineChosenByTeacher },
+    esCreacion: false,
+    settings: {
+      generationMode: modoEfectivoActivo ?? settings.generationMode,
+      creationModelId: settings.creationModelId,
+      adjustmentModelId: settings.adjustmentModelId,
+    },
+  });
   if (!provider) return fail('No hay ningún motor de IA habilitado.', 503);
 
   if (user.isDemo) {
@@ -523,6 +558,21 @@ export const POST: APIRoute = async ({ request, locals }) => {
           if (errores.length > 0) correctionTriggers.push('errors');
           if (reinicioOk === false) correctionTriggers.push('reset');
           if ((pruebas ?? []).some((prueba) => prueba.ok === false)) correctionTriggers.push('tests');
+
+          // T11 (motor-claude): `parentChatMessageId` ata esta ronda al
+          // turno de creación/ajuste que la disparó (ni CORRECTION ni
+          // VERIFICATION crean su propio `ChatMessage`) — así se puede sumar
+          // el costo COMPLETO de un turno. `redFlagsAFijar` es la última
+          // bandera roja determinística (`turno-diff.ts`) que disparó en la
+          // VERIFICATION reciente de este proyecto, si la hubo — si esta
+          // ronda terminó aplicando una edición (`editOutcomeTrace` no es
+          // `'failed'`), se la considera arreglada (heurística honesta, ver
+          // el comentario de `AiTrace.redFlagsFixed` en el schema).
+          const [parentChatMessageId, redFlagsAFijar] = await Promise.all([
+            ultimoChatMessageIdDelProyecto(project.id),
+            banderaRojaRecienteSinFijar(project.id),
+          ]);
+
           await recordAiTrace({
             userId: user.id,
             projectId: project.id,
@@ -539,6 +589,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
             selfTestPassed: pruebas ? pruebas.filter((p) => p.ok).length : null,
             correctionRounds: ronda,
             correctionTriggers,
+            generationMode: modoEfectivoActivo ?? settings.generationMode,
+            turnRole: 'adjustment',
+            parentChatMessageId,
+            redFlagsFixed: redFlagsAFijar ? editOutcomeTrace !== 'failed' : null,
           });
         }
 
