@@ -70,6 +70,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 | T1 `scripts/sonda-anthropic.ts`, two runs (2026-10-08) | <0.05 | ~0.003 total (both runs combined; second run's cache hit made costs even smaller than the first) |
 | T4 round 1b real-model verification (2026-10-08) | 0.10 | 0.0540 |
 | T5 smoke test, vision reviewer, 2 cases (2026-10-08) | 0.08 | 0.021782 (gasto.json `smoke-revisor`; project ledger total now 0.2826 of the 15.00 global cap) |
+| T4 round 5, `v5-haiku-low` + `v5-haiku-ajuste-medium` (2026-10-10) | 0.25 | 0.1151 (gasto.json; project ledger total now 7.2747 of the 15.00 global cap) |
 
 ## T1 notes (2026-10-08)
 
@@ -794,3 +795,62 @@ report; not duplicated here to keep this file from growing past what a
 future session needs to resume work (the raw artifacts — `corrida.json`,
 `turno-N.html`, `turno-N-*.png` — are the source of truth, committed in
 `claude-exp` on `exp/motor-claude`, commit `f4ce021`).
+
+## T4 round 5 notes (2026-10-10) — forced full-rewrite fallback, append wording, full-page reviewer capture
+
+Committed as `ba7486a`; notes were never written at the time (backfilled
+this round). Three changes, aimed at the round 4 open items (scene-scaling
+non-compliance, "shorten" non-compliance, a layout defect the reviewer gate
+missed):
+
+- A `edit_resource_code` retry that still fails (`no_match`/`no_op`/anything
+  else) now falls back to a FORCED full `update_resource_code` rewrite
+  instead of ending the turn in an honest-failure message — same mechanism
+  `stream.ts`/`autocorreccion.ts` already had for the recovery-after-failed-
+  edit path, just forced rather than offered.
+- Prompt wording for append-style requests ("al final", "agregá") was
+  sharpened to push back on a no-op/partial append.
+- The reviewer's screenshot capture switched to a full-page capture (not
+  just the first viewport) so content added "at the end" that falls outside
+  1280×800 is actually visible to the vision reviewer.
+
+**Measured result** (`v5-haiku-low`: 5 cases, 1 rep each; `v5-haiku-ajuste-
+medium`: H1/H2 only at `esfuerzo: medium`; both against real Haiku 5.5,
+`experimentos/motor-claude/resultados/` on `exp/motor-claude`):
+
+- **H1 "más grande" — fixed.** The round 4 open defect (scene shrinking
+  instead of scaling on "más grande para proyectar") did not reproduce:
+  the camera moved closer as the checklist line asks.
+- **H4 — clean.** No defect found in this sample.
+- **H2 turn 3, "al final agregá 3 preguntas" — still not fulfilled, and
+  nothing in the harness caught it.** The turn added NO new question, no
+  input, no interactive element — only a comment ("las preguntas de repaso
+  se agregan abajo") and an empty bar. Both the self-test (no error, no
+  broken reset) and the vision reviewer (full-page capture, real screenshot)
+  passed the turn as fine. This is the exact defect class round 6's goal A
+  (turn-diff vs. request check) was written to catch: a promise with no
+  content, invisible to both existing checks because nothing actually
+  broke — the resource just silently didn't do what was asked.
+- **H5 "más corto" — near no-op.** +79 bytes on a "make it shorter" turn:
+  neither shrinking content nor meaningfully growing it. Same shape as the
+  round 4 open item ("asking for shorter isn't enough on its own").
+
+Per-case cost/time (`resumen.json`): `v5-haiku-low` 5 cases, USD
+0.0822271, 332.1s total (H1 83.9s/$0.0195, H2 54.4s/$0.0108, H3 84.8s/
+$0.0217, H4 57.0s/$0.0161, H5 52.0s/$0.0141); `v5-haiku-ajuste-medium` H1/H2
+only, USD 0.0329194, 136.7s total (H1 73.6s/$0.0144, H2 63.1s/$0.0185 — both
+noticeably slower than the matching `low` row, as expected for `medium`
+effort, with no measurable quality change on this 2-case sample). Round
+spend: USD 0.1151 of the USD 0.25 hard limit (`gasto.json`); project ledger
+grand total USD 7.2747 of the USD 15.00 global cap.
+
+**Open for round 6:** H2's silent no-op append, and H5's near no-op
+shorten, are both cases where self-test + vision reviewer agree the turn is
+"fine" while the actual request went unfulfilled — a deterministic,
+model-independent check of what actually changed in the HTML (not just
+"did it render without errors") is the missing layer. `v3-haiku-low`/
+`v3-opus-medium`/`v3-sonnet-medium` blind-evaluation result directories and
+`ciego/r1/` under `claude-exp` are still untracked locally from an earlier
+round's blind comparison — left as is (out of this round's scope; not
+part of the round 5 real-model run this section documents).
+
