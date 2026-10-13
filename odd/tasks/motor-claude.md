@@ -42,14 +42,16 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 ## Tasks
 
 - [x] T1 Native Anthropic provider + admin option + real smoke call (delegated: 2+ files)
-- [ ] T2 Experiment tooling and teacher prompt set on `exp/motor-claude` (delegated)
-- [ ] T3 Haiku 5.5 baseline run + blind evaluation
-- [ ] T4 Harness improvement rounds on Haiku (up to 5)
+- [x] T2 Experiment tooling and teacher prompt set on `exp/motor-claude` (delegated)
+- [x] T3 Haiku 5.5 baseline run + blind evaluation
+- [x] T4 Harness improvement rounds on Haiku (rounds 1–6 + pre-deploy fixes)
 - [x] T5 Verifier with screenshots (Haiku), replacing gpt-6-luna
-- [ ] T6 Sonnet 5.5, Opus 5.5 and Haiku + Opus advisor on the hard prompts
+- [x] T6 Sonnet 5.5, Opus 5.5 and hybrid modes on the hard prompts (advisor tool not tested — see pending)
 - [x] T7 Credit-aware engine policy
-- [ ] T8 Report: cost and time per resource per model, when to use each, pending tests
+- [x] T8 Report: cost and time per resource per model, when to use each, pending tests
 - [x] T9 Anthropic presets (Haiku/Sonnet/Opus 5.5) + create-provider-from-preset admin flow
+- [x] T11 Usage statistics (/admin/uso, exports, token-gated /api/stats/uso.json)
+- [ ] T12 Deploy to production and verify live (owner authorized 2026-10-10)
 
 ## Acceptance criteria
 
@@ -1574,3 +1576,39 @@ disproven finding #1's investigation — well under the $0.08 task cap.
 **Commits** (`feat/motor-claude`, not pushed): `c4742bd` (#4),
 `83818b2` (#9), `95fbd29` (#7), `142fce9` (#5), `db89689` (#6/#8),
 `58a3940` (#3), `0534f6c` (#2).
+
+## T8 Final report (2026-10-13)
+
+### Blind evaluation, 5 hard teacher cases × 3 turns, 1 rep (round 2)
+
+| Mode | Global /10 | USD per resource (create + 2 adjustments) | Create time | Adjust time |
+|---|---|---|---|---|
+| todo-opus | 8.4 | 0.96 | ~4.5 min | ~75 s |
+| crea-opus (Haiku adjusts) | 7.0 | 0.64 | ~4.3 min | ~26 s |
+| todo-sonnet | 6.6 | 0.32 | ~1.8 min | ~55 s |
+| base (Haiku, harness v6) | 6.2 | 0.019 | ~55 s | ~40 s |
+| crea-sonnet (Haiku adjusts) | 4.2 | 0.18 | ~2 min | ~35 s |
+
+Haiku improved from 4.3 (original harness) / 5.3 (v3) to 6.2 (v6). Hybrids lose quality
+because Haiku struggles to adjust code another model wrote. Recommendation: `base` by
+default; `todo-opus` with `premiumUntilUsd` when credit is left over (≈75–100 premium
+resources per USD 100); `crea-sonnet` not recommended; `todo-sonnet` poor value.
+
+Per active teacher per month (assumption: 8 resources × 4 adjustments): base ≈ USD 0.22;
+todo-opus ≈ USD 10. USD 200 of credit covers ~900 active teachers on base.
+
+### Pending tests (for leftover end-of-cycle credit)
+
+1. Opus 5.5 at effort low (todo-opus-low): may keep most of the quality at lower cost/time.
+2. crea-opus with Sonnet adjusting (premium code adjusted by a stronger model).
+3. Haiku + Opus via the advisor tool (`advisor_20260301`; pairing with claude-haiku-5-5 unverified).
+4. revisor-sonnet mode (Haiku + Sonnet reviewer) blind-evaluated against base.
+5. "más corto" compliance (still weak on Haiku) — needs its own harness round.
+6. More repetitions (n=5 per case is noisy) once production traces show real request mix.
+7. Replay real production requests (from /admin/trazas) through each mode instead of synthetic cases.
+
+### Spend
+
+Experiment ledger (gasto.json): USD 11.86 including the final smoke; plus ~USD 0.03 of
+probe/accidental calls outside the ledger (T1 sonda, T11 accidental, pre-deploy probe).
+Compare against the Console's "Promotional credits" usage for the same dates.
