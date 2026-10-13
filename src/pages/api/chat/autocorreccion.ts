@@ -601,10 +601,33 @@ export const POST: APIRoute = async ({ request, locals }) => {
           });
         }
 
+        /**
+         * Hallazgo de revisión (motor-claude, pre-deploy): `update` liso
+         * pisaba `currentHtml` sin importar si YA había cambiado desde que
+         * esta ronda arrancó (`htmlPreCorreccion`, leído al principio del
+         * endpoint) — un mensaje nuevo, un deshacer o una edición a mano del
+         * docente mientras esta corrección en segundo plano todavía corría
+         * se perdían, pisados por un resultado calculado sobre HTML VIEJO.
+         * `updateMany` con `currentHtml: htmlPreCorreccion` en el `where`
+         * hace que la escritura sólo aplique si nadie more movió el piso: si
+         * `count` sale 0, el proyecto cambió mientras tanto y esto es un
+         * no-op — nunca se manda `{type:'code'}` (el cliente seguiría
+         * aplicando un resultado que ya no corresponde), y `codeUpdated`
+         * queda en `false`, lo que el evento `done` ya reporta tal cual.
+         */
         if (resultado.htmlFinal) {
-          await prisma.project.update({ where: { id: project.id }, data: { currentHtml: resultado.htmlFinal } });
-          codeUpdated = true;
-          send({ type: 'code', html: resultado.htmlFinal });
+          const escritura = await prisma.project.updateMany({
+            where: { id: project.id, currentHtml: htmlPreCorreccion },
+            data: { currentHtml: resultado.htmlFinal },
+          });
+          if (escritura.count > 0) {
+            codeUpdated = true;
+            send({ type: 'code', html: resultado.htmlFinal });
+          } else {
+            console.warn(
+              `[chat/autocorreccion] proyecto=${project.id} ronda=${ronda}: no-op — el HTML cambió mientras se corregía, se descarta el resultado.`,
+            );
+          }
         }
 
         // Una línea por ronda, sin contenido de HTML (proyecto, ronda,

@@ -258,6 +258,22 @@ export default function Workspace(props: WorkspaceProps) {
    *  servidor ya lo sabía de antemano. */
   const verificadorDesactivadoRef = useRef(!props.verificadorActivo);
 
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): el arreglo SILENCIOSO
+   * del revisor visual (T5, dentro de `iniciarVerificacion` más abajo) usa
+   * su PROPIO `AbortController` (`controllerArreglo`) — para cuando ese
+   * bloque arranca, `verificacionRef.current` YA se vació (la verificación
+   * que lo disparó ya terminó), así que `cancelarVerificacion` no tenía
+   * ninguna referencia para cortarlo. Un mensaje nuevo, un deshacer o una
+   * edición a mano mientras ese arreglo silencioso seguía corriendo en
+   * segundo plano lo dejaban terminar igual — y terminaba llamando
+   * `setHtml` con un resultado calculado sobre HTML que ya no es el
+   * vigente (ver el guard de `signal.aborted` en
+   * `aplicarCorreccionDesdeVerificador`, más abajo). `null` cuando no hay
+   * ningún arreglo silencioso corriendo.
+   */
+  const correccionSilenciosaRef = useRef<AbortController | null>(null);
+
   /** Corta cualquier verificación en curso y deja el panel como si nunca
    *  hubiera arrancado — mismo punto en el que ya se limpiaban
    *  `autopruebaAdvertencia`/`ultimasPruebas` (T4: "drop the result if the
@@ -265,6 +281,8 @@ export default function Workspace(props: WorkspaceProps) {
   function cancelarVerificacion() {
     verificacionRef.current?.controller.abort();
     verificacionRef.current = null;
+    correccionSilenciosaRef.current?.abort();
+    correccionSilenciosaRef.current = null;
     setVerificador({ fase: 'inactivo' });
   }
 
@@ -1072,6 +1090,11 @@ export default function Workspace(props: WorkspaceProps) {
      */
     if ((resultado.usoVision || resultado.banderaDeterministica) && accionables.length > 0) {
       const controllerArreglo = new AbortController();
+      // Hallazgo de revisión (motor-claude, pre-deploy): registrado para que
+      // `cancelarVerificacion` (nuevo mensaje, deshacer, edición a mano)
+      // pueda cortar ESTE arreglo también — ver el comentario de
+      // `correccionSilenciosaRef` más arriba.
+      correccionSilenciosaRef.current = controllerArreglo;
       let htmlCorregido: string | null = null;
       try {
         htmlCorregido = await aplicarCorreccionDesdeVerificador(accionables, controllerArreglo.signal, htmlDespues);
@@ -1080,6 +1103,15 @@ export default function Workspace(props: WorkspaceProps) {
           console.warn('[verificador] el arreglo automático del revisor visual falló:', error);
         }
       }
+
+      // Si mientras tanto `cancelarVerificacion` cortó este mismo arreglo,
+      // el ref ya no apunta a ESTE controller (lo vació o lo reemplazó otra
+      // verificación) — no hay nada más para tocar: el panel ya quedó en
+      // 'inactivo' por esa misma llamada, y pisarlo acá reviviría un
+      // resultado que ya no corresponde.
+      if (correccionSilenciosaRef.current !== controllerArreglo) return;
+      correccionSilenciosaRef.current = null;
+
       if (htmlCorregido) {
         try {
           const resultadoPrueba = await ejecutarAutopruebaEnIframe(htmlCorregido, {
@@ -1149,6 +1181,18 @@ export default function Workspace(props: WorkspaceProps) {
       signal,
     )) {
       if (event.type === 'code') {
+        /**
+         * Hallazgo de revisión (motor-claude, pre-deploy): `signal.aborted`
+         * se puede volver `true` ENTRE que el servidor manda este evento y
+         * que este bucle lo procesa (el `AbortController` del arreglo
+         * silencioso recién se registra en `correccionSilenciosaRef` —
+         * `cancelarVerificacion` lo corta ahí). JS es de un solo hilo: este
+         * chequeo, hecho ANTES de `setHtml`, es la última oportunidad de no
+         * aplicar un resultado que ya no corresponde — nunca puede haber
+         * una ejecución concurrente que lo vuelva obsoleto entre el chequeo
+         * y el `setHtml` de la línea siguiente.
+         */
+        if (signal.aborted) break;
         // Mismo tratamiento que un "code" de la autoprueba: la vista
         // previa cambia, sin pasar por el chat.
         setHtml(event.html);
