@@ -23,6 +23,9 @@ export interface PresetUI {
   reasoningParam: string;
   maxOutputTokens: number;
   hasSchedule: boolean;
+  /** Hallazgo de revisión (motor-claude, pre-deploy): el default de
+   *  `selectableByTeacher` al elegir este preset (`ModeloForm.tsx`). */
+  defaultSelectableByTeacher: boolean;
   pricesVerifiedAt: string;
   sourceUrl: string;
 }
@@ -38,6 +41,7 @@ export function presetsParaUI(): PresetUI[] {
     reasoningParam: preset.reasoning.param ?? 'reasoning_effort',
     maxOutputTokens: preset.maxOutputTokens,
     hasSchedule: preset.schedule !== null,
+    defaultSelectableByTeacher: preset.defaultSelectableByTeacher,
     pricesVerifiedAt: preset.pricesVerifiedAt,
     sourceUrl: preset.sourceUrl,
   }));

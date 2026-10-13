@@ -314,6 +314,70 @@ try {
     assert.equal(config?.reasoningEffort, 'low', 'motor explícito: se usa tal cual, sin que el modo le pise el esfuerzo');
   });
 
+  await prueba(
+    'Hallazgo de revisión: engineChosenByTeacher + motor premium (Sonnet) + presupuesto agotado -> cae al rol base (Haiku)',
+    async () => {
+      const config = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: sonnetId,
+        project: { aiModelId: haikuId, engineChosenByTeacher: true },
+        esCreacion: true,
+        settings: { generationMode: 'base', creationModelId: null, adjustmentModelId: null },
+        presupuestoPremiumAgotado: async () => true,
+        filasOverride: filasPropias,
+      });
+      assert.equal(config?.id, haikuId, 'con el presupuesto agotado, un motor premium elegido a mano cae al rol base');
+    },
+  );
+
+  await prueba(
+    'Hallazgo de revisión: engineChosenByTeacher + motor premium (Sonnet) + presupuesto SIN agotar -> respeta el motor elegido',
+    async () => {
+      const config = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: sonnetId,
+        project: { aiModelId: haikuId, engineChosenByTeacher: true },
+        esCreacion: true,
+        settings: { generationMode: 'base', creationModelId: null, adjustmentModelId: null },
+        presupuestoPremiumAgotado: async () => false,
+        filasOverride: filasPropias,
+      });
+      assert.equal(config?.id, sonnetId, 'con presupuesto disponible, el motor premium elegido a mano sigue respetándose');
+    },
+  );
+
+  await prueba(
+    'Hallazgo de revisión: engineChosenByTeacher + motor NO premium (Haiku) -> presupuestoPremiumAgotado nunca se invoca (optimización de costo preservada)',
+    async () => {
+      let invocada = false;
+      const config = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: haikuId,
+        project: { aiModelId: haikuId, engineChosenByTeacher: true },
+        esCreacion: true,
+        settings: { generationMode: 'base', creationModelId: null, adjustmentModelId: null },
+        presupuestoPremiumAgotado: async () => {
+          invocada = true;
+          return true;
+        },
+        filasOverride: filasPropias,
+      });
+      assert.equal(config?.id, haikuId);
+      assert.equal(invocada, false, 'un motor no premium no tiene que pagar la consulta de gasto del ciclo');
+    },
+  );
+
+  await prueba(
+    'Hallazgo de revisión: engineChosenByTeacher + motor premium, sin pasar presupuestoPremiumAgotado -> comportamiento de siempre (nunca cae)',
+    async () => {
+      const config = await motorDeGeneracion({
+        modelIdExplicitoDelPedido: sonnetId,
+        project: { aiModelId: haikuId, engineChosenByTeacher: true },
+        esCreacion: true,
+        settings: { generationMode: 'base', creationModelId: null, adjustmentModelId: null },
+        filasOverride: filasPropias,
+      });
+      assert.equal(config?.id, sonnetId, 'un llamador viejo que no pasa el callback no cambia su comportamiento');
+    },
+  );
+
   await prueba('motorDeGeneracion: sin motor explícito, el modo decide según el rol (creación vs. ajuste)', async () => {
     const creacion = await motorDeGeneracion({
       modelIdExplicitoDelPedido: null,

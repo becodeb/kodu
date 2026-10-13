@@ -167,6 +167,10 @@ export default function ModeloForm(props: ModeloFormProps) {
     setPrecioEscrituraCache(
       preset.prices.cacheWritePerMToken !== undefined ? String(preset.prices.cacheWritePerMToken) : '',
     );
+    // Hallazgo de revisión (motor-claude, pre-deploy): sólo un DEFAULT al
+    // elegir el preset — el admin sigue pudiendo tocar el interruptor antes
+    // de guardar, igual que con cualquier otro campo de este formulario.
+    setSelectableByTeacher(preset.defaultSelectableByTeacher);
 
     // Sugiere la cuenta de proveedor que ya coincide en baseUrl, si existe
     // una. Si no hay ninguna, el campo de clave de más abajo (T9) permite

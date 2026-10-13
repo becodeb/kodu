@@ -410,16 +410,73 @@ export async function motorParaRol(
  * mientras el modo activo no tenga su motor configurado, en vez de
  * converger de golpe en lo que sea el default de turno.
  */
+/** Hallazgo de revisión (motor-claude, pre-deploy): "premium" = Sonnet u
+ *  Opus, por el nombre REAL del modelo en el proveedor
+ *  (`ProviderConfig.model`) — mismo criterio que ya usa `provider.ts` para
+ *  distinguir Haiku (`provider.model.includes('haiku')`), nunca por
+ *  `presetKey`: un motor "Personalizado" (sin preset enlazado, columnas de
+ *  `AiModel` cargadas a mano) también puede ser Sonnet u Opus. */
+function esMotorPremium(providerModel: string): boolean {
+  return /sonnet|opus/i.test(providerModel);
+}
+
+/** Mismo criterio que `modosDeRespaldoLogueados` más arriba: una
+ *  combinación motor+rol se loguea UNA SOLA VEZ por proceso. */
+const motoresPremiumSinPresupuestoLogueados = new Set<string>();
+
 export async function motorDeGeneracion(params: {
   modelIdExplicitoDelPedido: string | null;
   project: { aiModelId: string | null; engineChosenByTeacher: boolean };
   esCreacion: boolean;
   settings: { generationMode: string; creationModelId: string | null; adjustmentModelId: string | null };
+  /**
+   * Hallazgo de revisión (motor-claude, pre-deploy): el recorte premium
+   * (`modos-generacion.ts#presupuestoPremiumAgotado`) también tiene que
+   * aplicar a un motor elegido EXPLÍCITAMENTE por el docente — antes de
+   * esto, `engineChosenByTeacher` se saltaba el recorte entero, así que un
+   * docente que eligió Sonnet/Opus a mano seguía pagando ese motor aun con
+   * el presupuesto del ciclo agotado.
+   *
+   * Es una FUNCIÓN perezosa, no un booleano ya calculado: sólo se invoca
+   * (y sólo entonces se paga la consulta de gasto que hace, ver
+   * `gastoDelCicloActual` en `stream.ts`/`autocorreccion.ts`/`verificar.ts`)
+   * cuando el motor elegido por el docente resulta ser Sonnet/Opus — un
+   * proyecto con Haiku (o cualquier otro motor no premium) elegido a mano
+   * sigue sin pagar esa consulta en cada turno, exactamente como antes de
+   * este fix. `undefined` = el llamador no la pasó (pruebas viejas, o un
+   * futuro llamador sin acceso al gasto del ciclo) — tratado como "nunca
+   * agotado", el comportamiento de siempre.
+   */
+  presupuestoPremiumAgotado?: () => Promise<boolean>;
   /** Ver el comentario de `resolverRolDeModo` — sólo para pruebas unitarias. */
   filasOverride?: FilaConProveedor[];
 }): Promise<ProviderConfig | null> {
   if (params.project.engineChosenByTeacher) {
-    return normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
+    const explicito = await normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
+    const role = params.esCreacion ? 'creation' : 'adjustment';
+
+    if (explicito && esMotorPremium(explicito.model) && params.presupuestoPremiumAgotado && (await params.presupuestoPremiumAgotado())) {
+      const clave = `${explicito.id}:${role}`;
+      if (!motoresPremiumSinPresupuestoLogueados.has(clave)) {
+        motoresPremiumSinPresupuestoLogueados.add(clave);
+        console.warn(
+          `[catalogo] motor elegido por el docente (${explicito.label}) es premium y el presupuesto del ciclo ya se agotó — se usa el rol base en su lugar.`,
+        );
+      }
+
+      const base = await resolverRolDeModo(
+        'base',
+        role,
+        { creationModelId: params.settings.creationModelId, adjustmentModelId: params.settings.adjustmentModelId },
+        params.filasOverride,
+      );
+      if (base) return base;
+      // Sin un motor base habilitado tampoco (admin no cargó el preset de
+      // Haiku): mejor el motor premium elegido que nada — mismo criterio
+      // "nunca un 503 evitable" que el resto de esta función.
+    }
+
+    return explicito;
   }
 
   const porModo = await resolverRolDeModo(

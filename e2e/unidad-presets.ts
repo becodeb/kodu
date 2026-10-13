@@ -79,6 +79,15 @@ await prueba('claude-sonnet-5-5/opus-5-5: sin tramo largo cargado (no es parte d
   assert.equal(preciosDePreset(PRESETS['claude-opus-5-5']!).longContext, undefined);
 });
 
+await prueba('Hallazgo de revisión: defaultSelectableByTeacher — Sonnet/Opus en false, el resto en true', () => {
+  assert.equal(PRESETS['claude-sonnet-5-5']!.defaultSelectableByTeacher, false);
+  assert.equal(PRESETS['claude-opus-5-5']!.defaultSelectableByTeacher, false);
+  assert.equal(PRESETS['claude-haiku-5-5']!.defaultSelectableByTeacher, true);
+  assert.equal(PRESETS['deepseek-flash']!.defaultSelectableByTeacher, true);
+  assert.equal(PRESETS['deepseek-v4-pro']!.defaultSelectableByTeacher, true);
+  assert.equal(PRESETS['openai-gpt-6-luna']!.defaultSelectableByTeacher, true);
+});
+
 await prueba('claude-sonnet-5-5: precios + cache-write verificados (2 / 0.10 / 10, escritura 2.50)', () => {
   const preset = PRESETS['claude-sonnet-5-5']!;
   const precios = preciosDePreset(preset);

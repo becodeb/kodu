@@ -30,7 +30,7 @@ import {
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
 import { cadenaDeMotores, motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
-import { modoEfectivo, gastoDelCicloActual } from '../../../lib/ai/modos-generacion.ts';
+import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado } from '../../../lib/ai/modos-generacion.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import {
   contenidoMensajeDeVersiones,
@@ -717,6 +717,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
       creationModelId: settings.creationModelId,
       adjustmentModelId: settings.adjustmentModelId,
     },
+    // Hallazgo de revisión (motor-claude, pre-deploy): perezosa a propósito
+    // — `motorDeGeneracion` sólo la llama (y sólo ahí se paga esta consulta,
+    // cacheada 60s de todos modos) cuando el motor elegido por el docente
+    // resulta ser Sonnet/Opus.
+    presupuestoPremiumAgotado: async () =>
+      presupuestoPremiumAgotado(await gastoDelCicloActual(settings.billingCycleDay), settings.premiumUntilUsd.toNumber()),
   });
   if (!provider) {
     return fail('No hay ningún motor de IA habilitado. Avisale a un administrador.', 503);

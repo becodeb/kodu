@@ -135,10 +135,22 @@ export const ORDEN_MODOS = [
  * del código) también cae a `'base'`, sin importar el gasto — nunca un
  * crash por una clave vieja.
  */
+/**
+ * Hallazgo de revisión (motor-claude, pre-deploy): el mismo booleano que
+ * decide `modoEfectivo` abajo, pero exportado aparte — un motor elegido
+ * EXPLÍCITAMENTE por el docente (`Project.engineChosenByTeacher`) no pasa
+ * por `modoEfectivo` (ver `catalogo.ts#motorDeGeneracion`), así que
+ * necesitaba su propia comparación "¿ya se agotó el presupuesto premium?",
+ * duplicada en tres lugares antes de esto.
+ */
+export function presupuestoPremiumAgotado(gastoDelCicloUsd: number, premiumUntilUsd: number): boolean {
+  return gastoDelCicloUsd >= premiumUntilUsd;
+}
+
 export function modoEfectivo(modeKeyConfigurado: string, gastoDelCicloUsd: number, premiumUntilUsd: number): string {
   if (modeKeyConfigurado === 'base') return 'base';
   if (!esClaveDeModoConocida(modeKeyConfigurado)) return 'base';
-  if (gastoDelCicloUsd >= premiumUntilUsd) return 'base';
+  if (presupuestoPremiumAgotado(gastoDelCicloUsd, premiumUntilUsd)) return 'base';
   return modeKeyConfigurado;
 }
 

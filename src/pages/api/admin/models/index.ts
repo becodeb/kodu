@@ -13,6 +13,7 @@ import {
   serializarMotor,
   type MotorAdmin,
 } from '../../../../lib/admin/modelos.ts';
+import { presetByKey } from '../../../../lib/ai/presets.ts';
 
 /**
  * `/api/admin/models` — listado y alta del catálogo de motores (design.md §2, §3.1;
@@ -94,7 +95,12 @@ export const POST: APIRoute = async ({ request }) => {
     priceCachedInputPerMToken: precioADecimal(datos.priceCachedInputPerMToken),
     priceOutputPerMToken: precioADecimal(datos.priceOutputPerMToken),
     priceCacheWritePerMToken: precioADecimal(datos.priceCacheWritePerMToken),
-    selectableByTeacher: datos.selectableByTeacher ?? true,
+    // Hallazgo de revisión (motor-claude, pre-deploy): sin un valor EXPLÍCITO
+    // en el pedido, el default sale del preset (`false` para Sonnet/Opus,
+    // `true` para cualquier otro) — nunca lo pisa cuando el llamador SÍ lo
+    // manda, así que el interruptor del formulario sigue siendo la última
+    // palabra (`ModeloForm.tsx` siempre lo manda explícito).
+    selectableByTeacher: datos.selectableByTeacher ?? presetByKey(datos.presetKey)?.defaultSelectableByTeacher ?? true,
     supportsVision: datos.supportsVision ?? false,
     maxOutputTokens: datos.maxOutputTokens ?? 131_072,
     reasoningEffort: datos.reasoningEffort ?? null,

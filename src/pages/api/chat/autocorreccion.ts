@@ -16,7 +16,7 @@ import {
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
 import { motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
-import { modoEfectivo, gastoDelCicloActual } from '../../../lib/ai/modos-generacion.ts';
+import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado } from '../../../lib/ai/modos-generacion.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
 import {
@@ -209,6 +209,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
       creationModelId: settings.creationModelId,
       adjustmentModelId: settings.adjustmentModelId,
     },
+    // Hallazgo de revisión (motor-claude, pre-deploy): mismo recorte premium
+    // que `stream.ts`, ahora también para un motor elegido a mano.
+    presupuestoPremiumAgotado: async () =>
+      presupuestoPremiumAgotado(await gastoDelCicloActual(settings.billingCycleDay), settings.premiumUntilUsd.toNumber()),
   });
   if (!provider) return fail('No hay ningún motor de IA habilitado.', 503);
 
