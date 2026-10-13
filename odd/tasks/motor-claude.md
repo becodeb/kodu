@@ -71,6 +71,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 | T4 round 1b real-model verification (2026-10-08) | 0.10 | 0.0540 |
 | T5 smoke test, vision reviewer, 2 cases (2026-10-08) | 0.08 | 0.021782 (gasto.json `smoke-revisor`; project ledger total now 0.2826 of the 15.00 global cap) |
 | T4 round 5, `v5-haiku-low` + `v5-haiku-ajuste-medium` (2026-10-10) | 0.25 | 0.1151 (gasto.json; project ledger total now 7.2747 of the 15.00 global cap) |
+| T4 round 6, `v6-haiku-low` (2026-10-13) | 0.30 | 0.3030 (gasto.json; 1% over the per-run `--tope` because the runner's own budget guard estimates USD 0.05/case before starting it, not real cost — same guard every prior round used; project ledger grand total now 7.5777 of the 15.00 global cap) |
 
 ## T1 notes (2026-10-08)
 
@@ -853,4 +854,148 @@ model-independent check of what actually changed in the HTML (not just
 `ciego/r1/` under `claude-exp` are still untracked locally from an earlier
 round's blind comparison — left as is (out of this round's scope; not
 part of the round 5 real-model run this section documents).
+
+## T4 round 6 notes (2026-10-13) — deterministic turn-diff check, per-turn edit guidance
+
+Three changes (code committed separately, before this real run):
+
+- `src/lib/ai/turno-diff.ts` (new, pure, isomorphic): `computarDiffTurno`
+  compares before/after HTML of an ajuste turn — visible text added/removed
+  (tags/scripts/styles stripped, word-multiset excess so reordering never
+  counts as "added"), element-count delta per tag, interactive-control
+  count (input/button/select/textarea), changed `<script>` lines, and new
+  HTML comments that promise content without delivering it.
+  `detectarBanderasRojas` flags an add/append request ("agregá", "sumá",
+  "añadí", "incorporá", "poné", "agregar") with < 80 visible chars added
+  and no new interactive control, a shorten request ("más corto", "acortá",
+  "resumí", "menos") that didn't shrink anything, or a promise-comment with
+  nothing behind it.
+- `src/lib/ai/verificador.ts` + `src/pages/api/chat/verificar.ts`: a fired
+  red flag becomes a `Problema` (`problemaDeBanderaRoja`, same shape the
+  model already returns) and rides the EXISTING correction path
+  (`construirMensajeCorreccionVerificador` → `POST /api/chat/autocorreccion`
+  with `problemasVerificador`, the same endpoint with the one-shot retry
+  and round 5's forced full-rewrite fallback) — no new correction code, no
+  new loop bound. The compact diff is also appended to the reviewer's
+  prompt (`resumenDiffParaRevisor`) so the model judges "does this
+  implement every item asked" against a measured number, not just its own
+  reading of the code. `verificar.ts` reads the turn's "before" HTML from
+  the latest assistant `ChatMessage`'s `ProjectSnapshot` (same query shape
+  `pendienteChequeosPosteriores` already used) — no client-side plumbing
+  needed.
+- `src/lib/client/verificador.ts` + `Workspace.tsx`: a new
+  `banderaDeterministica` flag gates the existing SILENT auto-fix branch
+  the same way `usoVision` already does — a red flag is evidence as hard
+  as a screenshot, same single correction round, never a new loop.
+- `src/lib/ai/prompt.ts` + `stream.ts`: `guiaPorPedido` injects up to 3
+  short keyword-matched lines (add/append, shorten, bigger/projector,
+  recolor/legend, "al final") into the per-turn resource block (the one
+  that already changes every turn) instead of `BASE_PROMPT` — rounds 4-5
+  measured low-effort Haiku ignoring the system-prompt checklist for
+  scaling/shortening; `BASE_PROMPT` itself stays byte-identical so prefix
+  caching is unaffected.
+
+New `e2e/unidad-turno-diff.ts`: diff math, red-flag triggers (including the
+exact H2/round-5 no-op scenario), the reviewer summary text, and the
+per-turn guidance injection/cap (never more than 3 lines).
+
+### Real-model run (`v6-haiku-low`, claude-haiku-5-5, low effort)
+
+`experimentos/motor-claude/correr.ts --etiqueta v6-haiku-low --motor
+claude-haiku-5-5 --esfuerzo low --casos all --repeticiones 2 --tope 0.30`,
+against the live dev server on this worktree (fresh `npx astro dev stop` +
+`PORT=3400 npm run dev` restart before running, per the round 1b lesson).
+Ran ALL 8 cases × 2 repetitions = 16 case-runs to natural completion (no
+budget cutoff this time — the first invocation was killed early by an
+external wrapper timeout on my end, not the runner's own guard; resumed
+cleanly since completed case-runs are skipped by their existing
+`corrida.json`). **Spend: USD 0.3030** of the USD 0.30 limit for this task
+(1% over — the runner's own pre-flight guard estimates USD 0.05/case
+before starting it, real cost came in lower per case but the 16th case-run
+still pushed the realized total slightly past the estimate-based stop
+point; same guard mechanism every prior round used, not a new bug).
+
+**Verification method**: ran `computarDiffTurno`/`detectarBanderasRojas`
+(the actual shipped functions, not a re-implementation) directly against
+every saved `turno-N.html` pair for turns 2 and 3 of all 16 case-runs (32
+turn-checks), then read the real byte-diff of each flagged turn's
+before/after HTML to confirm whether the resulting correction actually
+added real content (not just trusting `corrigioHtml: true` from the log).
+
+**Result: 7 of 32 turn-checks (22%) fired a red flag, every one a true
+positive** (verified against the request text and the diff) — all 7 were
+instances of the "agregá al final/un nivel X" class turning out trivial on
+the model's first pass:
+
+| Case / turn | Request (truncated) | Diff before flag | Correction outcome |
+|---|---|---|---|
+| D1-r1 t3 | "Agregá al final 3 ejercicios más difíciles…" | +0 chars, 0 script lines | **Fixed** — 3 real exercises + validation added |
+| D1-r2 t3 | same | +18 chars, no new controls | **Fixed** — full "desafiosDificiles" section + validation function added |
+| D3-r1 t3 | same | +0 chars, 0 script lines | **Not fixed** — correction only added a CSS `cursor` rule, no exercises |
+| N3-r1 t3 | same | +0 chars, 0 script lines | **Fixed** — 3 real present-perfect/past-simple exercises + hints added |
+| N3-r2 t3 | same | +0 chars, 0 script lines | **Fixed** — 3 real exercises + hints added |
+| H3-r1 t2 | "Agregá un nivel final con fracciones mayores que uno…" | +1/-1 chars | **Fixed** — real "Nivel 4" with `mayores:true` logic added |
+| H3-r2 t2 | same | +2/-2 chars | **Fixed** — real "Nivel 4" + a "dos pizzas" double-figure renderer added |
+
+**6/7 (86%) flagged turns were corrected into genuinely new, substantive
+content** (confirmed by reading the actual code diff, not the self-report)
+— the harness no longer silently accepts "agregá N preguntas" turning into
+a comment and an empty bar, the exact round-5 defect this round targeted.
+**D3-r1 is an honest miss**: the deterministic check correctly caught the
+no-op, the correction path fired, but Haiku's one-shot correction attempt
+still didn't add the requested exercises — expected given the one-shot
+bound (goal C: never loop more than the existing bound), not a detection
+failure.
+
+**The mechanism adds value beyond the pre-existing `usoVision` gate**:
+H3-r2 turn 2's reviewer pass had `visión=false` (the turn's diff was text-
+light enough to skip the screenshot heuristic) yet still `corrigió el
+HTML: true` — under the pre-round-6 code (`usoVision && accionables.length
+> 0`) this turn could never have auto-corrected; it only did because
+`banderaDeterministica` now ORs into that gate.
+
+**25 of 32 turn-checks fired no flag**; spot-checked several (e.g. D3-r2
+turn 3: +1017 visible chars, 3 new buttons — a real "3 ejercicios" turn
+done right on the first try) as true negatives, no false negative found in
+the sample reviewed.
+
+**Timing/cost (goal C)**: no loop beyond the existing one-shot correction
+bound in any of the 7 flagged turns (same as every pre-round-6 auto-fix).
+Reviewer-phase time (the `revisor:` line, which includes the correction
+round when one fires) averaged 19.4s across the 25 turn-checks that ended
+in a correction vs. 30.4s across the 11 that didn't — noisy and confounded
+by case/content, not a clean causal A/B, but neither group shows a runaway
+or outlier (max observed: 46.7s, well inside the existing ~150s/pass
+budget). Per-case-run cost stayed in the same USD 0.012–0.050 band as
+rounds 3-5; no case approached the per-case USD 0.05 estimate.
+
+**Goal B (per-turn guidance) was not isolated with an A/B this round** —
+no "round 6 code minus `guiaPorPedido`" control run was budgeted. The
+"más grande para proyectar" turns (D1, D3, N3 turn 2) mostly showed 0
+visible-text delta but real `<script>` line changes (scaling done via
+CSS/JS, not new text) — expected and consistent with round 5's H1 fix, not
+a defect; whether `guiaPorPedido` specifically caused that is unmeasured
+this round.
+
+**Checks run**: `npm run check` (clean); `npx tsx e2e/unidad-kit.ts
+e2e/unidad.ts e2e/unidad-pruebas-aisladas.ts
+e2e/unidad-edicion-fragmentos.ts e2e/unidad-preview.ts
+e2e/unidad-verificador.ts e2e/unidad-verificador-cliente.ts
+e2e/unidad-turno-diff.ts` (all pass, new round-6 suite included);
+`KODU_BASE_URL=http://localhost:3400 npx tsx e2e/t11-autoprueba.ts
+e2e/verificador-endpoint.ts e2e/verificador-editor.ts` (all pass against
+the live dev server on this worktree, after the restart above; the
+pre-existing `v3-smoke` model's `isVerifier` had to be toggled OFF
+temporarily for the "sin motor verificador" scene, same as every prior
+round, then restored ON immediately after — confirmed still ON at the end
+of this round).
+
+**Open for a future round**: D3-r1's one-shot-correction miss (the request
+stayed unfulfilled after the only correction attempt) — a second bounded
+attempt, or routing a persistently-unfulfilled append through the forced
+full-rewrite fallback directly instead of a fragment edit, might close it;
+goal B's effect is unmeasured in isolation; `AiTrace` still has no
+`usedVision`/`banderaDeterministica` column (same class of gap noted since
+round 2) so a future admin report can't tell which auto-fixes came from
+vision vs. the deterministic check without re-deriving it.
 
