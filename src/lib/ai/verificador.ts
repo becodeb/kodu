@@ -27,6 +27,7 @@
 import { plegarKit } from './kit.ts';
 import { reglasDelArnes } from './prompt.ts';
 import type { ContentPart } from './provider.ts';
+import type { BanderaRoja } from './turno-diff.ts';
 
 // ─────────────────────────────────────────────────────────────
 // El problema: tipo + validación/normalización de lo que devuelve el modelo
@@ -200,11 +201,23 @@ const SECCION_PEDIDO_EXPLICITO = `
 Antes de devolver tu lista, repasá el ÚLTIMO pedido del docente (la sección "## Último pedido (ajuste)", si existe) PUNTO POR PUNTO: para cada cosa concreta que pidió, confirmá en el código (y en la captura, si la tenés) que está hecha por completo. Si el pedido anterior aparece también ("## Pedido del turno anterior"), fijate además que este turno no lo haya dejado sin resolver o deshecho.
 Un pedido cumplido a MEDIAS cuenta como no cumplido: un contador, total o mensaje final que sigue apuntando a la cantidad vieja después de agregar o quitar algo; una escena, ilustración o layout que no escaló aunque pedían "más grande" o "para proyectar"; cualquier otra parte del pedido ausente o a medio hacer. Eso es tipo "pedido" y gravedad "alta" — nunca "baja": a un docente que pidió algo y recibió la mitad no le sirve una devolución optimista.`;
 
+/**
+ * T4 round 6 (motor-claude): si el mensaje de usuario trae una sección
+ * "## Diff estructural de este turno" (`resumenDiffParaRevisor`,
+ * `turno-diff.ts`), esto le dice al modelo qué es y cómo usarla — evidencia
+ * MEDIDA del propio código (no generada por una IA), para contrastar contra
+ * el pedido en vez de confiar sólo en su propia lectura. Se agrega SIEMPRE
+ * (igual que `SECCION_PEDIDO_EXPLICITO`): la sección de datos es opcional,
+ * pero la instrucción de cómo leerla es estática.
+ */
+const SECCION_DIFF_ESTRUCTURAL = `
+Si el mensaje trae una sección "## Diff estructural de este turno", es una medición directa del código (no una opinión de otra IA): caracteres de texto visible agregados/quitados, etiquetas que cambiaron de cantidad, controles interactivos antes/después y líneas de script cambiadas. Usala como evidencia dura: si el pedido es agregar algo y esa medición muestra casi nada de texto nuevo ni controles nuevos, el pedido NO está cumplido aunque el código "parezca" relacionado — reportalo tipo "pedido", gravedad "alta".`;
+
 /** Puerto verbatim de `sistema()` en `experimentos/razonamiento/verificar.ts`,
- *  con `SECCION_PEDIDO_EXPLICITO` (T4 round 4) agregada siempre al final, y
- *  la sección visual de T5 agregada DESPUÉS de esa cuando `conCaptura` es
- *  `true` — por default `false`. Ninguna de las dos toca la redacción
- *  verbatim de `base`. */
+ *  con `SECCION_PEDIDO_EXPLICITO` (T4 round 4) y `SECCION_DIFF_ESTRUCTURAL`
+ *  (T4 round 6) agregadas siempre al final, y la sección visual de T5
+ *  agregada DESPUÉS de esas cuando `conCaptura` es `true` — por default
+ *  `false`. Ninguna de las tres toca la redacción verbatim de `base`. */
 export function construirSistemaVerificador(reglas: string, opciones?: { conCaptura?: boolean }): string {
   const base = `Sos un revisor experto de recursos didácticos interactivos para escuelas argentinas. Un docente pidió un recurso y otra IA lo generó como un único documento HTML. Tu trabajo: encontrar los problemas CONCRETOS que un alumno o el docente se van a encontrar al usarlo en clase.
 
@@ -227,15 +240,19 @@ ${reglas}
 Respondé SOLO con JSON, sin texto antes ni después:
 {"problemas":[{"gravedad":"alta|media|baja","tipo":"logica|contenido|pedido|uso","que":"...","como_reproducir":"...","arreglo":"..."}]}`;
 
-  const sistema = `${base}${SECCION_PEDIDO_EXPLICITO}`;
+  const sistema = `${base}${SECCION_PEDIDO_EXPLICITO}\n${SECCION_DIFF_ESTRUCTURAL}`;
   return opciones?.conCaptura ? `${sistema}${SECCION_REVISOR_VISUAL}` : sistema;
 }
 
 /** Puerto verbatim de `usuario()` en `experimentos/razonamiento/verificar.ts`
  *  — la única diferencia es `htmlParaVerificador` en vez de `plegarKit` a
- *  secas (T3 pliega además las pruebas, ver más arriba). */
-export function construirUsuarioVerificador(pedido: string, html: string): string {
-  return `## Pedido del docente\n${pedido}\n\n## Recurso generado\n\`\`\`html\n${htmlParaVerificador(html)}\n\`\`\``;
+ *  secas (T3 pliega además las pruebas, ver más arriba), y el bloque
+ *  opcional de diff estructural (T4 round 6, `resumenDiff`) pegado entre el
+ *  pedido y el código — `null`/ausente (turno "nuevo", o sin snapshot de
+ *  "antes" para diffear) deja el mensaje byte a byte igual al de siempre. */
+export function construirUsuarioVerificador(pedido: string, html: string, resumenDiff?: string | null): string {
+  const bloqueDiff = resumenDiff ? `\n\n## Diff estructural de este turno\n${resumenDiff}` : '';
+  return `## Pedido del docente\n${pedido}${bloqueDiff}\n\n## Recurso generado\n\`\`\`html\n${htmlParaVerificador(html)}\n\`\`\``;
 }
 
 /**
@@ -255,8 +272,9 @@ export function construirContenidoUsuarioVerificador(
   pedido: string,
   html: string,
   capturaDataUrl?: string | string[] | null,
+  resumenDiff?: string | null,
 ): string | ContentPart[] {
-  const texto = construirUsuarioVerificador(pedido, html);
+  const texto = construirUsuarioVerificador(pedido, html, resumenDiff);
   const capturas = Array.isArray(capturaDataUrl) ? capturaDataUrl.filter(Boolean) : capturaDataUrl ? [capturaDataUrl] : [];
   if (capturas.length === 0) return texto;
   return [
@@ -434,6 +452,34 @@ export function problemasAccionables(problemas: Problema[]): Problema[] {
  * líneas de origen citadas: acá no hay un error de ejecución con línea y
  * columna, sólo la descripción del revisor.
  */
+/**
+ * T4 round 6 (motor-claude): convierte una `BanderaRoja` determinística
+ * (`turno-diff.ts`) en un `Problema` con la MISMA forma que devuelve el
+ * modelo — así se cuela por el camino de corrección existente
+ * (`construirMensajeCorreccionVerificador` → `POST /api/chat/autocorreccion`
+ * con `problemasVerificador`, el mismo endpoint que ya tiene la recuperación
+ * de un intento fallido y la caída a reescritura completa de la ronda 5) sin
+ * ningún código de corrección nuevo. `gravedad: 'alta'`/`tipo: 'pedido'`
+ * siempre: una bandera roja es, por construcción, "el pedido no se cumplió".
+ */
+const EXPLICACION_MOTIVO: Record<BanderaRoja['motivo'], string> = {
+  agregar_trivial: 'El pedido pedía agregar/sumar contenido y el cambio medido en el HTML es casi nulo',
+  acortar_sin_achicar: 'El pedido pedía acortar/resumir y el contenido visible no se achicó',
+  comentario_promesa_sin_contenido: 'El código agregó un comentario que promete contenido nuevo sin agregarlo de verdad',
+};
+
+export function problemaDeBanderaRoja(bandera: BanderaRoja, pedidoActual: string): Problema {
+  const pedidoRecortado = pedidoActual.trim().slice(0, 300);
+  return {
+    gravedad: 'alta',
+    tipo: 'pedido',
+    que: `${EXPLICACION_MOTIVO[bandera.motivo]}. Último pedido: "${pedidoRecortado}".`,
+    como_reproducir: bandera.detalle,
+    arreglo:
+      'Volvé a leer el último pedido del docente y agregá/quitá el contenido real que falta (texto, elementos, controles — no sólo un comentario o un contador). Si de verdad no se puede cumplir, decilo en el chat en vez de dar el cambio por hecho.',
+  };
+}
+
 export function construirMensajeCorreccionVerificador(problemas: Problema[]): string {
   const accionables = problemasAccionables(problemas);
 

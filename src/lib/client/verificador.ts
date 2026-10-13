@@ -129,7 +129,17 @@ export function decidirTipoVerificacion(args: {
 // ─────────────────────────────────────────────────────────────
 
 export type ResultadoVerificar =
-  | { estado: 'ok'; problemas: Problema[]; pasadas: number; fallidas: number; usoVision: boolean }
+  | {
+      estado: 'ok';
+      problemas: Problema[];
+      pasadas: number;
+      fallidas: number;
+      usoVision: boolean;
+      /** T4 round 6 (motor-claude): `true` si el chequeo determinístico
+       *  "¿este ajuste hizo lo que pidieron?" (`turno-diff.ts`) disparó una
+       *  bandera roja — evidencia medida, no una opinión del modelo. */
+      banderaDeterministica: boolean;
+    }
   | { estado: 'desactivado' }
   | { estado: 'sin-cupo' }
   | { estado: 'error' };
@@ -179,6 +189,7 @@ export async function verificarRecurso(
       pasadas: typeof data.pasadas === 'number' ? data.pasadas : 0,
       fallidas: typeof data.fallidas === 'number' ? data.fallidas : 0,
       usoVision: data.usoVision === true,
+      banderaDeterministica: data.banderaDeterministica === true,
     };
   }
   return null;

@@ -1042,8 +1042,16 @@ export default function Workspace(props: WorkspaceProps) {
      * verificador — "never loop more than once"). El revisor de SÓLO TEXTO
      * (sin captura, o motor sin visión) sigue el camino de siempre: se
      * muestra el panel y el docente decide con "¿Las arreglo?".
+     *
+     * T4 round 6 (motor-claude): `banderaDeterministica` entra por la MISMA
+     * puerta que `usoVision` — el chequeo determinístico de `turno-diff.ts`
+     * ("el pedido pedía agregar y el diff mide casi nada") es evidencia tan
+     * dura como una captura, y el defecto que lo motivó (ronda 5: "al final
+     * agregá 3 preguntas" no agregó ninguna) es justo el que un docente
+     * nunca notaría sin abrir el código — amerita el mismo arreglo
+     * silencioso, con el mismo tope de una sola ronda.
      */
-    if (resultado.usoVision && accionables.length > 0) {
+    if ((resultado.usoVision || resultado.banderaDeterministica) && accionables.length > 0) {
       const controllerArreglo = new AbortController();
       let htmlCorregido: string | null = null;
       try {

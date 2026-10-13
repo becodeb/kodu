@@ -849,7 +849,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // este turno puntual, así que va en el mismo bloque, nunca mezclado con
   // el `message` del docente que se persiste tal cual (ver `buildUserContent`).
   const currentResourceBlock =
-    buildCurrentResourceBlock(htmlParaModelo, project.title, codeEditedByTeacher ?? false, editsEnabled) +
+    buildCurrentResourceBlock(htmlParaModelo, project.title, codeEditedByTeacher ?? false, editsEnabled, message) +
     (checklistVigente.length > 0 ? `\n\n${bloqueChecklistParaAjuste(checklistVigente)}` : '');
 
   const userContent = await buildUserContent(

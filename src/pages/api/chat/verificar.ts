@@ -20,10 +20,13 @@ import {
   construirSistemaVerificador,
   pedidoDocente,
   parsearVerificacion,
+  problemaDeBanderaRoja,
   reglasDelArnes,
   unirPasadas,
+  MAX_PROBLEMAS,
   type Problema,
 } from '../../../lib/ai/verificador.ts';
+import { computarDiffTurno, detectarBanderasRojas, resumenDiffParaRevisor } from '../../../lib/ai/turno-diff.ts';
 import { consumedTokens, recordUsage } from '../../../lib/ai/usage.ts';
 import { recordAiTrace } from '../../../lib/ai/trace.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
@@ -253,6 +256,34 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const htmlParaRevisor = desenvolverPruebas(project.currentHtml);
 
   /**
+   * T4 round 6 (motor-claude): el HTML de ANTES de este turno
+   * (`ProjectSnapshot.html` del último mensaje "assistant" no deshecho —
+   * MISMA fila/consulta que `pendienteChequeosPosteriores`,
+   * `post-checks-db.ts`) para el chequeo determinístico "¿este ajuste hizo
+   * lo que pidieron?" (`turno-diff.ts`). Sólo tiene sentido para un AJUSTE
+   * (un recurso nuevo no tiene "antes" que comparar); `null` cuando no hay
+   * snapshot (recurso recién creado, o turno sin cambio registrado) — el
+   * chequeo entero se salta en silencio, nunca bloquea la verificación de
+   * siempre.
+   */
+  let htmlAntes: string | null = null;
+  if (tipo === 'ajuste') {
+    const ultimoAsistente = await prisma.chatMessage.findFirst({
+      where: { thread: { projectId: project.id }, role: 'assistant', undoneAt: null, snapshot: { isNot: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { snapshot: { select: { html: true } } },
+    });
+    htmlAntes = ultimoAsistente?.snapshot?.html ?? null;
+  }
+
+  const diffTurno = htmlAntes !== null ? computarDiffTurno(desenvolverPruebas(htmlAntes), htmlParaRevisor) : null;
+  // El ÚLTIMO pedido puntual (nunca el histórico combinado): matchear contra
+  // pedidos de turnos anteriores ya resueltos dispararía banderas falsas.
+  const pedidoParaBanderas = mensajeActual ?? primerMensaje?.content ?? '';
+  const banderasRojas = diffTurno ? detectarBanderasRojas(pedidoParaBanderas, diffTurno) : [];
+  const resumenDiff = diffTurno ? resumenDiffParaRevisor(diffTurno) : null;
+
+  /**
    * T5 (motor-claude, revisor visual): el único motor que corre acá es el
    * `isVerifier` del catálogo — ya puede ser cualquier `apiFormat`,
    * incluido `'anthropic'` (T1 lo dejó genérico, ver `catalogo.ts`). Con
@@ -270,7 +301,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const hayCaptura = Array.isArray(captura) ? captura.length > 0 : Boolean(captura);
   const usaVision = hayCaptura && supportsVision(provider);
   const sistema = construirSistemaVerificador(reglasDelArnes(), { conCaptura: usaVision });
-  const contenidoUsuario = construirContenidoUsuarioVerificador(pedido, htmlParaRevisor, usaVision ? captura : null);
+  const contenidoUsuario = construirContenidoUsuarioVerificador(
+    pedido,
+    htmlParaRevisor,
+    usaVision ? captura : null,
+    resumenDiff,
+  );
 
   const messages: ChatMessage[] = [
     { role: 'system', content: sistema },
@@ -295,6 +331,12 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const listasOk = resultados.filter((r): r is { problemas: Problema[] } => r.problemas !== null);
   const fallidas = resultados.length - listasOk.length;
 
+  // T4 round 6: los problemas sintéticos de las banderas rojas determinísticas
+  // van PRIMERO (son evidencia medida, no una opinión del modelo) — así
+  // sobreviven el `.slice(0, MAX_PROBLEMAS)` aunque el modelo haya llenado la
+  // lista con otros hallazgos.
+  const problemasDeterministicos = banderasRojas.map((bandera) => problemaDeBanderaRoja(bandera, pedidoParaBanderas));
+
   if (listasOk.length === 0) {
     // odd/tasks/ahorro-tokens.md (T4): se registra igual, sin hallazgos —
     // "cuando corre" incluye el caso en que ninguna pasada dio un JSON
@@ -309,14 +351,20 @@ export const POST: APIRoute = async ({ request, locals }) => {
       reasoningEffort: provider.reasoningEffort,
       requestText: pedido,
       durationMs: Date.now() - arranque,
-      verifierFindings: null,
+      verifierFindings: problemasDeterministicos.length > 0 ? problemasDeterministicos.length : null,
     });
+    // T4 round 6: aunque las pasadas del modelo fallaron todas, la bandera
+    // determinística no depende del modelo — si disparó, sigue siendo
+    // evidencia accionable; sin eso, nada que reportar (como siempre).
+    if (problemasDeterministicos.length > 0) {
+      return ok({ estado: 'ok', problemas: problemasDeterministicos, pasadas: cantidadPasadas, fallidas, usoVision: usaVision, banderaDeterministica: true });
+    }
     // Cada pasada ya logueó su propio motivo (arriba, en `ejecutarPasada`)
     // — acá no hay nada más que reportar, y NUNCA se loguea la clave.
     return ok({ estado: 'error' });
   }
 
-  const problemas = unirPasadas(listasOk.map((r) => r.problemas));
+  const problemas = [...problemasDeterministicos, ...unirPasadas(listasOk.map((r) => r.problemas))].slice(0, MAX_PROBLEMAS);
 
   // odd/tasks/motor-claude.md (T4 round 3): temporal, detrás de un env flag
   // — para calibrar la gravedad del revisor visual (¿por qué nunca sale
@@ -340,5 +388,17 @@ export const POST: APIRoute = async ({ request, locals }) => {
     verifierFindings: problemas.length,
   });
 
-  return ok({ estado: 'ok', problemas, pasadas: cantidadPasadas, fallidas, usoVision: usaVision });
+  return ok({
+    estado: 'ok',
+    problemas,
+    pasadas: cantidadPasadas,
+    fallidas,
+    usoVision: usaVision,
+    // T4 round 6: `true` cuando el chequeo determinístico (`turno-diff.ts`)
+    // disparó al menos una bandera roja — el cliente lo trata igual que
+    // `usoVision` para decidir si corrige en silencio (ver Workspace.tsx):
+    // es evidencia tan dura como una captura, no depende de que el modelo
+    // haya reportado nada.
+    banderaDeterministica: banderasRojas.length > 0,
+  });
 };

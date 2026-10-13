@@ -351,11 +351,88 @@ Para este ajuste tenés UNA sola herramienta disponible: \`edit_resource_code\`,
 - Para un rediseño grande que toca buena parte del documento, igual resolvelo con \`edit_resource_code\`: armá uno o varios reemplazos GRANDES (por ejemplo, un \`find\` que abarque el \`<body>\` entero o una sección completa) en vez de muchos reemplazos chiquitos.
 - Cada \`find\` tiene que ser una copia EXACTA de un fragmento que aparece una sola vez en el HTML de arriba (mismos espacios y saltos de línea); si no matchea ni una vez o matchea más de una, la edición entera se rechaza y el recurso queda igual.`;
 
+/**
+ * T4 round 6 (motor-claude): Haiku con esfuerzo bajo, medido en las rondas
+ * 4 y 5, no cambió de comportamiento con el checklist "Al ajustar un
+ * recurso" de `BASE_PROMPT` — "más grande para proyectar" seguía achicando
+ * la escena, "más corto" seguía sin sacar nada. Esa sección vive en el
+ * system prompt, que el modelo recibe UNA vez y puede ignorar entre un
+ * montón de reglas; esto la refuerza, pero SÓLO con la línea que aplica al
+ * pedido de ESTE turno puntual, pegada junto al HTML que el modelo tiene
+ * que leer de todos modos — nunca reemplaza el checklist del system
+ * prompt, nunca se mete en `BASE_PROMPT` (partiría el cache de prefijo, ver
+ * el comentario grande de esa constante más abajo).
+ *
+ * Por diseño, cada entrada es UNA línea corta; si varios pedidos matchean
+ * en el mismo turno (p.ej. "más grande y con otro color"), se cortan a las
+ * primeras 3 en el orden de la lista — nunca una lista larga que vuelva a
+ * ser "un checklist que se puede ignorar".
+ */
+interface GuiaPorPedido {
+  claves: string[];
+  linea: string;
+}
+
+const GUIAS_POR_PEDIDO: GuiaPorPedido[] = [
+  {
+    claves: ['agrega', 'suma', 'anadi', 'incorpora', 'pone'],
+    linea:
+      '- Este pedido es de AGREGAR: el cambio tiene que sumar contenido real y visible (texto, elementos, controles) — nunca alcanza con un comentario que diga que se va a agregar, ni con un contenedor vacío.',
+  },
+  {
+    claves: ['mas corto', 'acorta', 'resumi', 'menos'],
+    linea:
+      '- Este pedido es de ACORTAR: borrá o fusioná contenido de verdad hasta que entre en menos tiempo/espacio — nunca achiques la letra ni comprimas el espaciado para simular que es más corto.',
+  },
+  {
+    claves: ['mas grande', 'proyector', 'proyectar', 'agrandar'],
+    linea:
+      '- Este pedido es de AGRANDAR para proyectar: escalá TODA la composición (cámara, objetos, etiquetas, layout) para que llene el viewport — en una escena 3D la cámara se ACERCA, nunca se aleja ni queda igual.',
+  },
+  {
+    claves: ['color', 'colores', 'leyenda', 'referencia'],
+    linea: '- Si cambiás un color, actualizá también su leyenda o referencia — nunca sólo uno de los dos.',
+  },
+  {
+    claves: ['al final'],
+    linea: '- "Al final" es DESPUÉS de la última sección existente, nunca en el medio ni reemplazando otra parte.',
+  },
+];
+
+function sinAcentosParaClave(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase();
+}
+
+function contieneClave(textoNormalizado: string, clave: string): boolean {
+  if (clave.includes(' ')) return textoNormalizado.includes(clave);
+  return new RegExp(`\\b${clave}`, 'u').test(textoNormalizado);
+}
+
+/** `''` si ningún pedido de la lista matchea — el bloque del recurso queda
+ *  byte a byte igual al de antes de esta ronda. */
+function guiaPorPedido(pedidoActual: string): string {
+  if (!pedidoActual) return '';
+  const normalizado = sinAcentosParaClave(pedidoActual);
+  const lineas = GUIAS_POR_PEDIDO.filter((guia) => guia.claves.some((clave) => contieneClave(normalizado, clave)))
+    .map((guia) => guia.linea)
+    .slice(0, 3);
+  if (lineas.length === 0) return '';
+  return `\n\n## Para este pedido puntual\n${lineas.join('\n')}`;
+}
+
 export function buildCurrentResourceBlock(
   currentHtml: string,
   projectTitle: string,
   htmlEditedByTeacher: boolean,
   editsEnabled = false,
+  /** T4 round 6: el pedido de ESTE turno (texto crudo del docente), para
+   *  `guiaPorPedido`. `''` (default) desactiva la guía puntual — mismo
+   *  resultado que antes de esta ronda. Nunca se usa si `editsEnabled` es
+   *  `false` (un recurso nuevo no tiene "ajuste" que reforzar). */
+  pedidoActual = '',
 ): string {
   // El bloque canónico del kit (T2, "Kit aplicado por el servidor") son ~40
   // líneas de Tailwind config que el modelo no escribió y no tiene que
@@ -387,7 +464,7 @@ export function buildCurrentResourceBlock(
       '\nEste documento es tan largo que hubo que recortarlo para mostrártelo: lo que sigue NO es el archivo completo. No lo reescribas entero, porque perderías la parte que no ves. Hacé el cambio más acotado posible y, si el pedido toca la zona recortada, decíselo al docente y pedile que te pegue esa parte en el chat.\n';
   }
 
-  const guia = editsEnabled ? GUIA_EDICION_POR_FRAGMENTOS : '';
+  const guia = editsEnabled ? GUIA_EDICION_POR_FRAGMENTOS + guiaPorPedido(pedidoActual) : '';
 
   return `${section}\n\`\`\`html\n${body}\n\`\`\`${guia}`;
 }
