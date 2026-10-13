@@ -51,7 +51,7 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 - [x] T8 Report: cost and time per resource per model, when to use each, pending tests
 - [x] T9 Anthropic presets (Haiku/Sonnet/Opus 5.5) + create-provider-from-preset admin flow
 - [x] T11 Usage statistics (/admin/uso, exports, token-gated /api/stats/uso.json)
-- [ ] T12 Deploy to production and verify live (owner authorized 2026-10-10)
+- [x] T12 Deploy to production and verify live (owner authorized 2026-10-10)
 
 ## Acceptance criteria
 
@@ -1612,3 +1612,17 @@ todo-opus ≈ USD 10. USD 200 of credit covers ~900 active teachers on base.
 Experiment ledger (gasto.json): USD 11.86 including the final smoke; plus ~USD 0.03 of
 probe/accidental calls outside the ledger (T1 sonda, T11 accidental, pre-deploy probe).
 Compare against the Console's "Promotional credits" usage for the same dates.
+
+## T12 Deploy (2026-10-13)
+
+Pushed main ced2d3e at 20:26 UTC (fast-forward from 9682b22). Coolify deployment
+finished; app `running:healthy`, last_online_at 20:32:30 UTC (after the push, so the
+entrypoint's `prisma migrate deploy` succeeded). The site returned 503 for ~6 minutes
+while the container restarted, then 200. Live probes: `/` and `/gallery` 200;
+`/admin/uso` and `/admin/generacion` redirect to login; `/api/admin/uso.json` 401;
+`/api/stats/uso.json` 404 (fail-closed until STATS_API_TOKEN is set).
+
+Owner steps left: /admin/motores → preset "Claude Haiku 5.5" + paste a NEW (rotated)
+Anthropic key; it becomes the reviewer automatically. /admin/generacion → mode
+`base` (default), credit 200 / premium cutoff / cycle day. Optional: STATS_API_TOKEN
+(≥32 chars) in Coolify env + redeploy.
