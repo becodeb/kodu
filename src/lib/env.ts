@@ -181,6 +181,22 @@ const envSchema = z.object({
   INTERNAL_CRON_SECRET: z.string().default(''),
 
   /**
+   * odd/tasks/motor-claude.md (T11): secreto que protege
+   * `GET /api/stats/uso.json` — el único acceso de sólo lectura a las
+   * estadísticas de uso que NO pasa por una sesión de admin (pensado para
+   * que el dueño lo consulte desde afuera, p.ej. un dashboard propio o un
+   * script). Comparación en tiempo constante contra el header
+   * `Authorization: Bearer <token>`. Vacío, o más corto de 32 caracteres
+   * (demasiado débil para un secreto de acceso), hace que el endpoint
+   * devuelva 404 SIEMPRE (fail-closed: ni siquiera admite que existe) —
+   * mismo criterio "vacío = apagado" que `INTERNAL_CRON_SECRET`, pero con
+   * un piso de largo porque ESTE endpoint expone datos (aunque sean
+   * agregados, sin PII) a quien lo acierte, no sólo dispara una acción
+   * idempotente.
+   */
+  STATS_API_TOKEN: z.string().default(''),
+
+  /**
    * odd/tasks/planes-y-cobros.md (T8): qué adaptador de `Invoicer` usa el
    * servidor (`src/lib/billing/facturador/`). `none` (default) = facturación
    * automática apagada: las facturas quedan `PENDING` para siempre y
@@ -263,6 +279,7 @@ export function getEnv(): Env {
     MP_WEBHOOK_SECRET: read('MP_WEBHOOK_SECRET'),
     BILLING_FAKE_NOW: read('BILLING_FAKE_NOW'),
     INTERNAL_CRON_SECRET: read('INTERNAL_CRON_SECRET'),
+    STATS_API_TOKEN: read('STATS_API_TOKEN'),
     INVOICE_PROVIDER: read('INVOICE_PROVIDER'),
     ARCA_CUIT: read('ARCA_CUIT'),
     ARCA_PUNTO_VENTA: read('ARCA_PUNTO_VENTA'),

@@ -1,0 +1,15 @@
+---
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import UsoPanel from '../../components/admin/UsoPanel.tsx';
+import { rangoDelCicloActual, resumenUso } from '../../lib/admin/uso.ts';
+import { leerAppSettings } from '../../lib/settings.ts';
+
+// El middleware ya garantiza sesión + rol ADMIN en /admin/**.
+const settings = await leerAppSettings();
+const rango = rangoDelCicloActual(settings.billingCycleDay);
+const resumen = await resumenUso(rango);
+---
+
+<AdminLayout title="Uso">
+  <UsoPanel client:load initial={resumen} />
+</AdminLayout>

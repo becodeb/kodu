@@ -39,6 +39,14 @@ export interface FilaTrazaExport {
   selfTestFailed: number | null;
   correctionRounds: number | null;
   verifierFindings: number | null;
+  // odd/tasks/motor-claude.md (T11): ver el comentario de cada columna en
+  // el schema (`AiTrace`).
+  generationMode: string | null;
+  turnRole: string | null;
+  parentChatMessageId: string | null;
+  selfTestDurationMs: number | null;
+  redFlags: string | null;
+  redFlagsFixed: boolean | null;
   faceRating: string | null;
   faceRatingComment: string | null;
   inlineQuestionKind: string | null;
@@ -73,6 +81,12 @@ export const COLUMNAS_EXPORT_TRAZAS: Array<keyof FilaTrazaExport> = [
   'selfTestFailed',
   'correctionRounds',
   'verifierFindings',
+  'generationMode',
+  'turnRole',
+  'parentChatMessageId',
+  'selfTestDurationMs',
+  'redFlags',
+  'redFlagsFixed',
   'faceRating',
   'faceRatingComment',
   'inlineQuestionKind',
@@ -121,6 +135,12 @@ export async function filasExportTrazas(filtro: FiltroTrazas): Promise<FilaTraza
       selfTestFailed: true,
       correctionRounds: true,
       verifierFindings: true,
+      generationMode: true,
+      turnRole: true,
+      parentChatMessageId: true,
+      selfTestDurationMs: true,
+      redFlags: true,
+      redFlagsFixed: true,
       faceRating: true,
       faceRatingComment: true,
       inlineQuestionKind: true,
@@ -159,6 +179,12 @@ export async function filasExportTrazas(filtro: FiltroTrazas): Promise<FilaTraza
     selfTestFailed: fila.selfTestFailed,
     correctionRounds: fila.correctionRounds,
     verifierFindings: fila.verifierFindings,
+    generationMode: fila.generationMode,
+    turnRole: fila.turnRole,
+    parentChatMessageId: fila.parentChatMessageId,
+    selfTestDurationMs: fila.selfTestDurationMs,
+    redFlags: fila.redFlags,
+    redFlagsFixed: fila.redFlagsFixed,
     faceRating: fila.faceRating,
     faceRatingComment: fila.faceRatingComment,
     inlineQuestionKind: fila.inlineQuestionKind,
