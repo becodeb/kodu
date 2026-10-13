@@ -794,6 +794,30 @@ model AppSettings {
   /// "capa 1" que sobrevivió a la baja de modo prime — ver
   /// `src/lib/ai/capacidades.ts`.
   versionsForAll     Boolean  @default(false)
+  /// T7 (motor-claude): clave de un modo definido en CODE
+  /// (`src/lib/ai/modos-generacion.ts`), nunca validada contra una tabla —
+  /// mismo criterio que `AiModel.presetKey`. Una clave desconocida (modo
+  /// sacado del código) cae a `'base'`, nunca un crash.
+  generationMode     String   @default("base")
+  /// Sólo importa con `generationMode === 'personalizado'`: el motor que el
+  /// admin eligió a mano para generar un recurso NUEVO, desde el catálogo de
+  /// `AiModel` habilitados. `NULL` = sin elegir todavía — cae al modo base.
+  creationModelId    String?
+  creationModel      AiModel? @relation("AppSettingsCreationModel", fields: [creationModelId], references: [id], onDelete: SetNull)
+  /// Mismo criterio que `creationModelId`, para el rol de AJUSTE.
+  adjustmentModelId  String?
+  adjustmentModel    AiModel? @relation("AppSettingsAdjustmentModel", fields: [adjustmentModelId], references: [id], onDelete: SetNull)
+  /// USD incluidos en el crédito mensual de la API de Claude del dueño (sin
+  /// rollover). Ver `odd/tasks/motor-claude.md` §Objective.
+  monthlyCreditUsd   Decimal  @default(200) @db.Decimal(10, 2)
+  /// Gasto del ciclo (sólo modelos `apiFormat: "anthropic"`) a partir del
+  /// cual un modo premium se comporta como `'base'` — ver
+  /// `src/lib/ai/modos-generacion.ts#resolverModoEfectivo`.
+  premiumUntilUsd    Decimal  @default(100) @db.Decimal(10, 2)
+  /// Día del mes (UTC) en que arranca el ciclo de facturación, 1 a 28 (todo
+  /// mes tiene al menos 28 días — sin ambigüedad de "día 31"). Ver
+  /// `src/lib/ai/modos-generacion.ts#ventanaDelCiclo`. CHECK en la migración.
+  billingCycleDay    Int      @default(1)
   updatedAt          DateTime @updatedAt
 }
 
@@ -1059,6 +1083,15 @@ model Project {
   selectedModel          ModelChoice       @default(MINIMAX)
   aiModelId              String?
   aiModel                AiModel?          @relation(fields: [aiModelId], references: [id], onDelete: SetNull)
+  /// T7 (motor-claude): `true` sólo cuando ESTA fila la puso un docente
+  /// tocando el selector (`SelectorDeMotor.tsx#onModelChange`, vía
+  /// `PATCH /api/projects/:id`) — nunca por la asignación silenciosa inicial
+  /// (`project/[id].astro`) ni por el swap automático de respaldo
+  /// (`Workspace.tsx#onUseFallback`). Gatea si el modo de generación activo
+  /// (`AppSettings.generationMode`) puede reencaminar este proyecto o si hay
+  /// que respetar la elección explícita del docente — ver
+  /// `src/lib/ai/modos-generacion.ts#motorParaTurno`.
+  engineChosenByTeacher  Boolean           @default(false)
   userId                 String
   user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Marca los recursos creados por la cuenta compartida de demo (design.md
@@ -1366,6 +1399,11 @@ model AiModel {
 
   projects   Project[]
   tokenUsage TokenUsage[]
+  /// T7 (motor-claude): back-relation de `AppSettings.creationModel`/
+  /// `adjustmentModel` ("personalizado") — nunca se lee desde acá, sólo hace
+  /// falta para que Prisma sepa resolver las dos FK a esta misma tabla.
+  appSettingsCreation   AppSettings[] @relation("AppSettingsCreationModel")
+  appSettingsAdjustment AppSettings[] @relation("AppSettingsAdjustmentModel")
 
   @@unique([providerId, providerModel])
   @@index([enabled, sortOrder])
