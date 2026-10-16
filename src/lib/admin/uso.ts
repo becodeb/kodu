@@ -8,6 +8,9 @@ import {
   proyeccionDeCierre,
   gastoDelCicloActual,
   MODES,
+  MODO_AUTOMATICO_KEY,
+  tierAutomaticoActual,
+  type TierAutomatico,
 } from '../ai/modos-generacion.ts';
 
 /**
@@ -231,6 +234,11 @@ export interface ResumenCreditoUso {
   modoEfectivo: string;
   proyeccionCierreUsd: number;
   gastoPorDia: PuntoGastoDiario[];
+  /** T14: sólo presente cuando `modoEfectivo === 'automatico'` — mismo
+   *  dato que la caja viva de `/admin/generacion`, para que el export de
+   *  `/admin/uso` también pueda explicar por qué un recurso salió en tal
+   *  tier. */
+  automatico: { tier: TierAutomatico; razon: string } | null;
 }
 
 async function resumenCredito(ahora: Date): Promise<ResumenCreditoUso> {
@@ -239,6 +247,18 @@ async function resumenCredito(ahora: Date): Promise<ResumenCreditoUso> {
   const fin = finDelCiclo(settings.billingCycleDay, inicio);
   const gastoCicloUsd = await gastoDelCicloActual(settings.billingCycleDay, ahora);
   const efectivo = modoEfectivo(settings.generationMode, gastoCicloUsd, settings.premiumUntilUsd.toNumber());
+
+  const decisionAutomatico =
+    efectivo === MODO_AUTOMATICO_KEY
+      ? await tierAutomaticoActual(
+          {
+            billingCycleDay: settings.billingCycleDay,
+            monthlyCreditUsd: settings.monthlyCreditUsd.toNumber(),
+            premiumUntilUsd: settings.premiumUntilUsd.toNumber(),
+          },
+          ahora,
+        )
+      : null;
 
   const filasDelCiclo = await prisma.tokenUsage.findMany({
     where: { createdAt: { gte: inicio }, costUsd: { not: null }, aiModel: { provider: { apiFormat: 'anthropic' } } },
@@ -263,6 +283,7 @@ async function resumenCredito(ahora: Date): Promise<ResumenCreditoUso> {
     modoEfectivo: efectivo,
     proyeccionCierreUsd: proyeccionDeCierre(gastoCicloUsd, inicio, fin, ahora),
     gastoPorDia,
+    automatico: decisionAutomatico ? { tier: decisionAutomatico.tier, razon: decisionAutomatico.razon } : null,
   };
 }
 

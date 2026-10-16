@@ -321,6 +321,14 @@ export default function GeneracionPanel({ initial }: Props) {
               El crédito incluido se agotó; lo que siga se cobra aparte o se corta según la Console.
             </p>
           )}
+          {resumen.ciclo.automatico && (
+            <p className="text-ink-700">
+              Hoy los recursos nuevos usan: <strong>{resumen.ciclo.automatico.tierEtiqueta}</strong> — porque{' '}
+              {resumen.ciclo.automatico.razon}. Quedan {resumen.ciclo.automatico.diasRestantes.toFixed(1)} días del
+              ciclo, crédito restante USD {formatoUsd(resumen.ciclo.automatico.creditoRestanteUsd)}, proyección de
+              cierre USD {formatoUsd(resumen.ciclo.automatico.proyeccionCierreUsd)}.
+            </p>
+          )}
         </div>
       </section>
 

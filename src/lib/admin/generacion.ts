@@ -5,13 +5,22 @@ import { motorVerificador } from '../ai/catalogo.ts';
 import {
   MODES,
   MODO_PERSONALIZADO_KEY,
+  MODO_AUTOMATICO_KEY,
   ORDEN_MODOS,
   modoEfectivo,
   inicioDelCiclo,
   finDelCiclo,
   proyeccionDeCierre,
   gastoDelCicloActual,
+  tierAutomaticoActual,
+  type TierAutomatico,
 } from '../ai/modos-generacion.ts';
+
+const ETIQUETA_POR_TIER: Record<TierAutomatico, string> = {
+  haiku: 'Haiku',
+  sonnet: 'Sonnet',
+  opus: 'Opus',
+};
 
 export interface ModeloParaSelector {
   id: string;
@@ -38,6 +47,18 @@ export interface CicloActualUI {
    *  configurado, si el gasto ya pasó `premiumUntilUsd`). */
   modoEfectivo: string;
   proyeccionUsd: number;
+  /**
+   * T14: sólo presente cuando el modo efectivo es `automatico` — la línea
+   * viva "Hoy los recursos nuevos usan: X — porque …" del panel. `null` en
+   * cualquier otro modo (nunca se calcula el pacing si no corresponde).
+   */
+  automatico: {
+    tierEtiqueta: string;
+    razon: string;
+    diasRestantes: number;
+    creditoRestanteUsd: number;
+    proyeccionCierreUsd: number;
+  } | null;
 }
 
 export interface ResumenGeneracion {
@@ -87,28 +108,57 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
 
   const presetKeysHabilitados = new Set(filas.map((fila) => fila.presetKey).filter((key): key is string => key !== null));
 
-  const modos: ModoUI[] = ORDEN_MODOS.filter((key) => key !== MODO_PERSONALIZADO_KEY).map((key) => {
-    const modo = MODES[key]!;
-    const presetsDelModo = new Set([modo.roles.creation.presetKey, modo.roles.adjustment.presetKey]);
-    const presetsFaltantes = [...presetsDelModo]
-      .filter((presetKey) => !presetKeysHabilitados.has(presetKey))
-      .map((presetKey) => presetByKey(presetKey)?.label ?? presetKey);
+  // T14: "automatico" vive AFUERA de MODES (sus roles no son fijos) — se
+  // describe a mano, y nunca tiene "presetsFaltantes" (necesita Haiku Y
+  // Sonnet Y Opus según el día, no un preset único que avisar).
+  const presetsHaikuYSonnet = ['claude-haiku-5-5', 'claude-sonnet-5-5'].filter(
+    (presetKey) => !presetKeysHabilitados.has(presetKey),
+  );
+  const modoAutomaticoUI: ModoUI = {
+    key: MODO_AUTOMATICO_KEY,
+    label: 'Automático (recomendado)',
+    description:
+      'El sistema decide sólo, recurso por recurso: Sonnet por defecto, Haiku si el crédito del ciclo viene corto, y Opus en los últimos días si sobra crédito. Cada recurso se ajusta siempre con el motor que lo creó.',
+    measuredCreation: 'Varía según el día — ver la caja del ciclo abajo',
+    measuredAdjustment: 'El mismo motor con el que nació el recurso',
+    presetsFaltantes: presetsHaikuYSonnet.map((presetKey) => presetByKey(presetKey)?.label ?? presetKey),
+  };
 
-    return {
-      key: modo.key,
-      label: modo.label,
-      description: modo.description,
-      measuredCreation: modo.measured.creation,
-      measuredAdjustment: modo.measured.adjustment,
-      presetsFaltantes,
-    };
-  });
+  const modos: ModoUI[] = [
+    modoAutomaticoUI,
+    ...ORDEN_MODOS.filter((key) => key !== MODO_PERSONALIZADO_KEY && key !== MODO_AUTOMATICO_KEY).map((key) => {
+      const modo = MODES[key]!;
+      const presetsDelModo = new Set([modo.roles.creation.presetKey, modo.roles.adjustment.presetKey]);
+      const presetsFaltantes = [...presetsDelModo]
+        .filter((presetKey) => !presetKeysHabilitados.has(presetKey))
+        .map((presetKey) => presetByKey(presetKey)?.label ?? presetKey);
+
+      return {
+        key: modo.key,
+        label: modo.label,
+        description: modo.description,
+        measuredCreation: modo.measured.creation,
+        measuredAdjustment: modo.measured.adjustment,
+        presetsFaltantes,
+      };
+    }),
+  ];
 
   const ahora = new Date();
   const inicio = inicioDelCiclo(settings.billingCycleDay, ahora);
   const fin = finDelCiclo(settings.billingCycleDay, inicio);
   const gastoUsd = await gastoDelCicloActual(settings.billingCycleDay, ahora);
   const efectivo = modoEfectivo(settings.generationMode, gastoUsd, settings.premiumUntilUsd.toNumber());
+
+  // T14: el pacing sólo se calcula cuando el modo EFECTIVO es "automatico"
+  // — ningún otro modo paga esta consulta extra en cada carga del panel.
+  const decisionAutomatico =
+    efectivo === MODO_AUTOMATICO_KEY
+      ? await tierAutomaticoActual(
+          { billingCycleDay: settings.billingCycleDay, monthlyCreditUsd: settings.monthlyCreditUsd.toNumber(), premiumUntilUsd: settings.premiumUntilUsd.toNumber() },
+          ahora,
+        )
+      : null;
 
   // Hallazgo de revisión (motor-claude, pre-deploy): el aviso + botón "Usar
   // Haiku 5.5 como revisor" de `GeneracionPanel.tsx` necesitan saber (a) si
@@ -136,6 +186,15 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
       gastoUsd,
       modoEfectivo: efectivo,
       proyeccionUsd: proyeccionDeCierre(gastoUsd, inicio, fin, ahora),
+      automatico: decisionAutomatico
+        ? {
+            tierEtiqueta: ETIQUETA_POR_TIER[decisionAutomatico.tier],
+            razon: decisionAutomatico.razon,
+            diasRestantes: decisionAutomatico.diasRestantes,
+            creditoRestanteUsd: decisionAutomatico.creditoRestanteUsd,
+            proyeccionCierreUsd: decisionAutomatico.proyeccionCierreUsd,
+          }
+        : null,
     },
     hayVerificadorUsable: verificadorUsable !== null,
     haikuParaVerificador: haikuHabilitado ? { id: haikuHabilitado.id, displayName: haikuHabilitado.displayName } : null,
