@@ -52,13 +52,13 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 - [x] T9 Anthropic presets (Haiku/Sonnet/Opus 5.5) + create-provider-from-preset admin flow
 - [x] T11 Usage statistics (/admin/uso, exports, token-gated /api/stats/uso.json)
 - [x] T12 Deploy to production and verify live (owner authorized 2026-10-10)
-- [~] T14 "Automático" mode: credit-aware pacing (haiku/sonnet/opus) + model
-      stickiness — pacing/routing/admin panel/uso done and tested; live
-      suites and real-model smoke pending (see T14/T15 notes below)
-- [~] T15 "Pulido visual" (haiku-pulido): visual-polish pass with Sonnet —
-      reusable lib function + server endpoint done; client wiring into the
-      live creation flow (self-test re-run + revert) and the experiment
-      runner's `--modo haiku-pulido` deferred (see notes)
+- [x] T14 "Automático" mode: credit-aware pacing (haiku/sonnet/opus) + model
+      stickiness — live suites and a real smoke call now done too (see the
+      2026-10-17 notes below)
+- [x] T15 "Pulido visual" (haiku-pulido): visual-polish pass with Sonnet —
+      client wiring (capture, call, apply quietly, one self-test, revert)
+      and the experiment runner's `--modo haiku-pulido`/`automatico` now
+      done too (see the 2026-10-17 notes below)
 
 ## Acceptance criteria
 
@@ -1695,3 +1695,105 @@ smoke calls (`t11-autoprueba`, `verificador-endpoint`, `verificador-editor`,
 `m2-catalogo`, the budgeted `correr.ts` smoke) — none were run this pass.
 `npm run check` is clean and the new unit tests pass; nothing beyond that was
 verified against a real Anthropic call.
+
+## T14/T15 notes (2026-10-17, client wiring + experiment runner + verification)
+
+Single writer, worktree `~/projects/kodu-wt/claude` (`feat/motor-claude`) +
+`~/projects/kodu-wt/claude-exp` (`exp/motor-claude`). Two commits, one per
+worktree, each after `npm run check` passed clean: `4ee4cbb` (client wiring +
+server persist/revert, `claude`), `7912870` (runner modes + measurement,
+`claude-exp`).
+
+**Client wiring**: `project/[id].astro` resolves `pulidoActivo =
+settings.generationMode === 'haiku-pulido'` server-side (same pattern as
+`verificadorActivo`) and passes it to `Workspace.tsx`. `iniciarVerificacion`
+now triggers `ejecutarPulido` from EVERY exit path (via a small
+`dispararPulido` helper before each `return`, not a `try/finally` wrap —
+avoided reindenting the whole function) whenever the turn is a creation turn,
+regardless of whether the reviewer itself is configured/ran — polish is an
+independent mode. `ejecutarPulido`: captures with the SAME options as the
+reviewer capture, posts `/api/chat/pulir`, applies the HTML quietly
+(`setHtml`, no chat message), runs `ejecutarAutopruebaEnIframe` once, and
+reverts (`setHtml` back + `POST /api/chat/pulir-revertir`) if
+`necesitaCorreccion` or any console error remains. The `'puliendo'` panel
+phase (`EstadoPanelVerificador`, `PreviewPanel.tsx`) is purely cosmetic —
+`verificador` is always restored to whatever it held before polish started,
+success or failure alike (T15: "failures must be silent"). Registered on
+`pulidoRef`, aborted by `cancelarVerificacion` like the reviewer's silent fix.
+
+**Server**: `/api/chat/pulir` now persists on apply with a conditional
+`updateMany` (`where currentHtml: project.currentHtml`), same pattern as
+`autocorreccion.ts` — `count === 0` degrades to `aplicado:false`. New `POST
+/api/chat/pulir-revertir` (owner-checked, no auth surprises) does the inverse
+conditional write (`where currentHtml: htmlPulido`) so a stale revert never
+clobbers HTML the teacher already moved past.
+
+**Known limitation found by the smoke test, not fixed this pass**: the
+revert criterion is "any self-test error after polish", not "a NEW error
+beyond what the turn already had". A creation turn that already ended in
+`avisoFinal` (self-test warning survived the 2 correction rounds) will see
+its post-polish self-test fail on those SAME pre-existing errors and revert
+every time, even if the polish itself was harmless. Safe (never ships a
+worse resource) but means polish effectively never sticks on an imperfect
+baseline — worth comparing against the pre-polish error count in a follow-up
+instead of a flat zero.
+
+**Experiment runner** (`correr.ts`, `exp/motor-claude`): `haiku-pulido` added
+to `ROLES_POR_MODO`/`ESTIMADO_USD_POR_CASO_MODO` (0.08/case) — provisions the
+Haiku roles AND the Sonnet preset the polish pass always needs by preset,
+independent of role. `automatico` added too (0.15/case estimate, documented
+as a mid-point, not a measurement) — provisions all three tiers since no
+single role is fixed. `todo-sonnet` was already present (confirmed, estimate
+bumped 0.30→0.35 per the task's number). New `esperarPulido` mirrors
+`esperarRevisor`: polls `AiTrace{turnKind:'POLISH'}`, then — only if the
+server applied something (`editOutcome === 'FRAGMENTS'`) — polls
+`Project.currentHtml` for up to `ESPERA_PULIDO_MS` (90s, covers the up-to-50s
+client self-test) to detect a revert. `UsagePurpose.POLISH` added to this
+worktree's `prisma/schema.prisma` (client-type-only, no migration — the
+shared `koduedu_claude` DB already has it from `feat/motor-claude`'s
+`20261031000000_automatico_y_pulido`) so this branch's Prisma client can
+query it; `npx prisma generate` re-run after.
+
+**Verification run this pass** (dev server restarted after the T14/T15
+schema landed): `npm run check` clean in both worktrees (the exp worktree's
+remaining errors — missing `@anthropic-ai/sdk` package, an unrelated
+`razonamiento/correr-ui.ts` schema drift — are pre-existing, not touched by
+this pass, and `correr.ts` never imports `provider.ts`). All `e2e/unidad*.ts`
+pass (pre-existing unrelated flakes: `unidad-creditos.ts` hits a unique-
+constraint race on welcome credits, logged but asserted around). Live suites
+against the mock provider (`t11-autoprueba`, `verificador-endpoint`,
+`verificador-editor`, `m2-catalogo`) all pass — ran with the dev DB's 25 real
+`AiProvider{apiFormat:'anthropic', enabled:true}` rows temporarily disabled
+(ids saved, all 25 restored after; confirmed 0 new `TokenUsage` rows joined
+to a real Anthropic model in that window) and `isVerifier` confirmed already
+on `Motor Claude · final-base · preset-claude-haiku-5-5`, untouched. Fresh-DB
+migration check: `CREATE DATABASE koduedu_scratch_migcheck` in the
+`kodu_db_dev` container, `prisma migrate deploy` from zero with
+`DATABASE_URL` overridden only for that command — all 54 migrations applied
+cleanly including `20261031000000_automatico_y_pulido` — then dropped.
+
+**Real smoke** (`ANTHROPIC_KODU_API_KEY` from `~/.credentials/anthropic-kodu.env`,
+`KODU_BASE_URL=http://localhost:3400`, `H2-ciclo-del-agua`, 1 rep each):
+
+- `smoke-pulido` (`--modo haiku-pulido --tope 0.15`): USD 0.0916 total. Turn 1
+  (creation) cost USD 0.0050 and ended in `avisoFinal` (2 console errors
+  survived its own correction rounds) — polish ran (45.5s, USD 0.0818) and
+  **reverted**, exactly the limitation above: the post-polish self-test saw
+  the same pre-existing errors and the client discarded it. No "after"
+  screenshot exists for this run because nothing was kept — the "before"
+  capture (`experimentos/motor-claude/resultados/smoke-pulido/H2-ciclo-del-agua-r1/turno-1-1280.png`,
+  taken before polish/reviewer ran) is a clean, readable flat-design water-cycle
+  scene (sun, cloud, labelled stage, caption) — already decent on its own, so
+  there's nothing to compare it against this run.
+- `smoke-auto` (`--modo automatico --tope 0.30`): USD 0.2216 total, 0 console
+  errors on all 3 turns. `decidirTierAutomatico` picked **Sonnet 5.5** for
+  the creation turn (plenty of cycle credit left) and `Project.creationModelId`
+  stuck: both adjustments (and their correction round) ran on the SAME Sonnet
+  model via `AiTrace.model`/`reasoningEffort` — confirms stickiness routes
+  adjustments through the creation model, not a hardcoded role.
+
+Combined real spend this pass: USD 0.3133 of the USD 0.45 hard limit for
+this task. `AppSettings.generationMode` confirmed back to `base` and all 27
+Anthropic `AiProvider` rows confirmed `enabled:true` at the end (the runner
+restores the mode itself; the disable/restore for the live suites was done
+and undone by hand, verified by direct query both times).
