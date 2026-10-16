@@ -6,12 +6,16 @@ import { cifrar } from '../src/lib/crypto/secretos.ts';
 import {
   MODES,
   MODO_PERSONALIZADO_KEY,
+  MODO_AUTOMATICO_KEY,
   modeByKey,
   esClaveDeModoConocida,
   modoEfectivo,
   inicioDelCiclo,
   finDelCiclo,
   proyeccionDeCierre,
+  decidirTierAutomatico,
+  COSTO_MEDIDO_POR_RECURSO_USD,
+  type InsumoPacingAutomatico,
 } from '../src/lib/ai/modos-generacion.ts';
 import { invalidarCatalogo, motorParaRol, motorDeGeneracion, type FilaConProveedor } from '../src/lib/ai/catalogo.ts';
 
@@ -152,6 +156,102 @@ await prueba('proyeccionDeCierre: ciclo recién arrancado (ahora === inicio) nun
   const fin = new Date('2026-04-01T00:00:00.000Z');
   const proyeccion = proyeccionDeCierre(0.01, inicio, fin, inicio);
   assert.equal(Number.isFinite(proyeccion), true);
+});
+
+// ---------------------------------------------------------------------------
+// T14: decidirTierAutomatico (pura) — mid-cycle bajo/sobre presupuesto,
+// histéresis, último tramo -> opus, bordes del ciclo.
+// ---------------------------------------------------------------------------
+
+const INICIO_30D = new Date('2026-03-01T00:00:00.000Z');
+const FIN_30D = new Date('2026-03-31T00:00:00.000Z');
+
+function insumo(parcial: Partial<InsumoPacingAutomatico>): InsumoPacingAutomatico {
+  return {
+    gastoDelCicloUsd: 0,
+    monthlyCreditUsd: 200,
+    inicio: INICIO_30D,
+    fin: FIN_30D,
+    ahora: new Date('2026-03-15T00:00:00.000Z'),
+    gastoPromedioDiarioRecienteUsd: 0,
+    costosPorTier: COSTO_MEDIDO_POR_RECURSO_USD,
+    ...parcial,
+  };
+}
+
+await prueba('decidirTierAutomatico: mid-cycle, ritmo bajo (proyección muy por debajo del 90%) -> sonnet', () => {
+  // 14 días transcurridos, ritmo reciente bajo: 0.5 USD/día de Haiku ⇒
+  // reescalado a Sonnet, proyección de cierre chica contra 200 de crédito.
+  const decision = decidirTierAutomatico(
+    insumo({ gastoDelCicloUsd: 7, gastoPromedioDiarioRecienteUsd: 0.5 }),
+    null,
+  );
+  assert.equal(decision.tier, 'sonnet');
+});
+
+await prueba('decidirTierAutomatico: mid-cycle, ritmo alto (proyección pasa el 90%) -> haiku', () => {
+  const decision = decidirTierAutomatico(
+    insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 8 }),
+    null,
+  );
+  assert.equal(decision.tier, 'haiku');
+});
+
+await prueba('decidirTierAutomatico: crédito del ciclo ya agotado -> haiku SIEMPRE, sin importar días/ritmo', () => {
+  const decision = decidirTierAutomatico(
+    insumo({ gastoDelCicloUsd: 250, monthlyCreditUsd: 200, gastoPromedioDiarioRecienteUsd: 0 }),
+    null,
+  );
+  assert.equal(decision.tier, 'haiku');
+  assert.match(decision.razon, /agotó/);
+});
+
+await prueba('decidirTierAutomatico: histéresis — mismo gasto, tierCacheado=haiku exige un umbral más duro para volver a sonnet', () => {
+  // Proyección de cierre entre el 80% y el 90% del crédito: sin caché pasa
+  // a sonnet (umbral 90%), pero si YA estaba en haiku, se queda en haiku.
+  const base = insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 0.26 });
+  const sinCache = decidirTierAutomatico(base, null);
+  const vieneDeHaiku = decidirTierAutomatico(base, 'haiku');
+  assert.equal(sinCache.tier, 'sonnet');
+  assert.equal(vieneDeHaiku.tier, 'haiku');
+});
+
+await prueba('decidirTierAutomatico: últimos 4 días del ciclo, crédito restante sobra -> opus', () => {
+  const decision = decidirTierAutomatico(
+    insumo({
+      ahora: new Date('2026-03-28T00:00:00.000Z'), // 3 días restantes
+      gastoDelCicloUsd: 20,
+      monthlyCreditUsd: 200,
+      gastoPromedioDiarioRecienteUsd: 0.1, // ritmo casi nulo: Sonnet no gastaría casi nada el resto
+    }),
+    null,
+  );
+  assert.equal(decision.tier, 'opus');
+});
+
+await prueba('decidirTierAutomatico: últimos días PERO el crédito restante no sobra -> no es opus', () => {
+  const decision = decidirTierAutomatico(
+    insumo({
+      ahora: new Date('2026-03-28T00:00:00.000Z'),
+      gastoDelCicloUsd: 190,
+      monthlyCreditUsd: 200,
+      gastoPromedioDiarioRecienteUsd: 5,
+    }),
+    null,
+  );
+  assert.notEqual(decision.tier, 'opus');
+});
+
+await prueba('decidirTierAutomatico: borde del ciclo (ahora === fin) no da NaN/Infinity ni revienta', () => {
+  const decision = decidirTierAutomatico(insumo({ ahora: FIN_30D, gastoDelCicloUsd: 50 }), null);
+  assert.equal(Number.isFinite(decision.diasRestantes), true);
+  assert.equal(decision.diasRestantes, 0);
+  assert.ok(['haiku', 'sonnet', 'opus'].includes(decision.tier));
+});
+
+await prueba('esClaveDeModoConocida/modoEfectivo: "automatico" es conocida y NUNCA cae por premiumUntilUsd', () => {
+  assert.equal(esClaveDeModoConocida(MODO_AUTOMATICO_KEY), true);
+  assert.equal(modoEfectivo(MODO_AUTOMATICO_KEY, 999, 1), MODO_AUTOMATICO_KEY);
 });
 
 // ---------------------------------------------------------------------------
@@ -464,6 +564,62 @@ try {
       settings: { generationMode: 'crea-opus', creationModelId: null, adjustmentModelId: null },
     });
     assert.equal(paraCorreccion?.id, haikuId);
+  });
+
+  // -------------------------------------------------------------------------
+  // T14: "automatico" — pacing (contra el catálogo real, sin invocar la API)
+  // y "model stickiness" para el rol de ajuste.
+  // -------------------------------------------------------------------------
+
+  const settingsAutomatico = (over: Partial<{ billingCycleDay: number; monthlyCreditUsd: number; premiumUntilUsd: number }> = {}) => ({
+    generationMode: MODO_AUTOMATICO_KEY,
+    creationModelId: null,
+    adjustmentModelId: null,
+    billingCycleDay: 1,
+    monthlyCreditUsd: 200,
+    premiumUntilUsd: 100,
+    ...over,
+  });
+
+  await prueba('automatico: creación resuelve a un motor habilitado (haiku, sonnet u opus, nunca null) contra el catálogo real', async () => {
+    const provider = await motorDeGeneracion({
+      modelIdExplicitoDelPedido: null,
+      project: { aiModelId: null, engineChosenByTeacher: false },
+      esCreacion: true,
+      settings: settingsAutomatico(),
+    });
+    assert.ok(provider, 'automatico debería resolver SIEMPRE a algún motor con el catálogo de esta prueba poblado');
+    assert.ok([haikuId, sonnetId].includes(provider!.id), 'sin Opus en el catálogo de esta prueba, sólo puede caer en Haiku o Sonnet');
+  });
+
+  await prueba('automatico: stickiness — un ajuste con creationModelId=Sonnet (habilitado) se queda en Sonnet', async () => {
+    const provider = await motorDeGeneracion({
+      modelIdExplicitoDelPedido: null,
+      project: { aiModelId: null, engineChosenByTeacher: false, creationModelId: sonnetId },
+      esCreacion: false,
+      settings: settingsAutomatico(),
+    });
+    assert.equal(provider?.id, sonnetId);
+  });
+
+  await prueba('automatico: stickiness — creationModelId apuntando a un motor que ya no existe cae a Haiku, no a null', async () => {
+    const provider = await motorDeGeneracion({
+      modelIdExplicitoDelPedido: null,
+      project: { aiModelId: null, engineChosenByTeacher: false, creationModelId: randomUUID() },
+      esCreacion: false,
+      settings: settingsAutomatico(),
+    });
+    assert.equal(provider?.id, haikuId);
+  });
+
+  await prueba('automatico: sin creationModelId (proyecto de antes de T14), el ajuste cae a Haiku', async () => {
+    const provider = await motorDeGeneracion({
+      modelIdExplicitoDelPedido: null,
+      project: { aiModelId: null, engineChosenByTeacher: false, creationModelId: null },
+      esCreacion: false,
+      settings: settingsAutomatico(),
+    });
+    assert.equal(provider?.id, haikuId);
   });
 } finally {
   await limpiar();
