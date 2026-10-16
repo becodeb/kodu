@@ -52,6 +52,13 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
 - [x] T9 Anthropic presets (Haiku/Sonnet/Opus 5.5) + create-provider-from-preset admin flow
 - [x] T11 Usage statistics (/admin/uso, exports, token-gated /api/stats/uso.json)
 - [x] T12 Deploy to production and verify live (owner authorized 2026-10-10)
+- [~] T14 "Automático" mode: credit-aware pacing (haiku/sonnet/opus) + model
+      stickiness — pacing/routing/admin panel/uso done and tested; live
+      suites and real-model smoke pending (see T14/T15 notes below)
+- [~] T15 "Pulido visual" (haiku-pulido): visual-polish pass with Sonnet —
+      reusable lib function + server endpoint done; client wiring into the
+      live creation flow (self-test re-run + revert) and the experiment
+      runner's `--modo haiku-pulido` deferred (see notes)
 
 ## Acceptance criteria
 
@@ -1626,3 +1633,65 @@ Owner steps left: /admin/motores → preset "Claude Haiku 5.5" + paste a NEW (ro
 Anthropic key; it becomes the reviewer automatically. /admin/generacion → mode
 `base` (default), credit 200 / premium cutoff / cycle day. Optional: STATS_API_TOKEN
 (≥32 chars) in Coolify env + redeploy.
+
+## T14/T15 notes (2026-10-16/17, worktree `~/projects/kodu-wt/claude`)
+
+Single writer, branch `feat/motor-claude` from `origin/main` `cfdfd39` (equal at
+start). Committed in 4 units, each after `npm run check` passed clean: pacing +
+stickiness + schema (`95c870d`), unit tests for pacing/stickiness (`65ad6d9`),
+admin panel + `/admin/uso` exposure (`7faac7a`), T15 `pulido.ts` + endpoint
+(`272bbfc`). Migration `20261031000000_automatico_y_pulido` applied to
+`koduedu_claude` only (`Project.creationModelId`, `UsagePurpose.POLISH`,
+`AppSettings.generationMode` SQL default → `automatico` for brand-new rows
+only — production's existing row is untouched, no `UPDATE` in the migration).
+
+**T14 done**: `decidirTierAutomatico` (pure, `src/lib/ai/modos-generacion.ts`)
+picks haiku/sonnet/opus from cycle spend + days left + a linear "if the recent
+pace were priced at Sonnet" projection, with hysteresis (haiku→sonnet needs
+≤80% projected, not ≤90%) and a 5-min decision cache
+(`tierAutomaticoActual`). Model stickiness: `Project.creationModelId` is set
+once, on the first successful save of a NEW resource (`stream.ts`, any mode —
+cheap, future-proofs the project), and `catalogo.ts#motorAutomatico` reads it
+for the `adjustment` role ONLY when `generationMode === 'automatico'`,
+falling back to Haiku if the sticky engine is gone/disabled. 11 unit tests in
+`e2e/unidad-modos-generacion.ts` cover mid-cycle under/over budget, the
+hysteresis boundary, last-4-days opus with/without enough remaining credit,
+the `ahora === fin` edge, and the 3 stickiness branches against the real test
+catalog — all pass. `/admin/generacion` lists "Automático (recomendado)" and
+shows a live "Hoy los recursos nuevos usan: X — porque …" line with the
+pacing numbers; `/admin/uso` + its exports (+ `/api/stats/uso.json`) carry
+the same `{tier, razon}` in `ResumenCreditoUso.automatico`.
+
+**T14 deviation**: the "≥20 resources → live per-tier average cost" refinement
+from the task (vs. the fixed measured constants 0.019/0.32/0.96) was NOT
+built — there's no real `automatico` usage yet to average, and the fixed
+constants already satisfy "pure, unit-testable, documented" with a clearly
+commented fallback. Worth a follow-up once there's real volume.
+
+**T15 done**: `src/lib/ai/pulido.ts#pulirVisualmente` — one forced
+`edit_resource_code` call to Sonnet 5.5 (effort "low", same precedent as the
+T5 visual reviewer), system-prompted to touch ONLY visual quality, never
+logic/text/ids/handlers/`__koduPruebas`. Never retries; never mutates the
+HTML unless the tool call AND the edit both validate cleanly against the
+real document (so "revert" is automatic — nothing was touched otherwise).
+`POST /api/chat/pulir` wires it behind `generationMode === 'haiku-pulido'`,
+mirrors `/api/chat/verificar`'s auth/ownership/fingerprint gates, records
+`AiTrace`/`TokenUsage` with the new `UsagePurpose.POLISH`. `haiku-pulido`
+itself is registered as a normal mode in `modos-generacion.ts` (same roles
+as `base`).
+
+**T15 NOT done (left for a follow-up)**: the client-side trigger — calling
+`/api/chat/pulir` right after the existing self-test/revisor cycle for a
+brand-new resource in `haiku-pulido` mode, then re-running the self-test on
+the polished HTML and reverting (simply not calling `setHtml`) if it fails —
+was deliberately left out of this pass. It requires touching
+`Workspace.tsx`'s live creation flow (a ~2000-line file already carrying the
+T4/T5 self-test+revisor orchestration) and real-browser verification I
+couldn't do safely inside this unit. Also not done: wiring `--modo
+haiku-pulido`/confirming `--modo todo-sonnet` in
+`experimentos/motor-claude/correr.ts` (`exp/motor-claude` worktree), and all
+of the Verification section's live suites / fresh-DB migration check / real
+smoke calls (`t11-autoprueba`, `verificador-endpoint`, `verificador-editor`,
+`m2-catalogo`, the budgeted `correr.ts` smoke) — none were run this pass.
+`npm run check` is clean and the new unit tests pass; nothing beyond that was
+verified against a real Anthropic call.
