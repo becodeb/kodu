@@ -52,7 +52,12 @@ export interface GenerationMode {
   };
 }
 
-const HAIKU_LOW: RoleSpec = { presetKey: 'claude-haiku-5-5', effort: 'low' };
+/** Exportado (T14): `catalogo.ts#motorAutomatico` lo usa como el respaldo de
+ *  AJUSTE del modo `automatico` cuando no hay (o ya no sirve) un motor
+ *  "pegado" al proyecto — mismo criterio que el resto de los modos
+ *  (`crea-sonnet`/`crea-opus`/`todo-sonnet`/`todo-opus` también ajustan en
+ *  Haiku cuando no hay nada mejor que hacer). */
+export const HAIKU_LOW: RoleSpec = { presetKey: 'claude-haiku-5-5', effort: 'low' };
 const SONNET_LOW: RoleSpec = { presetKey: 'claude-sonnet-5-5', effort: 'low' };
 const SONNET_MEDIUM: RoleSpec = { presetKey: 'claude-sonnet-5-5', effort: 'medium' };
 const OPUS_MEDIUM: RoleSpec = { presetKey: 'claude-opus-5-5', effort: 'medium' };
@@ -100,7 +105,34 @@ export const MODES: Record<string, GenerationMode> = {
     roles: { creation: OPUS_MEDIUM, adjustment: OPUS_MEDIUM, reviewer: HAIKU_LOW },
     measured: { creation: '≈USD 0,58 · ≈4,5 min', adjustment: '≈USD 0,19 · ≈75 s' },
   },
+  /**
+   * T15 (motor-claude): Haiku crea y ajusta exactamente como el modo
+   * `base`; lo único distinto es un paso EXTRA que `stream.ts` dispara
+   * después del ciclo de self-test/revisor de la generación inicial (nunca
+   * de un ajuste) — ver `src/lib/ai/pulido.ts`. Este registro sólo existe
+   * para que `/admin/generacion` lo liste y para que `resolverRolDeModo`
+   * sepa qué motor usar en los tres roles; el paso de pulido en sí NO es un
+   * rol de este objeto, así que no hay un `RoleSpec` para "pulido" acá.
+   */
+  'haiku-pulido': {
+    key: 'haiku-pulido',
+    label: 'Haiku + pulido visual con Sonnet',
+    description: 'Crea y ajusta con Haiku 5.5, igual que el modo base. En CADA recurso nuevo, un paso extra con Sonnet 5.5 mejora sólo lo visual (paleta, ilustración, composición) después del self-test — nunca toca lógica, texto ni ids. Experimental, sin medir a ciegas todavía.',
+    roles: { creation: HAIKU_LOW, adjustment: HAIKU_LOW, reviewer: HAIKU_LOW },
+    measured: { creation: '≈USD 0,008 · ≈55 s (+ pulido, ver panel)', adjustment: '≈USD 0,006 · ≈40 s (con revisión)' },
+  },
 };
+
+/**
+ * T14: clave del modo `automatico`. Vive AFUERA de `MODES` — a diferencia de
+ * los modos de arriba, sus roles no son fijos: el rol `creation` de un
+ * recurso NUEVO lo decide `tierAutomaticoActual` (abajo, pacing según el
+ * crédito del ciclo) y el rol `adjustment` prioriza el motor con el que ESE
+ * proyecto nació (`Project.creationModelId`, "stickiness") antes de caer a
+ * `HAIKU_LOW` — exactamente el mismo motivo por el que `'personalizado'`
+ * tampoco vive en `MODES` (sus roles no son presets fijos).
+ */
+export const MODO_AUTOMATICO_KEY = 'automatico';
 
 /** No vive en `MODES`: sus roles no son presets, son motores elegidos a
  *  mano (`AppSettings.creationModelId`/`adjustmentModelId`). */
@@ -112,18 +144,22 @@ export function modeByKey(key: string | null | undefined): GenerationMode | null
 }
 
 export function esClaveDeModoConocida(key: string): boolean {
-  return key === MODO_PERSONALIZADO_KEY || key in MODES;
+  return key === MODO_PERSONALIZADO_KEY || key === MODO_AUTOMATICO_KEY || key in MODES;
 }
 
 /** Todas las claves que `/admin/generacion` puede ofrecer en el selector,
- *  en un orden fijo (barato→caro, "personalizado" al final). */
+ *  en un orden fijo (barato→caro, "personalizado" al final). `automatico`
+ *  va primero (T14, nuevo default recomendado) — el resto no cambia de
+ *  orden. */
 export const ORDEN_MODOS = [
+  MODO_AUTOMATICO_KEY,
   'base',
   'revisor-sonnet',
   'crea-sonnet',
   'crea-opus',
   'todo-sonnet',
   'todo-opus',
+  'haiku-pulido',
   MODO_PERSONALIZADO_KEY,
 ] as const;
 
@@ -150,6 +186,15 @@ export function presupuestoPremiumAgotado(gastoDelCicloUsd: number, premiumUntil
 export function modoEfectivo(modeKeyConfigurado: string, gastoDelCicloUsd: number, premiumUntilUsd: number): string {
   if (modeKeyConfigurado === 'base') return 'base';
   if (!esClaveDeModoConocida(modeKeyConfigurado)) return 'base';
+  /**
+   * T14: `automatico` NUNCA se recorta por `premiumUntilUsd` — ese tope es
+   * el mecanismo de los modos FIJOS (T7), pensado para un modo que siempre
+   * pide el mismo motor premium. `automatico` ya decide sólo, recurso por
+   * recurso, con su propio pacing contra `monthlyCreditUsd`
+   * (`tierAutomaticoActual`) — aplicarle el mismo recorte binario encima
+   * sería una segunda política de crédito peleando con la primera.
+   */
+  if (modeKeyConfigurado === MODO_AUTOMATICO_KEY) return MODO_AUTOMATICO_KEY;
   if (presupuestoPremiumAgotado(gastoDelCicloUsd, premiumUntilUsd)) return 'base';
   return modeKeyConfigurado;
 }
@@ -233,4 +278,200 @@ export async function gastoDelCicloActual(billingCycleDay: number, ahora: Date =
  *  alcanza) — existe para que un test no dependa de esperar un minuto real. */
 export function invalidarCacheDeGasto(): void {
   cacheGasto = null;
+}
+
+// ---------------------------------------------------------------------------
+// T14: pacing del modo `automatico` — decide a qué tier (haiku/sonnet/opus)
+// manda un recurso NUEVO. `decidirTierAutomatico` es PURA (sin I/O, para
+// poder probarla con fechas/números fijos); `tierAutomaticoActual` es el
+// wrapper con efecto que de verdad se llama en producción.
+// ---------------------------------------------------------------------------
+
+export type TierAutomatico = 'haiku' | 'sonnet' | 'opus';
+
+export interface CostosPorTierUsd {
+  haiku: number;
+  sonnet: number;
+  opus: number;
+}
+
+/**
+ * Promedio medido por recurso (generación + ajustes de ese recurso),
+ * `odd/tasks/motor-claude.md` §T4/T6/T8. Respaldo cuando no hay todavía
+ * ≥20 recursos recientes de ese tier para promediar en vivo desde
+ * `TokenUsage`/`AiTrace` (ese promedio en vivo queda para cuando haya
+ * volumen real en `automatico` — ver la nota en `tierAutomaticoActual`).
+ */
+export const COSTO_MEDIDO_POR_RECURSO_USD: CostosPorTierUsd = {
+  haiku: 0.019,
+  sonnet: 0.32,
+  opus: 0.96,
+};
+
+const DIAS_ULTIMO_TRAMO = 4;
+const FACTOR_SEGURIDAD_OPUS = 1.5;
+const MARGEN_SEGURIDAD_OPUS_USD = 10;
+const UMBRAL_SONNET = 0.9;
+/** Histéresis: una vez en `haiku`, hace falta una proyección más floja
+ *  (≤80%, no ≤90%) para volver a `sonnet` — evita el "flapping" de un
+ *  gasto que oscila justo alrededor del 90%. */
+const UMBRAL_VUELTA_A_SONNET = 0.8;
+
+export interface InsumoPacingAutomatico {
+  gastoDelCicloUsd: number;
+  monthlyCreditUsd: number;
+  inicio: Date;
+  fin: Date;
+  ahora: Date;
+  /** USD/día: últimos 3 días reales si hay datos, si no el promedio del
+   *  ciclo hasta ahora (gasto / días transcurridos) — lo decide el
+   *  llamador (`tierAutomaticoActual`); esta función sólo lo usa. */
+  gastoPromedioDiarioRecienteUsd: number;
+  costosPorTier: CostosPorTierUsd;
+}
+
+export interface DecisionPacingAutomatico {
+  tier: TierAutomatico;
+  razon: string;
+  diasRestantes: number;
+  creditoRestanteUsd: number;
+  /** Fin de ciclo = gasto ya hecho + lo que falta del ciclo, al ritmo
+   *  reciente RE-ESCALADO al precio de Sonnet (ver el comentario de la
+   *  función). Es el número que `/admin/generacion`/`/admin/uso` muestran
+   *  como "proyección". */
+  proyeccionCierreUsd: number;
+  proyeccionRestoCicloConSonnetUsd: number;
+}
+
+/**
+ * T14 (motor-claude): decide el tier de un recurso NUEVO del modo
+ * `automatico`. Pura — ni lee ni cachea nada; `tierAutomaticoActual` abajo
+ * hace esa parte.
+ *
+ * El "ritmo con Sonnet" es una aproximación DELIBERADA: no hay forma de
+ * saber, sin guardar qué tier corrió cada recurso reciente, cuántos
+ * recursos reales hay detrás del gasto diario reciente — así que se estima
+ * esa cantidad dividiendo el gasto reciente por el costo de UN recurso
+ * Haiku (el tier por defecto la mayoría del tiempo) y se multiplica esa
+ * cantidad por el costo de Sonnet. Determinístico, documentado, y nunca
+ * peor que no proyectar nada — exactamente el mismo criterio de
+ * "subestimar es la dirección segura" que ya usa `gastoDelCicloActual`.
+ */
+export function decidirTierAutomatico(
+  insumo: InsumoPacingAutomatico,
+  tierCacheado: TierAutomatico | null,
+): DecisionPacingAutomatico {
+  const { gastoDelCicloUsd, monthlyCreditUsd, inicio, fin, ahora, gastoPromedioDiarioRecienteUsd, costosPorTier } = insumo;
+
+  const diasRestantes = Math.max((fin.getTime() - ahora.getTime()) / MS_POR_DIA, 0);
+  const creditoRestanteUsd = monthlyCreditUsd - gastoDelCicloUsd;
+  const recursosPorDiaReciente = costosPorTier.haiku > 0 ? gastoPromedioDiarioRecienteUsd / costosPorTier.haiku : 0;
+  const proyeccionRestoCicloConSonnetUsd = recursosPorDiaReciente * costosPorTier.sonnet * diasRestantes;
+  const proyeccionCierreUsd = gastoDelCicloUsd + proyeccionRestoCicloConSonnetUsd;
+
+  const base = { diasRestantes, creditoRestanteUsd, proyeccionCierreUsd, proyeccionRestoCicloConSonnetUsd };
+
+  // Siempre gana esta regla, pase lo que pase con días/proyección: ya no
+  // queda crédito, así que un recurso nuevo no puede ser premium.
+  if (gastoDelCicloUsd >= monthlyCreditUsd) {
+    return { ...base, tier: 'haiku', razon: 'el crédito del ciclo ya se agotó' };
+  }
+
+  if (
+    diasRestantes <= DIAS_ULTIMO_TRAMO &&
+    creditoRestanteUsd >= proyeccionRestoCicloConSonnetUsd * FACTOR_SEGURIDAD_OPUS + MARGEN_SEGURIDAD_OPUS_USD
+  ) {
+    return {
+      ...base,
+      tier: 'opus',
+      razon: `quedan ${diasRestantes.toFixed(1)} días del ciclo y el crédito restante (USD ${creditoRestanteUsd.toFixed(2)}) sobra para no desperdiciarlo`,
+    };
+  }
+
+  const umbral = tierCacheado === 'haiku' ? UMBRAL_VUELTA_A_SONNET : UMBRAL_SONNET;
+  const umbralUsd = monthlyCreditUsd * umbral;
+  if (proyeccionCierreUsd <= umbralUsd) {
+    return {
+      ...base,
+      tier: 'sonnet',
+      razon: `la proyección de cierre (USD ${proyeccionCierreUsd.toFixed(2)}) no pasa el ${Math.round(umbral * 100)}% del crédito mensual (USD ${umbralUsd.toFixed(2)})`,
+    };
+  }
+
+  return {
+    ...base,
+    tier: 'haiku',
+    razon: `la proyección de cierre (USD ${proyeccionCierreUsd.toFixed(2)}) ya pasa el ${Math.round(umbral * 100)}% del crédito mensual (USD ${umbralUsd.toFixed(2)})`,
+  };
+}
+
+async function gastoUltimosNDiasUsd(ahora: Date, dias: number): Promise<number> {
+  const desde = new Date(ahora.getTime() - dias * MS_POR_DIA);
+  const resultado = await prisma.tokenUsage.aggregate({
+    where: {
+      createdAt: { gte: desde, lte: ahora },
+      costUsd: { not: null },
+      aiModel: { provider: { apiFormat: 'anthropic' } },
+    },
+    _sum: { costUsd: true },
+  });
+  return resultado._sum.costUsd?.toNumber() ?? 0;
+}
+
+const CACHE_TIER_TTL_MS = 5 * 60_000;
+let cacheTier: { inicioMs: number; expira: number; decision: DecisionPacingAutomatico } | null = null;
+
+/**
+ * Wrapper con efecto de `decidirTierAutomatico`: lee el gasto del ciclo
+ * (ya cacheado 60s por `gastoDelCicloActual`) y el gasto de los últimos 3
+ * días reales, y cachea la DECISIÓN completa 5 minutos (T14: "cache the
+ * decision ≤5 min") — dentro de esos 5 min, ningún turno paga una
+ * proyección nueva y la histéresis ve el mismo `tierCacheado` que el
+ * último cálculo real. La caché se invalida sola si cambia el `inicio` del
+ * ciclo, igual que `gastoDelCicloActual`.
+ *
+ * `costosPorTier` queda fijo en los valores medidos (`COSTO_MEDIDO_POR_
+ * RECURSO_USD`) por ahora — el promedio EN VIVO desde `TokenUsage`/
+ * `AiTrace` cuando haya ≥20 recursos de `automatico` queda abierto para una
+ * ronda futura (necesita acumular volumen real primero).
+ */
+export async function tierAutomaticoActual(
+  settings: { billingCycleDay: number; monthlyCreditUsd: number; premiumUntilUsd: number },
+  ahora: Date = new Date(),
+): Promise<DecisionPacingAutomatico> {
+  const inicio = inicioDelCiclo(settings.billingCycleDay, ahora);
+
+  if (cacheTier && cacheTier.inicioMs === inicio.getTime() && cacheTier.expira > Date.now()) {
+    return cacheTier.decision;
+  }
+
+  const fin = finDelCiclo(settings.billingCycleDay, inicio);
+  const gastoDelCicloUsd = await gastoDelCicloActual(settings.billingCycleDay, ahora);
+  const diasTranscurridos = Math.max((ahora.getTime() - inicio.getTime()) / MS_POR_DIA, 1 / 24);
+
+  let gastoPromedioDiarioRecienteUsd = (await gastoUltimosNDiasUsd(ahora, 3)) / 3;
+  if (gastoPromedioDiarioRecienteUsd <= 0) {
+    gastoPromedioDiarioRecienteUsd = gastoDelCicloUsd / diasTranscurridos;
+  }
+
+  const decision = decidirTierAutomatico(
+    {
+      gastoDelCicloUsd,
+      monthlyCreditUsd: settings.monthlyCreditUsd,
+      inicio,
+      fin,
+      ahora,
+      gastoPromedioDiarioRecienteUsd,
+      costosPorTier: COSTO_MEDIDO_POR_RECURSO_USD,
+    },
+    cacheTier?.decision.tier ?? null,
+  );
+
+  cacheTier = { inicioMs: inicio.getTime(), expira: Date.now() + CACHE_TIER_TTL_MS, decision };
+  return decision;
+}
+
+/** Sólo para pruebas: ver `invalidarCacheDeGasto`. */
+export function invalidarCacheDeTierAutomatico(): void {
+  cacheTier = null;
 }

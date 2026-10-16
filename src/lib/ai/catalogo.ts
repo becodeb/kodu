@@ -5,7 +5,16 @@ import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
 import { scheduleFromAiModel } from './pricing.ts';
 import { presetByKey, preciosDePreset } from './presets.ts';
-import { MODES, MODO_PERSONALIZADO_KEY, modeByKey, type RoleSpec } from './modos-generacion.ts';
+import {
+  MODES,
+  MODO_PERSONALIZADO_KEY,
+  MODO_AUTOMATICO_KEY,
+  HAIKU_LOW,
+  modeByKey,
+  tierAutomaticoActual,
+  type RoleSpec,
+  type TierAutomatico,
+} from './modos-generacion.ts';
 
 /** Una fila de `AiModel` con su cuenta de proveedor ya incluida. */
 export type FilaConProveedor = AiModel & { provider: AiProvider };
@@ -424,11 +433,79 @@ function esMotorPremium(providerModel: string): boolean {
  *  combinación motor+rol se loguea UNA SOLA VEZ por proceso. */
 const motoresPremiumSinPresupuestoLogueados = new Set<string>();
 
+/** Mismos presets/esfuerzo que `crea-sonnet`/`crea-opus`/`todo-sonnet`/
+ *  `todo-opus` en `modos-generacion.ts` para el rol `creation` — T14 no
+ *  inventa un esfuerzo nuevo, reusa el ya medido. */
+const ROLE_SPEC_POR_TIER_AUTOMATICO: Record<TierAutomatico, RoleSpec> = {
+  haiku: HAIKU_LOW,
+  sonnet: { presetKey: 'claude-sonnet-5-5', effort: 'medium' },
+  opus: { presetKey: 'claude-opus-5-5', effort: 'medium' },
+};
+
+/**
+ * T14 (motor-claude): resuelve el rol `creation`/`adjustment` del modo
+ * `automatico`. Nunca pasa por `resolverRolDeModo` (sus roles no son fijos
+ * como los de `MODES`) — en cambio:
+ *
+ *  - `creation`: el tier que decide `tierAutomaticoActual` (pacing por
+ *    crédito del ciclo), resuelto al motor habilitado de ese preset. Si ese
+ *    preset no tiene ningún motor habilitado, cae al preset de Haiku
+ *    (mismo criterio de respaldo que `resolverRolDeModo`).
+ *  - `adjustment`: "model stickiness" (T14 punto 1) — el motor con el que
+ *    ESE proyecto nació (`project.creationModelId`), mientras siga
+ *    habilitado y con clave utilizable. Sin eso (proyecto de antes de esta
+ *    columna, o el motor que lo creó ya no está disponible), cae a
+ *    `HAIKU_LOW` — igual que el resto de los modos cuando ajustan sin un
+ *    motor "pegado" mejor a mano.
+ */
+async function motorAutomatico(
+  esCreacion: boolean,
+  creationModelId: string | null,
+  settings: { billingCycleDay: number; monthlyCreditUsd: number; premiumUntilUsd: number },
+  filasOverride?: FilaConProveedor[],
+): Promise<ProviderConfig | null> {
+  const filas = filasOverride ?? (await filasDelCatalogo());
+
+  if (!esCreacion && creationModelId) {
+    const fila = filas.find((candidata) => candidata.id === creationModelId && utilizable(candidata));
+    if (fila) {
+      const config = construirConfig(fila);
+      if (tieneClaveUtilizable(config)) return config;
+    }
+    // Motor de creación apagado/borrado/sin clave: cae al respaldo de abajo.
+  }
+
+  if (!esCreacion) {
+    return motorPorPresetKey(filas, HAIKU_LOW);
+  }
+
+  const decision = await tierAutomaticoActual(settings);
+  const directo = motorPorPresetKey(filas, ROLE_SPEC_POR_TIER_AUTOMATICO[decision.tier]);
+  if (directo) return directo;
+  return motorPorPresetKey(filas, HAIKU_LOW);
+}
+
 export async function motorDeGeneracion(params: {
   modelIdExplicitoDelPedido: string | null;
-  project: { aiModelId: string | null; engineChosenByTeacher: boolean };
+  /** T14: `creationModelId` es el motor con el que ESTE proyecto nació
+   *  ("stickiness") — sólo lo lee el modo `automatico` (`motorAutomatico`),
+   *  los demás modos ni lo miran. `null`/`undefined` en todo proyecto
+   *  anterior a esta columna: se comporta como si no hubiera sticky. */
+  project: { aiModelId: string | null; engineChosenByTeacher: boolean; creationModelId?: string | null };
   esCreacion: boolean;
-  settings: { generationMode: string; creationModelId: string | null; adjustmentModelId: string | null };
+  settings: {
+    generationMode: string;
+    creationModelId: string | null;
+    adjustmentModelId: string | null;
+    /** T14: sólo los lee el modo `automatico` (`tierAutomaticoActual`) —
+     *  opcionales para no romper ningún llamador/prueba de antes de T14 que
+     *  nunca puede activar ese modo (`billingCycleDay` default 1,
+     *  `monthlyCreditUsd`/`premiumUntilUsd` default 0, que con el pacing de
+     *  arriba decide `haiku` siempre — nunca un crash por faltar un número). */
+    billingCycleDay?: number;
+    monthlyCreditUsd?: number;
+    premiumUntilUsd?: number;
+  };
   /**
    * Hallazgo de revisión (motor-claude, pre-deploy): el recorte premium
    * (`modos-generacion.ts#presupuestoPremiumAgotado`) también tiene que
@@ -477,6 +554,20 @@ export async function motorDeGeneracion(params: {
     }
 
     return explicito;
+  }
+
+  if (params.settings.generationMode === MODO_AUTOMATICO_KEY) {
+    const porAutomatico = await motorAutomatico(
+      params.esCreacion,
+      params.project.creationModelId ?? null,
+      {
+        billingCycleDay: params.settings.billingCycleDay ?? 1,
+        monthlyCreditUsd: params.settings.monthlyCreditUsd ?? 0,
+        premiumUntilUsd: params.settings.premiumUntilUsd ?? 0,
+      },
+      params.filasOverride,
+    );
+    return porAutomatico ?? normalizarMotor(params.modelIdExplicitoDelPedido ?? params.project.aiModelId);
   }
 
   const porModo = await resolverRolDeModo(

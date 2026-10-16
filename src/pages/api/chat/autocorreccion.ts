@@ -202,12 +202,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const provider = await motorDeGeneracion({
     modelIdExplicitoDelPedido: null,
-    project: { aiModelId: project.aiModelId, engineChosenByTeacher: project.engineChosenByTeacher },
+    project: {
+      aiModelId: project.aiModelId,
+      engineChosenByTeacher: project.engineChosenByTeacher,
+      creationModelId: project.creationModelId,
+    },
     esCreacion: false,
     settings: {
       generationMode: modoEfectivoActivo ?? settings.generationMode,
       creationModelId: settings.creationModelId,
       adjustmentModelId: settings.adjustmentModelId,
+      billingCycleDay: settings.billingCycleDay,
+      monthlyCreditUsd: settings.monthlyCreditUsd.toNumber(),
+      premiumUntilUsd: settings.premiumUntilUsd.toNumber(),
     },
     // Hallazgo de revisión (motor-claude, pre-deploy): mismo recorte premium
     // que `stream.ts`, ahora también para un motor elegido a mano.

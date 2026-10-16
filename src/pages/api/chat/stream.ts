@@ -710,12 +710,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   const provider = await motorDeGeneracion({
     modelIdExplicitoDelPedido: model ?? null,
-    project: { aiModelId: project.aiModelId, engineChosenByTeacher: project.engineChosenByTeacher },
+    project: {
+      aiModelId: project.aiModelId,
+      engineChosenByTeacher: project.engineChosenByTeacher,
+      creationModelId: project.creationModelId,
+    },
     esCreacion: recursoInicial,
     settings: {
       generationMode: modoEfectivoActivo ?? settings.generationMode,
       creationModelId: settings.creationModelId,
       adjustmentModelId: settings.adjustmentModelId,
+      billingCycleDay: settings.billingCycleDay,
+      monthlyCreditUsd: settings.monthlyCreditUsd.toNumber(),
+      premiumUntilUsd: settings.premiumUntilUsd.toNumber(),
     },
     // Hallazgo de revisión (motor-claude, pre-deploy): perezosa a propósito
     // — `motorDeGeneracion` sólo la llama (y sólo ahí se paga esta consulta,
@@ -1765,7 +1772,18 @@ export const POST: APIRoute = async ({ request, locals }) => {
           if (generatedHtml) {
             await prisma.project.update({
               where: { id: project.id },
-              data: { currentHtml: generatedHtml },
+              data: {
+                currentHtml: generatedHtml,
+                // T14 (model stickiness): se fija UNA SOLA VEZ, en la
+                // generación inicial de este proyecto — `recursoInicial` es
+                // falso en cualquier ajuste posterior, y el `if` sólo entra
+                // la primera vez porque `creationModelId` nace en `null`.
+                // Se guarda sin importar el modo activo (barato, y deja la
+                // columna lista si `automatico` se activa más adelante en
+                // este mismo proyecto) — sólo el modo `automatico` LEE esta
+                // columna (`catalogo.ts#motorAutomatico`).
+                ...(recursoInicial && !project.creationModelId ? { creationModelId: provider.id } : {}),
+              },
             });
           }
 

@@ -798,7 +798,11 @@ model AppSettings {
   /// (`src/lib/ai/modos-generacion.ts`), nunca validada contra una tabla —
   /// mismo criterio que `AiModel.presetKey`. Una clave desconocida (modo
   /// sacado del código) cae a `'base'`, nunca un crash.
-  generationMode     String   @default("base")
+  /// T14: el default de SQL sólo importa para una instalación NUEVA (una
+  /// fila de `AppSettings` que todavía no existe) — producción ya tiene su
+  /// fila con el valor que el dueño eligió, y esta migración nunca la
+  /// toca (ningún `UPDATE`, sólo `ALTER COLUMN ... SET DEFAULT`).
+  generationMode     String   @default("automatico")
   /// Sólo importa con `generationMode === 'personalizado'`: el motor que el
   /// admin eligió a mano para generar un recurso NUEVO, desde el catálogo de
   /// `AiModel` habilitados. `NULL` = sin elegir todavía — cae al modo base.
@@ -837,6 +841,11 @@ enum UsagePurpose {
   /// tiene `projectId` (la charla existe antes que el recurso) y
   /// `forNewResource` queda en NULL: no es ni una generación ni un ajuste.
   IDEATION
+  /// odd/tasks/motor-claude.md (T15): el paso extra de "pulido visual" con
+  /// Sonnet del modo `haiku-pulido`, inmediatamente después del self-test/
+  /// revisor de la generación inicial. `forNewResource` siempre `true`
+  /// cuando se registra (el pulido sólo corre en la creación).
+  POLISH
 }
 
 /// odd/tasks/ahorro-tokens.md (T3a): cómo se escribió el código en ESTE
@@ -1157,6 +1166,17 @@ model Project {
   /// que respetar la elección explícita del docente — ver
   /// `src/lib/ai/modos-generacion.ts#motorParaTurno`.
   engineChosenByTeacher  Boolean           @default(false)
+  /// T14 (motor-claude, modo `automatico`): el `AiModel` con el que este
+  /// proyecto nació (fijado UNA sola vez, en la generación inicial — ver
+  /// `stream.ts`). Mientras siga habilitado, el modo `automatico` ajusta y
+  /// corrige con ESTE motor en vez de recalcular el tier por pacing cada
+  /// vez — medido: Haiku ajustando código de Sonnet/Opus cae de 6,2 a 4,2
+  /// sobre 10. `NULL` en todo proyecto creado antes de esta columna, y en
+  /// cualquier proyecto que nunca corrió bajo `automatico`: se comporta
+  /// como "sin sticky", nunca un crash. `onDelete: SetNull`: borrar el
+  /// `AiModel` no borra el proyecto.
+  creationModelId        String?
+  creationModel          AiModel?          @relation("ProjectCreationModel", fields: [creationModelId], references: [id], onDelete: SetNull)
   userId                 String
   user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Marca los recursos creados por la cuenta compartida de demo (design.md
@@ -1469,6 +1489,9 @@ model AiModel {
   /// falta para que Prisma sepa resolver las dos FK a esta misma tabla.
   appSettingsCreation   AppSettings[] @relation("AppSettingsCreationModel")
   appSettingsAdjustment AppSettings[] @relation("AppSettingsAdjustmentModel")
+  /// T14 (motor-claude, modo `automatico`): back-relation de
+  /// `Project.creationModel` ("model stickiness") — nunca se lee desde acá.
+  projectsCreatedWith   Project[]     @relation("ProjectCreationModel")
 
   @@unique([providerId, providerModel])
   @@index([enabled, sortOrder])
