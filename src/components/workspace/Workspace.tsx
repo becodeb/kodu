@@ -11,7 +11,7 @@ import {
   verificarRecurso,
   type EstadoPanelVerificador,
 } from '../../lib/client/verificador.ts';
-import { pulirRecurso, revertirPulido } from '../../lib/client/pulido.ts';
+import { empeoroTrasPulido, pulirRecurso, revertirPulido } from '../../lib/client/pulido.ts';
 import { fingerprintHtml } from '../../lib/ai/fingerprint.ts';
 import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import type { OpcionesCaptura } from '../../lib/preview.ts';
@@ -1218,6 +1218,12 @@ export default function Workspace(props: WorkspaceProps) {
 
     try {
       const fingerprint = fingerprintHtml(htmlBase);
+      // Baseline self-test of the pre-polish HTML: the revert below must only
+      // fire on failures the polish INTRODUCED, not on warnings the resource
+      // already carried (smoke-pulido: every polish was discarded because the
+      // creation turn had ended with residual console errors).
+      const baseline = await ejecutarAutopruebaEnIframe(htmlBase, { signal: controller.signal }).catch(() => null);
+      if (pulidoRef.current !== controller) return;
       // T15: misma llamada de captura que usa el revisor visual (T5) —
       // página completa, mismo formato/calidad/ancho — nunca una captura
       // "distinta" sólo porque la pide otro paso.
@@ -1247,7 +1253,7 @@ export default function Workspace(props: WorkspaceProps) {
       let revertir = false;
       try {
         const resultadoPrueba = await ejecutarAutopruebaEnIframe(htmlPulido, { signal: controller.signal });
-        revertir = !resultadoPrueba || necesitaCorreccion(resultadoPrueba) || resultadoPrueba.errores.length > 0;
+        revertir = !resultadoPrueba || empeoroTrasPulido(baseline, resultadoPrueba);
       } catch {
         revertir = true; // timeout, abort, o cualquier otra cosa: tratarlo como "no salió limpio".
       }

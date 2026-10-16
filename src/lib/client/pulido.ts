@@ -1,3 +1,4 @@
+import type { ResultadoAutopruebaCliente } from './autoprueba.ts';
 /**
  * T15 (motor-claude, client wiring): cliente del paso de "pulido visual"
  * (`POST /api/chat/pulir` y, si el self-test posterior falla,
@@ -67,4 +68,24 @@ export async function revertirPulido(
   } catch {
     return false;
   }
+}
+
+/**
+ * T15: whether the polished resource is WORSE than the pre-polish baseline —
+ * only failures the polish introduced count: a new error message, a reset
+ * that used to work and now doesn't, or a checklist test that passed before
+ * and fails now. Without a baseline (it couldn't run), any failure counts.
+ */
+export function empeoroTrasPulido(
+  antes: Pick<ResultadoAutopruebaCliente, 'errores' | 'reinicioOk' | 'pruebas'> | null,
+  despues: Pick<ResultadoAutopruebaCliente, 'errores' | 'reinicioOk' | 'pruebas'>,
+): boolean {
+  if (!antes) {
+    return despues.errores.length > 0 || despues.reinicioOk === false || (despues.pruebas ?? []).some((p) => !p.ok);
+  }
+  const mensajesAntes = new Set(antes.errores.map((e) => e.mensaje));
+  if (despues.errores.some((e) => !mensajesAntes.has(e.mensaje))) return true;
+  if (antes.reinicioOk !== false && despues.reinicioOk === false) return true;
+  const okAntes = new Set((antes.pruebas ?? []).filter((p) => p.ok).map((p) => p.id));
+  return (despues.pruebas ?? []).some((p) => !p.ok && okAntes.has(p.id));
 }
