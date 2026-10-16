@@ -433,6 +433,19 @@ function esMotorPremium(providerModel: string): boolean {
  *  combinación motor+rol se loguea UNA SOLA VEZ por proceso. */
 const motoresPremiumSinPresupuestoLogueados = new Set<string>();
 
+/**
+ * T15 (motor-claude, `pulido.ts`): resolución ad-hoc modo→preset para un
+ * paso que no es ni `creation` ni `adjustment` de ningún modo — el pulido
+ * visual siempre pide Sonnet, sin importar qué modo esté activo. Mismo
+ * respaldo que el resto del catálogo: `null` si ningún motor habilitado
+ * tiene ese preset (el llamador decide — `pulir.ts` no corre el paso sin
+ * esto).
+ */
+export async function motorParaPresetYEsfuerzo(spec: RoleSpec, filasOverride?: FilaConProveedor[]): Promise<ProviderConfig | null> {
+  const filas = filasOverride ?? (await filasDelCatalogo());
+  return motorPorPresetKey(filas, spec);
+}
+
 /** Mismos presets/esfuerzo que `crea-sonnet`/`crea-opus`/`todo-sonnet`/
  *  `todo-opus` en `modos-generacion.ts` para el rol `creation` — T14 no
  *  inventa un esfuerzo nuevo, reusa el ya medido. */
