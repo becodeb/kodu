@@ -718,6 +718,15 @@ function PreviewPanel(props: PreviewPanelProps) {
               </p>
             )}
 
+            {/* T15 (motor-claude, "haiku-pulido"): misma pieza visual que
+                'corriendo', sólo con otro texto — ver el comentario de la
+                fase en verificador.ts. */}
+            {props.verificador.fase === 'puliendo' && (
+              <p className="mb-2 rounded-lg bg-sutil px-3 py-1.5 text-xs text-ink-600">
+                <span className="t-shimmer">Puliendo el diseño…</span>
+              </p>
+            )}
+
             {props.verificador.fase === 'resultado' && (
               <>
                 {props.verificador.accionables.length === 0 && props.verificador.contenido.length === 0 && (

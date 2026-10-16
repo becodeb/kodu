@@ -259,7 +259,15 @@ export type EstadoPanelVerificador =
   | { fase: 'resultado'; accionables: Problema[]; contenido: Problema[] }
   | { fase: 'arreglando' }
   | { fase: 'arreglado' }
-  | { fase: 'fallo-arreglo' };
+  | { fase: 'fallo-arreglo' }
+  /**
+   * T15 (motor-claude, "haiku-pulido"): el pulido visual de Sonnet 5.5
+   * sobre una generación NUEVA. Puramente informativa — nunca hay un botón
+   * ni un resultado que mostrar después: `Workspace.tsx` siempre vuelve al
+   * estado de ANTES de este paso al terminar (aplicado, revertido, o
+   * "no corresponde" se tratan igual: "failures must be silent").
+   */
+  | { fase: 'puliendo' };
 
 /** "1 cosa para mejorar" / "N cosas para mejorar" — para el encabezado
  *  "Revisé el recurso y encontré …:". */

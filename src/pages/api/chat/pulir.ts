@@ -19,11 +19,14 @@ import { fail, ok, readBody } from '../../../lib/http.ts';
  *
  * Mismo espíritu que `/api/chat/verificar`: corre SOLO, sin que el docente
  * lo haya pedido — cualquier "no corresponde" (modo distinto, sin motor
- * Sonnet, el modelo no propuso nada, la edición no matcheó) es un `200`
- * discreto con `aplicado:false`, nunca un error. El self-test POSTERIOR a
- * este pulido, y la decisión de "revert" si falla, corren en el cliente
- * (`Workspace.tsx`) — este endpoint nunca toca `Project.currentHtml`: el
- * cliente decide si aplica el HTML que devuelve.
+ * Sonnet, el modelo no propuso nada, la edición no matcheó, el HTML cambió
+ * mientras tanto) es un `200` discreto con `aplicado:false`, nunca un
+ * error. El self-test POSTERIOR a este pulido, y la decisión de "revert" si
+ * falla (`POST /api/chat/pulir-revertir`), corren en el cliente
+ * (`Workspace.tsx`) — pero ESTE endpoint sí persiste `Project.currentHtml`
+ * cuando `aplicado:true`, con el mismo `updateMany` condicionado que usa
+ * `autocorreccion.ts`, para que el cliente pueda aplicar la respuesta a la
+ * vista previa sin un viaje de red extra sólo para guardar.
  */
 
 const schema = z.object({
@@ -124,6 +127,26 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
   if (!resultado.aplicado) {
     return ok({ aplicado: false, motivo: resultado.motivo, html: null });
+  }
+
+  /**
+   * T15 (client wiring, pre-deploy): persistir ACÁ, condicionado a que
+   * `currentHtml` siga siendo el mismo que se le mandó al modelo (mismo
+   * `updateMany` con `currentHtml` en el `where` que ya usa
+   * `autocorreccion.ts` — ver ese comentario para el porqué). El cliente
+   * aplica el HTML a la vista previa apenas recibe la respuesta ("quietly",
+   * sin esperar este resultado), pero quien decide si queda GUARDADO es
+   * esta escritura: si el docente ya tocó algo mientras Sonnet pensaba
+   * (mensaje nuevo, deshacer, edición a mano), `count` sale 0 y el pulido
+   * se descarta como si nunca hubiera pasado — nunca se pisa HTML más
+   * nuevo que el que este pulido vio.
+   */
+  const escritura = await prisma.project.updateMany({
+    where: { id: project.id, currentHtml: project.currentHtml },
+    data: { currentHtml: resultado.html },
+  });
+  if (escritura.count === 0) {
+    return ok({ aplicado: false, motivo: 'html_cambio_mientras_tanto', html: null });
   }
 
   return ok({ aplicado: true, motivo: null, html: resultado.html });

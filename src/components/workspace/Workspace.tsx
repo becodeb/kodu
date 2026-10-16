@@ -11,6 +11,7 @@ import {
   verificarRecurso,
   type EstadoPanelVerificador,
 } from '../../lib/client/verificador.ts';
+import { pulirRecurso, revertirPulido } from '../../lib/client/pulido.ts';
 import { fingerprintHtml } from '../../lib/ai/fingerprint.ts';
 import { necesitaCorreccion, type ResultadoPrueba } from '../../lib/ai/autoprueba.ts';
 import type { OpcionesCaptura } from '../../lib/preview.ts';
@@ -73,6 +74,16 @@ interface WorkspaceProps {
    * nunca llega a pedirse.
    */
   verificadorActivo: boolean;
+  /**
+   * T15 (motor-claude, "haiku-pulido"): mismo criterio que
+   * `verificadorActivo` arriba, resuelto server-side (`project/[id].astro`,
+   * `settings.generationMode === 'haiku-pulido'`) — así `ejecutarPulido`
+   * (más abajo) nunca tiene que preguntarle al servidor "¿corresponde?"
+   * antes de poder intentar el pulido. `engineChosenByTeacher` es un
+   * criterio POR PROYECTO que ya filtra `/api/chat/pulir` del lado del
+   * servidor, no entra en este prop global.
+   */
+  pulidoActivo: boolean;
   /**
    * T5 (odd/tasks/generacion-simple-y-reanudable.md): el turno más nuevo que
    * cambió el HTML y todavía no pasó por el self-test/corrección/verificador
@@ -274,6 +285,16 @@ export default function Workspace(props: WorkspaceProps) {
    */
   const correccionSilenciosaRef = useRef<AbortController | null>(null);
 
+  /**
+   * T15 (motor-claude, "haiku-pulido", client wiring): el `AbortController`
+   * del pulido visual EN CURSO (si hay uno) — mismo tratamiento que
+   * `correccionSilenciosaRef`: un mensaje nuevo, un deshacer o una edición
+   * a mano mientras el pulido todavía corre en segundo plano lo corta
+   * (`cancelarVerificacion`, abajo), y `ejecutarPulido` nunca aplica un
+   * resultado calculado sobre HTML que ya no es el vigente.
+   */
+  const pulidoRef = useRef<AbortController | null>(null);
+
   /** Corta cualquier verificación en curso y deja el panel como si nunca
    *  hubiera arrancado — mismo punto en el que ya se limpiaban
    *  `autopruebaAdvertencia`/`ultimasPruebas` (T4: "drop the result if the
@@ -283,6 +304,8 @@ export default function Workspace(props: WorkspaceProps) {
     verificacionRef.current = null;
     correccionSilenciosaRef.current?.abort();
     correccionSilenciosaRef.current = null;
+    pulidoRef.current?.abort();
+    pulidoRef.current = null;
     setVerificador({ fase: 'inactivo' });
   }
 
@@ -1023,11 +1046,32 @@ export default function Workspace(props: WorkspaceProps) {
     htmlDespues: string,
     esRecursoInicialAlEmpezar: boolean,
   ): Promise<void> {
-    if (verificadorDesactivadoRef.current) return; // ya se sabe que no hay motor: ni un pedido más esta sesión.
     if (verificacionRef.current) return; // defensivo (T4: "nunca dos a la vez"): no debería poder pasar.
 
+    /**
+     * T15 (motor-claude, "haiku-pulido", client wiring): el pulido es un
+     * modo INDEPENDIENTE del verificador (T5) — "no hay verificador
+     * configurado" no le cuesta el pulido a "haiku-pulido". Cada punto de
+     * salida de esta función (sin motor, tipo que no aplica, sin cupo,
+     * desactivado, o el camino normal con/sin arreglo silencioso) dispara
+     * el pulido con el HTML que le corresponde a ESE punto antes de
+     * retornar, en vez de un único `finally` — evita reindentar todo el
+     * cuerpo de la función sólo para esto.
+     */
+    const dispararPulido = (htmlBase: string) => {
+      if (esRecursoInicialAlEmpezar) void ejecutarPulido(htmlBase);
+    };
+
+    if (verificadorDesactivadoRef.current) {
+      dispararPulido(htmlDespues); // ya se sabe que no hay motor: ni un pedido más esta sesión.
+      return;
+    }
+
     const tipo = decidirTipoVerificacion({ esRecursoInicialAlEmpezar, htmlAntes, htmlDespues });
-    if (!tipo) return; // ni "nuevo" ni un ajuste que haya tocado el <script> propio: no corresponde llamar.
+    if (!tipo) {
+      dispararPulido(htmlDespues); // ni "nuevo" ni un ajuste que haya tocado el <script> propio.
+      return;
+    }
 
     const controller = new AbortController();
     const fingerprint = fingerprintHtml(htmlDespues);
@@ -1067,11 +1111,13 @@ export default function Workspace(props: WorkspaceProps) {
 
     if (!resultado || resultado.estado === 'sin-cupo' || resultado.estado === 'error') {
       setVerificador({ fase: 'inactivo' }); // T4: nunca una alarma por esto — ver el comentario del endpoint.
+      dispararPulido(htmlDespues);
       return;
     }
     if (resultado.estado === 'desactivado') {
       verificadorDesactivadoRef.current = true; // T4 (item 4): cachear "sin motor" para el resto de la sesión.
       setVerificador({ fase: 'inactivo' });
+      dispararPulido(htmlDespues);
       return;
     }
 
@@ -1135,10 +1181,98 @@ export default function Workspace(props: WorkspaceProps) {
       // Quieto: sólo se muestra lo que ya se mostraba antes de T5 (los
       // problemas de "contenido", nunca auto-arreglados) — nada nuevo.
       setVerificador(contenido.length > 0 ? { fase: 'resultado', accionables: [], contenido } : { fase: 'inactivo' });
+      // T15: pulir sobre el HTML YA arreglado por el revisor silencioso, si
+      // aplicó algo — nunca sobre el que quedó obsoleto.
+      dispararPulido(htmlCorregido ?? htmlDespues);
       return;
     }
 
     setVerificador({ fase: 'resultado', accionables, contenido });
+    dispararPulido(htmlDespues);
+  }
+
+  /**
+   * T15 (motor-claude, "haiku-pulido", client wiring): el paso de pulido
+   * visual — se llama SIEMPRE desde el final de `iniciarVerificacion`
+   * (`dispararPulido`, arriba) para un turno de CREACIÓN, nunca para un
+   * ajuste (T15: "right after the existing self-test/revisor cycle for a
+   * brand-new resource"). `htmlBase` es el HTML que ya está guardado en la
+   * base al momento de llamar (el de la generación, o el que dejó el
+   * arreglo silencioso del revisor si aplicó algo) — la huella que se manda
+   * es la de ESE HTML, mismo criterio que el resto del pipeline.
+   *
+   * Completamente silencioso, de punta a punta (T15: "Failures must be
+   * silent"): la fase `'puliendo'` del panel es sólo cosmética — se
+   * restaura el estado de ANTES al terminar, se haya aplicado, revertido,
+   * o no correspondido nada. Nunca reintenta, nunca llama de nuevo al
+   * verificador, nunca muestra un mensaje de éxito/error.
+   */
+  async function ejecutarPulido(htmlBase: string): Promise<void> {
+    if (!props.pulidoActivo) return;
+    if (pulidoRef.current) return; // defensivo: nunca dos pulidos a la vez.
+
+    const controller = new AbortController();
+    pulidoRef.current = controller;
+    const estadoPrevio = verificador;
+    setVerificador({ fase: 'puliendo' });
+
+    try {
+      const fingerprint = fingerprintHtml(htmlBase);
+      // T15: misma llamada de captura que usa el revisor visual (T5) —
+      // página completa, mismo formato/calidad/ancho — nunca una captura
+      // "distinta" sólo porque la pide otro paso.
+      const captura = await (capturadorRevisorRef.current?.({
+        formato: 'jpeg',
+        calidad: 0.8,
+        anchoMax: 1280,
+        paginaCompleta: true,
+      }) ?? Promise.resolve(null));
+
+      const resultado = await pulirRecurso({ projectId, fingerprint, captura }, controller.signal);
+      if (pulidoRef.current !== controller) return; // superado por otra cosa mientras corría.
+
+      if (!resultado?.aplicado || !resultado.html) return; // "no corresponde": `finally` restaura el panel.
+
+      const htmlPulido = resultado.html;
+      // Igual que `aplicarCorreccionDesdeVerificador`: la vista cambia sin
+      // pasar por el chat — el servidor YA guardó este HTML (`pulir.ts`,
+      // conditional update), así que esto sólo sincroniza lo que se ve.
+      setHtml(htmlPulido);
+      codeEditedByTeacher.current = false;
+      if (screenshotUrl) setPortadaVieja(true);
+
+      // T15 ("self-test ONCE; if it fails or new errors appear, revert"):
+      // una sola pasada, nunca un segundo intento ni una nueva ronda de
+      // corrección — si no sale limpia, se deshace entero.
+      let revertir = false;
+      try {
+        const resultadoPrueba = await ejecutarAutopruebaEnIframe(htmlPulido, { signal: controller.signal });
+        revertir = !resultadoPrueba || necesitaCorreccion(resultadoPrueba) || resultadoPrueba.errores.length > 0;
+      } catch {
+        revertir = true; // timeout, abort, o cualquier otra cosa: tratarlo como "no salió limpio".
+      }
+
+      if (pulidoRef.current !== controller) return; // superado mientras corría el self-test.
+
+      if (revertir) {
+        setHtml(htmlBase);
+        codeEditedByTeacher.current = false;
+        // Servidor: mismo `updateMany` condicionado que `pulir.ts` usó para
+        // guardar — si el docente ya movió el piso mientras tanto, esto es
+        // un no-op silencioso (ver el comentario de `pulir-revertir.ts`).
+        await revertirPulido({ projectId, htmlPulido, htmlOriginal: htmlBase }, controller.signal).catch(() => false);
+      }
+    } catch (error) {
+      if ((error as Error)?.name !== 'AbortError') {
+        console.warn('[pulido] la pasada de pulido visual falló:', error);
+      }
+    } finally {
+      if (pulidoRef.current === controller) pulidoRef.current = null;
+      // Si mientras tanto `cancelarVerificacion` ya puso 'inactivo' (y
+      // abortó este mismo controller), no hay que pisarlo con el estado
+      // previo — ESE 'inactivo' es más nuevo que `estadoPrevio`.
+      if (!controller.signal.aborted) setVerificador(estadoPrevio);
+    }
   }
 
   /**

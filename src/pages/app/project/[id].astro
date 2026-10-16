@@ -154,6 +154,16 @@ const avisoDeMotorRepunteado =
 // verificador o no".
 const verificadorActivo = (await motorVerificador()) !== null;
 
+// T15 (motor-claude, client wiring, pre-deploy): mismo criterio que
+// `verificadorActivo` arriba — se resuelve UNA vez server-side, con el
+// mismo chequeo que ya usa `/api/chat/pulir` (`generationMode`), para que
+// el cliente nunca tenga que preguntarle al servidor "¿corresponde pulir?"
+// antes de poder intentarlo — ningún viaje de red nuevo sólo para saber
+// esto. `engineChosenByTeacher` NO entra acá (sí entra en el endpoint): es
+// un criterio por PROYECTO, no global, y ya lo filtra `pulir.ts` del lado
+// del servidor — este prop sólo dice si el modo global está prendido.
+const pulidoActivo = settings.generationMode === 'haiku-pulido';
+
 // El consumo del recurso (design.md — "The workspace cost indicator"): se
 // calcula acá, en el frontmatter, no en el cliente — así se refresca cuando
 // la página se refresca y no anda pidiendo datos aparte. Ausente entero
@@ -318,6 +328,7 @@ const pedidoInicial =
     capacidades={capacidadesEditor}
     initialChecklist={checklistDelRecurso}
     verificadorActivo={verificadorActivo}
+    pulidoActivo={pulidoActivo}
     pendingPostChecks={chequeosPosterioresPendientes}
     pedidoInicial={pedidoInicial}
   />
