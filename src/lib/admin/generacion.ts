@@ -89,6 +89,22 @@ export interface ResumenGeneracion {
    * el aviso señala a `/admin/motores` en vez de ofrecer el botón).
    */
   haikuParaVerificador: ModeloParaSelector | null;
+  /**
+   * T16 (motor-claude, "automatico" en producción): si HAY alguna cuenta
+   * `AiProvider` `apiFormat: "anthropic"` HABILITADA — sin esto, ni el modo
+   * `automatico` ni la auto-provisión (`catalogo.ts#asegurarMotorDePresetSiFalta`)
+   * tienen de dónde sacar un motor Claude, sin importar qué modo esté
+   * configurado. `false` dispara el aviso "Cargá la clave de Anthropic…".
+   */
+  hayCuentaAnthropicHabilitada: boolean;
+  /**
+   * Los motores Claude (Haiku/Sonnet/Opus 5.5) ya habilitados ahora mismo —
+   * los haya cargado el admin a mano o los haya creado la auto-provisión
+   * del punto 1 de arriba. El panel los lista para que quede claro qué
+   * quedó configurado solo, sin que el admin tenga que ir a revisar
+   * `/admin/motores`.
+   */
+  modelosClaudeHabilitados: Array<ModeloParaSelector & { presetKey: string }>;
 }
 
 /**
@@ -170,6 +186,17 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
   const verificadorUsable = await motorVerificador();
   const haikuHabilitado = filas.find((fila) => fila.presetKey === 'claude-haiku-5-5') ?? null;
 
+  // T16: cuenta Anthropic habilitada — independiente de si ya hay algún
+  // motor Claude habilitado o no (una cuenta recién cargada, sin ningún
+  // motor todavía, también cuenta como "configurado": la auto-provisión del
+  // próximo turno real en modo automatico se encarga del resto).
+  const hayCuentaAnthropicHabilitada =
+    (await prisma.aiProvider.count({ where: { apiFormat: 'anthropic', enabled: true } })) > 0;
+  const CLAVES_CLAUDE = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'];
+  const modelosClaudeHabilitados = filas
+    .filter((fila): fila is typeof fila & { presetKey: string } => fila.presetKey !== null && CLAVES_CLAUDE.includes(fila.presetKey))
+    .map((fila) => ({ id: fila.id, displayName: fila.displayName, presetKey: fila.presetKey }));
+
   return {
     versionsForAll: settings.versionsForAll,
     generationMode: settings.generationMode,
@@ -198,5 +225,7 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
     },
     hayVerificadorUsable: verificadorUsable !== null,
     haikuParaVerificador: haikuHabilitado ? { id: haikuHabilitado.id, displayName: haikuHabilitado.displayName } : null,
+    hayCuentaAnthropicHabilitada,
+    modelosClaudeHabilitados,
   };
 }

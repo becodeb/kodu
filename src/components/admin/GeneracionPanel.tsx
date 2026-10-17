@@ -134,6 +134,35 @@ export default function GeneracionPanel({ initial }: Props) {
         </p>
       )}
 
+      {!resumen.hayCuentaAnthropicHabilitada && (
+        <div className="kodu-card space-y-2 border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-amber-900">Falta la cuenta de Claude</p>
+          <p className="text-sm text-amber-800">
+            Cargá la clave de Anthropic en{' '}
+            <a href="/admin/motores" className="underline">
+              /admin/motores
+            </a>{' '}
+            con el preset Claude Haiku 5.5. El modo Automático (y los demás modos con Claude) no pueden
+            crear ni ajustar nada hasta que exista esa cuenta.
+          </p>
+        </div>
+      )}
+
+      {resumen.hayCuentaAnthropicHabilitada && resumen.modelosClaudeHabilitados.length > 0 && (
+        <div className="kodu-card space-y-1 p-4">
+          <p className="text-sm font-semibold text-ink-900">Motores Claude configurados</p>
+          <ul className="list-inside list-disc text-sm text-ink-700">
+            {resumen.modelosClaudeHabilitados.map((motor) => (
+              <li key={motor.id}>{motor.displayName}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-ink-500">
+            Sonnet 5.5 y Opus 5.5 se crean solos la primera vez que el modo Automático los necesita — no
+            hace falta cargarlos a mano.
+          </p>
+        </div>
+      )}
+
       {!resumen.hayVerificadorUsable && (
         <div className="kodu-card space-y-2 border-amber-200 bg-amber-50 p-4">
           <p className="text-sm font-semibold text-amber-900">No hay ningún revisor visual activo</p>
@@ -300,9 +329,10 @@ export default function GeneracionPanel({ initial }: Props) {
           </div>
         </div>
         <p className="text-xs text-ink-500">
-          Al llegar al tope premium, cualquier modo que no sea "Haiku (recomendado)" —incluido
-          Personalizado— se comporta como el modo base hasta el próximo corte. Al llegar al crédito
-          incluido, se sigue trabajando en el modo base, pero la caja de abajo se pone en rojo.
+          Al llegar al tope premium, cualquier modo que no sea "Haiku (económico)" —incluido
+          Personalizado— se comporta como el modo base hasta el próximo corte. "Automático" no entra en
+          este recorte: pacea su propio gasto contra el crédito mensual. Al llegar al crédito incluido, se
+          sigue trabajando en el modo base, pero la caja de abajo se pone en rojo.
         </p>
 
         <div
