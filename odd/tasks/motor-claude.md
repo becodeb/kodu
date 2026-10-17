@@ -59,6 +59,10 @@ Sonnet 5.5 is 2 / 10, Opus 5.5 is 4 / 20; neither can disable thinking nor force
       client wiring (capture, call, apply quietly, one self-test, revert)
       and the experiment runner's `--modo haiku-pulido`/`automatico` now
       done too (see the 2026-10-17 notes below)
+- [x] T16 Production default: `automatico` as the owner-chosen production
+      mode, auto-provisioning Sonnet/Opus/Haiku presets from a single
+      Anthropic key, data migration to `automatico`, remeasured Sonnet
+      pacing constant, admin labels/warnings (see the notes below)
 
 ## Acceptance criteria
 
@@ -1896,3 +1900,101 @@ H1/H2): USD 0.4340 total, under budget.
   capture in place would give a cleaner comparison.
 
 `AppSettings.generationMode` confirmed back to `base` after this pass.
+
+## T16 production default (2026-10-17) — owner decision: `automatico` in production
+
+Owner decision: production runs mode `automatico` (Sonnet 5.5 default, Haiku
+when the cycle's credit runs short, Opus in the last days if credit would be
+wasted), with nothing to configure beyond adding the Anthropic key via the
+Haiku 5.5 preset in `/admin/motores`.
+
+1. **Auto-provision** (`src/lib/ai/catalogo.ts#asegurarMotorDePresetSiFalta`,
+   called from `motorAutomatico` for the three Claude presets, skipped when
+   `filasOverride` is passed — tests only): when NO `AiModel` row at all has a
+   given Claude `presetKey` and an enabled `apiFormat:'anthropic'` provider
+   exists, creates the model via the SAME `camposDePreset` mechanism
+   `POST /api/admin/models` uses — `enabled:true`, `selectableByTeacher`/
+   `supportsVision` from the preset's own defaults (Haiku: true/true;
+   Sonnet/Opus: false/false), never `isVerifier`/`isDefault`. A row that
+   already exists (even `enabled:false`) is left untouched — an admin's
+   explicit "off" is respected, never revived. Memoized by preset per
+   process (`presetsAutoprovistosEnEsteProceso`); never throws into the
+   request path (catches and logs). Unit tests: `e2e/unidad-autoprovision.ts`
+   (scratch DB `koduedu_autoprov`, created/migrated/dropped by the test
+   itself in `kodu_db_dev`) — creates when missing, idempotent (forced
+   re-check without memoization), respects a disabled row, no-op without an
+   Anthropic provider, and confirms the process-memoization short-circuit.
+2. **Data migration** `20261101000000_automatico_default_produccion`:
+   `UPDATE "AppSettings" SET "generationMode"='automatico' WHERE
+   "generationMode"='base'` — the SQL column default was already changed to
+   `'automatico'` by `20261031000000_automatico_y_pulido` (for brand-new
+   rows only); this migration does the part that was deliberately deferred
+   then: moving production's EXISTING row off the old default, while never
+   touching a value the owner already chose by hand. Applied to
+   `koduedu_claude` via `prisma migrate deploy` (confirmed:
+   `generationMode` went from `'base'` to `'automatico'` in the dev DB,
+   left as-is per the task's own instruction).
+3. **Measured constants**: `COSTO_MEDIDO_POR_RECURSO_USD.sonnet` in
+   `modos-generacion.ts` updated 0.32 → 0.19 (re-measured on
+   `v8-todo-sonnet`: 5 hard cases, creation + 2 adjustments each, mean USD
+   0.186/≈2.2 min per resource — computed directly from
+   `experimentos/motor-claude/resultados/v8-todo-sonnet/*/corrida.json`,
+   `claude-exp` worktree). `todo-sonnet`'s `measured.creation` text updated
+   to `≈USD 0,10 · ≈1,2 min` (creation-only mean from the same 5 runs:
+   0.1019 USD / 1.23 min). `haiku-pulido` label now ends in "(experimental,
+   no recomendado)"; its description now states the `v9-haiku-pulido`
+   finding verbatim: Sonnet only edited 2 of 5 hard cases and the change
+   wasn't visible in before/after screenshots, ≈USD 0.085 and ≈45s extra
+   when it does apply. `base` mode's label changed from "Haiku
+   (recomendado)" to "Haiku (económico)" — "Automático (recomendado)" was
+   already the label `generacion.ts` hardcodes for the `automatico` mode
+   (T14), so no change was needed there. The one other place that
+   referenced the old "Haiku (recomendado)" wording as literal text
+   (`GeneracionPanel.tsx`'s premium-cutoff paragraph) was updated to match,
+   and now also notes that `automatico` is exempt from that premium cutoff.
+4. **Admin visibility** (`/admin/generacion`): `resumenGeneracion()` gained
+   `hayCuentaAnthropicHabilitada` (any enabled `apiFormat:'anthropic'`
+   provider) and `modelosClaudeHabilitados` (enabled models linked to any of
+   the three Claude presets, whether created by hand or by auto-provision).
+   `GeneracionPanel.tsx`: when no Anthropic account is enabled, shows "Cargá
+   la clave de Anthropic en /admin/motores con el preset Claude Haiku 5.5."
+   verbatim; when one is enabled, lists the configured Claude models with a
+   note that Sonnet/Opus provision themselves the first time `automatico`
+   needs them.
+
+**Checks run**: `npm run check` (clean). All 28 `e2e/unidad*.ts` files pass,
+including the new `unidad-autoprovision.ts` — one pre-existing fixture in
+`unidad-modos-generacion.ts`'s hysteresis test needed its
+`gastoPromedioDiarioRecienteUsd` fixture value adjusted (0.26 → 0.45) because
+the Sonnet pacing constant it feeds into changed (0.32 → 0.19); the test's
+assertions and intent are unchanged, only the number needed to still land
+the projection between the 80%/90% thresholds. Live suites against the dev
+server on this worktree, restarted first (`npx astro dev stop` + fresh
+`PORT=3400 npm run dev`): `t11-autoprueba.ts`, `verificador-editor.ts`,
+`m2-catalogo.ts` — all pass, run with the dev DB's 30 enabled
+`AiProvider{apiFormat:'anthropic'}` rows temporarily disabled (ids saved,
+all 30 restored after; confirmed 0 new `TokenUsage` rows joined to a real
+Anthropic model in that window via direct query) and `isVerifier` restored
+to `true` on `Motor Claude · final-base · preset-claude-haiku-5-5`
+afterward (cleared to `false` by `verificador-editor.ts`'s own cleanup, same
+as every prior round). No auto-provisioned row was left behind in the dev
+DB by these runs — the three Claude presets already had real rows from
+earlier rounds, so `asegurarMotorDePresetSiFalta` always found an existing
+row and no-opped. Fresh-DB migration check: `CREATE DATABASE
+koduedu_scratch_t16` in `kodu_db_dev`, `prisma migrate deploy` from zero
+(`DATABASE_URL` override on the command only) — all 55 migrations applied
+cleanly, `AppSettings` row 1 confirmed `generationMode = 'automatico'` (by
+column default, via the pre-existing seed migration's `INSERT` with no
+explicit value for that column) — then dropped. No real Anthropic API call
+made this pass.
+
+**Not done / open**: the per-mode "measured" `adjustment` figures for
+`todo-sonnet` were NOT re-measured (only `creation`, per the task's
+explicit scope) — the existing `≈USD 0,07 · ≈55 s` text is noticeably off
+from this same sample's real adjustment mean (USD 0.042/27s), left
+untouched since changing it wasn't asked for and risked scope creep.
+`pulido.ts`'s own Sonnet-preset resolution (`motorParaPresetYEsfuerzo`,
+used by `haiku-pulido` mode) does NOT go through the new auto-provision
+path — the owner's decision was scoped to `automatico` only, so
+`haiku-pulido` still requires the admin to load the Sonnet preset by hand
+if that mode is ever selected.
