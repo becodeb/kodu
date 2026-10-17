@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '../db.ts';
-import type { AiModel, AiProvider } from '../../generated/prisma/client.ts';
+import type { PrismaClient, AiModel, AiProvider, Prisma } from '../../generated/prisma/client.ts';
 import { ClaveInvalida, ClaveNoConfigurada, descifrar } from '../crypto/secretos.ts';
 import type { ProviderConfig } from './provider.ts';
 import type { MotorPublico } from '../workspace-types.ts';
 import { scheduleFromAiModel } from './pricing.ts';
 import { presetByKey, preciosDePreset } from './presets.ts';
+import { camposDePreset } from '../admin/modelos.ts';
 import {
   MODES,
   MODO_PERSONALIZADO_KEY,
@@ -456,6 +458,108 @@ const ROLE_SPEC_POR_TIER_AUTOMATICO: Record<TierAutomatico, RoleSpec> = {
 };
 
 /**
+ * T16 (motor-claude, "automatico" en producción): los tres presets que el
+ * modo `automatico` puede necesitar. El dueño pidió que, con sólo cargar la
+ * clave de Anthropic en `/admin/motores` vía el preset Haiku 5.5, no haya
+ * nada más para configurar — así que esta función auto-provisiona los OTROS
+ * dos presets (Sonnet/Opus) también, sin que el admin tenga que repetir el
+ * alta a mano por cada uno.
+ */
+const CLAUDE_PRESET_KEYS_AUTOMATICO = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5'] as const;
+
+/** Un preset ya intentado (con éxito, sin cuenta Anthropic, o con un error)
+ *  no se vuelve a consultar en este mismo proceso — "once per process per
+ *  preset", memoizado. Un reinicio del proceso (deploy, `npx astro dev stop`)
+ *  es la única forma de reintentar. */
+const presetsAutoprovistosEnEsteProceso = new Set<string>();
+
+/** Sólo para pruebas (scratch DB): fuerza que el próximo
+ *  `asegurarMotorDePresetSiFalta` vuelva a consultar la base para esa clave,
+ *  en vez de confiar en la memoización del proceso. */
+export function invalidarMemoDeAutoprovision(presetKey?: string): void {
+  if (presetKey) presetsAutoprovistosEnEsteProceso.delete(presetKey);
+  else presetsAutoprovistosEnEsteProceso.clear();
+}
+
+/**
+ * T16 (motor-claude): si NINGUNA fila de `AiModel` tiene este `presetKey`
+ * todavía (ni habilitada ni apagada) y existe una cuenta `AiProvider`
+ * `apiFormat: "anthropic"` HABILITADA, crea el motor desde el preset — mismo
+ * mecanismo que usa `POST /api/admin/models` (`camposDePreset`): `enabled:
+ * true`, `selectableByTeacher`/`supportsVision` con los defaults del preset
+ * (Haiku queda seleccionable por el docente y con visión; Sonnet/Opus NO
+ * quedan seleccionables por el docente — son premium), y NUNCA
+ * `isVerifier`/`isDefault` (quedan en su default `false`: auto-provisionar un
+ * motor nunca debe cambiar en silencio cuál revisa o cuál arranca la
+ * instalación, eso sigue siendo una decisión del admin).
+ *
+ * Si YA existe una fila con ese `presetKey` — aunque esté `enabled: false`
+ * (el admin la apagó a mano) — esta función no toca nada: respeta esa
+ * decisión, nunca la revive.
+ *
+ * Memoizado por preset por PROCESO (`presetsAutoprovistosEnEsteProceso`):
+ * sólo pega contra la base la primera vez que se pide cada preset, sea cual
+ * sea el resultado. Nunca tira una excepción hacia el llamador (un turno
+ * real no se puede caer porque la auto-provisión falló) — cualquier error se
+ * loguea y se sigue como si el preset no tuviera motor, que es exactamente
+ * el estado de antes de esta función existir.
+ */
+export async function asegurarMotorDePresetSiFalta(presetKey: string, client: PrismaClient = prisma): Promise<void> {
+  if (presetsAutoprovistosEnEsteProceso.has(presetKey)) return;
+  presetsAutoprovistosEnEsteProceso.add(presetKey);
+
+  try {
+    const preset = presetByKey(presetKey);
+    if (!preset || preset.provider.apiFormat !== 'anthropic') return;
+
+    let creado = false;
+
+    await client.$transaction(async (tx) => {
+      const existente = await tx.aiModel.findFirst({ where: { presetKey }, select: { id: true } });
+      if (existente) return;
+
+      const cuenta = await tx.aiProvider.findFirst({
+        where: { apiFormat: 'anthropic', enabled: true },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true },
+      });
+      if (!cuenta) return;
+
+      const ultimo = await tx.aiModel.findFirst({ orderBy: { sortOrder: 'desc' }, select: { sortOrder: true } });
+      const sortOrder = (ultimo?.sortOrder ?? -1) + 1;
+
+      const data: Prisma.AiModelUncheckedCreateInput = {
+        id: randomUUID(),
+        providerId: cuenta.id,
+        providerModel: preset.providerModel,
+        displayName: `${preset.label} (provisto automáticamente)`,
+        description: null,
+        adminNote: 'T16 (motor-claude): creado automáticamente por el modo "automatico" al detectar una cuenta Anthropic habilitada sin este preset configurado. Nunca isVerifier/isDefault.',
+        enabled: true,
+        sortOrder,
+        fallbackModelId: null,
+        userTokenWindowHours: 0,
+        maxInputChars: 400_000,
+        userTokenLimit: 0,
+        selectableByTeacher: preset.defaultSelectableByTeacher,
+        supportsVision: preset.defaultSupportsVision,
+        ...camposDePreset(presetKey),
+      };
+
+      await tx.aiModel.create({ data });
+      creado = true;
+    });
+
+    if (creado) {
+      invalidarCatalogo();
+      console.log(`[catalogo] T16: motor auto-provisto para el preset "${presetKey}" (modo automatico, cuenta Anthropic habilitada sin este motor).`);
+    }
+  } catch (error) {
+    console.error(`[catalogo] T16: auto-provisión del preset "${presetKey}" falló, se sigue sin ese motor:`, error);
+  }
+}
+
+/**
  * T14 (motor-claude): resuelve el rol `creation`/`adjustment` del modo
  * `automatico`. Nunca pasa por `resolverRolDeModo` (sus roles no son fijos
  * como los de `MODES`) — en cambio:
@@ -477,6 +581,16 @@ async function motorAutomatico(
   settings: { billingCycleDay: number; monthlyCreditUsd: number; premiumUntilUsd: number },
   filasOverride?: FilaConProveedor[],
 ): Promise<ProviderConfig | null> {
+  // T16: la auto-provisión pega contra la base de verdad (cuentas/filas
+  // reales) — una prueba que fija `filasOverride` está probando la
+  // RESOLUCIÓN modo→rol en memoria a propósito (ver el comentario de
+  // `resolverRolDeModo`), nunca quiere que esto le agregue filas reales por
+  // debajo. Los llamadores reales (`motorDeGeneracion`) nunca pasan
+  // `filasOverride`.
+  if (!filasOverride) {
+    await Promise.all(CLAUDE_PRESET_KEYS_AUTOMATICO.map((presetKey) => asegurarMotorDePresetSiFalta(presetKey)));
+  }
+
   const filas = filasOverride ?? (await filasDelCatalogo());
 
   if (!esCreacion && creationModelId) {
