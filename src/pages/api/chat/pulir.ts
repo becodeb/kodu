@@ -109,6 +109,28 @@ export const POST: APIRoute = async ({ request, locals }) => {
     });
   }
 
+  /**
+   * Debug-investigation fix (motor-claude T14/T15): la escritura condicional
+   * de `currentHtml` AHORA corre ANTES de `recordAiTrace`, no después. Antes,
+   * un observador externo que pollea `AiTrace{turnKind:'POLISH'}` para saber
+   * "¿ya terminó el pulido?" (como `experimentos/motor-claude/correr.ts`)
+   * podía ver la traza ANTES de que la escritura a `Project.currentHtml`
+   * hubiera corrido — y, si leía `currentHtml` en esa ventana, encontraba
+   * todavía el HTML pre-pulido, no el pulido. No se confirmó que esta
+   * ventana causara los falsos "revertido" vistos en `v9-haiku-pulido`
+   * (quedó sin reproducir con logging en vivo), pero igual es un orden
+   * incorrecto: quien mira la traza nunca debería poder ver un HTML que no
+   * sea el que esa traza ya dejó. Se corrige el orden independientemente.
+   */
+  let escrituraAplicada = false;
+  if (resultado.aplicado) {
+    const escritura = await prisma.project.updateMany({
+      where: { id: project.id, currentHtml: project.currentHtml },
+      data: { currentHtml: resultado.html },
+    });
+    escrituraAplicada = escritura.count > 0;
+  }
+
   await recordAiTrace({
     userId: user.id,
     projectId: project.id,
@@ -125,27 +147,50 @@ export const POST: APIRoute = async ({ request, locals }) => {
     console.error('[chat/pulir] no se pudo registrar la traza del pulido:', error);
   });
 
+  if (process.env.KODU_DEBUG_PULIDO === '1') {
+    // TEMP DEBUG (motor-claude T14/T15, revert investigation) — remove once
+    // the revert-every-time issue is confirmed fixed.
+    let primerDiff = -1;
+    if (resultado.aplicado) {
+      const a = project.currentHtml;
+      const b = resultado.html;
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) {
+        if (a[i] !== b[i]) {
+          primerDiff = i;
+          break;
+        }
+      }
+    }
+    console.log('[PULIDO_DEBUG][server]', {
+      projectId: project.id,
+      aplicado: resultado.aplicado,
+      motivo: resultado.motivo,
+      htmlCharsBefore: project.currentHtml.length,
+      htmlCharsAfter: resultado.aplicado ? resultado.html.length : null,
+      durationMs: resultado.durationMs,
+      primerDiffEn: primerDiff,
+      contextoAntes: primerDiff >= 0 ? project.currentHtml.slice(Math.max(0, primerDiff - 80), primerDiff + 160) : null,
+      contextoDespues: primerDiff >= 0 && resultado.aplicado ? resultado.html.slice(Math.max(0, primerDiff - 80), primerDiff + 160) : null,
+    });
+  }
+
   if (!resultado.aplicado) {
     return ok({ aplicado: false, motivo: resultado.motivo, html: null });
   }
 
   /**
-   * T15 (client wiring, pre-deploy): persistir ACÁ, condicionado a que
-   * `currentHtml` siga siendo el mismo que se le mandó al modelo (mismo
-   * `updateMany` con `currentHtml` en el `where` que ya usa
-   * `autocorreccion.ts` — ver ese comentario para el porqué). El cliente
-   * aplica el HTML a la vista previa apenas recibe la respuesta ("quietly",
-   * sin esperar este resultado), pero quien decide si queda GUARDADO es
-   * esta escritura: si el docente ya tocó algo mientras Sonnet pensaba
-   * (mensaje nuevo, deshacer, edición a mano), `count` sale 0 y el pulido
-   * se descarta como si nunca hubiera pasado — nunca se pisa HTML más
-   * nuevo que el que este pulido vio.
+   * T15 (client wiring): la escritura condicional de arriba (`escrituraAplicada`,
+   * ANTES de `recordAiTrace` — ver ese comentario para el porqué del orden)
+   * es la misma `updateMany` con `currentHtml` en el `where` que ya usa
+   * `autocorreccion.ts`. El cliente aplica el HTML a la vista previa apenas
+   * recibe esta respuesta ("quietly", sin esperar), pero quien decide si
+   * queda GUARDADO es esa escritura: si el docente ya tocó algo mientras
+   * Sonnet pensaba (mensaje nuevo, deshacer, edición a mano), `count` salió
+   * 0 y el pulido se descarta como si nunca hubiera pasado — nunca se pisa
+   * HTML más nuevo que el que este pulido vio.
    */
-  const escritura = await prisma.project.updateMany({
-    where: { id: project.id, currentHtml: project.currentHtml },
-    data: { currentHtml: resultado.html },
-  });
-  if (escritura.count === 0) {
+  if (!escrituraAplicada) {
     return ok({ aplicado: false, motivo: 'html_cambio_mientras_tanto', html: null });
   }
 

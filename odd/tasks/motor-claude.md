@@ -1797,3 +1797,102 @@ this task. `AppSettings.generationMode` confirmed back to `base` and all 27
 Anthropic `AiProvider` rows confirmed `enabled:true` at the end (the runner
 restores the mode itself; the disable/restore for the live suites was done
 and undone by hand, verified by direct query both times).
+
+## T14/T15 notes (2026-10-17, "pulido reverts every time" investigation)
+
+Debugged the symptom from `v8-haiku-pulido` (5/5 hard cases: server applied
+a `FRAGMENTS` edit, client reported "revertido" every time) in worktrees
+`~/projects/kodu-wt/claude` (`feat/motor-claude`) and `~/projects/kodu-wt/claude-exp`
+(`exp/motor-claude`). **The app's revert decision was already correct** —
+the actual bug was a false-positive in the EXPERIMENT RUNNER's detection,
+not in the app.
+
+**What was checked and ruled out**: (a) kit-wrapping mismatch in `pulir.ts`'s
+conditional `updateMany` — `pulido.ts` never touches `aislarPruebasKit`/
+`desenvolverPruebas`, operates on `project.currentHtml` directly, same
+representation throughout; not the cause. (b) client-side logic
+(`empeoroTrasPulido`, added in `e2c26ce`) — confirmed correct by adding
+temporary `console.debug` instrumentation (since removed) and reading it
+live through the experiment runner's Playwright page console: for the two
+`v9-haiku-pulido` cases where the server applied an edit (H2, H4), the
+client's own baseline-vs-after comparison computed `revertir: false` both
+times — it correctly recognised the polish introduced no new failures and
+decided to KEEP it.
+
+**What actually happened (proven with an independent watcher)**: wrote a
+throwaway Node/Prisma script (`/tmp/.../watch-polish.ts`, not committed)
+polling `AiTrace{turnKind:'POLISH'}` + `Project.currentHtml.length` every
+150ms, completely separate from the runner's own polling. For H4
+(`72b25716…`), it showed `currentHtml` landing at the polished length
+(`80756`) within ~110ms of the `AiTrace` row appearing, and **staying
+there for the entire ~85s window** until turn 2's own edit grew it further
+— it was NEVER reverted. Yet `correr.ts`'s `esperarPulido` reported
+`revertido: true` for that exact run. Same pattern for H2. This proves the
+polish was kept correctly by the app; the runner's own "did it revert?"
+detection was the thing lying.
+
+**Root cause of the false positive**: not conclusively pinned down with
+live instrumentation (the debug logging added to `esperarPulido` was
+edited into the file AFTER the process that produced this evidence had
+already started — `tsx` doesn't hot-reload a running process — so it never
+actually printed for this run; discovered too late to re-run cheaply within
+budget). The most likely mechanism, and a real latent bug regardless: in
+`pulir.ts`, `recordAiTrace` ran BEFORE the conditional `Project.currentHtml`
+write, so an external poller watching for the `AiTrace` row to decide
+"check the HTML now" could in principle observe the trace a few
+milliseconds before the write landed.
+
+**Fixes applied**:
+1. `src/pages/api/chat/pulir.ts` — reordered so the conditional
+   `prisma.project.updateMany` write now runs BEFORE `recordAiTrace`, not
+   after. Closes the ordering window regardless of whether it was THE
+   cause. `escrituraAplicada` (boolean) replaces the old inline `escritura`
+   check at the bottom of the handler. Also added a `KODU_DEBUG_PULIDO=1`
+   env-gated server log (kept, cheap, off by default).
+2. `experimentos/motor-claude/correr.ts` (`exp/motor-claude` worktree) —
+   `esperarPulido`'s revert-wait loop now requires the "still equal to the
+   pre-polish HTML" state to be observed on TWO CONSECUTIVE polls
+   (`vecesSeguidasIgualAlAntes >= 2`) before declaring `revertido: true`,
+   instead of trusting a single read. Also added `turno-1-prepulido.html`/
+   `-1280.png`/`-1920.png` (captured right before the polish call, honest
+   "before") and `turno-1-pulido.html`/`-1280.png`/`-1920.png` (captured
+   right after `esperarPulido` confirms applied-and-kept, honest "after" —
+   NOT reconstructed from `turno-2.html`, which would already carry turn
+   2's own edit on top).
+3. `Workspace.tsx`/`src/lib/client/pulido.ts` — unchanged net (temporary
+   debug `console.debug` calls added during the investigation were removed
+   again; `git diff` on these two files is empty against `e2c26ce`).
+
+**Verification this pass**: `npm run check` clean in `claude`. All 27
+`e2e/unidad*.ts` pass, including `unidad-pulido-revertir.ts`. Live suites
+`t11-autoprueba` and `verificador-editor` pass against the mock provider
+(29 real `AiProvider{apiFormat:'anthropic'}` rows — up from 27, two more
+got added by later experiment runs — temporarily disabled, ids saved,
+all 29 restored after; `isVerifier` restored to `true` on
+`Motor Claude · final-base · preset-claude-haiku-5-5` at the end — it had
+been left `false` from some earlier step before this pass started, and the
+v9 run itself also cleared it, so it needed restoring twice).
+
+**Real smoke this pass** (`v9-haiku-pulido`, `--casos duros --repeticiones 1
+--tope 0.55`, resumed once after a `timeout` cutoff killed it mid-H3 — the
+runner's own `corrida.json`-exists skip correctly avoided double-charging
+H1/H2): USD 0.4340 total, under budget.
+- H1, H3, H5: server found nothing worth a forced visual edit
+  (`sin_tool_call`/similar — Sonnet is explicitly told "si no encontrás
+  nada visual que valga la pena mejorar, no llames ninguna herramienta") —
+  `editOutcome: FAILED`, no HTML change, ~USD 0.078 spent on the attempt
+  each time. Not a bug — this is the designed behaviour for an
+  already-decent resource.
+- H2, H4: server applied a small edit (FRAGMENTS, +301/+301 chars), client
+  kept it (`revertir: false`, confirmed independently as described above).
+  `turno-1-prepulido-1280.png` vs `turno-1-1280.png`/`turno-2-1280.png`
+  (the closest available "after" for this run, since the new
+  `turno-1-pulido.png` capture code landed AFTER this run already executed)
+  show no visually obvious difference in the main viewport crop for either
+  case — the polish edit was small (~300 chars) and may have touched
+  something outside this crop, or a subtle token not visible at this zoom.
+  Honestly: I cannot confirm the polish looked BETTER from these images:
+  it looked the same. A future run with the new `turno-1-pulido.png`
+  capture in place would give a cleaner comparison.
+
+`AppSettings.generationMode` confirmed back to `base` after this pass.
