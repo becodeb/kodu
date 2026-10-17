@@ -65,7 +65,7 @@ const OPUS_MEDIUM: RoleSpec = { presetKey: 'claude-opus-5-5', effort: 'medium' }
 export const MODES: Record<string, GenerationMode> = {
   base: {
     key: 'base',
-    label: 'Haiku (recomendado)',
+    label: 'Haiku (económico)',
     description: 'Crea y ajusta con Claude Haiku 5.5, esfuerzo bajo. El motor de todos los días: mejor relación calidad/precio (6,2/10 en la prueba a ciegas).',
     roles: { creation: HAIKU_LOW, adjustment: HAIKU_LOW, reviewer: HAIKU_LOW },
     measured: { creation: '≈USD 0,008 · ≈55 s', adjustment: '≈USD 0,006 · ≈40 s (con revisión)' },
@@ -96,7 +96,14 @@ export const MODES: Record<string, GenerationMode> = {
     label: 'Sonnet para todo',
     description: 'Crea y ajusta con Sonnet 5.5 (esfuerzo medio). 6,6/10 a ciegas: apenas mejor que Haiku a unas 17 veces el precio.',
     roles: { creation: SONNET_MEDIUM, adjustment: SONNET_MEDIUM, reviewer: HAIKU_LOW },
-    measured: { creation: '≈USD 0,17 · ≈1,8 min', adjustment: '≈USD 0,07 · ≈55 s' },
+    // T16 (motor-claude): medido sobre v8-todo-sonnet (5 casos difíciles,
+    // creación + 2 ajustes cada uno) — ver odd/tasks/motor-claude.md §T16.
+    // La creación sola promedia USD 0,1019/1,23 min (computado directo de
+    // experimentos/motor-claude/resultados/v8-todo-sonnet/*/corrida.json,
+    // worktree exp/motor-claude); el promedio por RECURSO completo (creación
+    // + 2 ajustes) es USD 0,186/≈2,2 min — ese es el número que alimenta
+    // `COSTO_MEDIDO_POR_RECURSO_USD.sonnet` más abajo, no éste.
+    measured: { creation: '≈USD 0,10 · ≈1,2 min', adjustment: '≈USD 0,07 · ≈55 s' },
   },
   'todo-opus': {
     key: 'todo-opus',
@@ -116,8 +123,12 @@ export const MODES: Record<string, GenerationMode> = {
    */
   'haiku-pulido': {
     key: 'haiku-pulido',
-    label: 'Haiku + pulido visual con Sonnet',
-    description: 'Crea y ajusta con Haiku 5.5, igual que el modo base. En CADA recurso nuevo, un paso extra con Sonnet 5.5 mejora sólo lo visual (paleta, ilustración, composición) después del self-test — nunca toca lógica, texto ni ids. Experimental, sin medir a ciegas todavía.',
+    label: 'Haiku + pulido visual con Sonnet (experimental, no recomendado)',
+    // T16 (motor-claude): medido sobre v9-haiku-pulido — en 5 casos difíciles,
+    // Sonnet sólo encontró algo para editar en 2 de los 5, y el cambio no se
+    // notó a simple vista comparando capturas antes/después (ver
+    // odd/tasks/motor-claude.md §T14/T15 "pulido reverts every time" y §T16).
+    description: 'Crea y ajusta con Haiku 5.5, igual que el modo base. En CADA recurso nuevo, un paso extra con Sonnet 5.5 intenta mejorar sólo lo visual (paleta, ilustración, composición) después del self-test — nunca toca lógica, texto ni ids. En 5 casos difíciles medidos, Sonnet sólo editó 2 de los 5 y el cambio no fue visible a simple vista; cuesta ≈USD 0,085 y agrega ≈45 s cuando se aplica. No recomendado todavía.',
     roles: { creation: HAIKU_LOW, adjustment: HAIKU_LOW, reviewer: HAIKU_LOW },
     measured: { creation: '≈USD 0,008 · ≈55 s (+ pulido, ver panel)', adjustment: '≈USD 0,006 · ≈40 s (con revisión)' },
   },
@@ -304,7 +315,13 @@ export interface CostosPorTierUsd {
  */
 export const COSTO_MEDIDO_POR_RECURSO_USD: CostosPorTierUsd = {
   haiku: 0.019,
-  sonnet: 0.32,
+  // T16 (motor-claude): remedido sobre v8-todo-sonnet — 5 casos difíciles,
+  // creación + 2 ajustes cada uno, promedio USD 0,186 / ≈2,2 min por recurso
+  // completo (computado directo de
+  // experimentos/motor-claude/resultados/v8-todo-sonnet/*/corrida.json,
+  // worktree exp/motor-claude) — reemplaza el 0,32 anterior (una estimación
+  // de antes de tener esta corrida real).
+  sonnet: 0.19,
   opus: 0.96,
 };
 

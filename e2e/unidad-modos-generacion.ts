@@ -209,7 +209,11 @@ await prueba('decidirTierAutomatico: crédito del ciclo ya agotado -> haiku SIEM
 await prueba('decidirTierAutomatico: histéresis — mismo gasto, tierCacheado=haiku exige un umbral más duro para volver a sonnet', () => {
   // Proyección de cierre entre el 80% y el 90% del crédito: sin caché pasa
   // a sonnet (umbral 90%), pero si YA estaba en haiku, se queda en haiku.
-  const base = insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 0.26 });
+  // T16: 0.45 (no 0.26) porque `COSTO_MEDIDO_POR_RECURSO_USD.sonnet` bajó de
+  // 0.32 a 0.19 (remedido, ver su propio comentario) — con el valor viejo de
+  // este fixture, la proyección ya no caía entre el 80% y el 90% del
+  // crédito con el precio nuevo de Sonnet.
+  const base = insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 0.45 });
   const sinCache = decidirTierAutomatico(base, null);
   const vieneDeHaiku = decidirTierAutomatico(base, 'haiku');
   assert.equal(sinCache.tier, 'sonnet');
