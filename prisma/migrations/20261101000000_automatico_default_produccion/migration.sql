@@ -1,0 +1,17 @@
+-- T16 (motor-claude): el dueño decidió que producción corra el modo
+-- "automatico" por defecto (Sonnet 5.5 por defecto, Haiku si el crédito del
+-- ciclo viene corto, Opus en los últimos días si sobra crédito), sin nada
+-- más para configurar más allá de cargar la clave de Anthropic en
+-- /admin/motores con el preset Claude Haiku 5.5 (ver
+-- odd/tasks/motor-claude.md §T16).
+--
+-- La migración 20261031000000_automatico_y_pulido ya dejó 'automatico' como
+-- DEFAULT de SQL para una fila de AppSettings NUEVA, pero deliberadamente no
+-- tocó la fila EXISTENTE de producción (todavía en 'base', el valor con el
+-- que arrancó toda instalación de antes de T14). Esta migración hace ese
+-- paso que faltaba: migra la fila existente SÓLO si todavía está en el
+-- default viejo ('base') — cualquier otro valor que el dueño ya eligió a
+-- mano (revisor-sonnet, crea-sonnet, crea-opus, todo-sonnet, todo-opus,
+-- haiku-pulido, personalizado) queda intacto, nunca se pisa una decisión
+-- explícita.
+UPDATE "AppSettings" SET "generationMode" = 'automatico' WHERE "generationMode" = 'base';
