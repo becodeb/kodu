@@ -156,6 +156,19 @@ export async function duplicateProject(
   targetUserId: string,
   createdByDemo = false,
 ) {
+  // El ejemplo editorial se copia con el mismo contrato que la galería:
+  // HTML editable, hilo nuevo y publicación privada. No inventa un docente.
+  const { CELULA_EJEMPLO_ID, ejemplos } = await import('./ejemplos.ts');
+  if (sourceId === CELULA_EJEMPLO_ID) {
+    const { leerCelulaEjemplo } = await import('./ejemplos-servidor.ts');
+    return createProject({
+      userId: targetUserId,
+      title: ejemplos[0].titulo + ' (copia)',
+      description: ejemplos[0].descripcion,
+      html: await leerCelulaEjemplo(),
+      createdByDemo,
+    });
+  }
   const source = await prisma.project.findFirst({
     where: { id: sourceId, isInGallery: true },
     select: { title: true, description: true, currentHtml: true },

@@ -1,0 +1,102 @@
+import 'dotenv/config';
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+import { chromium } from 'playwright';
+import { prisma } from '../src/lib/db.ts';
+import { createSessionToken, SESSION_COOKIE } from '../src/lib/auth/session.ts';
+import { CELULA_EJEMPLO_ID } from '../src/lib/ejemplos.ts';
+
+/** Con servidor y base local: KODU_BASE_URL=http://localhost:3001 npx tsx e2e/landing.ts */
+const base = process.env.KODU_BASE_URL ?? 'http://localhost:3000';
+assert(['localhost','127.0.0.1'].includes(new URL(base).hostname), 'Esta prueba crea datos temporales: usar servidor local.');
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+const errors: string[] = [];
+page.on('pageerror', error => errors.push(error.message));
+let userId: string | undefined;
+await mkdir('output/landing-qa', { recursive: true });
+try {
+  const response = await page.goto(base);
+  assert.equal(response?.status(), 200);
+  await page.evaluate(() => document.fonts.ready);
+  assert.match(await page.locator('#hero-title').innerText(), /Tu forma de enseñar/);
+  await page.addStyleTag({content:'astro-dev-toolbar{display:none!important}'});
+  const demo = page.frameLocator('#live-demo');
+  await demo.locator('.model img').evaluate(async (image: HTMLImageElement) => { await image.decode(); });
+  await demo.locator('[data-state="ready"]').waitFor({timeout:60000});
+  await demo.locator('#structure').selectOption('mitocondria');
+  assert.equal(await demo.locator('#organelle-name').innerText(), 'Mitocondria');
+  await demo.getByRole('button', { name: 'Comparar', exact: true }).click();
+  await demo.locator('#compare-a').selectOption('reticulo');
+  await demo.locator('#compare-b').selectOption('golgi');
+  assert.match(await demo.locator('#comparison').innerText(), /Retículo rugoso/);
+  assert.match(await demo.locator('#comparison').innerText(), /Aparato de Golgi/);
+  await demo.getByRole('button', { name: 'Desafío', exact: true }).click();
+  await demo.locator('#structure').selectOption('nucleo');
+  assert.equal(await demo.locator('#feedback').getAttribute('data-correct'), 'false');
+  assert(await demo.locator('#next-question').isDisabled());
+  for (const id of ['mitocondria','golgi','membrana','lisosoma']) {
+    await demo.locator('#structure').selectOption(id);
+    assert.equal(await demo.locator('#feedback').getAttribute('data-correct'), 'true');
+    await demo.locator('#next-question').click();
+  }
+  assert.equal(await demo.locator('#quiz-count').innerText(), 'DESAFÍO COMPLETADO');
+  await demo.locator('#next-question').click();
+  assert.equal(await demo.locator('#quiz-count').innerText(), 'PISTA 1 DE 4');
+  await page.getByRole('button', { name: 'Funciones', exact: true }).click();
+  assert.match(await page.locator('#live-demo').getAttribute('src') ?? '', /explorador-funciones/);
+  await page.getByRole('button', { name: 'Célula animal', exact: true }).click();
+  await demo.locator('.model img').evaluate(async (image: HTMLImageElement) => { await image.decode(); });
+  await demo.locator('[data-state="ready"]').waitFor({timeout:60000});
+  await page.waitForTimeout(2800);
+  await demo.locator('body').evaluate(body => { const style=document.createElement('style');style.textContent='astro-dev-toolbar{display:none!important}';body.append(style); });
+  await page.screenshot({path:'output/landing-qa/desktop.png',fullPage:true});
+  for(const width of [390,768,1024]){
+    await page.setViewportSize({width,height:900});
+    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth), 'Overflow en landing a '+width);
+    assert(await demo.locator('body').evaluate(()=>document.documentElement.scrollWidth<=innerWidth), 'Overflow en demo a '+width);
+    if(width===390) await page.screenshot({path:'output/landing-qa/mobile.png',fullPage:true});
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  const cell = await page.goto(base+'/p/'+CELULA_EJEMPLO_ID);
+  assert.equal(cell?.status(),200);
+  assert.match(cell?.headers()['content-security-policy']??'', /form-action 'none'/);
+  await page.locator('#structure').focus();
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#organelle-name').innerText(),'Mitocondria');
+  await page.goto(base+'/gallery');
+  assert.equal(await page.getByRole('heading',{name:'La célula animal',exact:true}).count(),1);
+  await page.getByRole('button',{name:'Duplicar',exact:true}).first().scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('astro-island')).some(el => el.textContent?.includes('Duplicar') && !el.hasAttribute('ssr')));
+  await page.getByRole('button',{name:'Duplicar',exact:true}).first().click();
+  await page.waitForURL('**/login?**');
+  const guest = await page.request.post(base+'/api/projects/'+CELULA_EJEMPLO_ID+'/duplicate',{headers:{Origin:base}});
+  assert.equal(guest.status(),401);
+  const user = await prisma.user.create({data:{name:'QA landing temporal',email:'landing-'+crypto.randomUUID()+'@kodu.local',emailVerifiedAt:new Date(),aiAccessOverride:true}});
+  userId=user.id;
+  const token=await createSessionToken(user);
+  await page.context().addCookies([{name:SESSION_COOKIE,value:token,url:base,httpOnly:true,sameSite:'Lax'}]);
+  const duplicate=await page.request.post(base+'/api/projects/'+CELULA_EJEMPLO_ID+'/duplicate',{headers:{Origin:base}});
+  assert.equal(duplicate.status(),200,await duplicate.text());
+  const body=await duplicate.json();
+  const copy=await prisma.project.findFirstOrThrow({where:{userId},include:{threads:true}});
+  assert.equal(copy.isInGallery,false);
+  assert.equal(copy.threads.length,1);
+  assert.match(copy.currentHtml,/quiz-panel/);
+  assert.match(copy.currentHtml,/\/recursos\/celula\/ilustracion-v1.webp/);
+  assert.notEqual(copy.slug,CELULA_EJEMPLO_ID);
+  await page.goto(base+'/p/'+copy.slug);
+  await page.locator('.model img').evaluate(async (image:HTMLImageElement)=>{await image.decode()});
+  await page.locator('[data-state="ready"]').waitFor({timeout:60000});
+  await page.locator('#structure').selectOption('golgi');
+  assert.equal(await page.locator('#organelle-name').innerText(),'Aparato de Golgi');
+  assert(body);
+  assert.deepEqual(errors,[]);
+  console.log('OK: landing, móvil/tablet, exploración, comparación, desafío, teclado, CSP, galería, acceso y copia editable.');
+} finally {
+  if(userId) await prisma.user.delete({where:{id:userId}});
+  await prisma.$disconnect();
+  await browser.close();
+}

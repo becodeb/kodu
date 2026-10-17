@@ -3,6 +3,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import DuplicateButton from '../components/DuplicateButton.tsx';
 import BotonLike from '../components/BotonLike.tsx';
 import { prisma } from '../lib/db.ts';
+import { ejemplos, CELULA_EJEMPLO_ID } from '../lib/ejemplos.ts';
 
 /** Galería comunitaria (SPEC §5.3): sólo los recursos con el switch activo. */
 const user = Astro.locals.user;
@@ -54,10 +55,35 @@ const likeados = user
     </p>
   </header>
 
+  <section class="mt-8" aria-labelledby="ejemplos-title">
+    <h2 id="ejemplos-title" class="text-lg font-semibold text-ink-900">Para explorar con Kodu</h2>
+    <p class="mt-1 text-sm text-ink-500">Ejemplos interactivos. Abrilos, probalos y llevá nuevas ideas a tu clase.</p>
+    <ul class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {ejemplos.map((ejemplo) => (
+        <li class="kodu-card flex flex-col overflow-hidden">
+          <a href={ejemplo.url} target="_blank" rel="noopener noreferrer">
+            <img src={ejemplo.imagen} alt={ejemplo.alt} width="900" height="600" loading="lazy" class="h-48 w-full border-b border-linea object-cover" />
+          </a>
+          <div class="flex flex-1 flex-col p-4">
+            <p class="text-xs font-medium text-brand-600">{ejemplo.area}</p>
+            <h3 class="mt-2 font-semibold text-ink-900">{ejemplo.titulo}</h3>
+            <p class="mt-1 text-xs text-ink-500">por Kodu · Recurso de ejemplo</p>
+            <p class="mt-3 flex-1 text-sm text-ink-700">{ejemplo.descripcion}</p>
+            <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-linea pt-3">
+              <a href={ejemplo.url} target="_blank" rel="noopener noreferrer" class="kodu-btn-primary px-2.5 py-1.5 text-xs">Probar a pantalla completa</a>
+              {ejemplo.id === CELULA_EJEMPLO_ID && <DuplicateButton client:visible projectId={CELULA_EJEMPLO_ID} isLoggedIn={Boolean(user)} />}
+            </div>
+          </div>
+        </li>
+      ))}
+    </ul>
+  </section>
+  <h2 class="mt-10 text-lg font-semibold text-ink-900">Compartidos por la comunidad</h2>
+
   {
     projects.length === 0 ? (
       <div class="kodu-card mt-6 p-10 text-center">
-        <h2 class="text-lg font-semibold text-ink-900">La galería todavía está vacía</h2>
+        <h3 class="text-lg font-semibold text-ink-900">Todavía no hay recursos de la comunidad</h3>
         <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
           Cuando publiques un recurso desde el editor va a aparecer acá para el resto de la red.
         </p>

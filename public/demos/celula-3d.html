@@ -1,372 +1,144 @@
 <!doctype html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Célula animal en 3D</title>
-    <style>
-      * {
-        box-sizing: border-box;
-        margin: 0;
-      }
-      body {
-        font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-        background: #f4f6fb;
-        color: #10131f;
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      header {
-        padding: 14px 20px 10px;
-        display: flex;
-        align-items: baseline;
-        justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
-      }
-      h1 {
-        font-size: 19px;
-        letter-spacing: -0.02em;
-      }
-      .pista {
-        font-size: 13px;
-        color: #6b7185;
-      }
-      main {
-        flex: 1;
-        display: grid;
-        grid-template-columns: 1fr 240px;
-        gap: 14px;
-        padding: 0 20px 16px;
-        min-height: 0;
-      }
-      .escena {
-        position: relative;
-        background:
-          radial-gradient(120% 90% at 30% 10%, #ffffff, #e9edf7 70%);
-        border: 1px solid #dfe4f0;
-        border-radius: 10px;
-        overflow: hidden;
-        cursor: grab;
-      }
-      .escena:active {
-        cursor: grabbing;
-      }
-      canvas {
-        display: block;
-        width: 100%;
-        height: 100%;
-      }
-      .panel {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        min-height: 0;
-      }
-      .ficha {
-        background: #fff;
-        border: 1px solid #dfe4f0;
-        border-radius: 10px;
-        padding: 14px;
-        flex: 1;
-        overflow: auto;
-      }
-      .ficha h2 {
-        font-size: 15px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .bolita {
-        width: 12px;
-        height: 12px;
-        border-radius: 999px;
-        flex: none;
-      }
-      .ficha p {
-        margin-top: 8px;
-        font-size: 13.5px;
-        line-height: 1.55;
-        color: #444a5c;
-      }
-      .lista {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 6px;
-      }
-      .lista button {
-        font: inherit;
-        font-size: 12.5px;
-        text-align: left;
-        padding: 7px 9px;
-        border: 1px solid #dfe4f0;
-        background: #fff;
-        border-radius: 8px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        color: #10131f;
-      }
-      .lista button[aria-pressed='true'] {
-        border-color: #4f46e5;
-        background: #f0efff;
-      }
-      .controles {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-size: 12.5px;
-        color: #6b7185;
-      }
-      .controles button {
-        font: inherit;
-        border: 1px solid #dfe4f0;
-        background: #fff;
-        border-radius: 8px;
-        padding: 6px 12px;
-        cursor: pointer;
-        color: #10131f;
-        font-weight: 600;
-      }
-      @media (max-width: 720px) {
-        main {
-          grid-template-columns: 1fr;
-          grid-template-rows: 1fr auto;
-        }
-        .ficha {
-          flex: none;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Célula animal en 3D</h1>
-      <span class="pista">Arrastrá para girarla · tocá un organelo para ver qué hace</span>
-    </header>
-
-    <main>
-      <div class="escena" id="escena"><canvas id="lienzo"></canvas></div>
-
-      <div class="panel">
-        <div class="lista" id="lista"></div>
-        <div class="ficha">
-          <h2><span class="bolita" id="ficha-color"></span><span id="ficha-nombre">La célula</span></h2>
-          <p id="ficha-texto">
-            Girala para ver dónde está cada parte. Tocá un organelo en la escena o elegilo de la
-            lista de arriba.
-          </p>
-        </div>
-        <div class="controles">
-          <button id="girar">Pausar giro</button>
-          <span id="estado">girando</span>
-        </div>
-      </div>
-    </main>
-
-    <script>
-      const ORGANELOS = [
-        { id: 'nucleo', nombre: 'Núcleo', color: '#4f46e5', r: 34, pos: [0, 0, 0], texto: 'Guarda el ADN y dirige todo lo que hace la célula. Decide qué proteínas se fabrican y cuándo.' },
-        { id: 'mitocondria', nombre: 'Mitocondria', color: '#e0483d', r: 17, pos: [70, -34, 26], texto: 'Es la usina: convierte los nutrientes en la energía que la célula usa para funcionar.' },
-        { id: 'mitocondria2', nombre: 'Mitocondria', color: '#e0483d', r: 15, pos: [-66, 44, -30], texto: 'Es la usina: convierte los nutrientes en la energía que la célula usa para funcionar.' },
-        { id: 'reticulo', nombre: 'Retículo rugoso', color: '#0f9d76', r: 21, pos: [-58, -46, 24], texto: 'Una red de membranas cubierta de ribosomas donde se arman y se pliegan las proteínas.' },
-        { id: 'golgi', nombre: 'Aparato de Golgi', color: '#e8a020', r: 20, pos: [58, 50, -18], texto: 'Empaqueta y despacha lo que fabrica la célula, como un centro de distribución.' },
-        { id: 'lisosoma', nombre: 'Lisosoma', color: '#8b5cf6', r: 12, pos: [24, 70, 40], texto: 'Digiere los restos y lo que ya no sirve. Es el sistema de reciclado.' },
-        { id: 'ribosoma', nombre: 'Ribosoma', color: '#2b7fd4', r: 8, pos: [-30, -70, -44], texto: 'Lee las instrucciones del ADN y arma las proteínas, aminoácido por aminoácido.' },
-        { id: 'vacuola', nombre: 'Vacuola', color: '#39b8c4', r: 16, pos: [-78, 6, 48], texto: 'Almacena agua, nutrientes y desechos hasta que la célula los necesita o los expulsa.' },
-      ];
-
-      const RADIO_CELULA = 118;
-      const lienzo = document.getElementById('lienzo');
-      const ctx = lienzo.getContext('2d');
-      const escena = document.getElementById('escena');
-
-      let anguloY = 0.6;
-      let anguloX = -0.25;
-      let girando = true;
-      let seleccionado = null;
-      let arrastrando = false;
-      let ultimo = null;
-      let proyectados = [];
-
-      function medir() {
-        const dpr = window.devicePixelRatio || 1;
-        const r = escena.getBoundingClientRect();
-        lienzo.width = r.width * dpr;
-        lienzo.height = r.height * dpr;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        return r;
-      }
-
-      let caja = medir();
-      window.addEventListener('resize', () => (caja = medir()));
-
-      function rotar([x, y, z]) {
-        const cy = Math.cos(anguloY), sy = Math.sin(anguloY);
-        const cx = Math.cos(anguloX), sx = Math.sin(anguloX);
-        const x1 = x * cy - z * sy;
-        const z1 = x * sy + z * cy;
-        const y1 = y * cx - z1 * sx;
-        const z2 = y * sx + z1 * cx;
-        return [x1, y1, z2];
-      }
-
-      function dibujar() {
-        const w = caja.width;
-        const h = caja.height;
-        const cx = w / 2;
-        const cy = h / 2;
-        const escala = Math.min(w, h) / 330;
-
-        ctx.clearRect(0, 0, w, h);
-
-        // Membrana: dos círculos para dar volumen
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(escala, escala);
-
-        const grad = ctx.createRadialGradient(-40, -50, 20, 0, 0, RADIO_CELULA);
-        grad.addColorStop(0, 'rgba(255,255,255,.95)');
-        grad.addColorStop(0.65, 'rgba(219,228,246,.55)');
-        grad.addColorStop(1, 'rgba(160,177,214,.45)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(0, 0, RADIO_CELULA, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#8ea2ce';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,.9)';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(0, 0, RADIO_CELULA - 5, 0, Math.PI * 2);
-        ctx.stroke();
-
-        proyectados = ORGANELOS.map((o) => {
-          const [x, y, z] = rotar(o.pos);
-          const p = 340 / (340 + z); // perspectiva
-          return { ...o, x: x * p, y: y * p, z, radio: o.r * p };
-        }).sort((a, b) => a.z - b.z);
-
-        for (const o of proyectados) {
-          const activo = seleccionado === o.id;
-          const luz = ctx.createRadialGradient(
-            o.x - o.radio * 0.35,
-            o.y - o.radio * 0.4,
-            o.radio * 0.15,
-            o.x,
-            o.y,
-            o.radio,
-          );
-          luz.addColorStop(0, '#ffffff');
-          luz.addColorStop(0.35, o.color);
-          luz.addColorStop(1, sombra(o.color));
-          ctx.beginPath();
-          ctx.arc(o.x, o.y, o.radio, 0, Math.PI * 2);
-          ctx.fillStyle = luz;
-          ctx.globalAlpha = o.z < -60 ? 0.75 : 1;
-          ctx.fill();
-          ctx.globalAlpha = 1;
-
-          if (activo) {
-            ctx.strokeStyle = '#10131f';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(o.x, o.y, o.radio + 5, 0, Math.PI * 2);
-            ctx.stroke();
-
-            ctx.font = '600 13px system-ui, sans-serif';
-            const etiqueta = o.nombre;
-            const ancho = ctx.measureText(etiqueta).width + 14;
-            const ex = o.x + o.radio + 10;
-            const ey = o.y - 10;
-            ctx.fillStyle = '#10131f';
-            ctx.beginPath();
-            ctx.roundRect(ex, ey, ancho, 22, 6);
-            ctx.fill();
-            ctx.fillStyle = '#fff';
-            ctx.fillText(etiqueta, ex + 7, ey + 15);
-          }
-        }
-
-        ctx.restore();
-      }
-
-      function sombra(hex) {
-        const n = parseInt(hex.slice(1), 16);
-        const r = Math.round(((n >> 16) & 255) * 0.55);
-        const g = Math.round(((n >> 8) & 255) * 0.55);
-        const b = Math.round((n & 255) * 0.55);
-        return `rgb(${r},${g},${b})`;
-      }
-
-      function seleccionar(id) {
-        seleccionado = id;
-        const o = ORGANELOS.find((x) => x.id === id);
-        document.getElementById('ficha-nombre').textContent = o ? o.nombre : 'La célula';
-        document.getElementById('ficha-texto').textContent = o
-          ? o.texto
-          : 'Girala para ver dónde está cada parte.';
-        document.getElementById('ficha-color').style.background = o ? o.color : 'transparent';
-        for (const b of document.querySelectorAll('.lista button')) {
-          b.setAttribute('aria-pressed', String(b.dataset.id === id));
-        }
-      }
-
-      // Lista lateral (sin repetir la segunda mitocondria)
-      const vistos = new Set();
-      const lista = document.getElementById('lista');
-      for (const o of ORGANELOS) {
-        if (vistos.has(o.nombre)) continue;
-        vistos.add(o.nombre);
-        const b = document.createElement('button');
-        b.dataset.id = o.id;
-        b.setAttribute('aria-pressed', 'false');
-        b.innerHTML = `<span class="bolita" style="background:${o.color}"></span>${o.nombre}`;
-        b.addEventListener('click', () => seleccionar(o.id));
-        lista.appendChild(b);
-      }
-
-      escena.addEventListener('pointerdown', (e) => {
-        arrastrando = true;
-        ultimo = { x: e.clientX, y: e.clientY };
-        escena.setPointerCapture(e.pointerId);
-      });
-      escena.addEventListener('pointermove', (e) => {
-        if (!arrastrando) return;
-        anguloY += (e.clientX - ultimo.x) * 0.01;
-        anguloX += (e.clientY - ultimo.y) * 0.008;
-        anguloX = Math.max(-1.2, Math.min(1.2, anguloX));
-        ultimo = { x: e.clientX, y: e.clientY };
-      });
-      escena.addEventListener('pointerup', (e) => {
-        arrastrando = false;
-        // Un clic sin arrastre selecciona el organelo de arriba de todo
-        const r = escena.getBoundingClientRect();
-        const escala = Math.min(r.width, r.height) / 330;
-        const px = (e.clientX - r.left - r.width / 2) / escala;
-        const py = (e.clientY - r.top - r.height / 2) / escala;
-        let elegido = null;
-        for (const o of proyectados) {
-          if (Math.hypot(px - o.x, py - o.y) <= o.radio + 3) elegido = o.id;
-        }
-        if (elegido) seleccionar(elegido);
-      });
-
-      document.getElementById('girar').addEventListener('click', (e) => {
-        girando = !girando;
-        e.target.textContent = girando ? 'Pausar giro' : 'Reanudar giro';
-        document.getElementById('estado').textContent = girando ? 'girando' : 'en pausa';
-      });
-
-      (function bucle() {
-        if (girando && !arrastrando) anguloY += 0.004;
-        dibujar();
-        requestAnimationFrame(bucle);
-      })();
-    </script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>La célula animal · Explorá, compará y descubrí</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fafaff;color:#24204e;font-family:system-ui,-apple-system,sans-serif}button,select{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #e5a328;outline-offset:3px}button:disabled{cursor:default}header{padding:18px 22px 12px;display:flex;align-items:center;justify-content:space-between;gap:14px}h1{font-size:20px;letter-spacing:-.04em;margin:0}header p{font-size:10px;color:#76708f;margin:5px 0 0}#progress{font-size:10px;color:#736a98;white-space:nowrap}.modes{display:flex;gap:5px;padding:0 22px 14px;border-bottom:1px solid #e8e5f4}.modes button{background:transparent;border:1px solid transparent;border-radius:7px;padding:8px 16px;font-size:11px;color:#6d638b}.modes button[aria-pressed=true]{color:#3b2ce7;background:#eeebff;border-color:#dcd5ff}.layout{display:grid;grid-template-columns:minmax(0,1fr) 205px;align-items:center;max-width:1300px;margin:auto;padding:10px 16px 14px;gap:10px}.visual{position:relative;min-width:0}.model{position:relative;width:100%;max-width:440px;margin:auto;aspect-ratio:1}.model img{width:100%;height:100%;display:block;border-radius:18px}.hotspot{position:absolute;left:var(--x);top:var(--y);transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px;background:#fffffff2;border:1px solid #d2caff;border-radius:7px;box-shadow:0 3px 9px #3b2ce71a;color:#302166;font-size:clamp(8px,1.25vw,11px);padding:7px 9px;white-space:nowrap;transition:box-shadow .2s}.hotspot:before{content:'';width:5px;height:5px;border-radius:50%;background:#8c74ed;flex:none}.hotspot[aria-pressed=true]{border-color:#3b2ce7;box-shadow:0 0 0 3px #3b2ce724;background:#3b2ce7;color:#fff}.hotspot[aria-pressed=true]:before{background:#ffcb67}.visual-note{text-align:center;color:#817892;font-size:9px;margin:3px 0 0}.details{align-self:center;padding:14px 10px;min-width:0}.kicker{font-size:9px;letter-spacing:.13em;color:#877caa;text-transform:uppercase;margin:0 0 10px}.details h2{font-size:23px;letter-spacing:-.045em;line-height:1.15;margin:0 0 13px}.details p{font-size:12px;line-height:1.7;color:#706588;margin:0 0 15px}.function{border-top:1px solid #e2ddef;padding-top:13px}.function strong{font-size:11px}.function ul{padding-left:16px;color:#6b6183;font-size:11px;line-height:1.9}.relation{background:#f0edff;padding:12px;border-radius:9px;margin-top:14px}.relation strong{font-size:10px;color:#3b2ce7}.relation p{font-size:11px;margin:5px 0 0;line-height:1.6}.next{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:18px}.next button,.quiz-action{border:1px solid #ddd5f6;color:#3b2ce7;background:white;border-radius:7px;padding:9px 12px;font-size:11px}.next span{font-size:9px;color:#877caa}.compare-label{display:block;font-size:10px;color:#736885;margin:10px 0 5px}select{width:100%;border:1px solid #dcd5ed;border-radius:6px;padding:8px;color:#34295c;background:white;font-size:12px}.comparison{margin-top:12px;padding-top:10px;border-top:1px solid #e4def0}.comparison h3{font-size:13px;margin:0 0 6px;color:#3b2ce7}.comparison p{font-size:11px;line-height:1.65}.quiz-question{font-weight:600;color:#33235f!important}.feedback{padding:11px;border-radius:8px;background:#eeeaff;font-size:11px!important;line-height:1.6;min-height:52px}.feedback[data-correct=true]{background:#e3f5ed;color:#236247}.feedback[data-correct=false]{background:#fff2d6;color:#795012}.quiz-action{background:#3b2ce7;color:white;width:100%;margin-top:7px;border-color:#3b2ce7}.quiz-action:disabled{opacity:.45}footer{border-top:1px solid #e8e5f4;display:flex;justify-content:space-between;padding:10px 22px;font-size:9px;color:#8d829e;gap:12px}footer a{color:#6e609b}noscript{display:block;padding:24px;color:#3b2ce7} [hidden]{display:none!important}
+@media(min-width:1050px){.model{max-width:700px}.layout{grid-template-columns:minmax(0,1fr) 290px}.details h2{font-size:32px}.details p{font-size:15px}.function strong{font-size:14px}.function ul{font-size:14px}.relation p{font-size:13px}.hotspot{font-size:12px}.details{padding:24px}.comparison p{font-size:14px}}
+@media(max-width:600px){header{padding:15px 15px 10px}h1{font-size:18px}header p{font-size:9px}#progress{font-size:9px}.modes{padding:0 12px 10px;gap:3px}.modes button{font-size:10px;padding:8px 13px;min-height:36px}.layout{display:block;padding:4px 10px 12px}.model{max-width:400px}.hotspot{font-size:9px;padding:9px 7px;min-height:32px}.details{padding:16px 10px}.details h2{font-size:22px;margin-bottom:8px}.details p{font-size:12px;line-height:1.65}.function{display:none}.relation{margin-top:10px;padding:10px}.next{margin-top:12px}.visual-note{font-size:8px}footer{padding:10px 15px;font-size:8px}.comparison{display:inline-block;width:49%;vertical-align:top;padding-right:12px}select{font-size:16px}.compare-label{margin-top:6px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+<style>
+.model{background:radial-gradient(ellipse at 48% 40%,#faf8ff,#ede8fb);border-radius:20px;isolation:isolate;overflow:hidden;max-width:520px}
+.cell-canvas{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:1;cursor:grab;touch-action:pan-y}
+.cell-canvas:active{cursor:grabbing}.model>img{position:relative;z-index:0}.model.is-3d>img{visibility:hidden}
+.hotspot{z-index:2;font-size:10px;background:#ffffffeb;padding:7px 9px;backdrop-filter:blur(8px)}
+.viewer-status{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px auto 0;max-width:520px;color:#71618d;font-size:10px;min-height:24px}
+.viewer-status strong{font-weight:500}.scene-controls{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin:9px auto 0;max-width:520px}
+.scene-controls button{background:#fff;border:1px solid #ded7ed;color:#554175;border-radius:7px;padding:7px 10px;font-size:10px;min-height:32px}
+.scene-controls button[aria-pressed=true]{background:#eee8ff;color:#5037b3}.scene-controls .zoom-control{font-size:16px;width:34px;padding:3px}
+.structure-picker{margin:12px auto 0;max-width:520px;display:flex;align-items:center;gap:12px}
+.structure-picker label{white-space:nowrap;font-size:10px;color:#736885}.structure-picker select{max-width:200px;font-size:11px;padding:7px}
+@media(min-width:1050px){.model{max-width:650px}.viewer-status,.scene-controls,.structure-picker{max-width:650px}}
+@media(max-width:600px){.model{max-width:400px}.hotspot{font-size:9px}.scene-controls button{min-height:38px}.structure-picker select{font-size:16px}.viewer-status{font-size:9px}.layout{padding-top:9px}}
+</style>
+</head>
+<body>
+<header><div><h1>La célula animal</h1><p>7.º grado · Explorá sus partes y descubrí cómo trabajan juntas</p></div><span id="progress" aria-live="polite">1 de 6 explorados</span></header>
+<nav class="modes" aria-label="Modo de la actividad"><button type="button" data-mode="explore" aria-pressed="true">Explorar</button><button type="button" data-mode="compare" aria-pressed="false">Comparar</button><button type="button" data-mode="quiz" aria-pressed="false">Desafío</button></nav>
+<main class="layout">
+  <section class="visual" aria-label="Modelo ilustrado de la célula">
+    <div class="model" data-cell-viewer data-model="/recursos/celula/modelo-v1.glb" data-state="loading"><img src="/recursos/celula/ilustracion-v1.webp" crossorigin="anonymous" width="1100" height="1100" alt="Corte ilustrado de una célula animal: núcleo violeta, mitocondria naranja, retículo rugoso, aparato de Golgi azul, lisosoma y membrana." fetchpriority="high">
+      <button class="hotspot" data-id="membrana" style="--x:23%;--y:17%" aria-pressed="false">Membrana</button>
+      <button class="hotspot" data-id="nucleo" style="--x:60%;--y:35%" aria-pressed="true">Núcleo</button>
+      <button class="hotspot" data-id="reticulo" style="--x:77%;--y:47%" aria-pressed="false">Retículo rugoso</button>
+      <button class="hotspot" data-id="mitocondria" style="--x:25%;--y:53%" aria-pressed="false">Mitocondria</button>
+      <button class="hotspot" data-id="golgi" style="--x:69%;--y:71%" aria-pressed="false">Aparato de Golgi</button>
+      <button class="hotspot" data-id="lisosoma" style="--x:39%;--y:69%" aria-pressed="false">Lisosoma</button>
+    </div>
+    <div class="viewer-status"><strong id="render-status" role="status">Preparando la célula en 3D…</strong><span>Modelo didáctico</span></div>
+    <div class="scene-controls" id="scene-controls" role="group" aria-label="Controles de la vista 3D" hidden>
+      <button type="button" id="reset-view">Vista inicial</button>
+      <button type="button" id="toggle-labels" aria-pressed="true">Etiquetas</button>
+      <button type="button" id="zoom-out" class="zoom-control" aria-label="Alejar">−</button>
+      <button type="button" id="zoom-in" class="zoom-control" aria-label="Acercar">+</button>
+    </div>
+    <div class="structure-picker"><label for="structure">Elegir estructura</label><select id="structure"></select></div>
+    <p class="visual-note">Colores y proporciones simplificados. También podés elegir una estructura con el teclado.</p>
+  </section>
+  <aside class="details">
+    <section id="explore-panel">
+      <p class="kicker">UNA CÉLULA, MUCHAS FUNCIONES</p>
+      <div aria-live="polite" aria-atomic="true"><h2 id="organelle-name">Núcleo</h2><p id="organelle-description"></p><div class="function"><strong>Su función</strong><ul id="organelle-functions"></ul></div><div class="relation"><strong>Trabaja en equipo</strong><p id="organelle-relation"></p></div></div>
+      <div class="next"><button id="previous" aria-label="Organelo anterior">←</button><span id="position">1 / 6</span><button id="next" aria-label="Organelo siguiente">→</button></div>
+    </section>
+    <section id="compare-panel" hidden>
+      <p class="kicker">PENSÁ EN SUS DIFERENCIAS</p><h2>Compará funciones</h2><label class="compare-label" for="compare-a">Primera estructura</label><select id="compare-a"></select><label class="compare-label" for="compare-b">Segunda estructura</label><select id="compare-b"></select>
+      <div id="comparison" aria-live="polite"></div><p>¿Por qué una no podría reemplazar a la otra? Explicalo con tus palabras.</p>
+    </section>
+    <section id="quiz-panel" hidden>
+      <p class="kicker" id="quiz-count"></p><h2>¿Quién lo hace?</h2><p id="question" class="quiz-question"></p><p>Elegí una estructura en el modelo.</p><p id="feedback" class="feedback" role="status"></p><button class="quiz-action" id="next-question" disabled>Siguiente pista →</button>
+    </section>
+  </aside>
+</main>
+<noscript>Activá JavaScript para explorar las funciones de cada organelo y resolver las actividades.</noscript>
+<footer><span>Un recurso de Kodu · Ciencias naturales</span><a href="https://openstax.org/books/biology-2e/pages/4-3-eukaryotic-cells" target="_blank" rel="noopener noreferrer">Referencia: OpenStax Biology 2e ↗</a></footer>
+<script>
+const parts=[
+ {id:'nucleo',name:'Núcleo',description:'Contiene la mayor parte del ADN de la célula. Esa información permite regular su actividad y fabricar las proteínas que necesita.',functions:['Conserva la información genética.','Participa en la regulación de la actividad celular.'],relation:'Las instrucciones del ADN se copian en ARN. Los ribosomas usan esa información para fabricar proteínas.',short:'Conserva la información genética y regula la actividad celular.'},
+ {id:'mitocondria',name:'Mitocondria',description:'Transforma la energía de los nutrientes en ATP mediante la respiración celular. El ATP permite realizar muchas tareas de la célula.',functions:['Participa en la respiración celular.','Produce gran parte del ATP celular.'],relation:'Las actividades de transporte, síntesis y mantenimiento de la célula necesitan energía disponible.',short:'Produce gran parte del ATP que la célula utiliza.'},
+ {id:'reticulo',name:'Retículo rugoso',description:'Es una red de membranas con ribosomas adheridos. Participa en la producción y el plegamiento de proteínas destinadas a membranas o a la secreción.',functions:['Recibe proteínas de los ribosomas adheridos.','Ayuda a plegarlas y enviarlas en vesículas.'],relation:'Muchas proteínas viajan desde el retículo hasta el aparato de Golgi para continuar su procesamiento.',short:'Participa en la producción y el plegamiento de proteínas.'},
+ {id:'golgi',name:'Aparato de Golgi',description:'Recibe proteínas y lípidos, los modifica, los clasifica y los envía hacia distintos destinos en vesículas.',functions:['Modifica y clasifica moléculas.','Las distribuye en vesículas.'],relation:'Recibe materiales del retículo endoplasmático y los dirige hacia la membrana, los lisosomas u otros destinos.',short:'Modifica, clasifica y distribuye proteínas y lípidos.'},
+ {id:'lisosoma',name:'Lisosoma',description:'Contiene enzimas que degradan materiales y componentes celulares desgastados. Así, la célula puede reutilizar parte de sus materiales.',functions:['Degrada materiales con enzimas.','Participa en el reciclado celular.'],relation:'Sus enzimas se producen en el retículo rugoso y se procesan y distribuyen a través del aparato de Golgi.',short:'Degrada materiales y permite reciclar componentes celulares.'},
+ {id:'membrana',name:'Membrana plasmática',description:'Delimita la célula y regula el intercambio con el entorno. Es una barrera selectiva: no todas las sustancias la atraviesan de la misma manera.',functions:['Separa el interior del exterior.','Regula intercambios y recibe señales.'],relation:'El intercambio controlado permite incorporar nutrientes y eliminar desechos, manteniendo condiciones internas adecuadas.',short:'Delimita la célula y regula su intercambio con el entorno.'}
+];
+const questions=[
+ {id:'mitocondria',text:'Una célula muscular necesita mucho ATP para contraerse. ¿Qué organelo participa en producir gran parte de ese ATP?',hint:'Buscá la estructura vinculada con la respiración celular.',why:'Las mitocondrias producen ATP mediante la respiración celular. Las células con alta demanda de energía suelen tener muchas.'},
+ {id:'golgi',text:'Una proteína ya salió del retículo. Ahora necesita ser clasificada y enviada a su destino. ¿Dónde ocurre este proceso?',hint:'Pensá en la estructura que modifica, clasifica y distribuye materiales.',why:'El aparato de Golgi modifica y clasifica moléculas, y las distribuye en vesículas.'},
+ {id:'membrana',text:'La célula necesita controlar qué sustancias entran y salen. ¿Qué estructura hace posible ese intercambio selectivo?',hint:'Es el límite entre la célula y su entorno.',why:'La membrana plasmática es selectivamente permeable y regula el intercambio con el entorno.'},
+ {id:'lisosoma',text:'Un componente celular está desgastado. ¿Qué organelo ayuda a degradarlo para reutilizar sus materiales?',hint:'Buscá una estructura con enzimas que degradan materiales.',why:'Los lisosomas contienen enzimas que degradan materiales y participan en el reciclado celular.'}
+];
+const $=id=>document.getElementById(id);
+let mode='explore',selected=0,questionIndex=0,answered=false,finished=false;
+const visited=new Set(['nucleo']);
+function mark(ids){
+ document.querySelectorAll('.hotspot').forEach(b=>b.setAttribute('aria-pressed',String(ids.includes(b.dataset.id))));
+ if(ids.length===1)$('structure').value=ids[0];
+ window.dispatchEvent(new CustomEvent('kodu-cell-highlight',{detail:{ids,focus:mode==='explore'}}));
+}
+function explore(index){
+ selected=(index+parts.length)%parts.length;const part=parts[selected];visited.add(part.id);
+ $('organelle-name').textContent=part.name;$('organelle-description').textContent=part.description;
+ $('organelle-functions').replaceChildren(...part.functions.map(text=>{const li=document.createElement('li');li.textContent=text;return li}));
+ $('organelle-relation').textContent=part.relation;$('position').textContent=(selected+1)+' / '+parts.length;
+ $('progress').textContent=visited.size+' de '+parts.length+' explorados';mark([part.id]);
+}
+function compare(){
+ const a=parts.find(p=>p.id===$('compare-a').value),b=parts.find(p=>p.id===$('compare-b').value);
+ $('comparison').replaceChildren(...[a,b].map(p=>{const box=document.createElement('div');box.className='comparison';const title=document.createElement('h3');title.textContent=p.name;const text=document.createElement('p');text.textContent=p.short;box.append(title,text);return box}));
+ mark([a.id,b.id]);
+}
+function loadQuestion(){
+ answered=false;finished=false;$('quiz-count').textContent='PISTA '+(questionIndex+1)+' DE '+questions.length;
+ $('question').textContent=questions[questionIndex].text;$('feedback').textContent='Podés volver a intentar: lo importante es relacionar cada parte con su función.';
+ $('feedback').removeAttribute('data-correct');$('next-question').disabled=true;$('next-question').textContent=questionIndex===questions.length-1?'Ver cierre →':'Siguiente pista →';mark([]);
+}
+function setMode(nextMode){
+ mode=nextMode;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+ for(const name of ['explore','compare','quiz'])$(name+'-panel').hidden=name!==mode;
+ if(mode==='explore')explore(selected);if(mode==='compare')compare();if(mode==='quiz'){questionIndex=0;loadQuestion()}
+}
+document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+function choose(id){
+ if(!parts.some(part=>part.id===id))return;
+ if(mode==='explore')explore(parts.findIndex(p=>p.id===id));
+ if(mode==='compare'){$('compare-b').value=id;compare()}
+ if(mode==='quiz'&&!answered&&!finished){
+   const q=questions[questionIndex],correct=id===q.id;mark([id]);$('feedback').dataset.correct=String(correct);
+   $('feedback').textContent=correct?'¡Exacto! '+q.why:'Todavía no. '+q.hint;
+   if(correct){answered=true;$('next-question').disabled=false}
+ }
+}
+document.querySelectorAll('.hotspot').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.id)));
+window.addEventListener('kodu-cell-pick',event=>choose(event.detail.id));
+$('structure').addEventListener('change',()=>choose($('structure').value));
+['compare-a','compare-b','structure'].forEach(id=>{
+ for(const part of parts){const option=document.createElement('option');option.value=part.id;option.textContent=part.name;$(id).append(option)}
+ if(id!=='structure')$(id).addEventListener('change',compare);
+});
+$('compare-a').value='reticulo';$('compare-b').value='golgi';
+$('previous').addEventListener('click',()=>explore(selected-1));$('next').addEventListener('click',()=>explore(selected+1));
+$('next-question').addEventListener('click',()=>{
+ if(finished){questionIndex=0;loadQuestion();return}
+ if(!answered)return;
+ if(questionIndex<questions.length-1){questionIndex++;loadQuestion();return}
+ finished=true;$('quiz-count').textContent='DESAFÍO COMPLETADO';$('question').textContent='Cada parte cumple una función. Juntas, hacen posible la vida de la célula.';
+ $('feedback').textContent='Para conversar: elegí dos estructuras y explicá cómo se relacionan. ¿Qué podría pasar si una dejara de funcionar?';$('feedback').removeAttribute('data-correct');$('next-question').textContent='Volver a empezar';mark([]);
+});
+explore(0);
+</script>
+<script src="/recursos/celula/visor-v1.js" defer crossorigin="anonymous" onerror="document.querySelector('[data-cell-viewer]').dataset.state='fallback';document.getElementById('render-status').textContent='Vista ilustrada · podés seguir explorando';"></script>
+</body>
 </html>

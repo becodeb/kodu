@@ -3,6 +3,7 @@ import { defineConfig } from 'astro/config';
 import node from '@astrojs/node';
 import react from '@astrojs/react';
 import tailwindcss from '@tailwindcss/vite';
+import { cellAssetsDev } from './scripts/cell-3d/dev-assets.ts';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
@@ -38,7 +39,7 @@ export default defineConfig({
   // el protocolo del socket y detras de un proxy TLS da 403 en cada formulario.
   security: { checkOrigin: false },
 
-  integrations: [react()],
+  integrations: [react(), cellAssetsDev()],
 
   vite: {
     plugins: [tailwindcss()],

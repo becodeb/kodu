@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "node ./dist/server/entry.mjs",
-    "build": "prisma generate && astro build",
+    "build": "npm run build:cell-viewer && prisma generate && astro build",
     "preview": "node ./dist/server/entry.mjs",
     "astro": "astro",
     "db:generate": "prisma generate",
@@ -15,7 +15,8 @@
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
     "check": "tsc --noEmit",
-    "test:cobros": "tsx scripts/probar-cobros.ts"
+    "test:cobros": "tsx scripts/probar-cobros.ts",
+    "build:cell-viewer": "node scripts/cell-3d/build-viewer.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -40,6 +41,7 @@
     "react-dom": "^19.2.8",
     "tailwindcss": "^4.3.3",
     "thinking-orbs": "^0.3.1",
+    "three": "0.180.0",
     "tsx": "^4.23.12",
     "unpdf": "^1.8.1",
     "zod": "^4.4.3"
@@ -48,6 +50,7 @@
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "esbuild": "0.28.2",
     "playwright": "^1.62.1",
     "typescript": "^7.0.2"
   }

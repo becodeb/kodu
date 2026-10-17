@@ -1,6 +1,9 @@
 import type { APIRoute } from 'astro';
 import { prisma } from '../../lib/db.ts';
 import { ALLOWED_CDNS } from '../../lib/cdn-allowlist.ts';
+import { CELULA_EJEMPLO_ID } from '../../lib/ejemplos.ts';
+import { leerCelulaEjemplo } from '../../lib/ejemplos-servidor.ts';
+import { getEnv } from '../../lib/env.ts';
 
 /**
  * GET /p/:slug — vista pública del recurso (SPEC §5.4).
@@ -16,16 +19,15 @@ import { ALLOWED_CDNS } from '../../lib/cdn-allowlist.ts';
  * cookie de sesión de quien lo esté mirando. La CSP corta eso: permite los CDN
  * didácticos y bloquea cualquier conexión o envío de formulario hacia la app.
  *
- * `ALLOWED_CDNS` vive en `src/lib/cdn-allowlist.ts`, su propio módulo. Mismo
- * orden y mismos orígenes de siempre — el string de la CSP que arma este
- * archivo no cambió.
+ * Además de los CDN, se permite la ruta pública y cerrada de assets de la
+ * célula. No se habilitan conexiones generales al origen de la aplicación.
  */
 
-const CSP = [
+export const resourceCsp = (origin: string) => [
   `default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ${ALLOWED_CDNS.join(' ')}`,
   `img-src 'self' data: blob: https:`,
   // Sin 'self': el recurso no puede llamar a la API de KoduEdu.
-  `connect-src ${ALLOWED_CDNS.join(' ')}`,
+  `connect-src ${ALLOWED_CDNS.join(' ')} ${origin}/recursos/celula/ ${new URL(getEnv().PUBLIC_SITE_URL).origin}/recursos/celula/`,
   `form-action 'none'`,
   `base-uri 'none'`,
 ].join('; ');
@@ -60,8 +62,10 @@ export function asegurarViewport(html: string): string {
   return META_VIEWPORT + '\n' + html;
 }
 
-export const GET: APIRoute = async ({ params }) => {
-  const project = await prisma.project.findUnique({
+export const GET: APIRoute = async ({ params, url }) => {
+  const project = params.slug === CELULA_EJEMPLO_ID
+    ? { currentHtml: await leerCelulaEjemplo() }
+    : await prisma.project.findUnique({
     where: { slug: params.slug! },
     select: { currentHtml: true },
   });
@@ -76,7 +80,7 @@ export const GET: APIRoute = async ({ params }) => {
   return new Response(asegurarViewport(project.currentHtml), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Content-Security-Policy': CSP,
+      'Content-Security-Policy': resourceCsp(url.origin),
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'Cache-Control': 'public, max-age=60',
