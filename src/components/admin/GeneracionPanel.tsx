@@ -157,7 +157,7 @@ export default function GeneracionPanel({ initial }: Props) {
             ))}
           </ul>
           <p className="text-xs text-ink-500">
-            Sonnet 5.5 y Opus 5.5 se crean solos la primera vez que el modo Automático los necesita — no
+            Sonnet 5.5 se crea solo la primera vez que el modo Automático lo necesita — no
             hace falta cargarlos a mano.
           </p>
         </div>

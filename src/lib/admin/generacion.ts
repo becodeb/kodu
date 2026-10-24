@@ -126,7 +126,7 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
 
   // T14: "automatico" vive AFUERA de MODES (sus roles no son fijos) — se
   // describe a mano, y nunca tiene "presetsFaltantes" (necesita Haiku Y
-  // Sonnet Y Opus según el día, no un preset único que avisar).
+  // Sonnet según el crédito, no un preset único que avisar).
   const presetsHaikuYSonnet = ['claude-haiku-5-5', 'claude-sonnet-5-5'].filter(
     (presetKey) => !presetKeysHabilitados.has(presetKey),
   );
@@ -134,7 +134,7 @@ export async function resumenGeneracion(): Promise<ResumenGeneracion> {
     key: MODO_AUTOMATICO_KEY,
     label: 'Automático (recomendado)',
     description:
-      'El sistema decide sólo, recurso por recurso: Sonnet por defecto, Haiku si el crédito del ciclo viene corto, y Opus en los últimos días si sobra crédito. Cada recurso se ajusta siempre con el motor que lo creó.',
+      'El sistema decide sólo, recurso por recurso: Sonnet por defecto y Haiku si el crédito del ciclo viene corto. Nunca elige Opus por su cuenta (tarda unos 5 minutos): queda para el docente que lo elija a mano. Cada recurso se ajusta siempre con el motor que lo creó.',
     measuredCreation: 'Varía según el día — ver la caja del ciclo abajo',
     measuredAdjustment: 'El mismo motor con el que nació el recurso',
     presetsFaltantes: presetsHaikuYSonnet.map((presetKey) => presetByKey(presetKey)?.label ?? presetKey),
