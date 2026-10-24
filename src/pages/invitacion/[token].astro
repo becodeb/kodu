@@ -49,7 +49,7 @@ if (resolucion.valida && sessionUser) {
 const next = `/invitacion/${encodeURIComponent(token)}`;
 ---
 
-<BaseLayout title="Invitación">
+<BaseLayout title="Invitación" sinAccesoEnBarra>
   <div class="kodu-card mx-auto mt-8 max-w-lg p-8 text-center sm:mt-16">
     {
       !resolucion.valida ? (

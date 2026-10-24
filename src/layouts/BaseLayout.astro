@@ -21,6 +21,12 @@ interface Props {
    * pasa esta prop) ni el desktop del editor cambian.
    */
   compactMobile?: boolean;
+  /**
+   * Sin "Ingresar"/"Crear cuenta" en la barra para quien no tiene sesión: la
+   * página ya trae sus propios botones y los de la barra no la retoman al
+   * volver (ej. la invitación, que necesita `?next=` para sumar a la sede).
+   */
+  sinAccesoEnBarra?: boolean;
 }
 
 const {
@@ -30,6 +36,7 @@ const {
   wide = false,
   bleed = false,
   compactMobile = false,
+  sinAccesoEnBarra = false,
 } = Astro.props;
 
 const user = Astro.locals.user;
@@ -302,7 +309,7 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
                     </form>
                   </div>
                 </details>
-              ) : (
+              ) : sinAccesoEnBarra ? null : (
                 <>
                   <a href="/login" class="text-ink-700 hover:text-brand-600">
                     Ingresar
