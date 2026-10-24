@@ -10,6 +10,6 @@ import { listarOrganizacionesSuperadmin } from '../../../lib/orgs/gestion.ts';
 const arbol = await listarOrganizacionesSuperadmin(Astro.locals.user!);
 ---
 
-<AdminLayout title="Organizaciones">
+<AdminLayout title="Organizaciones" description="Redes y sedes que administran su propia gente.">
   <OrganizacionesPanel client:load initialRedes={arbol.redes} initialStandalone={arbol.standalone} />
 </AdminLayout>

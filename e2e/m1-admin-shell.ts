@@ -102,20 +102,21 @@ async function main(): Promise<void> {
       await iniciarSesion(page, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
 
       const respuesta = await page.goto(`${BASE_URL}/admin`, { waitUntil: 'domcontentloaded' });
-      assert.ok(page.url().startsWith(`${BASE_URL}/admin/usuarios`), `esperaba /admin/usuarios, llegó a ${page.url()}`);
-      assert.equal(respuesta?.status(), 200, `/admin/usuarios para ADMIN debe dar 200, dio ${respuesta?.status()}`);
+      // odd/tasks/admin-ui-redesign.md (T02): `/admin` dejó de redirigir a
+      // `/admin/usuarios` — ahora es el resumen en sí mismo.
+      assert.equal(page.url(), `${BASE_URL}/admin`, `esperaba quedarse en /admin, llegó a ${page.url()}`);
+      assert.equal(respuesta?.status(), 200, `/admin para ADMIN debe dar 200, dio ${respuesta?.status()}`);
 
       for (const tema of ['light', 'dark'] as const) {
         if (tema === 'dark') await conTema(page, 'dark');
 
-        await page.waitForSelector('h1:has-text("Panel")');
-        const pestañas = page.locator('nav[aria-label="Secciones del panel"] a');
-        // 8: Docentes, Organizaciones, Métricas, Recursos, Proveedores,
-        // Motores, Generación, Demo. "Dominios" se quitó en
-        // odd/tasks/organizaciones.md (T2): `AuthorizedDomain` ya no existe,
-        // la reemplaza `OrganizationDomain`; "Organizaciones" la reemplaza
-        // recién en T6; "Métricas" la agrega T7.
-        await assertCantidad(pestañas, 8, `la fila de pestañas debe tener 8 links (tema ${tema})`);
+        await page.waitForSelector('h1:has-text("Resumen")');
+        // odd/tasks/admin-ui-redesign.md (T01): la fila horizontal de
+        // pestañas la reemplazó una barra lateral agrupada — "Resumen" +
+        // 13 links agrupados (Personas, Contenido, IA, Plata). Mismo total
+        // de destinos que antes, sólo que agrupados.
+        const linksBarraLateral = page.locator('nav[aria-label="Secciones del panel"] a');
+        await assertCantidad(linksBarraLateral, 14, `la barra lateral debe tener 14 links (tema ${tema})`);
 
         const pillPanel = page.locator('a[href="/admin"]', { hasText: 'Panel' });
         await assertVisible(pillPanel, `el nav debe mostrar el pill "Panel" para ADMIN (tema ${tema})`);
@@ -154,11 +155,12 @@ async function main(): Promise<void> {
 
       // Misma cookie, mismo contexto de navegador: nunca se vuelve a loguear.
       const respuesta = await page.goto(`${BASE_URL}/admin`, { waitUntil: 'domcontentloaded' });
-      assert.ok(
-        page.url().startsWith(`${BASE_URL}/admin/usuarios`),
+      assert.equal(
+        page.url(),
+        `${BASE_URL}/admin`,
         `tras la promoción, /admin debería entrar (llegó a ${page.url()})`,
       );
-      assert.equal(respuesta?.status(), 200, 'tras la promoción, /admin/usuarios debe dar 200');
+      assert.equal(respuesta?.status(), 200, 'tras la promoción, /admin debe dar 200');
       console.log('✔ promoción en la base: la request siguiente ya entra como ADMIN, sin login nuevo');
 
       await contexto.close();

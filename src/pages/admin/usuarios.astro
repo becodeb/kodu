@@ -7,6 +7,6 @@ import { listarUsuariosAdmin } from '../../lib/admin/usuarios.ts';
 const usuarios = await listarUsuariosAdmin();
 ---
 
-<AdminLayout>
+<AdminLayout title="Docentes" description="Quién tiene cuenta, de dónde, y cuánto consume.">
   <UsuariosTabla client:load initialUsuarios={usuarios} />
 </AdminLayout>

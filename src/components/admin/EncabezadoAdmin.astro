@@ -1,0 +1,56 @@
+---
+/**
+ * Encabezado compartido de /admin (odd/tasks/admin-ui-redesign.md, T01):
+ * título + descripción de una línea + un breadcrumb opcional ("Docentes /
+ * Nombre") + un slot de acciones a la derecha (botones de la pantalla, p.ej.
+ * "+ Nueva cuenta"). Antes del rediseño, `AdminLayout.astro` dibujaba SIEMPRE
+ * el mismo encabezado fijo ("Panel") sin importar la pantalla; esto lo
+ * reemplaza por uno por página, sin que cada `.astro` tenga que reinventar el
+ * mismo `<h1>` + `<p>` a mano (algunas pantallas — Precios, Altas,
+ * Facturación — ya lo hacían suelto; quedó sacado de ahí al adoptar esto).
+ *
+ * Con `prefers-reduced-motion` respetado (`.admin-entra` en global.css):
+ * entra con un fade+rise discreto, UNA sola vez por carga de página, nunca en
+ * cada pestaña del teclado ni en cada hover.
+ */
+
+interface MigaDePan {
+  etiqueta: string;
+  href?: string;
+}
+
+interface Props {
+  title: string;
+  description?: string;
+  /** Último elemento = la página actual, sin `href`. */
+  breadcrumb?: MigaDePan[];
+}
+
+const { title, description, breadcrumb } = Astro.props;
+---
+
+<header class="admin-entra mb-6 flex flex-wrap items-start justify-between gap-4">
+  <div class="min-w-0">
+    {
+      breadcrumb && breadcrumb.length > 0 && (
+        <p class="mb-1 flex items-center gap-1.5 text-xs text-ink-500">
+          {breadcrumb.map((miga, indice) => (
+            <>
+              {indice > 0 && <span aria-hidden="true">/</span>}
+              {miga.href ? (
+                <a href={miga.href} class="hover:text-brand-600 hover:underline">
+                  {miga.etiqueta}
+                </a>
+              ) : (
+                <span class="text-ink-700">{miga.etiqueta}</span>
+              )}
+            </>
+          ))}
+        </p>
+      )
+    }
+    <h1 class="font-display text-2xl font-bold text-ink-900">{title}</h1>
+    {description && <p class="mt-1 text-sm text-ink-500">{description}</p>}
+  </div>
+  {Astro.slots.has('acciones') && <div class="flex shrink-0 items-center gap-2"><slot name="acciones" /></div>}
+</header>

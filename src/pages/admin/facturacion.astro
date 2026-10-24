@@ -63,13 +63,8 @@ const porcentaje = monotributo.porcentaje !== null ? Math.round(monotributo.porc
 const colorBarra = porcentaje === null ? 'bg-sutil' : porcentaje >= 90 ? 'bg-red-500' : porcentaje >= 70 ? 'bg-amber-500' : 'bg-brand-600';
 ---
 
-<AdminLayout title="Facturación">
+<AdminLayout title="Facturación" description="Pagos, facturas y el tope del monotributo.">
   <div class="max-w-4xl space-y-8">
-    <div>
-      <h1 class="font-display text-2xl font-bold text-ink-900">Facturación</h1>
-      <p class="mt-1 text-sm text-ink-500">Pagos, facturas y el tope del monotributo.</p>
-    </div>
-
     {
       facturacionApagada && (
         <p class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
