@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
+import { tonoPorId } from '../../lib/admin/avatar.ts';
 
 export interface RecursoGridProps {
   id: string;
@@ -120,8 +121,25 @@ export default function RecursosDocenteGrid({ recursos }: Props) {
                     loading="lazy"
                   />
                 ) : (
-                  <div className="grid h-32 w-full place-items-center border-b border-linea bg-sutil font-display text-2xl text-ink-500">
-                    {recurso.title.trim().charAt(0).toUpperCase() || '?'}
+                  // Sin captura: antes era un bloque gris de 128px con una
+                  // sola letra (parent review, polish #4) — una banda baja y
+                  // con un patrón de rayas derivado del id (mismo criterio
+                  // que `tonoPorId`: una cuenta/un recurso siempre cae en el
+                  // mismo tono, así no "parpadea" al reordenar la grilla).
+                  <div
+                    aria-hidden="true"
+                    className={`relative flex h-14 w-full items-center justify-center overflow-hidden border-b border-linea ${tonoPorId(recurso.id)}`}
+                  >
+                    <div
+                      className="absolute inset-0 opacity-40"
+                      style={{
+                        backgroundImage:
+                          'repeating-linear-gradient(135deg, currentColor 0, currentColor 1px, transparent 1px, transparent 9px)',
+                      }}
+                    />
+                    <span className="relative font-display text-sm">
+                      {recurso.title.trim().charAt(0).toUpperCase() || '?'}
+                    </span>
                   </div>
                 )}
               </a>

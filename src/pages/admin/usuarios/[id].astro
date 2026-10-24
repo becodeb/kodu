@@ -8,6 +8,7 @@ import { obtenerPerfilDocenteAdmin } from '../../../lib/admin/perfilDocente.ts';
 import { consumoDiarioDeUsuario, consumoPorUsuario } from '../../../lib/ai/usage.ts';
 import { formatearCostoAdminUsd } from '../../../lib/format/costo.ts';
 import { formatearTokensCompacto } from '../../../lib/format/tokens.ts';
+import { inicialesAvatar } from '../../../lib/admin/avatar.ts';
 
 /**
  * odd/tasks/admin-ui-redesign.md (T04): la ficha de un docente. Reemplaza la
@@ -66,13 +67,7 @@ const porModelo = porModeloRaw.map((fila) => ({
 
 const porRecursoTop = [...usuario.recursos].filter((recurso) => recurso.tokens > 0).slice(0, 8);
 
-const iniciales = usuario.name
-  .trim()
-  .split(/\s+/)
-  .map((parte) => parte[0])
-  .slice(0, 2)
-  .join('')
-  .toUpperCase();
+const iniciales = inicialesAvatar(usuario.name);
 
 function hrefSeccion(valor: Seccion): string {
   return valor === 'recursos' ? `/admin/usuarios/${usuario.id}` : `/admin/usuarios/${usuario.id}?seccion=${valor}`;
@@ -149,8 +144,8 @@ const ETIQUETAS_SECCION: Record<Seccion, string> = { recursos: 'Recursos', consu
       </p>
       <p class="text-xs text-ink-500">
         {usuario.tendenciaTokens30.porcentaje === null
-          ? 'últimos 30 días'
-          : `${usuario.tendenciaTokens30.subio ? '↑' : '↓'} ${Math.abs(usuario.tendenciaTokens30.porcentaje).toFixed(0)}% vs. los 30 anteriores`}
+          ? 'tokens en 30 días'
+          : `tokens en 30 días · ${usuario.tendenciaTokens30.subio ? '↑' : '↓'} ${Math.abs(usuario.tendenciaTokens30.porcentaje).toFixed(0)}% vs. los 30 anteriores`}
       </p>
     </div>
   </div>

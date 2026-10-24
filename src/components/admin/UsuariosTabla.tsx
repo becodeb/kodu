@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../lib/client/api.ts';
 import type { FilaUsuarioAdmin } from '../../lib/admin/usuarios.ts';
+import { inicialesAvatar, tonoPorId } from '../../lib/admin/avatar.ts';
+import BuscadorAdmin, { useAtajoBuscador } from './BuscadorAdmin.tsx';
 
 interface Props {
   initialUsuarios: FilaUsuarioAdmin[];
@@ -82,34 +84,13 @@ function escribirEstadoEnUrl(estado: EstadoFiltros): void {
   window.history.replaceState(null, '', url);
 }
 
-/** Un color fijo de la rampa de marca por docente (hash del id, no del
- *  índice en la lista: así una fila no cambia de color cuando el filtro
- *  reordena el arreglo). Siempre con texto `brand-700` encima, que
- *  `global.css` ya redefine para tema oscuro — nunca un color inventado
- *  fuera del sistema. */
-const TONOS_AVATAR = ['bg-brand-50 text-brand-700', 'bg-brand-100 text-brand-700', 'bg-sutil text-ink-700'];
-
-function hashSimple(texto: string): number {
-  let hash = 0;
-  for (let i = 0; i < texto.length; i++) hash = (hash * 31 + texto.charCodeAt(i)) >>> 0;
-  return hash;
-}
-
-function iniciales(nombre: string): string {
-  const partes = nombre.trim().split(/\s+/);
-  const primera = partes[0]?.[0] ?? '';
-  const segunda = partes.length > 1 ? partes[partes.length - 1]![0] : '';
-  return `${primera}${segunda}`.toUpperCase();
-}
-
 function Avatar({ id, nombre }: { id: string; nombre: string }) {
-  const tono = TONOS_AVATAR[hashSimple(id) % TONOS_AVATAR.length];
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${tono}`}
+      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${tonoPorId(id)}`}
     >
-      {iniciales(nombre)}
+      {inicialesAvatar(nombre)}
     </span>
   );
 }
@@ -189,6 +170,17 @@ function CabeceraOrdenable({
   );
 }
 
+/** El estado de acceso a la IA como pastilla compacta de una sola línea —
+ *  antes era texto corrido y "Por organización" rompía en dos renglones en
+ *  la columna angosta (parent review, polish #2). */
+function PildoraAcceso({ valor }: { valor: FilaUsuarioAdmin['accesoIa'] }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-sutil px-2 py-0.5 text-xs whitespace-nowrap text-ink-700">
+      {valor}
+    </span>
+  );
+}
+
 function ultimaActividadOrdenMs(usuario: FilaUsuarioAdmin): number {
   return usuario.ultimaActividadIso ? new Date(usuario.ultimaActividadIso).getTime() : -Infinity;
 }
@@ -220,20 +212,7 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estado.rol, estado.acceso, estado.organizacion, estado.actividad, estado.campo, estado.direccion, terminoDebounced]);
 
-  // Atajo "/": enfoca el buscador, salvo que ya se esté escribiendo en algo.
-  useEffect(() => {
-    function alTeclear(evento: KeyboardEvent) {
-      if (evento.key !== '/') return;
-      const activo = document.activeElement;
-      const yaEscribiendo =
-        activo instanceof HTMLInputElement || activo instanceof HTMLTextAreaElement || activo?.getAttribute('contenteditable') === 'true';
-      if (yaEscribiendo) return;
-      evento.preventDefault();
-      inputBusquedaRef.current?.focus();
-    }
-    document.addEventListener('keydown', alTeclear);
-    return () => document.removeEventListener('keydown', alTeclear);
-  }, []);
+  useAtajoBuscador(inputBusquedaRef);
 
   const organizaciones = useMemo(() => {
     const nombres = new Set<string>();
@@ -415,20 +394,14 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="min-w-48 flex-1">
-          <label className="sr-only" htmlFor="buscar-docente">
-            Buscar por nombre o email
-          </label>
-          <input
-            id="buscar-docente"
-            ref={inputBusquedaRef}
-            type="search"
-            value={estado.busqueda}
-            onChange={(evento) => setEstado((actual) => ({ ...actual, busqueda: evento.target.value }))}
-            placeholder="Buscar por nombre o email… (atajo: /)"
-            className="kodu-input"
-          />
-        </div>
+        <BuscadorAdmin
+          id="buscar-docente"
+          label="Buscar por nombre o email"
+          value={estado.busqueda}
+          onChange={(valor) => setEstado((actual) => ({ ...actual, busqueda: valor }))}
+          placeholder="Buscar por nombre o email…"
+          inputRef={inputBusquedaRef}
+        />
 
         <select
           aria-label="Filtrar por rol"
@@ -562,7 +535,9 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                         'Cuenta personal'
                       )}
                     </td>
-                    <td className="px-4 py-3 text-ink-700">{usuario.accesoIa}</td>
+                    <td className="px-4 py-3 text-ink-700">
+                      <PildoraAcceso valor={usuario.accesoIa} />
+                    </td>
                     <td className="px-4 py-3 text-right tabular-nums text-ink-700">{usuario.proyectos}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-ink-700">
                       <div className="flex items-center justify-end gap-2">
@@ -570,7 +545,9 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                         <span>{usuario.tokens.toLocaleString('es-AR')}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-ink-900">{usuario.costoDisplay}</td>
+                    <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums text-ink-900">
+                      {usuario.costoDisplay}
+                    </td>
                     <td className="px-4 py-3 text-ink-500">{usuario.ultimaActividad}</td>
                     <td className="px-4 py-3 text-right">
                       <MenuAcciones usuario={usuario} />
@@ -618,7 +595,9 @@ export default function UsuariosTabla({ initialUsuarios }: Props) {
                   <dt className="text-ink-500">Organización</dt>
                   <dd className="text-right text-ink-700">{usuario.organizationName ?? 'Cuenta personal'}</dd>
                   <dt className="text-ink-500">Acceso a la IA</dt>
-                  <dd className="text-right text-ink-700">{usuario.accesoIa}</dd>
+                  <dd className="text-right text-ink-700">
+                    <PildoraAcceso valor={usuario.accesoIa} />
+                  </dd>
                   <dt className="text-ink-500">Recursos</dt>
                   <dd className="text-right tabular-nums text-ink-700">{usuario.proyectos}</dd>
                   <dt className="text-ink-500">Consumo</dt>
