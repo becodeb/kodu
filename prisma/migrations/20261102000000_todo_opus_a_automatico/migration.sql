@@ -1,0 +1,12 @@
+-- Hallazgo de revisión (motor-claude, 2026-10-24): producción tiene
+-- `AppSettings.generationMode = 'todo-opus'` puesto a mano para una prueba
+-- (odd/tasks/motor-claude.md) — no es una decisión del dueño para uso
+-- normal, y con `decidirTierAutomatico` corregido (proyección por recursos
+-- reales, nunca elige Opus sola) el modo recomendado para producción vuelve
+-- a ser `automatico` (Sonnet por defecto, Haiku si el crédito viene corto).
+--
+-- Mismo criterio que `20261101000000_automatico_default_produccion`: migra
+-- la fila EXISTENTE sólo si todavía está en el valor que se quiere dejar
+-- atrás ('todo-opus') — cualquier otro valor que el dueño ya haya elegido a
+-- mano después de esto queda intacto, nunca se pisa una decisión explícita.
+UPDATE "AppSettings" SET "generationMode" = 'automatico' WHERE "generationMode" = 'todo-opus';
