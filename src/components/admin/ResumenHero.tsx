@@ -17,15 +17,16 @@ import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
  */
 
 export interface KpisResumenProps {
+  rango: 7 | 30 | 90;
   docentesTotal: number;
   docentesActivos7: number;
-  docentesActivos30: number;
+  docentesActivosRango: number;
   recursosTotal: number;
-  recursosCreados30: number;
+  recursosCreadosRango: number;
   publicadosEnGaleria: number;
-  tokens30: number;
-  costo30Display: string;
-  deltaCosto30: { porcentaje: number | null; subio: boolean | null };
+  tokensRango: number;
+  costoRangoDisplay: string;
+  deltaCostoRango: { porcentaje: number | null; subio: boolean | null };
 }
 
 export interface PuntoDiaProps {
@@ -175,24 +176,29 @@ export default function ResumenHero({ kpis, porDia }: Props) {
         <KpiTile href="/admin/usuarios" etiqueta="Docentes" valor={kpis.docentesTotal} activar={entrado} />
         <KpiTile
           href="/admin/usuarios"
-          etiqueta="Activos (30 días)"
-          valor={kpis.docentesActivos30}
+          etiqueta={`Activos (${kpis.rango} días)`}
+          valor={kpis.docentesActivosRango}
           secundario={`${kpis.docentesActivos7} en los últimos 7`}
           activar={entrado}
         />
         <KpiTile href="/admin/proyectos" etiqueta="Recursos" valor={kpis.recursosTotal} activar={entrado} />
-        <KpiTile href="/admin/proyectos" etiqueta="Creados (30 días)" valor={kpis.recursosCreados30} activar={entrado} />
+        <KpiTile
+          href="/admin/proyectos"
+          etiqueta={`Creados (${kpis.rango} días)`}
+          valor={kpis.recursosCreadosRango}
+          activar={entrado}
+        />
         <KpiTile href="/gallery" etiqueta="En la galería" valor={kpis.publicadosEnGaleria} activar={entrado} />
         <a
           href="/admin/uso"
           className="admin-entra kodu-card flex flex-col gap-0.5 px-4 py-3 transition-colors hover:border-ink-500"
         >
-          <span className="text-xs text-ink-500">Costo (30 días)</span>
-          <span className="font-display text-2xl text-ink-900 tabular-nums">{kpis.costo30Display}</span>
+          <span className="text-xs text-ink-500">Costo ({kpis.rango} días)</span>
+          <span className="font-display text-2xl text-ink-900 tabular-nums">{kpis.costoRangoDisplay}</span>
           <span className="text-xs text-ink-500">
-            {kpis.deltaCosto30.porcentaje === null
-              ? `${formatearTokensCompacto(kpis.tokens30)} tokens`
-              : `${kpis.deltaCosto30.subio ? '↑' : '↓'} ${Math.abs(kpis.deltaCosto30.porcentaje).toFixed(0)}% vs. los 30 días previos`}
+            {kpis.deltaCostoRango.porcentaje === null
+              ? `${formatearTokensCompacto(kpis.tokensRango)} tokens`
+              : `${kpis.deltaCostoRango.subio ? '↑' : '↓'} ${Math.abs(kpis.deltaCostoRango.porcentaje).toFixed(0)}% vs. los ${kpis.rango} días previos`}
           </span>
         </a>
       </div>
@@ -200,7 +206,7 @@ export default function ResumenHero({ kpis, porDia }: Props) {
       <div className="admin-entra-demorado kodu-card mt-6 p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="font-display text-lg font-bold text-ink-900">Últimos 30 días</h2>
+            <h2 className="font-display text-lg font-bold text-ink-900">Últimos {kpis.rango} días</h2>
             <p className="text-sm text-ink-500">Tocá o enfocá una columna para ver el día exacto.</p>
           </div>
           <div className="flex gap-0.5 rounded-lg bg-sutil p-0.5 text-sm" role="group" aria-label="Elegir serie del gráfico">
@@ -222,11 +228,11 @@ export default function ResumenHero({ kpis, porDia }: Props) {
 
         {!huboDatos ? (
           <p className="rounded-lg bg-sutil px-4 py-8 text-center text-sm text-ink-500">
-            Todavía no hay consumo registrado en los últimos 30 días.
+            Todavía no hay consumo registrado en los últimos {kpis.rango} días.
           </p>
         ) : (
           <div className="relative">
-            <svg viewBox={`0 0 ${ANCHO} ${ALTO}`} role="img" className="w-full" aria-label={`${SERIES.find((s) => s.clave === serie)!.etiqueta} por día, últimos 30 días`}>
+            <svg viewBox={`0 0 ${ANCHO} ${ALTO}`} role="img" className="w-full" aria-label={`${SERIES.find((s) => s.clave === serie)!.etiqueta} por día, últimos ${kpis.rango} días`}>
               {max > 0 && (
                 <line x1={0} y1={AREA_TOP} x2={ANCHO} y2={AREA_TOP} className="stroke-linea" strokeWidth={1} />
               )}
@@ -289,7 +295,7 @@ export default function ResumenHero({ kpis, porDia }: Props) {
         )}
 
         <table className="sr-only">
-          <caption>Serie diaria de los últimos 30 días</caption>
+          <caption>Serie diaria de los últimos {kpis.rango} días</caption>
           <thead>
             <tr>
               <th>Fecha</th>
