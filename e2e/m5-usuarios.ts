@@ -542,16 +542,17 @@ async function main(): Promise<void> {
       await contextoAdmin.close();
 
       // MISMA cookie que al principio de este bloque: nunca se volvió a
-      // loguear `pagePromovido`. `/admin` en sí mismo siempre redirige a
-      // `/admin/usuarios` (la pestaña por defecto, `admin/index.astro`) —
-      // lo que importa acá es que el middleware YA NO lo mande a `/app`.
+      // loguear `pagePromovido`. odd/tasks/admin-ui-redesign.md (T02): `/admin`
+      // dejó de redirigir a `/admin/usuarios` — ahora es el resumen en sí
+      // mismo (`admin/index.astro`). Lo que importa acá es que el middleware
+      // YA NO lo mande a `/app`.
       await pagePromovido.goto(`${BASE_URL}/admin`, { waitUntil: 'domcontentloaded' });
       assert.equal(
         new URL(pagePromovido.url()).pathname,
-        '/admin/usuarios',
+        '/admin',
         'ya ADMIN en la base: el próximo pedido de la MISMA sesión ya no rebota a /app',
       );
-      await pagePromovido.waitForSelector('h1:has-text("Panel")');
+      await pagePromovido.waitForSelector('h1:has-text("Resumen")');
       console.log('✔ la promoción rige en el próximo pedido, con la cookie vieja, sin volver a loguearse');
 
       await contexto2.close();

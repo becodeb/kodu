@@ -1,5 +1,106 @@
 ---
-// /admin no es una pantalla en sí: el middleware ya garantizó el rol ADMIN,
-// así que esto solo decide a qué pestaña entra por defecto.
-return Astro.redirect('/admin/usuarios', 302);
+import AdminLayout from '../../layouts/AdminLayout.astro';
+import ResumenHero from '../../components/admin/ResumenHero.tsx';
+import { resumenAdmin } from '../../lib/admin/resumen.ts';
+
+/**
+ * odd/tasks/admin-ui-redesign.md (T02): `/admin` deja de redirigir a
+ * `/admin/usuarios` — es el resumen de la plataforma en sí mismo (el
+ * destino de "Resumen" en la barra lateral de `AdminLayout.astro`).
+ */
+const resumen = await resumenAdmin();
+
+const sinActividadNunca = resumen.kpis.docentesTotal === 0;
 ---
+
+<AdminLayout title="Resumen" description="El estado general de la plataforma, de un vistazo.">
+  {
+    sinActividadNunca ? (
+      <p class="kodu-card px-5 py-8 text-center text-sm text-ink-500">
+        Todavía no hay docentes en la plataforma. En cuanto se sume el primero, este resumen va a mostrar su actividad.
+      </p>
+    ) : (
+      <ResumenHero client:load kpis={resumen.kpis} porDia={resumen.porDia} />
+    )
+  }
+
+  {
+    !sinActividadNunca && (
+      <div class="mt-8 grid gap-6 lg:grid-cols-3">
+        <div class="kodu-card p-5 lg:col-span-1">
+          <h2 class="font-display text-base font-bold text-ink-900">Quién más consume</h2>
+          <p class="mt-0.5 text-xs text-ink-500">Últimos 30 días.</p>
+          {resumen.topDocentes.length === 0 ? (
+            <p class="mt-4 text-sm text-ink-500">Nadie usó la IA en los últimos 30 días.</p>
+          ) : (
+            <ul class="mt-4 space-y-3">
+              {resumen.topDocentes.map((docente) => (
+                <li class="flex items-baseline justify-between gap-3 text-sm">
+                  <a href={`/admin/usuarios/${docente.id}`} class="truncate text-ink-900 hover:text-brand-600 hover:underline">
+                    {docente.nombre}
+                  </a>
+                  <span class="shrink-0 text-ink-500 tabular-nums">{docente.costoDisplay}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div class="kodu-card p-5 lg:col-span-1">
+          <h2 class="font-display text-base font-bold text-ink-900">En qué motor se fue</h2>
+          <p class="mt-0.5 text-xs text-ink-500">Últimos 30 días.</p>
+          {resumen.porMotor.length === 0 ? (
+            <p class="mt-4 text-sm text-ink-500">Sin consumo en los últimos 30 días.</p>
+          ) : (
+            (() => {
+              const maxMotor = Math.max(...resumen.porMotor.map((motor) => motor.tokens), 1);
+              return (
+                <ul class="mt-4 space-y-3">
+                  {resumen.porMotor.map((motor) => (
+                    <li>
+                      <div class="mb-1 flex items-baseline justify-between gap-2 text-sm">
+                        <span class="truncate text-ink-900">{motor.etiqueta}</span>
+                        <span class="shrink-0 text-xs text-ink-500">{motor.costoDisplay}</span>
+                      </div>
+                      <div class="h-2 overflow-hidden rounded-full bg-sutil">
+                        <div
+                          class="h-full rounded-full bg-brand-600"
+                          style={`width: ${Math.max((motor.tokens / maxMotor) * 100, motor.tokens > 0 ? 3 : 0)}%`}
+                        />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              );
+            })()
+          )}
+        </div>
+
+        <div class="kodu-card p-5 lg:col-span-1">
+          <h2 class="font-display text-base font-bold text-ink-900">Últimos recursos</h2>
+          <p class="mt-0.5 text-xs text-ink-500">Los 6 más nuevos.</p>
+          {resumen.recursosRecientes.length === 0 ? (
+            <p class="mt-4 text-sm text-ink-500">Todavía no se generó ningún recurso.</p>
+          ) : (
+            <ul class="mt-4 space-y-3">
+              {resumen.recursosRecientes.map((recurso) => (
+                <li class="text-sm">
+                  <a href={`/app/project/${recurso.id}`} class="block truncate text-ink-900 hover:text-brand-600 hover:underline">
+                    {recurso.titulo}
+                  </a>
+                  <p class="text-xs text-ink-500">
+                    <a href={`/admin/usuarios/${recurso.propietarioId}`} class="hover:text-brand-600 hover:underline">
+                      {recurso.propietarioNombre}
+                    </a>
+                    {' · '}
+                    {recurso.creadoDisplay}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    )
+  }
+</AdminLayout>
