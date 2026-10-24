@@ -68,7 +68,10 @@ export default function ProveedoresPanel(props: ProveedoresPanelProps) {
 
       {proveedores.length === 0 ? (
         <div className="kodu-card p-10 text-center text-sm text-ink-500">
-          Todavía no hay ninguna cuenta de proveedor configurada.
+          <p>Todavía no hay ninguna cuenta de proveedor configurada.</p>
+          <button type="button" onClick={() => setFormAbierto('nuevo')} className="mt-3 text-sm text-brand-600 hover:underline">
+            + Nueva cuenta
+          </button>
         </div>
       ) : (
         <ol className="space-y-2">

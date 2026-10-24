@@ -29,7 +29,7 @@ const { fila } = Astro.props;
   <summary class="cursor-pointer py-1 text-xs text-brand-600 hover:underline">Detalle de costo — {fila.nombre}</summary>
   <div class="mt-2 mb-1 grid gap-4 sm:grid-cols-2">
     <div>
-      <h3 class="mb-1.5 text-xs font-semibold text-ink-700 uppercase">Costo por paso</h3>
+      <h3 class="mb-1.5 text-xs font-semibold text-ink-700">Costo por paso</h3>
       <table class="w-full text-xs">
         <tbody>
           {
@@ -45,7 +45,7 @@ const { fila } = Astro.props;
       </table>
     </div>
     <div>
-      <h3 class="mb-1.5 text-xs font-semibold text-ink-700 uppercase">Promedios, contra el plan</h3>
+      <h3 class="mb-1.5 text-xs font-semibold text-ink-700">Promedios, contra el plan</h3>
       <ul class="space-y-1 text-xs text-ink-700">
         <li>
           Por recurso nuevo: <b class="text-ink-900">{formatearPromedio(fila.agregado.costoPromedioRecursoNuevo)}</b>{' '}

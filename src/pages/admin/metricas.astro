@@ -54,7 +54,7 @@ function nombreConIndentacion(fila: FilaMetricasOrganizacion): string {
           id="mes"
           name="mes"
           onchange="this.form.requestSubmit()"
-          class="rounded-lg border border-linea bg-superficie px-3 py-2 text-sm text-ink-900"
+          class="kodu-input w-auto"
         >
           {
             [...mesesDisponibles].reverse().map((valor) => (
@@ -92,7 +92,7 @@ function nombreConIndentacion(fila: FilaMetricasOrganizacion): string {
         quedarse sólo con las filas de organización. */}
     <table id="tabla-metricas" class="w-full min-w-[720px] text-left text-sm">
       <thead>
-        <tr class="border-b border-linea text-xs tracking-wide text-ink-500 uppercase">
+        <tr class="border-b border-linea text-xs text-ink-500">
           <th class="py-2 pr-3 font-medium">Organización</th>
           <th class="py-2 px-3 text-right font-medium">Docentes hoy</th>
           <th class="py-2 px-3 text-right font-medium">Activos</th>
