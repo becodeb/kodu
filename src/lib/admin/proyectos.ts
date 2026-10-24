@@ -18,6 +18,8 @@ export interface FilaProyectoAdmin {
   tienePortada: boolean;
   /** Portada vieja: la IA tocó el recurso después de la última captura. */
   portadaVieja: boolean;
+  /** `null` cuando `tienePortada` es `false` — la miniatura de la tabla. */
+  screenshotUrl: string | null;
   likes: number;
   createdByDemo: boolean;
   duenoId: string;
@@ -58,6 +60,7 @@ export async function listarProyectosAdmin(): Promise<FilaProyectoAdmin[]> {
       fila.screenshotUrl !== null &&
       fila.screenshotAt !== null &&
       fila.screenshotAt < fila.updatedAt,
+    screenshotUrl: fila.screenshotUrl,
     likes: fila._count.likes,
     createdByDemo: fila.createdByDemo,
     duenoId: fila.userId,
