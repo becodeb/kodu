@@ -36,6 +36,14 @@ const envSchema = z.object({
   MAX_UPLOAD_MB: z.coerce.number().positive().default(10),
 
   /**
+   * Destino de /taller (src/pages/taller.ts): el enlace de invitación que se
+   * reparte en un taller presencial, completo o sólo el token. Vacío = /taller
+   * vuelve al inicio. Vive acá y no en el repo porque el token es lo que da
+   * acceso a la organización.
+   */
+  TALLER_INVITE_URL: z.string().default(''),
+
+  /**
    * Motor de IA. Hay tres proveedores y el docente elige cuál usa.
    *
    * ALPHA y MINIMAX son gratuitos, multimodales y sin cupo. DEEPSEEK se paga
@@ -246,6 +254,7 @@ export function getEnv(): Env {
     PUBLIC_SITE_URL: read('PUBLIC_SITE_URL'),
     UPLOADS_DIR: read('UPLOADS_DIR'),
     MAX_UPLOAD_MB: read('MAX_UPLOAD_MB'),
+    TALLER_INVITE_URL: read('TALLER_INVITE_URL'),
     // Los nombres viejos (DEEPSEEK_*) siguen valiendo de respaldo para que un
     // entorno sin actualizar no se quede sin motor al desplegar.
     AI_ALPHA_API_KEY: read('AI_ALPHA_API_KEY') ?? read('DEEPSEEK_API_KEY'),
