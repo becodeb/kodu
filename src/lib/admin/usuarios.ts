@@ -74,7 +74,18 @@ export interface FilaUsuarioAdmin {
   tokens: number;
   /** Ya formateado: "≈ US$ 1,24" | "US$ 0,00" | "—". */
   costoDisplay: string;
+  /** Crudo, sólo para ordenar por consumo (`costoDisplay` es un string que
+   *  no ordena bien). `null` = sin ningún turno o sin precio conocido. */
+  costoUsdNumero: number | null;
   ultimaActividad: string;
+  /** ISO o `null` ("Nunca") — T03: filtro "activos 7/30 días" y sort por
+   *  actividad necesitan la fecha real, no sólo el texto relativo. */
+  ultimaActividadIso: string | null;
+  /** T03: 14 casilleros (más viejo → más nuevo), tokens por día — para la
+   *  minicha sparkline de la fila. Se calcula de la MISMA pasada de
+   *  `TokenUsage` que ya trae `usoPorUsuario` más abajo (ninguna consulta
+   *  extra ni por fila). */
+  sparkline: number[];
 }
 
 /**
@@ -85,6 +96,10 @@ export interface FilaUsuarioAdmin {
  * Docente" y un botón "Hacer administrador" que jamás debería tocarla —
  * confundiría la tabla en vez de aclararla.
  */
+/** Días que cubre la sparkline de fila (T03). Fijo y chico a propósito: es
+ *  una señal de "¿está subiendo o se apagó?", no un gráfico para leer cifras. */
+const DIAS_SPARKLINE = 14;
+
 export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
   const [usuarios, filasUso, proyectosPorUsuario] = await Promise.all([
     prisma.user.findMany({
@@ -109,10 +124,18 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
     }),
   ]);
 
+  const hoy = new Date();
+  hoy.setUTCHours(0, 0, 0, 0);
+  const desdeSparkline = new Date(hoy);
+  desdeSparkline.setUTCDate(desdeSparkline.getUTCDate() - (DIAS_SPARKLINE - 1));
+
   const usoPorUsuario = new Map<
     string,
     { tokens: number; costUsd: Prisma.Decimal; sinPrecio: boolean; ultima: Date }
   >();
+  // T03: misma pasada de `filasUso` — un arreglo de `DIAS_SPARKLINE`
+  // casilleros por usuario, nada de consultas por fila.
+  const sparklinePorUsuario = new Map<string, number[]>();
   for (const fila of filasUso) {
     const previo = usoPorUsuario.get(fila.userId) ?? {
       tokens: 0,
@@ -125,6 +148,15 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
     else previo.costUsd = previo.costUsd.add(fila.costUsd);
     if (fila.createdAt > previo.ultima) previo.ultima = fila.createdAt;
     usoPorUsuario.set(fila.userId, previo);
+
+    if (fila.createdAt >= desdeSparkline) {
+      const indice = Math.floor((fila.createdAt.getTime() - desdeSparkline.getTime()) / 86_400_000);
+      if (indice >= 0 && indice < DIAS_SPARKLINE) {
+        const casilleros = sparklinePorUsuario.get(fila.userId) ?? new Array(DIAS_SPARKLINE).fill(0);
+        casilleros[indice] += fila.promptTokens + fila.completionTokens;
+        sparklinePorUsuario.set(fila.userId, casilleros);
+      }
+    }
   }
 
   const proyectosMapa = new Map(proyectosPorUsuario.map((fila) => [fila.userId, fila]));
@@ -157,6 +189,8 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
       .sort((a, b) => b.getTime() - a.getTime())[0];
 
     const org = usuario.organizationId ? (organizacionesMapa.get(usuario.organizationId) ?? null) : null;
+    const costoUsdNumero =
+      uso === undefined || uso.sinPrecio ? null : Number(uso.costUsd.toString());
 
     return {
       id: usuario.id,
@@ -171,7 +205,10 @@ export async function listarUsuariosAdmin(): Promise<FilaUsuarioAdmin[]> {
       proyectos: proyectoInfo?._count._all ?? 0,
       tokens: uso?.tokens ?? 0,
       costoDisplay: formatearCostoAdminUsd(uso === undefined ? null : uso.sinPrecio ? null : uso.costUsd.toString()),
+      costoUsdNumero,
       ultimaActividad: haceTiempo(ultimaActividadFecha ?? null),
+      ultimaActividadIso: ultimaActividadFecha ? ultimaActividadFecha.toISOString() : null,
+      sparkline: sparklinePorUsuario.get(usuario.id) ?? new Array(DIAS_SPARKLINE).fill(0),
     };
   });
 
