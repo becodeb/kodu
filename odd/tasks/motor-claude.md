@@ -1998,3 +1998,44 @@ used by `haiku-pulido` mode) does NOT go through the new auto-provision
 path — the owner's decision was scoped to `automatico` only, so
 `haiku-pulido` still requires the admin to load the Sonnet preset by hand
 if that mode is ever selected.
+
+## Hallazgo de revisión (2026-10-24): proyección por recursos reales, `automatico` nunca elige Opus sola
+
+Producción (ciclo 2026-10): USD 8,91 gastados de 200, pero `decidirTierAutomatico`
+proyectaba ≈USD 216 (>90%) y caía a Haiku — con sólo ~15 recursos hechos por
+13 docentes. Causa: la proyección vieja estimaba "cuántos recursos hay detrás
+del gasto reciente" dividiendo ese gasto por el costo de UN recurso Haiku —
+cualquier día con uso Sonnet/Opus en el medio inflaba esa cuenta 10-50x.
+
+Cambios:
+- `InsumoPacingAutomatico.gastoPromedioDiarioRecienteUsd` → `recursosPorDiaReciente`:
+  cuenta proyectos DISTINTOS con fila `TokenUsage` Anthropic (`projectId` no
+  nulo) en los últimos 3 días reales; si no hay ninguno, cae a proyectos
+  distintos del ciclo actual / días transcurridos (mismo respaldo de siempre).
+- `decidirTierAutomatico` ya NUNCA decide `'opus'` — se quitó esa rama entera
+  (y sus constantes `DIAS_ULTIMO_TRAMO`/`FACTOR_SEGURIDAD_OPUS`/
+  `MARGEN_SEGURIDAD_OPUS_USD`, ya sin uso). El dueño no quiere que el modo
+  automático haga esperar ~5 min a un docente sin que él lo haya pedido.
+  Opus sigue disponible por `engineChosenByTeacher` o los modos fijos
+  (`crea-opus`/`todo-opus`) — `TierAutomatico` conserva `'opus'` en el tipo
+  (lo siguen usando `ETIQUETA_POR_TIER`/`ROLE_SPEC_POR_TIER_AUTOMATICO`)
+  aunque esta función ya no pueda devolverlo.
+- `COSTO_MEDIDO_POR_RECURSO_USD.sonnet`: 0,19 → 0,71, remedido sobre
+  `/api/stats/uso.json` de producción (2026-10-24) — Sonnet 5.5 bajo
+  `automatico`: creación mediana 160s/≈USD 0,25, ajuste mediana 77s/≈USD 0,23,
+  y los docentes reales hacen ≈3 ajustes por recurso.
+- Migración de datos `20261102000000_todo_opus_a_automatico`: producción
+  tenía `AppSettings.generationMode = 'todo-opus'` puesto a mano para una
+  prueba — vuelve a `'automatico'` (mismo patrón que
+  `20261101000000_automatico_default_produccion`, sólo pisa esa fila si
+  todavía está en `'todo-opus'`).
+- `e2e/unidad-modos-generacion.ts`: casos nuevos con el escenario real de
+  producción (8,91/200, ~5 recursos/día, 7 días restantes → sonnet), uso
+  pesado real → haiku, histéresis, "últimos días con mucho crédito" → sonnet
+  (nunca opus), y crédito agotado → haiku. Las expectativas de "opus en el
+  último tramo" se quitaron.
+- `SelectorDeMotor.tsx`/`motoresParaDocente()` no se tocaron: un docente YA
+  puede elegir Opus a mano si un admin habilitó una fila de `AiModel` de
+  Opus con `selectableByTeacher: true` — el label/hint que ve es el
+  `displayName`/`description` que el admin le puso a esa fila, sin ningún
+  aviso de "esto tarda ~5 min" en el código del selector.

@@ -292,7 +292,8 @@ export function invalidarCacheDeGasto(): void {
 }
 
 // ---------------------------------------------------------------------------
-// T14: pacing del modo `automatico` — decide a qué tier (haiku/sonnet/opus)
+// T14: pacing del modo `automatico` — decide a qué tier (haiku/sonnet;
+// NUNCA opus, hallazgo de revisión 2026-10-24, ver `decidirTierAutomatico`)
 // manda un recurso NUEVO. `decidirTierAutomatico` es PURA (sin I/O, para
 // poder probarla con fechas/números fijos); `tierAutomaticoActual` es el
 // wrapper con efecto que de verdad se llama en producción.
@@ -315,19 +316,18 @@ export interface CostosPorTierUsd {
  */
 export const COSTO_MEDIDO_POR_RECURSO_USD: CostosPorTierUsd = {
   haiku: 0.019,
-  // T16 (motor-claude): remedido sobre v8-todo-sonnet — 5 casos difíciles,
-  // creación + 2 ajustes cada uno, promedio USD 0,186 / ≈2,2 min por recurso
-  // completo (computado directo de
-  // experimentos/motor-claude/resultados/v8-todo-sonnet/*/corrida.json,
-  // worktree exp/motor-claude) — reemplaza el 0,32 anterior (una estimación
-  // de antes de tener esta corrida real).
-  sonnet: 0.19,
+  // Hallazgo de revisión (motor-claude, 2026-10-24): remedido sobre
+  // producción real bajo `automatico` (`/api/stats/uso.json`, medición del
+  // 2026-10-24) — Sonnet 5.5 creación ≈USD 0,25 (mediana 160 s), ajuste
+  // ≈USD 0,23 (mediana 77 s), y los docentes reales hacen ≈3 ajustes por
+  // recurso: el promedio medido por recurso completo (creación + sus
+  // ajustes, mismo criterio que el resto de esta tabla) da USD 0,71 —
+  // reemplaza el 0,19 anterior (la corrida de `v8-todo-sonnet`, 5 casos
+  // sintéticos sin ajustes reales de docente detrás).
+  sonnet: 0.71,
   opus: 0.96,
 };
 
-const DIAS_ULTIMO_TRAMO = 4;
-const FACTOR_SEGURIDAD_OPUS = 1.5;
-const MARGEN_SEGURIDAD_OPUS_USD = 10;
 const UMBRAL_SONNET = 0.9;
 /** Histéresis: una vez en `haiku`, hace falta una proyección más floja
  *  (≤80%, no ≤90%) para volver a `sonnet` — evita el "flapping" de un
@@ -340,10 +340,12 @@ export interface InsumoPacingAutomatico {
   inicio: Date;
   fin: Date;
   ahora: Date;
-  /** USD/día: últimos 3 días reales si hay datos, si no el promedio del
-   *  ciclo hasta ahora (gasto / días transcurridos) — lo decide el
-   *  llamador (`tierAutomaticoActual`); esta función sólo lo usa. */
-  gastoPromedioDiarioRecienteUsd: number;
+  /** Recursos/día: últimos 3 días reales (proyectos distintos con al menos
+   *  una fila de `TokenUsage` Anthropic) si hay datos, si no los proyectos
+   *  distintos del ciclo hasta ahora / días transcurridos — lo decide el
+   *  llamador (`tierAutomaticoActual`); esta función sólo lo usa para
+   *  reescalar al costo de Sonnet. */
+  recursosPorDiaReciente: number;
   costosPorTier: CostosPorTierUsd;
 }
 
@@ -365,24 +367,30 @@ export interface DecisionPacingAutomatico {
  * `automatico`. Pura — ni lee ni cachea nada; `tierAutomaticoActual` abajo
  * hace esa parte.
  *
- * El "ritmo con Sonnet" es una aproximación DELIBERADA: no hay forma de
- * saber, sin guardar qué tier corrió cada recurso reciente, cuántos
- * recursos reales hay detrás del gasto diario reciente — así que se estima
- * esa cantidad dividiendo el gasto reciente por el costo de UN recurso
- * Haiku (el tier por defecto la mayoría del tiempo) y se multiplica esa
- * cantidad por el costo de Sonnet. Determinístico, documentado, y nunca
- * peor que no proyectar nada — exactamente el mismo criterio de
- * "subestimar es la dirección segura" que ya usa `gastoDelCicloActual`.
+ * Hallazgo de revisión (2026-10-24): la proyección usa directamente
+ * `recursosPorDiaReciente` (recursos reales, no "gasto reciente dividido
+ * por el costo de un recurso Haiku") — la versión vieja asumía que TODO el
+ * ritmo reciente era de recursos Haiku, así que un solo día con uso
+ * Sonnet/Opus en el medio inflaba la proyección 10-50x (el costo de Sonnet
+ * es ~10x el de Haiku, el de Opus ~50x) y tiraba el modo a Haiku con el
+ * crédito casi sin tocar. Contar proyectos distintos (ver
+ * `tierAutomaticoActual`) no tiene ese problema: no importa qué tier corrió
+ * cada recurso, la CANTIDAD de recursos es la misma.
+ *
+ * `automatico` NUNCA elige Opus solo (hallazgo de revisión, 2026-10-24): el
+ * dueño no quiere que un docente espere ~5 min sin haberlo pedido. Opus
+ * sigue disponible por elección explícita del docente
+ * (`Project.engineChosenByTeacher`) o en los modos fijos
+ * (`crea-opus`/`todo-opus`) — nunca por este pacing.
  */
 export function decidirTierAutomatico(
   insumo: InsumoPacingAutomatico,
   tierCacheado: TierAutomatico | null,
 ): DecisionPacingAutomatico {
-  const { gastoDelCicloUsd, monthlyCreditUsd, inicio, fin, ahora, gastoPromedioDiarioRecienteUsd, costosPorTier } = insumo;
+  const { gastoDelCicloUsd, monthlyCreditUsd, inicio, fin, ahora, recursosPorDiaReciente, costosPorTier } = insumo;
 
   const diasRestantes = Math.max((fin.getTime() - ahora.getTime()) / MS_POR_DIA, 0);
   const creditoRestanteUsd = monthlyCreditUsd - gastoDelCicloUsd;
-  const recursosPorDiaReciente = costosPorTier.haiku > 0 ? gastoPromedioDiarioRecienteUsd / costosPorTier.haiku : 0;
   const proyeccionRestoCicloConSonnetUsd = recursosPorDiaReciente * costosPorTier.sonnet * diasRestantes;
   const proyeccionCierreUsd = gastoDelCicloUsd + proyeccionRestoCicloConSonnetUsd;
 
@@ -392,17 +400,6 @@ export function decidirTierAutomatico(
   // queda crédito, así que un recurso nuevo no puede ser premium.
   if (gastoDelCicloUsd >= monthlyCreditUsd) {
     return { ...base, tier: 'haiku', razon: 'el crédito del ciclo ya se agotó' };
-  }
-
-  if (
-    diasRestantes <= DIAS_ULTIMO_TRAMO &&
-    creditoRestanteUsd >= proyeccionRestoCicloConSonnetUsd * FACTOR_SEGURIDAD_OPUS + MARGEN_SEGURIDAD_OPUS_USD
-  ) {
-    return {
-      ...base,
-      tier: 'opus',
-      razon: `quedan ${diasRestantes.toFixed(1)} días del ciclo y el crédito restante (USD ${creditoRestanteUsd.toFixed(2)}) sobra para no desperdiciarlo`,
-    };
   }
 
   const umbral = tierCacheado === 'haiku' ? UMBRAL_VUELTA_A_SONNET : UMBRAL_SONNET;
@@ -422,17 +419,30 @@ export function decidirTierAutomatico(
   };
 }
 
-async function gastoUltimosNDiasUsd(ahora: Date, dias: number): Promise<number> {
-  const desde = new Date(ahora.getTime() - dias * MS_POR_DIA);
-  const resultado = await prisma.tokenUsage.aggregate({
+/**
+ * Cuenta proyectos DISTINTOS con al menos una fila de `TokenUsage`
+ * Anthropic (`projectId` no nulo) en la ventana `[desde, hasta]` — una
+ * consulta barata (`distinct` sobre un índice), nunca un `COUNT(*)` de
+ * filas (un recurso con muchos turnos no tiene que pesar más que uno con
+ * pocos).
+ *
+ * Hallazgo de revisión (motor-claude, 2026-10-24): reemplaza contar
+ * "USD gastados / costo de un recurso Haiku" — esa cuenta vieja asumía que
+ * TODO el gasto reciente era de recursos Haiku, así que un solo día con
+ * uso Sonnet/Opus en el medio inflaba la proyección 10-50x. Contar
+ * proyectos reales no tiene ese sesgo.
+ */
+async function recursosConUsoAnthropicEntre(desde: Date, hasta: Date): Promise<number> {
+  const filas = await prisma.tokenUsage.findMany({
     where: {
-      createdAt: { gte: desde, lte: ahora },
-      costUsd: { not: null },
+      createdAt: { gte: desde, lte: hasta },
+      projectId: { not: null },
       aiModel: { provider: { apiFormat: 'anthropic' } },
     },
-    _sum: { costUsd: true },
+    distinct: ['projectId'],
+    select: { projectId: true },
   });
-  return resultado._sum.costUsd?.toNumber() ?? 0;
+  return filas.length;
 }
 
 const CACHE_TIER_TTL_MS = 5 * 60_000;
@@ -440,12 +450,21 @@ let cacheTier: { inicioMs: number; expira: number; decision: DecisionPacingAutom
 
 /**
  * Wrapper con efecto de `decidirTierAutomatico`: lee el gasto del ciclo
- * (ya cacheado 60s por `gastoDelCicloActual`) y el gasto de los últimos 3
- * días reales, y cachea la DECISIÓN completa 5 minutos (T14: "cache the
- * decision ≤5 min") — dentro de esos 5 min, ningún turno paga una
- * proyección nueva y la histéresis ve el mismo `tierCacheado` que el
- * último cálculo real. La caché se invalida sola si cambia el `inicio` del
- * ciclo, igual que `gastoDelCicloActual`.
+ * (ya cacheado 60s por `gastoDelCicloActual`) y los recursos reales de los
+ * últimos 3 días (`recursosConUsoAnthropicEntre`), y cachea la DECISIÓN
+ * completa 5 minutos (T14: "cache the decision ≤5 min") — dentro de esos 5
+ * min, ningún turno paga una proyección nueva y la histéresis ve el mismo
+ * `tierCacheado` que el último cálculo real. La caché se invalida sola si
+ * cambia el `inicio` del ciclo, igual que `gastoDelCicloActual`.
+ *
+ * Hallazgo de revisión (motor-claude, 2026-10-24): `recursosPorDiaReciente`
+ * cuenta proyectos distintos con uso Anthropic en los últimos 3 días, no
+ * gasto dividido por el costo de un recurso Haiku — ver el comentario de
+ * `decidirTierAutomatico` y de `recursosConUsoAnthropicEntre`. Si no hubo
+ * NINGÚN recurso en esos 3 días (ciclo recién arrancado, o una instalación
+ * nueva), cae al mismo respaldo de siempre: proyectos distintos del ciclo
+ * hasta ahora, sobre días transcurridos (mínimo 1 hora, igual que
+ * `proyeccionDeCierre`).
  *
  * `costosPorTier` queda fijo en los valores medidos (`COSTO_MEDIDO_POR_
  * RECURSO_USD`) por ahora — el promedio EN VIVO desde `TokenUsage`/
@@ -466,9 +485,11 @@ export async function tierAutomaticoActual(
   const gastoDelCicloUsd = await gastoDelCicloActual(settings.billingCycleDay, ahora);
   const diasTranscurridos = Math.max((ahora.getTime() - inicio.getTime()) / MS_POR_DIA, 1 / 24);
 
-  let gastoPromedioDiarioRecienteUsd = (await gastoUltimosNDiasUsd(ahora, 3)) / 3;
-  if (gastoPromedioDiarioRecienteUsd <= 0) {
-    gastoPromedioDiarioRecienteUsd = gastoDelCicloUsd / diasTranscurridos;
+  const recursosEnUltimos3Dias = await recursosConUsoAnthropicEntre(new Date(ahora.getTime() - 3 * MS_POR_DIA), ahora);
+  let recursosPorDiaReciente = recursosEnUltimos3Dias / 3;
+  if (recursosPorDiaReciente <= 0) {
+    const recursosDelCiclo = await recursosConUsoAnthropicEntre(inicio, ahora);
+    recursosPorDiaReciente = recursosDelCiclo / diasTranscurridos;
   }
 
   const decision = decidirTierAutomatico(
@@ -478,7 +499,7 @@ export async function tierAutomaticoActual(
       inicio,
       fin,
       ahora,
-      gastoPromedioDiarioRecienteUsd,
+      recursosPorDiaReciente,
       costosPorTier: COSTO_MEDIDO_POR_RECURSO_USD,
     },
     cacheTier?.decision.tier ?? null,

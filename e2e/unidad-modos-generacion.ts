@@ -159,8 +159,12 @@ await prueba('proyeccionDeCierre: ciclo recién arrancado (ahora === inicio) nun
 });
 
 // ---------------------------------------------------------------------------
-// T14: decidirTierAutomatico (pura) — mid-cycle bajo/sobre presupuesto,
-// histéresis, último tramo -> opus, bordes del ciclo.
+// Hallazgo de revisión (motor-claude, 2026-10-24): decidirTierAutomatico
+// ahora proyecta con RECURSOS/día reales (`recursosPorDiaReciente`), no
+// gasto reciente dividido por el costo de un recurso Haiku — y nunca
+// decide 'opus' sola (el dueño no quiere que el modo automático haga
+// esperar ~5 min a un docente sin que lo haya pedido él mismo). mid-cycle
+// bajo/sobre presupuesto, histéresis, bordes del ciclo.
 // ---------------------------------------------------------------------------
 
 const INICIO_30D = new Date('2026-03-01T00:00:00.000Z');
@@ -172,26 +176,30 @@ function insumo(parcial: Partial<InsumoPacingAutomatico>): InsumoPacingAutomatic
     monthlyCreditUsd: 200,
     inicio: INICIO_30D,
     fin: FIN_30D,
-    ahora: new Date('2026-03-15T00:00:00.000Z'),
-    gastoPromedioDiarioRecienteUsd: 0,
+    ahora: new Date('2026-03-15T00:00:00.000Z'), // 16 días restantes del ciclo de 30
+    recursosPorDiaReciente: 0,
     costosPorTier: COSTO_MEDIDO_POR_RECURSO_USD,
     ...parcial,
   };
 }
 
-await prueba('decidirTierAutomatico: mid-cycle, ritmo bajo (proyección muy por debajo del 90%) -> sonnet', () => {
-  // 14 días transcurridos, ritmo reciente bajo: 0.5 USD/día de Haiku ⇒
-  // reescalado a Sonnet, proyección de cierre chica contra 200 de crédito.
+await prueba('decidirTierAutomatico: escenario real de producción (2026-10) — USD 8,91 gastados de 200, ~5 recursos/día, 7 días restantes -> sonnet', () => {
+  // El caso que disparó esta revisión: con la fórmula vieja (gasto/costo-de-
+  // Haiku) esto proyectaba ≈USD 216 (>90% de 200) y caía a Haiku con el
+  // crédito casi sin tocar. Contando recursos reales, la proyección es chica.
   const decision = decidirTierAutomatico(
-    insumo({ gastoDelCicloUsd: 7, gastoPromedioDiarioRecienteUsd: 0.5 }),
+    insumo({ ahora: new Date('2026-03-24T00:00:00.000Z'), gastoDelCicloUsd: 8.91, recursosPorDiaReciente: 5 }),
     null,
   );
   assert.equal(decision.tier, 'sonnet');
+  assert.ok(decision.proyeccionCierreUsd < 180, `proyección inesperadamente alta: ${decision.proyeccionCierreUsd}`);
 });
 
-await prueba('decidirTierAutomatico: mid-cycle, ritmo alto (proyección pasa el 90%) -> haiku', () => {
+await prueba('decidirTierAutomatico: uso pesado real (proyección SÍ pasa el 90%) -> haiku', () => {
+  // 10 recursos/día a USD 0,71 (Sonnet) durante los 16 días que quedan,
+  // sobre un gasto ya hecho de 100 -> proyección de cierre > 180 (90% de 200).
   const decision = decidirTierAutomatico(
-    insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 8 }),
+    insumo({ gastoDelCicloUsd: 100, recursosPorDiaReciente: 10 }),
     null,
   );
   assert.equal(decision.tier, 'haiku');
@@ -199,7 +207,7 @@ await prueba('decidirTierAutomatico: mid-cycle, ritmo alto (proyección pasa el 
 
 await prueba('decidirTierAutomatico: crédito del ciclo ya agotado -> haiku SIEMPRE, sin importar días/ritmo', () => {
   const decision = decidirTierAutomatico(
-    insumo({ gastoDelCicloUsd: 250, monthlyCreditUsd: 200, gastoPromedioDiarioRecienteUsd: 0 }),
+    insumo({ gastoDelCicloUsd: 250, monthlyCreditUsd: 200, recursosPorDiaReciente: 0 }),
     null,
   );
   assert.equal(decision.tier, 'haiku');
@@ -207,50 +215,35 @@ await prueba('decidirTierAutomatico: crédito del ciclo ya agotado -> haiku SIEM
 });
 
 await prueba('decidirTierAutomatico: histéresis — mismo gasto, tierCacheado=haiku exige un umbral más duro para volver a sonnet', () => {
-  // Proyección de cierre entre el 80% y el 90% del crédito: sin caché pasa
-  // a sonnet (umbral 90%), pero si YA estaba en haiku, se queda en haiku.
-  // T16: 0.45 (no 0.26) porque `COSTO_MEDIDO_POR_RECURSO_USD.sonnet` bajó de
-  // 0.32 a 0.19 (remedido, ver su propio comentario) — con el valor viejo de
-  // este fixture, la proyección ya no caía entre el 80% y el 90% del
-  // crédito con el precio nuevo de Sonnet.
-  const base = insumo({ gastoDelCicloUsd: 100, gastoPromedioDiarioRecienteUsd: 0.45 });
+  // 6 recursos/día durante los 16 días que quedan, sobre 100 ya gastados:
+  // proyección de cierre ≈168 — entre el 80% (160) y el 90% (180) de 200.
+  // Sin caché pasa a sonnet (umbral 90%); si YA estaba en haiku, el umbral
+  // más duro (80%) la deja en haiku.
+  const base = insumo({ gastoDelCicloUsd: 100, recursosPorDiaReciente: 6 });
   const sinCache = decidirTierAutomatico(base, null);
   const vieneDeHaiku = decidirTierAutomatico(base, 'haiku');
   assert.equal(sinCache.tier, 'sonnet');
   assert.equal(vieneDeHaiku.tier, 'haiku');
 });
 
-await prueba('decidirTierAutomatico: últimos 4 días del ciclo, crédito restante sobra -> opus', () => {
+await prueba('decidirTierAutomatico: últimos días del ciclo con mucho crédito libre -> sigue en sonnet, NUNCA opus', () => {
   const decision = decidirTierAutomatico(
     insumo({
       ahora: new Date('2026-03-28T00:00:00.000Z'), // 3 días restantes
       gastoDelCicloUsd: 20,
       monthlyCreditUsd: 200,
-      gastoPromedioDiarioRecienteUsd: 0.1, // ritmo casi nulo: Sonnet no gastaría casi nada el resto
+      recursosPorDiaReciente: 0.1, // ritmo casi nulo: Sonnet no gastaría casi nada el resto
     }),
     null,
   );
-  assert.equal(decision.tier, 'opus');
+  assert.equal(decision.tier, 'sonnet');
 });
 
-await prueba('decidirTierAutomatico: últimos días PERO el crédito restante no sobra -> no es opus', () => {
-  const decision = decidirTierAutomatico(
-    insumo({
-      ahora: new Date('2026-03-28T00:00:00.000Z'),
-      gastoDelCicloUsd: 190,
-      monthlyCreditUsd: 200,
-      gastoPromedioDiarioRecienteUsd: 5,
-    }),
-    null,
-  );
-  assert.notEqual(decision.tier, 'opus');
-});
-
-await prueba('decidirTierAutomatico: borde del ciclo (ahora === fin) no da NaN/Infinity ni revienta', () => {
+await prueba('decidirTierAutomatico: borde del ciclo (ahora === fin) no da NaN/Infinity ni revienta, y nunca es opus', () => {
   const decision = decidirTierAutomatico(insumo({ ahora: FIN_30D, gastoDelCicloUsd: 50 }), null);
   assert.equal(Number.isFinite(decision.diasRestantes), true);
   assert.equal(decision.diasRestantes, 0);
-  assert.ok(['haiku', 'sonnet', 'opus'].includes(decision.tier));
+  assert.ok(['haiku', 'sonnet'].includes(decision.tier));
 });
 
 await prueba('esClaveDeModoConocida/modoEfectivo: "automatico" es conocida y NUNCA cae por premiumUntilUsd', () => {
