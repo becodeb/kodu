@@ -44,12 +44,14 @@ Strategy: `single-pr` style on one feature branch with work-unit commits; merge/
 
 - [x] T01 Shell: grouped sidebar nav (Resumen · Personas · Contenido · IA · Plata), mobile drawer, shared `EncabezadoAdmin`, motion utilities. Route: delegated (writer trigger: 2+ non-trivial files). Evidence: 35de85e; m1-admin-shell ✔, m5-usuarios ✔.
 - [x] T02 Overview `/admin`: platform aggregation (KPIs, 30-day daily tokens/cost, active teachers, top teachers, top engines, latest resources) + hero chart. Route: delegated. Evidence: 2089eb0; parent screenshot review found: chart needs range selector (7/30/90, data sparse), engines list too long (cap 6), top teachers show — without price (show tokens). Fixes folded into T03 batch.
-- [ ] T03 Teachers list: search, filters (role, AI access, organization, activity), sort, URL-synced state, avatars, row → profile. Route: delegated.
-- [ ] T04 Teacher profile: header with stats, sections Recursos (grid with filters) / Consumo (charts) / Cuenta (role + AI access actions). Route: delegated.
+- [x] T03 Teachers list: search, filters (role, AI access, organization, activity), sort, URL-synced state, avatars, row → profile. Route: delegated. Evidence: 2b8deec (T02 fixes), 4be4cd9; m5-usuarios ✔. Parent review: avatar initials take punctuation ("D("), access/USD cells wrap, search placeholder truncated → folded into T05.
+- [x] T04 Teacher profile: header with stats, sections Recursos (grid with filters) / Consumo (charts) / Cuenta (role + AI access actions). Route: delegated. Evidence: c590930; m5-usuarios ✔ (navigations moved to ?seccion=consumo). Parent review: coverless cards are oversized grey blocks → folded into T05.
 - [ ] T05 Resources list: owner filter, sort, consistent filter bar; apply shared header/filter/empty states to remaining admin pages. Route: delegated.
 - [ ] T06 Verification: e2e suites updated and green, browser screenshots both themes and mobile. Route: delegated + parent review.
 
 ## Progress
+
+- 2026-10-25: T03–T04 done; check/build clean. `m8-proyectos-ajenos` fails at the owner opening their own project: pre-existing fixture gap (creates the org via `prisma.organization.create`, so no `OrganizationLicense`; billing then denies AI). Branch does not touch billing or project view. Next: T05 + polish + T06.
 
 - 2026-10-25: T01–T02 done. Worktree node_modules symlink pointed at an old branch missing `@anthropic-ai/sdk` and `three` (main needs both); replaced with own `npm ci`. After that `npm run check` clean and `npm run build` complete. Next: T03–T04 + T02 fixes.
 
