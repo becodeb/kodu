@@ -224,6 +224,9 @@ export interface DetalleUsuarioAdmin {
   /** "se sumó el 4 de marzo". */
   creadoDisplay: string;
   accesoIa: string;
+  /** El permiso individual crudo (T04: lo necesita `CuentaDocenteAdmin.tsx`
+   *  para saber qué opción marcar, igual que el menú de fila en T03). */
+  aiAccessOverride: boolean | null;
   organizationName: string | null;
   organizationId: string | null;
   tokens: number;
@@ -265,6 +268,7 @@ export async function obtenerUsuarioAdmin(id: string): Promise<DetalleUsuarioAdm
     role: usuario.role,
     creadoDisplay: `se sumó el ${fechaLarga(usuario.createdAt)}`,
     accesoIa: textoAccesoIa(usuario.aiAccessOverride, org),
+    aiAccessOverride: usuario.aiAccessOverride,
     organizationName: org?.name ?? null,
     organizationId: usuario.organizationId,
     tokens,

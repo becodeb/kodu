@@ -2,57 +2,100 @@
 import AdminLayout from '../../../layouts/AdminLayout.astro';
 import GraficoColumnas from '../../../components/admin/GraficoColumnas.tsx';
 import GraficoBarras from '../../../components/admin/GraficoBarras.tsx';
-import { prisma } from '../../../lib/db.ts';
-import { obtenerUsuarioAdmin } from '../../../lib/admin/usuarios.ts';
+import RecursosDocenteGrid from '../../../components/admin/RecursosDocenteGrid.tsx';
+import CuentaDocenteAdmin from '../../../components/admin/CuentaDocenteAdmin.tsx';
+import { obtenerPerfilDocenteAdmin } from '../../../lib/admin/perfilDocente.ts';
 import { consumoDiarioDeUsuario, consumoPorUsuario } from '../../../lib/ai/usage.ts';
 import { formatearCostoAdminUsd } from '../../../lib/format/costo.ts';
 import { formatearTokensCompacto } from '../../../lib/format/tokens.ts';
-import { haceTiempo } from '../../../lib/format/fecha.ts';
+
+/**
+ * odd/tasks/admin-ui-redesign.md (T04): la ficha de un docente. Reemplaza la
+ * versión de T02 (Prisma inline + lista plana de recursos) por tres
+ * secciones — Recursos (default), Consumo, Cuenta — sincronizadas a
+ * `?seccion=` como cualquier otro filtro de este panel (navegación real,
+ * nunca estado de cliente: compartir el link o recargar muestra la misma
+ * pestaña). `?rango=` dentro de Consumo sigue el mismo criterio que
+ * `/admin` (T02 fixes).
+ *
+ * e2e/m5-usuarios.ts ya cubría la versión vieja (gráficos + recursos
+ * siempre visibles, sin pestañas) — se actualizó ahí mismo para abrir
+ * `?seccion=consumo` antes de leer los gráficos, que es exactamente lo que
+ * cambió: la ESTRUCTURA de la página, no las cifras que calcula.
+ */
+const SECCIONES = ['recursos', 'consumo', 'cuenta'] as const;
+type Seccion = (typeof SECCIONES)[number];
+const seccionParam = Astro.url.searchParams.get('seccion');
+const seccion: Seccion = (SECCIONES as readonly string[]).includes(seccionParam ?? '') ? (seccionParam as Seccion) : 'recursos';
+
+const rangoParam = Astro.url.searchParams.get('rango');
+const rangoConsumo: 30 | 90 = rangoParam === '90' ? 90 : 30;
 
 // El middleware ya garantiza sesión + rol ADMIN en /admin/**.
-const usuario = await obtenerUsuarioAdmin(Astro.params.id!);
+const usuario = await obtenerPerfilDocenteAdmin(Astro.params.id!);
 if (!usuario) return Astro.redirect('/admin/usuarios', 302);
 
-const [periodo, porModeloRaw, proyectos] = await Promise.all([
-  consumoDiarioDeUsuario(usuario.id, 30),
-  consumoPorUsuario(usuario.id),
-  prisma.project.findMany({
-    where: { userId: usuario.id },
-    orderBy: { updatedAt: 'desc' },
-    select: { id: true, title: true, updatedAt: true },
-  }),
+const [periodo, porModeloRaw] = await Promise.all([
+  seccion === 'consumo' ? consumoDiarioDeUsuario(usuario.id, rangoConsumo) : Promise.resolve(null),
+  seccion === 'consumo' ? consumoPorUsuario(usuario.id) : Promise.resolve([]),
 ]);
 
 /**
  * "Todavía no usó la IA" es sobre TODA la historia del docente, no sólo la
- * ventana de 30 días del gráfico de columnas (design.md): alguien que usó
- * la IA hace 40 días y no volvió no "todavía no usó la IA", así que el
- * corte usa el total de `usuario.tokens` (all-time), no `periodo.tokens`.
+ * ventana del gráfico de columnas (design.md): alguien que usó la IA hace 40
+ * días y no volvió no "todavía no usó la IA", así que el corte usa el total
+ * de `usuario.tokens` (all-time), no `periodo.tokens`.
  */
 const nuncaUsoLaIa = usuario.tokens === 0;
 
-const subtituloColumnas = (() => {
-  const tokensTexto = `${formatearTokensCompacto(periodo.tokens)} tokens`;
-  if (periodo.costUsd !== null && periodo.costUsd.isZero()) {
-    return `${tokensTexto} · US$ 0,00 — todo con el motor sin costo.`;
-  }
-  return `${tokensTexto} · ${formatearCostoAdminUsd(periodo.costUsd?.toString() ?? null)} en los últimos 30 días.`;
-})();
+const subtituloColumnas = periodo
+  ? (() => {
+      const tokensTexto = `${formatearTokensCompacto(periodo.tokens)} tokens`;
+      if (periodo.costUsd !== null && periodo.costUsd.isZero()) {
+        return `${tokensTexto} · US$ 0,00 — todo con el motor sin costo.`;
+      }
+      return `${tokensTexto} · ${formatearCostoAdminUsd(periodo.costUsd?.toString() ?? null)} en los últimos ${rangoConsumo} días.`;
+    })()
+  : '';
 
 const porModelo = porModeloRaw.map((fila) => ({
   etiqueta: fila.etiqueta,
   tokens: fila.tokens,
   costoDisplay: fila.historico ? '— histórico' : formatearCostoAdminUsd(fila.costUsd?.toString() ?? null),
 }));
+
+const porRecursoTop = [...usuario.recursos].filter((recurso) => recurso.tokens > 0).slice(0, 8);
+
+const iniciales = usuario.name
+  .trim()
+  .split(/\s+/)
+  .map((parte) => parte[0])
+  .slice(0, 2)
+  .join('')
+  .toUpperCase();
+
+function hrefSeccion(valor: Seccion): string {
+  return valor === 'recursos' ? `/admin/usuarios/${usuario.id}` : `/admin/usuarios/${usuario.id}?seccion=${valor}`;
+}
+
+function hrefRango(valor: 30 | 90): string {
+  return valor === 30 ? `/admin/usuarios/${usuario.id}?seccion=consumo` : `/admin/usuarios/${usuario.id}?seccion=consumo&rango=${valor}`;
+}
+
+const ETIQUETAS_SECCION: Record<Seccion, string> = { recursos: 'Recursos', consumo: 'Consumo', cuenta: 'Cuenta' };
 ---
 
-<AdminLayout title={usuario.name}>
-  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
-    <div>
-      <a href="/admin/usuarios" class="text-xs text-ink-500 hover:text-brand-600">← Docentes</a>
-      <h1 class="font-display mt-1 text-2xl font-bold text-ink-900">{usuario.name}</h1>
-      <p class="mt-1 flex items-center gap-1.5 text-sm text-ink-500">
-        {usuario.email} · {usuario.creadoDisplay}
+<AdminLayout title={usuario.name} breadcrumb={[{ etiqueta: 'Docentes', href: '/admin/usuarios' }, { etiqueta: usuario.name }]}>
+  <div class="admin-entra mb-6 flex flex-wrap items-start gap-4">
+    <span
+      aria-hidden="true"
+      class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-brand-100 font-display text-lg text-brand-700"
+    >
+      {iniciales}
+    </span>
+    <div class="min-w-0 flex-1">
+      <p class="flex items-center gap-1.5 text-sm text-ink-500">
+        {usuario.email}
         {usuario.esGoogle && (
           <span
             title="Inició sesión con Google"
@@ -63,80 +106,147 @@ const porModelo = porModeloRaw.map((fila) => ({
           </span>
         )}
       </p>
-    </div>
-    <div class="flex flex-wrap items-center gap-3">
-      <p class="rounded-lg border border-linea bg-sutil px-3 py-1.5 text-sm text-ink-700">
-        {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'} ·{' '}
-        {usuario.organizationName && usuario.organizationId ? (
-          <a href={`/admin/organizaciones/${usuario.organizationId}`} class="text-brand-600 hover:underline">
-            {usuario.organizationName}
-          </a>
-        ) : (
-          'Cuenta personal'
-        )}{' '}
-        · Acceso a la IA: {usuario.accesoIa}
+      <p class="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+        <span class="rounded-lg border border-linea bg-sutil px-2.5 py-1 text-ink-700">
+          {usuario.role === 'ADMIN' ? 'Administrador' : 'Docente'}
+        </span>
+        <span class="text-ink-500">
+          {usuario.organizationName && usuario.organizationId ? (
+            <a href={`/admin/organizaciones/${usuario.organizationId}`} class="text-brand-600 hover:underline">
+              {usuario.organizationName}
+            </a>
+          ) : (
+            'Cuenta personal'
+          )}
+        </span>
+        <span class="text-ink-500">· Acceso a la IA: {usuario.accesoIa}</span>
+        <span class="text-ink-500">· {usuario.creadoDisplay}</span>
+        <span class="text-ink-500">· última actividad {usuario.ultimaActividad}</span>
       </p>
     </div>
   </div>
 
-  <div class="kodu-card mb-6 grid grid-cols-1 divide-y divide-linea sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-    <div class="p-5">
-      <p class="font-display text-2xl text-ink-900">{formatearTokensCompacto(usuario.tokens)}</p>
+  <div class="admin-entra kodu-card mb-6 grid grid-cols-2 divide-y divide-linea sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+    <div class="p-4">
+      <p class="font-display text-xl text-ink-900">{usuario.proyectosCount}</p>
+      <p class="text-xs text-ink-500">{usuario.proyectosCount === 1 ? 'recurso' : 'recursos'}</p>
+    </div>
+    <div class="p-4">
+      <p class="font-display text-xl text-ink-900">{usuario.publicadosCount}</p>
+      <p class="text-xs text-ink-500">publicados</p>
+    </div>
+    <div class="p-4">
+      <p class="font-display text-xl text-ink-900">{formatearTokensCompacto(usuario.tokens)}</p>
       <p class="text-xs text-ink-500">tokens</p>
     </div>
-    <div class="p-5">
-      <p class="font-display text-2xl text-ink-900">{usuario.costoDisplay}</p>
+    <div class="p-4">
+      <p class="font-display text-xl text-ink-900">{usuario.costoDisplay}</p>
       <p class="text-xs text-ink-500">costo</p>
     </div>
-    <div class="p-5">
-      <p class="font-display text-2xl text-ink-900">{usuario.proyectosCount}</p>
-      <p class="text-xs text-ink-500">{usuario.proyectosCount === 1 ? 'recurso' : 'recursos'}</p>
+    <div class="p-4">
+      <p class="font-display text-xl text-ink-900 tabular-nums">
+        {formatearTokensCompacto(usuario.tendenciaTokens30.actual)}
+      </p>
+      <p class="text-xs text-ink-500">
+        {usuario.tendenciaTokens30.porcentaje === null
+          ? 'últimos 30 días'
+          : `${usuario.tendenciaTokens30.subio ? '↑' : '↓'} ${Math.abs(usuario.tendenciaTokens30.porcentaje).toFixed(0)}% vs. los 30 anteriores`}
+      </p>
     </div>
   </div>
 
-  <section class="kodu-card mb-6 p-5">
-    <h2 class="text-sm font-semibold text-ink-900">Consumo de los últimos 30 días</h2>
-    {
-      nuncaUsoLaIa ? (
-        <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
-      ) : (
-        <div class="mt-4">
-          <GraficoColumnas porDia={periodo.porDia} subtitulo={subtituloColumnas} />
-        </div>
-      )
-    }
-  </section>
+  <div class="mb-6 flex gap-0.5 rounded-lg bg-sutil p-0.5 text-sm" role="tablist" aria-label="Secciones de la ficha">
+    {SECCIONES.map((valor) => (
+      <a
+        href={hrefSeccion(valor)}
+        role="tab"
+        aria-selected={seccion === valor ? 'true' : 'false'}
+        class={`rounded-md px-3 py-1.5 transition-colors ${
+          seccion === valor ? 'bg-superficie font-medium text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
+        }`}
+      >
+        {ETIQUETAS_SECCION[valor]}
+      </a>
+    ))}
+  </div>
 
-  <section class="kodu-card mb-6 p-5">
-    <h2 class="text-sm font-semibold text-ink-900">En qué motor se fue</h2>
-    {
-      nuncaUsoLaIa ? (
-        <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
-      ) : (
-        <div class="mt-4">
-          <GraficoBarras filas={porModelo} />
-        </div>
-      )
-    }
-  </section>
+  {
+    seccion === 'recursos' && <RecursosDocenteGrid client:load recursos={usuario.recursos} />
+  }
 
-  <section class="kodu-card p-5">
-    <h2 class="text-sm font-semibold text-ink-900">Recursos</h2>
-    {
-      proyectos.length === 0 ? (
-        <p class="mt-4 text-sm text-ink-500">Todavía no creó ningún recurso.</p>
-      ) : (
-        <ul class="mt-4 divide-y divide-linea">
-          {proyectos.map((proyecto) => (
-            <li class="flex items-center justify-between py-2.5 text-sm">
-              <a href={`/app/project/${proyecto.id}`} class="font-medium text-ink-900 hover:text-brand-600">
-                {proyecto.title}
-              </a>
-              <span class="text-xs text-ink-500">{haceTiempo(proyecto.updatedAt)}</span>
-            </li>
-          ))}
-        </ul>
-      )
-    }
-  </section>
+  {
+    seccion === 'consumo' && (
+      <div class="space-y-6">
+        <section class="kodu-card p-5">
+          <div class="mb-1 flex flex-wrap items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold text-ink-900">Consumo de los últimos {rangoConsumo} días</h2>
+            <div class="flex gap-0.5 rounded-lg bg-sutil p-0.5 text-xs" role="group" aria-label="Elegir ventana de tiempo">
+              {[30, 90].map((valor) => (
+                <a
+                  href={hrefRango(valor as 30 | 90)}
+                  aria-current={rangoConsumo === valor ? 'true' : undefined}
+                  class={`rounded-md px-2.5 py-1 transition-colors ${
+                    rangoConsumo === valor ? 'bg-superficie text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
+                  }`}
+                >
+                  {valor} días
+                </a>
+              ))}
+            </div>
+          </div>
+          {nuncaUsoLaIa ? (
+            <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
+          ) : (
+            <div class="mt-4">
+              <GraficoColumnas porDia={periodo!.porDia} subtitulo={subtituloColumnas} />
+            </div>
+          )}
+        </section>
+
+        <section class="kodu-card p-5">
+          <h2 class="text-sm font-semibold text-ink-900">En qué motor se fue</h2>
+          <p class="mt-0.5 text-xs text-ink-500">Todo el historial.</p>
+          {nuncaUsoLaIa ? (
+            <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA.</p>
+          ) : (
+            <div class="mt-4">
+              <GraficoBarras filas={porModelo} />
+            </div>
+          )}
+        </section>
+
+        <section class="kodu-card p-5">
+          <h2 class="text-sm font-semibold text-ink-900">Por recurso</h2>
+          <p class="mt-0.5 text-xs text-ink-500">Los que más tokens usaron, de todo el historial.</p>
+          {porRecursoTop.length === 0 ? (
+            <p class="mt-4 text-sm text-ink-500">Todavía no usó la IA en ningún recurso.</p>
+          ) : (
+            <ul class="mt-4 divide-y divide-linea">
+              {porRecursoTop.map((recurso) => (
+                <li class="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <a href={`/app/project/${recurso.id}`} class="truncate font-medium text-ink-900 hover:text-brand-600">
+                    {recurso.title}
+                  </a>
+                  <span class="shrink-0 tabular-nums text-ink-500">{formatearTokensCompacto(recurso.tokens)} tokens</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    )
+  }
+
+  {
+    seccion === 'cuenta' && (
+      <CuentaDocenteAdmin
+        client:load
+        usuarioId={usuario.id}
+        nombre={usuario.name}
+        roleInicial={usuario.role}
+        aiAccessOverrideInicial={usuario.aiAccessOverride}
+        accesoIaInicial={usuario.accesoIa}
+      />
+    )
+  }
 </AdminLayout>

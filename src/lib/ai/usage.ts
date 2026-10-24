@@ -553,6 +553,36 @@ export async function costoTotalDeUsuario(userId: string): Promise<CostoTotalUsu
   return { tokens, costUsd };
 }
 
+export interface ConsumoPorRecurso {
+  /** `null` = turnos del Taller de ideas, sin recurso todavía (ver `UsageRecord.projectId`). */
+  projectId: string | null;
+  tokens: number;
+}
+
+/**
+ * Consumo de un docente agrupado por recurso (odd/tasks/admin-ui-redesign.md,
+ * T04 — pestaña "Consumo" del detalle: "por recurso, con los que más tokens
+ * usan, linkeando al proyecto"). Mismo criterio de agregación a mano que
+ * `consumoPorUsuario`: una sola pasada de `findMany`, sin `groupBy` — acá no
+ * hace falta el cuidado todo-o-nada del costo (sólo se ordena por tokens),
+ * pero sí evita una consulta por proyecto.
+ */
+export async function consumoPorRecursoDeUsuario(userId: string): Promise<ConsumoPorRecurso[]> {
+  const filas = await prisma.tokenUsage.findMany({
+    where: { userId },
+    select: { projectId: true, promptTokens: true, completionTokens: true },
+  });
+
+  const porRecurso = new Map<string | null, number>();
+  for (const fila of filas) {
+    porRecurso.set(fila.projectId, (porRecurso.get(fila.projectId) ?? 0) + fila.promptTokens + fila.completionTokens);
+  }
+
+  return Array.from(porRecurso.entries())
+    .map(([projectId, tokens]) => ({ projectId, tokens }))
+    .sort((a, b) => b.tokens - a.tokens);
+}
+
 export interface ConsumoDiario {
   /** `YYYY-MM-DD`, en UTC. */
   fecha: string;
