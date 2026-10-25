@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import type { RefObject } from 'react';
 
 interface Props {
@@ -42,23 +41,4 @@ export default function BuscadorAdmin({ id, label, value, onChange, placeholder,
       </kbd>
     </div>
   );
-}
-
-/** Enfoca `ref` al apretar "/", salvo que ya se esté escribiendo en otro
- *  control — el mismo criterio que ya tenía `UsuariosTabla`, ahora
- *  compartido con `ProyectosTabla`. */
-export function useAtajoBuscador(ref: RefObject<HTMLInputElement | null>): void {
-  useEffect(() => {
-    function alTeclear(evento: KeyboardEvent) {
-      if (evento.key !== '/') return;
-      const activo = document.activeElement;
-      const yaEscribiendo =
-        activo instanceof HTMLInputElement || activo instanceof HTMLTextAreaElement || activo?.getAttribute('contenteditable') === 'true';
-      if (yaEscribiendo) return;
-      evento.preventDefault();
-      ref.current?.focus();
-    }
-    document.addEventListener('keydown', alTeclear);
-    return () => document.removeEventListener('keydown', alTeclear);
-  }, [ref]);
 }

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../lib/client/api.ts';
 import type { FilaProyectoAdmin } from '../../lib/admin/proyectos.ts';
 import { tonoPorId } from '../../lib/admin/avatar.ts';
-import BuscadorAdmin, { useAtajoBuscador } from './BuscadorAdmin.tsx';
+import BuscadorAdmin from './BuscadorAdmin.tsx';
+import { useAtajoBuscador } from '../../lib/admin/useAtajoBuscador.ts';
 
 interface Props {
   initialProyectos: FilaProyectoAdmin[];
