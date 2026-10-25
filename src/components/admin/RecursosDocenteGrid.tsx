@@ -1,4 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+
+// A teacher can have hundreds of resources; render them in pages so the
+// profile stays short on mobile.
+const TAMANO_PAGINA = 24;
 import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
 import { tonoPorId } from '../../lib/admin/avatar.ts';
 
@@ -34,6 +38,9 @@ export default function RecursosDocenteGrid({ recursos }: Props) {
   const [filtro, setFiltro] = useState<Filtro>('todos');
   const [busqueda, setBusqueda] = useState('');
   const [orden, setOrden] = useState<Orden>('recientes');
+  const [mostrados, setMostrados] = useState(TAMANO_PAGINA);
+
+  useEffect(() => setMostrados(TAMANO_PAGINA), [filtro, busqueda, orden]);
 
   const visibles = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
@@ -110,7 +117,7 @@ export default function RecursosDocenteGrid({ recursos }: Props) {
         <div className="kodu-card p-10 text-center text-sm text-ink-500">Ningún recurso coincide con lo que buscaste.</div>
       ) : (
         <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {visibles.map((recurso) => (
+          {visibles.slice(0, mostrados).map((recurso) => (
             <li key={recurso.id} className="kodu-card flex flex-col overflow-hidden">
               <a href={`/app/project/${recurso.id}`} className="block">
                 {recurso.screenshotUrl ? (
@@ -163,6 +170,14 @@ export default function RecursosDocenteGrid({ recursos }: Props) {
             </li>
           ))}
         </ul>
+      )}
+
+      {visibles.length > mostrados && (
+        <div className="flex justify-center pt-2">
+          <button type="button" className="kodu-btn kodu-btn-ghost" onClick={() => setMostrados((n) => n + TAMANO_PAGINA)}>
+            Mostrar {Math.min(TAMANO_PAGINA, visibles.length - mostrados)} más ({visibles.length - mostrados} restantes)
+          </button>
+        </div>
       )}
     </div>
   );
