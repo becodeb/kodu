@@ -46,10 +46,12 @@ Strategy: `single-pr` style on one feature branch with work-unit commits; merge/
 - [x] T02 Overview `/admin`: platform aggregation (KPIs, 30-day daily tokens/cost, active teachers, top teachers, top engines, latest resources) + hero chart. Route: delegated. Evidence: 2089eb0; parent screenshot review found: chart needs range selector (7/30/90, data sparse), engines list too long (cap 6), top teachers show — without price (show tokens). Fixes folded into T03 batch.
 - [x] T03 Teachers list: search, filters (role, AI access, organization, activity), sort, URL-synced state, avatars, row → profile. Route: delegated. Evidence: 2b8deec (T02 fixes), 4be4cd9; m5-usuarios ✔. Parent review: avatar initials take punctuation ("D("), access/USD cells wrap, search placeholder truncated → folded into T05.
 - [x] T04 Teacher profile: header with stats, sections Recursos (grid with filters) / Consumo (charts) / Cuenta (role + AI access actions). Route: delegated. Evidence: c590930; m5-usuarios ✔ (navigations moved to ?seccion=consumo). Parent review: coverless cards are oversized grey blocks → folded into T05.
-- [ ] T05 Resources list: owner filter, sort, consistent filter bar; apply shared header/filter/empty states to remaining admin pages. Route: delegated.
-- [ ] T06 Verification: e2e suites updated and green, browser screenshots both themes and mobile. Route: delegated + parent review.
+- [x] T05 Resources list: owner filter, sort, consistent filter bar; apply shared header/filter/empty states to remaining admin pages. Route: delegated. Evidence: 1b6e532 (polish), 5e24189, eb98205, 68b90cb (Fast Refresh crash: hook exported from a component file).
+- [x] T06 Verification: e2e suites updated and green, browser screenshots both themes and mobile. Route: delegated + parent review. Evidence: check + build clean; e2e ✔ m1, m5, m3, m7, admin-metricas, admin-organizaciones, org-panel, planes-superadmin; m8 ✖ reproduced identically on main (pre-existing fixture gap). Parent review found the profile rendering all 135 resources (24k px on mobile) → paged by 24, fixed in parent commit; m5 re-run ✔.
 
 ## Progress
+
+- 2026-10-25: all tasks done. Branch ready; not pushed or merged (owner's decision). Open: `m8-proyectos-ajenos` fixture creates its org without `OrganizationLicense` (fails on main too); `/admin/proyectos` ships every resource unpaginated (~580 KB with 779 rows); the public header nav overflows at 390px (outside /admin, pre-existing).
 
 - 2026-10-25: T03–T04 done; check/build clean. `m8-proyectos-ajenos` fails at the owner opening their own project: pre-existing fixture gap (creates the org via `prisma.organization.create`, so no `OrganizationLicense`; billing then denies AI). Branch does not touch billing or project view. Next: T05 + polish + T06.
 
