@@ -203,7 +203,10 @@ export default function ModelosPanel(props: ModelosPanelProps) {
 
       {motores.length === 0 ? (
         <div className="kodu-card p-10 text-center text-sm text-ink-500">
-          Todavía no hay ningún motor configurado.
+          <p>Todavía no hay ningún motor configurado.</p>
+          <button type="button" onClick={() => setFormAbierto('nuevo')} className="mt-3 text-sm text-brand-600 hover:underline">
+            + Nuevo motor
+          </button>
         </div>
       ) : (
         <ol className="space-y-2">

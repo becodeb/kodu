@@ -7,6 +7,6 @@ import { listarProyectosAdmin } from '../../lib/admin/proyectos.ts';
 const proyectos = await listarProyectosAdmin();
 ---
 
-<AdminLayout title="Recursos">
+<AdminLayout title="Recursos" description="Todo lo que se generó en la plataforma.">
   <ProyectosTabla client:load initialProyectos={proyectos} />
 </AdminLayout>

@@ -149,18 +149,18 @@ export default function DemoPanel({ initial }: Props) {
         {resumen.cuentaExiste && (
           <dl className="grid grid-cols-2 gap-4 border-t border-linea pt-4 text-sm sm:grid-cols-3">
             <div>
-              <dt className="text-xs text-ink-500 uppercase">Consumo de la ronda</dt>
+              <dt className="text-xs text-ink-500">Consumo de la ronda</dt>
               <dd className="mt-1 tabular-nums text-ink-900">
                 {resumen.consumoTokens.toLocaleString('es-AR')} / {resumen.demoTokenLimit.toLocaleString('es-AR')}{' '}
                 tokens
               </dd>
             </div>
             <div>
-              <dt className="text-xs text-ink-500 uppercase">Ronda empezó</dt>
+              <dt className="text-xs text-ink-500">Ronda empezó</dt>
               <dd className="mt-1 text-ink-900">{formatearFecha(resumen.demoCycleStartedAt)}</dd>
             </div>
             <div>
-              <dt className="text-xs text-ink-500 uppercase">Recursos de la demo</dt>
+              <dt className="text-xs text-ink-500">Recursos de la demo</dt>
               <dd className="mt-1 tabular-nums text-ink-900">{resumen.cantidadRecursos.toLocaleString('es-AR')}</dd>
             </div>
           </dl>

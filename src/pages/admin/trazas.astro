@@ -7,6 +7,6 @@ import { modelosConTrazas } from '../../lib/admin/trazas.ts';
 const modelos = await modelosConTrazas();
 ---
 
-<AdminLayout title="Trazas">
+<AdminLayout title="Trazas" description="El registro turno por turno.">
   <TrazasPanel client:load modelos={modelos} />
 </AdminLayout>

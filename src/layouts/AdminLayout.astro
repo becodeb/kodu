@@ -1,24 +1,32 @@
 ---
 import BaseLayout from './BaseLayout.astro';
+import EncabezadoAdmin from '../components/admin/EncabezadoAdmin.astro';
+import NavAdmin from '../components/admin/NavAdmin.astro';
 import { hasResendApiKey, billingNow } from '../lib/env.ts';
 import { colaDeRevision } from '../lib/billing/revision.ts';
 import { resumenMonotributo } from '../lib/billing/monotributo.ts';
 import { enviarRecordatoriosDeRenovacion } from '../lib/billing/recordatorios.ts';
 
 /**
- * Cascarón de /admin: encabezado fijo + fila de pestañas horizontal.
+ * Cascarón de /admin (odd/tasks/admin-ui-redesign.md, T01): barra lateral
+ * agrupada en escritorio (≥1024px), cajón en celular, encabezado por página
+ * (ver `EncabezadoAdmin.astro`).
  *
- * No hay sidebar en ningún lugar de la app — un solo header arriba — así que
- * cuatro destinos no justifican inventar uno acá. La fila de pestañas reusa
- * el idioma visual del selector de motor en ChatPanel.tsx (bg-sutil p-0.5,
- * pestaña activa bg-superficie + shadow-sm).
+ * Reemplaza la fila horizontal de 13 pestañas sueltas (sin agrupar, sin
+ * landing page — `/admin` sólo redirigía) por 4 grupos que responden "¿qué
+ * está haciendo el admin ahora?": Personas (quién entra), Contenido (qué se
+ * generó), IA (cómo se genera), Plata (cuánto cuesta). Mismos hrefs que
+ * antes — ningún link se mueve, así que nada que ya apunte a `/admin/uso`
+ * (por ejemplo) se rompe.
  */
 
 interface Props {
   title?: string;
+  description?: string;
+  breadcrumb?: { etiqueta: string; href?: string }[];
 }
 
-const { title = 'Panel' } = Astro.props;
+const { title = 'Panel', description, breadcrumb } = Astro.props;
 const ruta = Astro.url.pathname;
 
 /**
@@ -50,128 +58,187 @@ await enviarRecordatoriosDeRenovacion(billingNow());
 const monotributo = await resumenMonotributo(billingNow());
 const monotributoCritico = monotributo.porcentaje !== null && monotributo.porcentaje >= 0.9;
 
-const PESTAÑAS = [
-  { href: '/admin/usuarios', etiqueta: 'Docentes' },
-  // odd/tasks/organizaciones.md (T6): reemplaza a "Dominios" (la quitó T2,
-  // AuthorizedDomain ya no existe) — va justo después de Docentes porque es
-  // la otra pantalla que decide QUIÉN entra ("con qué acceso" vive acá,
-  // "quién administra" vive en Organizaciones).
-  { href: '/admin/organizaciones', etiqueta: 'Organizaciones' },
-  // odd/tasks/organizaciones.md (T7): justo después de Organizaciones —
-  // "quién administra" y "cuánto cuesta administrar eso" son las dos
-  // pantallas que miran a las organizaciones como unidad, antes de bajar a
-  // Recursos/Proveedores/Motores/Generación (que miran la plataforma entera).
-  { href: '/admin/metricas', etiqueta: 'Métricas' },
-  { href: '/admin/proyectos', etiqueta: 'Recursos' },
-  { href: '/admin/proveedores', etiqueta: 'Proveedores' },
-  { href: '/admin/motores', etiqueta: 'Motores' },
-  { href: '/admin/generacion', etiqueta: 'Generación' },
-  // odd/tasks/ahorro-tokens.md (T4): justo después de Generación —
-  // también mira la plataforma entera, no una organización puntual.
-  { href: '/admin/trazas', etiqueta: 'Trazas' },
-  // odd/tasks/motor-claude.md (T11): justo después de Trazas — lee la misma
-  // fuente (AiTrace/TokenUsage) pero agregada para "¿cómo se está usando
-  // esto de verdad?", en vez de la fila por fila de Trazas.
-  { href: '/admin/uso', etiqueta: 'Uso' },
-  { href: '/admin/demo', etiqueta: 'Demo' },
-  // odd/tasks/planes-y-cobros.md (T7): precios/revisión/facturación, al
-  // final de la tira — pantallas de cobro, no de la plataforma de recursos.
-  { href: '/admin/precios', etiqueta: 'Precios' },
-  { href: '/admin/altas', etiqueta: cola.length > 0 ? `Altas (${cola.length})` : 'Altas' },
-  { href: '/admin/facturacion', etiqueta: 'Facturación' },
+const RESUMEN = { href: '/admin', etiqueta: 'Resumen', titulo: 'El estado general de la plataforma, de un vistazo', icono: 'resumen' };
+
+const GRUPOS = [
+  {
+    nombre: 'Personas',
+    items: [
+      { href: '/admin/usuarios', etiqueta: 'Docentes', titulo: 'Buscar y administrar cuentas de docentes', icono: 'persona' },
+      {
+        href: '/admin/organizaciones',
+        etiqueta: 'Organizaciones',
+        titulo: 'Redes y sedes que administran su propia gente',
+        icono: 'organizacion',
+      },
+      {
+        href: '/admin/altas',
+        etiqueta: cola.length > 0 ? `Altas (${cola.length})` : 'Altas',
+        titulo: 'Instituciones y contactos esperando revisión',
+        icono: 'altaPersona',
+      },
+    ],
+  },
+  {
+    nombre: 'Contenido',
+    items: [
+      { href: '/admin/proyectos', etiqueta: 'Recursos', titulo: 'Todo lo que se generó en la plataforma', icono: 'grilla' },
+      { href: '/admin/demo', etiqueta: 'Demo', titulo: 'La cuenta pública de prueba', icono: 'play' },
+    ],
+  },
+  {
+    nombre: 'IA',
+    items: [
+      { href: '/admin/motores', etiqueta: 'Motores', titulo: 'Catálogo de modelos de IA habilitados', icono: 'cpu' },
+      { href: '/admin/proveedores', etiqueta: 'Proveedores', titulo: 'Cuentas de API que alimentan los motores', icono: 'enchufe' },
+      { href: '/admin/generacion', etiqueta: 'Generación', titulo: 'Cómo se reparten los turnos entre motores', icono: 'chispas' },
+      { href: '/admin/trazas', etiqueta: 'Trazas', titulo: 'El registro turno por turno', icono: 'lista' },
+    ],
+  },
+  {
+    nombre: 'Plata',
+    items: [
+      { href: '/admin/uso', etiqueta: 'Uso', titulo: 'Consumo agregado de la plataforma', icono: 'barras' },
+      { href: '/admin/metricas', etiqueta: 'Métricas', titulo: 'Costo por organización y por mes', icono: 'tendencia' },
+      { href: '/admin/precios', etiqueta: 'Precios', titulo: 'Tarifas de planes y bandas', icono: 'etiqueta' },
+      { href: '/admin/facturacion', etiqueta: 'Facturación', titulo: 'Pagos, facturas y el tope del monotributo', icono: 'recibo' },
+    ],
+  },
 ];
 ---
 
 <BaseLayout title={title} wide>
-  <header class="mb-6 max-w-2xl">
-    <h1 class="font-display text-2xl font-bold text-ink-900">Panel</h1>
-    <p class="mt-1 text-sm text-ink-500">Motores, acceso y consumo de la plataforma.</p>
-  </header>
-
-  {
-    resendApagado && (
-      <div class="mb-6 max-w-2xl rounded-lg border border-brand-300 bg-brand-50 px-4 py-3 text-sm text-brand-700">
-        La verificación de email está apagada: falta <code class="font-mono">RESEND_API_KEY</code>. Toda
-        cuenta nueva se toma como verificada.
-      </div>
-    )
-  }
-
-  {
-    monotributoCritico && (
-      <div
-        id="aviso-monotributo"
-        class="mb-6 max-w-2xl rounded-lg border border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-800"
-        data-porcentaje={Math.round(monotributo.porcentaje! * 100)}
+  <div class="lg:flex lg:items-start lg:gap-8">
+    {/* Barra superior de celular: sólo el botón que abre el cajón — el
+        encabezado de la página (EncabezadoAdmin) ya dice en qué pantalla
+        está, así que no hace falta repetir "Panel" acá. */}
+    <div class="mb-4 lg:hidden">
+      <button
+        type="button"
+        id="abrir-cajon-admin"
+        aria-expanded="false"
+        aria-controls="cajon-admin"
+        class="kodu-btn-ghost gap-2 py-1.5"
       >
-        <div class="flex items-start justify-between gap-3">
-          <p>
-            Te estás acercando al tope del monotributo: facturaste el {Math.round(monotributo.porcentaje! * 100)}%
-            de los últimos 12 meses. Mirá el detalle en <a href="/admin/facturacion" class="underline">Facturación</a>.
-          </p>
-          <button type="button" id="cerrar-aviso-monotributo" class="shrink-0 text-amber-700 hover:text-amber-900" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        Secciones
+      </button>
+    </div>
+
+    {/* Barra lateral de escritorio: fija al hacer scroll, nunca se superpone
+        porque el contenido vive en una columna flex hermana con min-w-0. */}
+    <aside class="hidden lg:block lg:w-56 lg:shrink-0">
+      <div class="sticky top-8">
+        <NavAdmin ruta={ruta} resumen={RESUMEN} grupos={GRUPOS} variante="escritorio" />
+      </div>
+    </aside>
+
+    {/* Cajón de celular: oculto por defecto (`hidden`, lo saca el script de
+        abajo), por encima de todo. El fondo semitransparente cierra al
+        tocarlo, igual que el `<details data-menu>` del header de
+        BaseLayout. */}
+    <div id="cajon-admin" class="fixed inset-0 z-50 hidden lg:hidden">
+      <div class="absolute inset-0 bg-carbon/40" data-cerrar-cajon aria-hidden="true" />
+      <div class="kodu-card absolute inset-y-0 left-0 w-72 overflow-y-auto p-4 shadow-lg">
+        <div class="mb-4 flex items-center justify-between">
+          <span class="font-display text-sm font-bold text-ink-900">Panel</span>
+          <button type="button" data-cerrar-cajon aria-label="Cerrar menú" class="text-ink-500 hover:text-ink-900">
             ✕
           </button>
         </div>
+        <NavAdmin ruta={ruta} resumen={RESUMEN} grupos={GRUPOS} variante="movil" />
       </div>
-    )
-  }
+    </div>
 
-  {
-    cola.length > 0 && (
-      <div class="mb-6 max-w-2xl rounded-lg border border-linea bg-sutil px-4 py-3 text-sm">
-        <p class="font-medium text-ink-900">
-          {cola.length} {cola.length === 1 ? 'institución espera' : 'instituciones esperan'} revisión
-        </p>
-        <ul class="mt-2 space-y-1">
-          {cola.slice(0, 5).map((item) => (
-            <li class="text-ink-700">
-              {item.tipo === 'ALTA' ? (
-                <a href={`/admin/organizaciones/${item.organizationId}`} class="text-brand-600 hover:underline">
-                  {item.nombre}
-                </a>
-              ) : (
-                <span>{item.nombre} (Hablemos)</span>
-              )}
-              {item.declaredStudents !== null && <span class="text-ink-500"> · {item.declaredStudents} alumnos</span>}
-            </li>
-          ))}
-        </ul>
-        {cola.length > 5 && <p class="mt-2 text-xs text-ink-500">y {cola.length - 5} más.</p>}
-      </div>
-    )
-  }
+    <div class="min-w-0 flex-1">
+      <EncabezadoAdmin title={title} description={description} breadcrumb={breadcrumb} />
 
-  {/*
-    overflow-x-auto + el par -mx-4/px-4 hacen que en mobile la tira se pueda
-    scrollear de punta a punta sin perder la alineación con el resto de la
-    página. Sin hamburguesa ni <select>: un select ocultaría las secciones
-    hermanas, que es justo lo que una fila de pestañas existe para mostrar.
-  */}
-  <nav
-    class="mb-6 -mx-4 flex snap-x gap-0.5 overflow-x-auto rounded-lg bg-sutil p-0.5 px-4"
-    aria-label="Secciones del panel"
-  >
-    {
-      PESTAÑAS.map((pestaña) => {
-        const activa = ruta === pestaña.href || ruta.startsWith(`${pestaña.href}/`);
-        return (
-          <a
-            href={pestaña.href}
-            aria-current={activa ? 'page' : undefined}
-            class={`shrink-0 snap-start rounded-md px-3.5 py-1.5 text-sm whitespace-nowrap transition-colors ${
-              activa ? 'bg-superficie text-ink-900 shadow-sm' : 'text-ink-500 hover:text-ink-700'
-            }`}
+      {
+        resendApagado && (
+          <div class="mb-6 max-w-2xl rounded-lg border border-brand-300 bg-brand-50 px-4 py-3 text-sm text-brand-700">
+            La verificación de email está apagada: falta <code class="font-mono">RESEND_API_KEY</code>. Toda
+            cuenta nueva se toma como verificada.
+          </div>
+        )
+      }
+
+      {
+        monotributoCritico && (
+          <div
+            id="aviso-monotributo"
+            class="mb-6 max-w-2xl rounded-lg border border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+            data-porcentaje={Math.round(monotributo.porcentaje! * 100)}
           >
-            {pestaña.etiqueta}
-          </a>
-        );
-      })
-    }
-  </nav>
+            <div class="flex items-start justify-between gap-3">
+              <p>
+                Te estás acercando al tope del monotributo: facturaste el {Math.round(monotributo.porcentaje! * 100)}%
+                de los últimos 12 meses. Mirá el detalle en <a href="/admin/facturacion" class="underline">Facturación</a>.
+              </p>
+              <button type="button" id="cerrar-aviso-monotributo" class="shrink-0 text-amber-700 hover:text-amber-900" aria-label="Cerrar">
+                ✕
+              </button>
+            </div>
+          </div>
+        )
+      }
 
-  <slot />
+      {
+        cola.length > 0 && (
+          <div class="mb-6 max-w-2xl rounded-lg border border-linea bg-sutil px-4 py-3 text-sm">
+            <p class="font-medium text-ink-900">
+              {cola.length} {cola.length === 1 ? 'institución espera' : 'instituciones esperan'} revisión
+            </p>
+            <ul class="mt-2 space-y-1">
+              {cola.slice(0, 5).map((item) => (
+                <li class="text-ink-700">
+                  {item.tipo === 'ALTA' ? (
+                    <a href={`/admin/organizaciones/${item.organizationId}`} class="text-brand-600 hover:underline">
+                      {item.nombre}
+                    </a>
+                  ) : (
+                    <span>{item.nombre} (Hablemos)</span>
+                  )}
+                  {item.declaredStudents !== null && <span class="text-ink-500"> · {item.declaredStudents} alumnos</span>}
+                </li>
+              ))}
+            </ul>
+            {cola.length > 5 && <p class="mt-2 text-xs text-ink-500">y {cola.length - 5} más.</p>}
+          </div>
+        )
+      }
+
+      <slot />
+    </div>
+  </div>
 </BaseLayout>
+
+<script>
+  // Cajón de celular: abrir/cerrar + Escape + click afuera. Mismo criterio
+  // que el `<details data-menu>` de BaseLayout, pero esto es un overlay
+  // fijo (no un <details>) porque tiene que cubrir toda la pantalla y
+  // bloquear el scroll del fondo mientras está abierto.
+  const boton = document.getElementById('abrir-cajon-admin');
+  const cajon = document.getElementById('cajon-admin');
+  if (boton && cajon) {
+    const cerrar = () => {
+      cajon.classList.add('hidden');
+      boton.setAttribute('aria-expanded', 'false');
+      document.body.classList.remove('overflow-hidden');
+    };
+    const abrir = () => {
+      cajon.classList.remove('hidden');
+      boton.setAttribute('aria-expanded', 'true');
+      document.body.classList.add('overflow-hidden');
+    };
+    boton.addEventListener('click', abrir);
+    cajon.querySelectorAll('[data-cerrar-cajon]').forEach((el) => el.addEventListener('click', cerrar));
+    document.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Escape' && !cajon.classList.contains('hidden')) cerrar();
+    });
+  }
+</script>
 
 <script>
   // T7: el aviso del monotributo se puede cerrar por el resto de la sesión

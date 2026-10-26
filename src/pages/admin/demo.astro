@@ -7,6 +7,6 @@ import { resumenDemo } from '../../lib/admin/demo.ts';
 const resumen = await resumenDemo();
 ---
 
-<AdminLayout>
+<AdminLayout title="Demo" description="Consumo y tope de la cuenta pública de prueba.">
   <DemoPanel client:load initial={resumen} />
 </AdminLayout>

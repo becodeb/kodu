@@ -21,16 +21,11 @@ const [bandas, planes, settings] = await Promise.all([
 const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: 'Mediana', GRANDE: 'Grande' };
 ---
 
-<AdminLayout title="Precios">
+<AdminLayout
+  title="Precios"
+  description="Un cambio acá sólo afecta cobros futuros: una licencia ya contratada mantiene el precio y la banda que tenía al cobrarse hasta su PRÓXIMA renovación."
+>
   <div class="max-w-3xl space-y-6">
-    <div>
-      <h1 class="font-display text-2xl font-bold text-ink-900">Precios</h1>
-      <p class="mt-1 text-sm text-ink-500">
-        Un cambio acá sólo afecta cobros futuros: una licencia ya contratada mantiene el precio y la banda que tenía
-        al cobrarse hasta su PRÓXIMA renovación.
-      </p>
-    </div>
-
     <p id="mensaje-precios" class="hidden rounded-lg px-4 py-3 text-sm"></p>
 
     <form id="form-precios" class="space-y-6">

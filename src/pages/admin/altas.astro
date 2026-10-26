@@ -24,13 +24,8 @@ const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', mont
 const ETIQUETA_BANDA: Record<string, string> = { PEQUENA: 'Pequeña', MEDIANA: 'Mediana', GRANDE: 'Grande' };
 ---
 
-<AdminLayout title="Altas">
+<AdminLayout title="Altas" description={'Instituciones de alta propia sin revisar y contactos "Hablemos".'}>
   <div class="max-w-3xl space-y-8">
-    <div>
-      <h1 class="font-display text-2xl font-bold text-ink-900">Altas</h1>
-      <p class="mt-1 text-sm text-ink-500">Instituciones de alta propia sin revisar y contactos "Hablemos".</p>
-    </div>
-
     <p id="mensaje-altas" class="hidden rounded-lg px-4 py-3 text-sm"></p>
 
     <section class="space-y-4">

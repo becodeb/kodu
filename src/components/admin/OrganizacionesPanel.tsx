@@ -76,7 +76,12 @@ export default function OrganizacionesPanel(props: Props) {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-ink-900">Redes</h2>
         {redes.length === 0 ? (
-          <div className="kodu-card p-6 text-sm text-ink-500">Todavía no hay ninguna red creada.</div>
+          <div className="kodu-card p-6 text-center text-sm text-ink-500">
+            <p>Todavía no hay ninguna red creada.</p>
+            <button type="button" onClick={() => setFormAbierto('red')} className="mt-3 text-sm text-brand-600 hover:underline">
+              + Nueva red
+            </button>
+          </div>
         ) : (
           <ol className="space-y-3">
             {redes.map((red) => (
@@ -133,7 +138,12 @@ export default function OrganizacionesPanel(props: Props) {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-ink-900">Colegios independientes</h2>
         {standalone.length === 0 ? (
-          <div className="kodu-card p-6 text-sm text-ink-500">Todavía no hay ningún colegio independiente.</div>
+          <div className="kodu-card p-6 text-center text-sm text-ink-500">
+            <p>Todavía no hay ningún colegio independiente.</p>
+            <button type="button" onClick={() => setFormAbierto('colegio')} className="mt-3 text-sm text-brand-600 hover:underline">
+              + Nuevo colegio
+            </button>
+          </div>
         ) : (
           <ol className="kodu-card divide-y divide-linea">
             {standalone.map((org) => (

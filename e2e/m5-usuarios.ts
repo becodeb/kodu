@@ -403,7 +403,7 @@ async function main(): Promise<void> {
       // ───────────────────────────────────────────────────────────
       // Detalle de usuario: MULTI (grilla de 30 columnas + barra apilada).
       // ───────────────────────────────────────────────────────────
-      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_MULTI]}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_MULTI]}?seccion=consumo`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1');
       const textoDetalleMulti = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
       assert.match(textoDetalleMulti, /25,5 k/, 'trío de estadísticas: tokens compactos');
@@ -412,14 +412,14 @@ async function main(): Promise<void> {
       console.log('✔ detalle: docente multi-día/multi-motor renderiza ambos gráficos con sus cifras');
 
       // UNO: la columna única, sin eje.
-      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_UNO]}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_UNO]}?seccion=consumo`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1');
       const svgColumnasUno = page.locator('svg[role="img"]').first();
       assert.equal(await svgColumnasUno.locator('rect').count(), 1, 'un solo turno: una sola columna, sin grilla de 30');
       console.log('✔ detalle: un solo turno renderiza una única columna, no una grilla vacía');
 
       // VACÍO: la frase, nunca un gráfico roto.
-      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_VACIO]}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_VACIO]}?seccion=consumo`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1');
       const textoDetalleVacio = await page.locator('main').innerText();
       assert.match(textoDetalleVacio, /Todavía no usó la IA\./);
@@ -427,7 +427,7 @@ async function main(): Promise<void> {
       console.log('✔ detalle: sin ningún turno, la frase reemplaza a los dos gráficos (nunca uno vacío)');
 
       // GRATIS: el subtítulo aclara "todo con el motor sin costo", no "sin datos".
-      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_GRATIS]}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_GRATIS]}?seccion=consumo`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1');
       const textoDetalleGratis = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
       assert.match(textoDetalleGratis, /todo con el motor sin costo/);
@@ -435,7 +435,7 @@ async function main(): Promise<void> {
       console.log('✔ detalle: consumo 100% gratuito se lee como tal, no como "sin actividad"');
 
       // SIN PRECIO: la fila histórica se etiqueta "— histórico" en la leyenda.
-      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_SIN_PRECIO]}`, { waitUntil: 'domcontentloaded' });
+      await page.goto(`${BASE_URL}/admin/usuarios/${ids[EMAIL_SIN_PRECIO]}?seccion=consumo`, { waitUntil: 'domcontentloaded' });
       await page.waitForSelector('h1');
       const textoDetalleSinPrecio = (await page.locator('main').innerText()).replace(/\s+/g, ' ');
       assert.match(textoDetalleSinPrecio, /— histórico/);
@@ -542,16 +542,17 @@ async function main(): Promise<void> {
       await contextoAdmin.close();
 
       // MISMA cookie que al principio de este bloque: nunca se volvió a
-      // loguear `pagePromovido`. `/admin` en sí mismo siempre redirige a
-      // `/admin/usuarios` (la pestaña por defecto, `admin/index.astro`) —
-      // lo que importa acá es que el middleware YA NO lo mande a `/app`.
+      // loguear `pagePromovido`. odd/tasks/admin-ui-redesign.md (T02): `/admin`
+      // dejó de redirigir a `/admin/usuarios` — ahora es el resumen en sí
+      // mismo (`admin/index.astro`). Lo que importa acá es que el middleware
+      // YA NO lo mande a `/app`.
       await pagePromovido.goto(`${BASE_URL}/admin`, { waitUntil: 'domcontentloaded' });
       assert.equal(
         new URL(pagePromovido.url()).pathname,
-        '/admin/usuarios',
+        '/admin',
         'ya ADMIN en la base: el próximo pedido de la MISMA sesión ya no rebota a /app',
       );
-      await pagePromovido.waitForSelector('h1:has-text("Panel")');
+      await pagePromovido.waitForSelector('h1:has-text("Resumen")');
       console.log('✔ la promoción rige en el próximo pedido, con la cookie vieja, sin volver a loguearse');
 
       await contexto2.close();

@@ -125,7 +125,7 @@ export default function UsoPanel({ initial }: Props) {
 
         {credito.gastoPorDia.length > 0 && (
           <div className="kodu-card space-y-1 p-4">
-            <p className="mb-2 text-xs font-medium text-ink-500 uppercase">Gasto por día (ciclo vigente)</p>
+            <p className="mb-2 text-xs font-medium text-ink-500">Gasto por día (ciclo vigente)</p>
             <div className="space-y-1">
               {credito.gastoPorDia.map((punto) => (
                 <div key={punto.fecha} className="flex items-center gap-2 text-xs">
@@ -182,7 +182,7 @@ export default function UsoPanel({ initial }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[480px] text-left text-sm">
               <thead>
-                <tr className="border-b border-linea text-xs tracking-wide text-ink-500 uppercase">
+                <tr className="border-b border-linea text-xs text-ink-500">
                   <th className="py-1.5 pr-3 font-medium">Modo</th>
                   <th className="py-1.5 px-3 text-right font-medium">Costo mensual estimado</th>
                   <th className="py-1.5 pl-3 font-medium">Fuente</th>
@@ -224,7 +224,7 @@ function TablaPorClave({ titulo, filas }: { titulo: string; filas: FilaUsoPorCla
         ) : (
           <table className="w-full min-w-[920px] text-left text-sm">
             <thead>
-              <tr className="border-b border-linea text-xs tracking-wide text-ink-500 uppercase">
+              <tr className="border-b border-linea text-xs text-ink-500">
                 <th className="py-1.5 pr-3 font-medium">{titulo === 'Por modo' ? 'Modo' : 'Modelo'}</th>
                 <th className="py-1.5 px-3 text-right font-medium">Turnos</th>
                 <th className="py-1.5 px-3 text-right font-medium">Costo total</th>

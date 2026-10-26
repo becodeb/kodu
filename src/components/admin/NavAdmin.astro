@@ -1,0 +1,123 @@
+---
+/**
+ * El contenido de la navegación de /admin (odd/tasks/admin-ui-redesign.md,
+ * T01): un solo componente que dibuja los mismos grupos tanto en la barra
+ * lateral de escritorio como en el cajón de celular — así los dos nunca
+ * pueden desincronizarse en un cambio futuro (sumar una pestaña, por
+ * ejemplo). `variante` sólo cambia el `aria-label` (tienen que ser
+ * distintos: los dos quedan en el DOM a la vez, uno oculto por CSS, y un
+ * mismo `aria-label` duplicado haría que cualquier query por ese nombre
+ * encontrara el doble de links).
+ */
+
+interface ItemNav {
+  href: string;
+  etiqueta: string;
+  titulo: string;
+  icono: string;
+}
+
+interface GrupoNav {
+  nombre: string;
+  items: ItemNav[];
+}
+
+interface Props {
+  ruta: string;
+  resumen: ItemNav;
+  grupos: GrupoNav[];
+  variante: 'escritorio' | 'movil';
+}
+
+const { ruta, resumen, grupos, variante } = Astro.props;
+
+function activo(href: string): boolean {
+  if (href === '/admin') return ruta === '/admin';
+  return ruta === href || ruta.startsWith(`${href}/`);
+}
+
+/** Trazos simples (viewBox 24×24, stroke currentColor) — nunca un ícono de marca. */
+const ICONOS: Record<string, string> = {
+  resumen: '<path d="M3 11l9-8 9 8M5 10v10h14V10"/>',
+  persona: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+  organizacion: '<path d="M4 21V7l8-4 8 4v14M4 21h16M9 21v-6h6v6"/>',
+  altaPersona: '<circle cx="9" cy="8" r="4"/><path d="M2 21c0-4 3-6 7-6s5 1 6 2M18 9v6M15 12h6"/>',
+  grilla: '<path d="M4 5h6v6H4V5zM14 5h6v6h-6V5zM4 15h6v6H4v-6zM14 15h6v6h-6v-6z"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 9l5 3-5 3V9z"/>',
+  cpu: '<rect x="7" y="7" width="10" height="10"/><path d="M9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3"/>',
+  enchufe: '<path d="M7 8h10v4a5 5 0 01-10 0V8zM9 3v5M15 3v5M12 17v4"/>',
+  chispas: '<path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/>',
+  lista: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  barras: '<path d="M4 20V10M10 20V4M16 20v-7M2 20h20"/>',
+  tendencia: '<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>',
+  etiqueta: '<path d="M3 11.5V4h7.5L21 14.5 13.5 22 3 11.5z"/><circle cx="7" cy="7" r="1"/>',
+  recibo: '<path d="M6 2h12v20l-3-2-3 2-3-2-3 2V2zM9 7h6M9 11h6M9 15h4"/>',
+};
+
+function svgDe(icono: string): string {
+  return ICONOS[icono] ?? ICONOS.grilla!;
+}
+---
+
+<nav aria-label={`Secciones del panel${variante === 'movil' ? ', menú de celular' : ''}`} class="space-y-6 text-sm">
+  <a
+    href={resumen.href}
+    title={resumen.titulo}
+    aria-current={activo(resumen.href) ? 'page' : undefined}
+    class={`flex items-center gap-2.5 rounded-lg px-3 py-2 font-medium transition-colors ${
+      activo(resumen.href) ? 'bg-brand-50 text-brand-700' : 'text-ink-700 hover:bg-sutil'
+    }`}
+  >
+    <svg
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.7"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+      class="shrink-0"
+      set:html={svgDe(resumen.icono)}
+    />
+    {resumen.etiqueta}
+  </a>
+
+  {
+    grupos.map((grupo) => (
+      <div>
+        <p class="mb-1.5 px-3 text-xs text-ink-500">{grupo.nombre}</p>
+        <ul class="space-y-0.5">
+          {grupo.items.map((item) => (
+            <li>
+              <a
+                href={item.href}
+                title={item.titulo}
+                aria-current={activo(item.href) ? 'page' : undefined}
+                class={`flex items-center gap-2.5 rounded-lg px-3 py-2 transition-colors ${
+                  activo(item.href) ? 'bg-brand-50 font-medium text-brand-700' : 'text-ink-700 hover:bg-sutil'
+                }`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                  class="shrink-0"
+                  set:html={svgDe(item.icono)}
+                />
+                <span class="truncate">{item.etiqueta}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))
+  }
+</nav>

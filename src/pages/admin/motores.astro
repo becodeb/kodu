@@ -19,6 +19,6 @@ const proveedores = filasProveedores.map((fila) => serializarProveedor(fila));
 const presets = presetsParaUI();
 ---
 
-<AdminLayout>
+<AdminLayout title="Motores" description="El catálogo de modelos de IA habilitados, con sus precios.">
   <ModelosPanel client:load initialMotores={motores} proveedores={proveedores} presets={presets} />
 </AdminLayout>

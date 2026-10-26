@@ -10,6 +10,6 @@ const rango = rangoDelCicloActual(settings.billingCycleDay);
 const resumen = await resumenUso(rango);
 ---
 
-<AdminLayout title="Uso">
+<AdminLayout title="Uso" description="Consumo agregado de la plataforma, por ciclo.">
   <UsoPanel client:load initial={resumen} />
 </AdminLayout>

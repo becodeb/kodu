@@ -12,6 +12,6 @@ const filas = await prisma.aiProvider.findMany({
 const proveedores = filas.map((fila) => serializarProveedor(fila));
 ---
 
-<AdminLayout>
+<AdminLayout title="Proveedores" description="Cuentas de API que alimentan los motores.">
   <ProveedoresPanel client:load initialProveedores={proveedores} />
 </AdminLayout>

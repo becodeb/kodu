@@ -7,6 +7,6 @@ import { resumenGeneracion } from '../../lib/admin/generacion.ts';
 const resumen = await resumenGeneracion();
 ---
 
-<AdminLayout title="Generación">
+<AdminLayout title="Generación" description="Cómo se reparten los turnos entre motores.">
   <GeneracionPanel client:load initial={resumen} />
 </AdminLayout>

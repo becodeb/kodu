@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     await iniciarSesion(page, { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
 
     await page.goto(`${BASE_URL}/admin/motores`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('h1:has-text("Panel")');
+    await page.waitForSelector('h1:has-text("Motores")');
     await page.waitForSelector('li:has-text("MiniMax M3")');
     console.log('✔ ADMIN: /admin/motores renderiza el listado sembrado (tema light)');
 
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     // 1. Alta de la cuenta de proveedor, por la UI real de /admin/proveedores.
     // ───────────────────────────────────────────────────────────
     await page.goto(`${BASE_URL}/admin/proveedores`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('h1:has-text("Panel")');
+    await page.waitForSelector('h1:has-text("Proveedores")');
     console.log('✔ ADMIN: /admin/proveedores renderiza (tema dark)');
 
     await page.getByRole('button', { name: '+ Nueva cuenta' }).click();
