@@ -43,6 +43,11 @@ export interface PreguntaTaller {
   opciones: string[];
   /** Se puede elegir más de una respuesta. */
   multiple: boolean;
+  /**
+   * La respuesta que Kodu recomienda (su posición en `opciones`), si alguna
+   * se destaca. Opcional: las charlas guardadas antes no la tienen.
+   */
+  recomendada?: number | null;
 }
 
 export interface IdeaPropuesta {
@@ -93,6 +98,20 @@ function texto(valor: unknown, maximo: number): string | null {
   return limpio.slice(0, maximo);
 }
 
+/**
+ * La recomendada llega como posición (lo que pide el prompt) o, a veces, como
+ * el texto de la opción. Cualquier otra cosa, o una posición que no existe,
+ * es "ninguna": mejor no destacar nada que destacar la equivocada.
+ */
+function leerRecomendada(valor: unknown, opciones: string[]): number | null {
+  if (typeof valor === 'number' && Number.isInteger(valor) && valor >= 0 && valor < opciones.length) return valor;
+  if (typeof valor === 'string') {
+    const posicion = opciones.indexOf(valor.trim());
+    return posicion >= 0 ? posicion : null;
+  }
+  return null;
+}
+
 function leerPreguntas(valor: unknown): PreguntaTaller[] {
   if (!Array.isArray(valor)) return [];
 
@@ -109,11 +128,14 @@ function leerPreguntas(valor: unknown): PreguntaTaller[] {
           .filter((opcion): opcion is string => opcion !== null)
       : [];
 
+    // Sin repetidas: dos chips iguales confunden más de lo que ayudan.
+    const unicas = [...new Set(opciones)].slice(0, MAX_OPCIONES);
+
     preguntas.push({
       texto: enunciado,
-      // Sin repetidas: dos chips iguales confunden más de lo que ayudan.
-      opciones: [...new Set(opciones)].slice(0, MAX_OPCIONES),
+      opciones: unicas,
       multiple: objeto.multiple === true,
+      recomendada: leerRecomendada(objeto.recomendada, unicas),
     });
     if (preguntas.length === MAX_PREGUNTAS) break;
   }
@@ -275,6 +297,13 @@ export function fusionarFicha(anterior: FichaIdea, cambios: FichaIdea): FichaIde
   return { ...anterior, ...cambios };
 }
 
+/**
+ * Lo esencial de la ficha: lo que el panel "Tu idea" muestra siempre (lo
+ * demás aparece sólo cuando ya se habló). Son las cosas sin las que la
+ * herramienta no sale bien; el resto Kodu lo decide con buen criterio.
+ */
+export const CAMPOS_ESENCIALES: CampoFicha[] = ['tema', 'nivel', 'objetivo', 'idea', 'interaccion', 'uso'];
+
 /** Cuántos campos de la ficha tienen algo, de 0 a 1. */
 export function progresoFicha(ficha: FichaIdea): number {
   const completos = CAMPOS_FICHA.filter((campo) => (ficha[campo.id] ?? '').trim().length > 0).length;
@@ -304,6 +333,45 @@ export function armarRespuesta(
   if (libre) partes.push(libre);
 
   return partes.join('\n');
+}
+
+/**
+ * Lo que el docente contestó en el panel de preguntas, armado como un solo
+ * mensaje: por cada pregunta, lo que tocó y lo que escribió en "Otra
+ * respuesta", con la pregunta al lado (el modelo necesita saber a qué
+ * contesta cada cosa). Las salteadas no van.
+ */
+export function armarRespuestas(
+  preguntas: PreguntaTaller[],
+  elegidas: Record<number, string[]>,
+  escritas: Record<number, string>,
+): string {
+  const partes: string[] = [];
+
+  preguntas.forEach((pregunta, indice) => {
+    const respuestas = [...(elegidas[indice] ?? [])];
+    const escrita = (escritas[indice] ?? '').trim();
+    if (escrita) respuestas.push(escrita);
+    if (respuestas.length === 0) return;
+    partes.push(`${pregunta.texto} → ${respuestas.join(', ')}`);
+  });
+
+  return partes.join('\n');
+}
+
+/**
+ * Para mostrar en la burbuja del docente sólo lo que contestó: cada línea
+ * "pregunta → respuesta" se queda con la respuesta (la pregunta ya está en
+ * la burbuja de Kodu de arriba). Lo demás, tal cual.
+ */
+export function respuestaParaMostrar(contenido: string): string {
+  return contenido
+    .split('\n')
+    .map((linea) => {
+      const flecha = linea.indexOf(' → ');
+      return flecha > 0 && linea.trimStart().startsWith('¿') ? linea.slice(flecha + 3) : linea;
+    })
+    .join('\n');
 }
 
 /** El nombre que se muestra en "Mis ideas" mientras la IA no propuso uno. */

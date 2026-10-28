@@ -267,10 +267,10 @@ async function main(): Promise<void> {
     // 5. Header: visible para los dos admins, ausente para un docente plano.
     // ───────────────────────────────────────────────────────────
     await adminN1.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
-    await assert.doesNotReject(() => adminN1.waitForSelector('a[href="/org"]', { timeout: 3_000 }), 'adminN1 debe ver el link "Mi organización"');
+    await assert.doesNotReject(() => adminN1.waitForSelector('a[href="/org"]', { state: 'attached', timeout: 3_000 }), 'adminN1 debe ver el link "Mi organización"');
 
     await adminRed.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
-    await assert.doesNotReject(() => adminRed.waitForSelector('a[href="/org"]', { timeout: 3_000 }), 'adminRed debe ver el link "Mi organización"');
+    await assert.doesNotReject(() => adminRed.waitForSelector('a[href="/org"]', { state: 'attached', timeout: 3_000 }), 'adminRed debe ver el link "Mi organización"');
 
     await plano.goto(`${BASE_URL}/app`, { waitUntil: 'domcontentloaded' });
     const linkOrgPlano = await plano.$('a[href="/org"]');

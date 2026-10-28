@@ -1,13 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import NewProjectButton from '../../components/NewProjectButton.tsx';
 import ProjectCardActions from '../../components/ProjectCardActions.tsx';
 import CuentaPersonal from '../../components/CuentaPersonal.astro';
+import VistaPrevia from '../../components/VistaPrevia.astro';
 import AvisoRenovacion from '../../components/billing/AvisoRenovacion.astro';
 import { prisma } from '../../lib/db.ts';
 import { haceTiempo } from '../../lib/format/fecha.ts';
 import { resolverAccesoIa } from '../../lib/orgs/acceso.ts';
-import { NOMBRE_TALLER } from '../../lib/taller/prompt.ts';
+import { leerFichaGuardada, nombreDeLaIdea } from '../../lib/taller/ficha.ts';
 import { billingNow } from '../../lib/env.ts';
 
 // El middleware ya garantiza sesión en /app/**; esto es sólo para el tipo.
@@ -66,17 +66,47 @@ const projects = bloqueada
 
 /**
  * odd/tasks/taller-de-ideas.md: las ideas del Taller que todavía no se
- * convirtieron en recurso, para invitar a retomarlas desde acá.
+ * convirtieron en recurso, para invitar a retomarlas desde acá. Sólo las más
+ * recientes; el resto está a un click en el Taller.
  */
+const IDEAS_A_MOSTRAR = 3;
 const ideasEnCurso = bloqueada
-  ? 0
-  : await prisma.ideaSession.count({ where: { userId: user.id, projectId: null } });
+  ? []
+  : await prisma.ideaSession.findMany({
+      where: { userId: user.id, projectId: null },
+      orderBy: { updatedAt: 'desc' },
+      take: IDEAS_A_MOSTRAR,
+      select: { id: true, title: true, brief: true, finalPrompt: true, updatedAt: true },
+    });
+const cantidadDeIdeas =
+  ideasEnCurso.length < IDEAS_A_MOSTRAR
+    ? ideasEnCurso.length
+    : await prisma.ideaSession.count({ where: { userId: user.id, projectId: null } });
+
+const ideas = ideasEnCurso.map((sesion) => ({
+  id: sesion.id,
+  nombre: nombreDeLaIdea(sesion.title, leerFichaGuardada(sesion.brief)),
+  estado: sesion.finalPrompt ? 'Pedido listo para crear' : 'En charla',
+  cuando: haceTiempo(sesion.updatedAt),
+}));
 
 /** "Bajo una semana" (design.md §7): pasado ese punto, la marca desaparece sola. */
 const SEMANA_MS = 7 * 24 * 60 * 60 * 1000;
 function editadoPorAdministracion(fecha: Date | null): boolean {
   return fecha !== null && Date.now() - fecha.getTime() < SEMANA_MS;
 }
+
+const primerNombre = user.name.trim().split(/\s+/)[0] ?? user.name;
+
+/**
+ * El último recurso tocado va destacado arriba ("Seguí donde lo dejaste") y no
+ * se repite en la grilla: dos tarjetas que llevan al mismo lugar en la misma
+ * pantalla son ruido. Mientras se busca o se filtra, la grilla sí lo incluye
+ * (el script de abajo lo muestra) para que la búsqueda no "pierda" un recurso.
+ */
+const [destacado] = projects;
+const conFiltros = projects.length > 4;
+const enLaGaleria = projects.filter((project) => project.isInGallery).length;
 ---
 
 <BaseLayout title="Mis recursos">
@@ -92,114 +122,225 @@ function editadoPorAdministracion(fecha: Date | null): boolean {
       endpoint="/api/billing/individual/renovar"
     />
   )}
-  <div class="flex flex-wrap items-end justify-between gap-4">
-    <div>
-      <h1 class="text-2xl font-bold text-ink-900">Mis recursos</h1>
-      <p class="mt-1 text-sm text-ink-500">
-        {user.role === 'ADMIN' ? 'Administración · ' : ''}{user.email}
-      </p>
-    </div>
 
-    <NewProjectButton client:load />
-  </div>
+  <header>
+    <p class="text-sm font-semibold tracking-wide text-brand-600 uppercase">Mis recursos</p>
+    <h1 class="font-display mt-1.5 text-3xl leading-tight text-ink-900 sm:text-4xl">Hola, {primerNombre}</h1>
+    <p class="mt-2 text-base text-ink-500">
+      {projects.length === 0
+        ? 'Acá van a quedar las herramientas que crees para tus clases.'
+        : ideas.length > 0
+          ? 'Seguí donde lo dejaste, o retomá una idea que quedó en camino.'
+          : 'Seguí donde lo dejaste. Tocá cualquier recurso para seguir editándolo.'}
+    </p>
+  </header>
 
-  {/* odd/tasks/taller-de-ideas.md: la entrada al Taller desde el panel. */}
-  <a
-    href="/app/taller"
-    class="kodu-card mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 p-4 transition-colors hover:border-brand-300"
-  >
-    <span class="min-w-0 flex-1">
-      <span class="block font-semibold text-ink-900">{NOMBRE_TALLER}</span>
-      <span class="mt-0.5 block text-sm text-ink-500">
-        {ideasEnCurso > 0
-          ? `Tenés ${ideasEnCurso === 1 ? 'una idea en camino. Retomala' : `${ideasEnCurso} ideas en camino. Retomalas`} cuando quieras, o pensá una nueva con Kodu.`
-          : '¿Sabés qué vas a dar pero no qué herramienta usar? Pensala con Kodu antes de crearla: te pregunta, te propone ideas y arma el pedido por vos.'}
-      </span>
-    </span>
-    <span class="kodu-btn-ghost shrink-0">{ideasEnCurso > 0 ? 'Ver mis ideas' : 'Pensar una idea'}</span>
-  </a>
-
-  {
-    projects.length === 0 ? (
-      <div class="kodu-card mt-6 p-10 text-center">
-        <h2 class="text-lg font-semibold text-ink-900">Todavía no creaste recursos</h2>
-        <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
-          Tocá <strong>Nuevo recurso</strong> y describile a la IA la actividad que necesitás: la vas
-          a ver armarse en vivo en el panel de vista previa. Si todavía no sabés qué pedir, empezá por el
-          <a href="/app/taller" class="font-medium text-brand-600 hover:underline">{NOMBRE_TALLER}</a>.
+  <section class="mt-8 flex flex-wrap gap-5" aria-label="Seguí donde lo dejaste" data-destacado>
+    {destacado ? (
+      <a
+        href={`/app/project/${destacado.id}`}
+        class="kodu-card kodu-elev kodu-alza flex min-w-0 flex-[999_1_34rem] flex-wrap overflow-hidden rounded-2xl"
+      >
+        <span class="block min-w-0 flex-[1_1_20rem]">
+          <VistaPrevia src={destacado.screenshotUrl} alt={`Vista previa de ${destacado.title}`} vacio="Sin portada todavía" carga="eager" />
+        </span>
+        <span class="flex flex-[1_1_18rem] flex-col gap-2.5 p-6 sm:p-7">
+          <span class="self-start rounded-full bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-700">
+            Último que editaste · {haceTiempo(destacado.updatedAt)}
+          </span>
+          <span class="font-display mt-1 text-2xl leading-tight text-ink-900">{destacado.title}</span>
+          {destacado.description && (
+            <span class="line-clamp-3 text-[15px] leading-relaxed text-ink-500">{destacado.description}</span>
+          )}
+          {editadoPorAdministracion(destacado.lastAdminActionAt) && (
+            <span class="text-xs text-brand-600">
+              Editado por administración · {haceTiempo(destacado.lastAdminActionAt)}
+            </span>
+          )}
+          <span class="mt-auto inline-flex items-center gap-2 pt-2 text-[15px] font-bold text-brand-700">
+            Seguir editando
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </span>
+        </span>
+      </a>
+    ) : (
+      /* Sin recursos: el único camino para crear es el botón de la barra, así
+         que acá sólo se lo señala, sin repetir otro botón que haga lo mismo. */
+      <div class="kodu-card flex min-w-0 flex-[999_1_34rem] flex-col justify-center rounded-2xl p-8 sm:p-10">
+        <h2 class="font-display text-2xl text-ink-900">Todavía no creaste recursos</h2>
+        <p class="mt-2 max-w-lg text-[15px] leading-relaxed text-ink-500">
+          Tocá <strong class="text-ink-900">Crear recurso</strong>, arriba a la derecha. Podés pensar la idea con
+          Kodu antes de crearla o contarle directo lo que necesitás, y la vas a ver armarse en vivo.
         </p>
       </div>
-    ) : (
-      <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
-          <li class="kodu-card flex flex-col overflow-hidden">
-            <a href={`/app/project/${project.id}`} class="block">
-              {project.screenshotUrl ? (
-                <img
-                  src={project.screenshotUrl}
-                  alt={`Captura de ${project.title}`}
-                  class="h-36 w-full border-b border-linea object-cover object-top"
-                  loading="lazy"
-                />
-              ) : (
-                <div class="grid h-36 w-full place-items-center border-b border-linea bg-sutil text-xs text-ink-500">
-                  Sin captura
-                </div>
+    )}
+
+    {ideas.length > 0 && (
+      <aside aria-labelledby="ideas-en-camino" class="kodu-card flex min-w-0 flex-[1_1_18rem] flex-col gap-3 rounded-2xl p-5 sm:p-6">
+        <div class="flex items-center gap-2.5">
+          <span class="grid h-9 w-9 place-items-center rounded-[10px] bg-brand-50 text-brand-700" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+            </svg>
+          </span>
+          <h2 id="ideas-en-camino" class="text-base font-bold text-ink-900">Ideas en camino</h2>
+          {cantidadDeIdeas > IDEAS_A_MOSTRAR && (
+            <a href="/app/taller" class="ml-auto text-sm font-semibold text-brand-600 hover:underline">
+              Ver las {cantidadDeIdeas}
+            </a>
+          )}
+        </div>
+        {ideas.map((idea) => (
+          <a
+            href={`/app/taller/${idea.id}`}
+            class="kodu-alza block rounded-xl border border-linea px-3.5 py-3"
+          >
+            <span class="block text-[15px] font-semibold text-ink-900">{idea.nombre}</span>
+            <span class="mt-0.5 block text-xs text-ink-500">{idea.estado} · {idea.cuando}</span>
+          </a>
+        ))}
+      </aside>
+    )}
+  </section>
+
+  {projects.length > 1 && (
+    <section class="mt-12" aria-labelledby="todos-tus-recursos">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <h2 id="todos-tus-recursos" class="text-xl font-bold text-ink-900">
+          Todos tus recursos <span class="font-medium text-ink-500">· {projects.length}</span>
+        </h2>
+
+        {conFiltros && (
+          <>
+            <div role="group" aria-label="Filtrar recursos" class="flex gap-1 rounded-[10px] bg-sutil p-1" data-filtros>
+              <button type="button" data-filtro="todos" aria-pressed="true" class="kodu-filtro">Todos</button>
+              <button type="button" data-filtro="galeria" aria-pressed="false" class="kodu-filtro">
+                En la galería · {enLaGaleria}
+              </button>
+              <button type="button" data-filtro="privado" aria-pressed="false" class="kodu-filtro">
+                Privados · {projects.length - enLaGaleria}
+              </button>
+            </div>
+            <label class="flex h-10 min-w-0 flex-[1_1_14rem] items-center gap-2 rounded-[10px] border border-linea bg-superficie px-3 text-ink-500 focus-within:border-brand-500 sm:ml-auto sm:max-w-xs">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" />
+                <path d="m20 20-3.5-3.5" />
+              </svg>
+              <span class="sr-only">Buscar en mis recursos</span>
+              <input
+                type="search"
+                placeholder="Buscar en mis recursos"
+                class="min-w-0 flex-1 bg-transparent text-[15px] text-ink-900 outline-none placeholder:text-ink-500"
+                data-buscar
+              />
+            </label>
+          </>
+        )}
+      </div>
+
+      <ul class="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3" data-grilla>
+        {projects.map((project, indice) => (
+          <li
+            class="kodu-card kodu-alza relative flex flex-col overflow-hidden rounded-[14px]"
+            data-recurso
+            data-estado={project.isInGallery ? 'galeria' : 'privado'}
+            data-texto={`${project.title} ${project.description ?? ''}`.toLowerCase()}
+            data-es-destacado={indice === 0 ? '' : undefined}
+            hidden={indice === 0}
+          >
+            {/* Toda la tarjeta lleva al editor (el `after:` estira el link
+                sobre la tarjeta); los íconos de abajo quedan por encima. */}
+            <a href={`/app/project/${project.id}`} class="flex flex-1 flex-col after:absolute after:inset-0">
+              <VistaPrevia src={project.screenshotUrl} alt={`Vista previa de ${project.title}`} chico vacio="Sin portada todavía" />
+              <span class="block px-4 pt-4 font-bold text-ink-900">{project.title}</span>
+              {project.description && (
+                <span class="mt-1 line-clamp-2 block px-4 text-sm text-ink-500">{project.description}</span>
               )}
             </a>
 
-            <div class="flex flex-1 flex-col p-4">
-              <a href={`/app/project/${project.id}`} class="font-semibold text-ink-900 hover:text-brand-600">
-                {project.title}
-              </a>
-              {project.description && (
-                <p class="mt-1 line-clamp-2 text-xs text-ink-500">{project.description}</p>
-              )}
+            {editadoPorAdministracion(project.lastAdminActionAt) && (
+              <p class="mt-2 px-4 text-xs text-brand-600">
+                Editado por administración · {haceTiempo(project.lastAdminActionAt)}
+              </p>
+            )}
 
-              <p class="mt-3 flex items-center gap-1.5 text-xs text-ink-500">
+            <div class="mt-auto flex items-center gap-1 pt-3 pr-2.5 pb-2.5 pl-4">
+              <span class="flex items-center gap-1.5 text-xs text-ink-500">
                 <span
-                  class={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
-                    project.isInGallery ? 'bg-brand-600' : 'bg-linea'
-                  }`}
+                  class={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${project.isInGallery ? 'bg-brand-600' : 'bg-linea'}`}
                   aria-hidden="true"
                 />
-                {project.isInGallery ? 'En la galería' : 'Privado'} ·{' '}
-                {project.updatedAt.toLocaleDateString('es-AR')}
-              </p>
-
-              {/* Marca durable de M8 (design.md §7): sólo mientras es reciente
-                  — pasada la semana, se apaga sola, no hace falta borrar nada. */}
-              {editadoPorAdministracion(project.lastAdminActionAt) && (
-                <p class="mt-1 text-xs text-brand-600">
-                  Editado por administración · {haceTiempo(project.lastAdminActionAt)}
-                </p>
-              )}
-
-              <div class="mt-3 flex items-center gap-3 border-t border-linea pt-3 text-xs">
-                <a
-                  href={`/app/project/${project.id}`}
-                  class="rounded-lg bg-brand-600 px-2.5 py-1.5 font-semibold text-white transition-colors hover:bg-brand-700"
-                >
-                  Editar
-                </a>
-                <a
-                  href={`/p/${project.slug}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="rounded-lg border border-linea px-2.5 py-1.5 font-medium text-ink-700 transition-colors hover:border-ink-500"
-                >
-                  Ver
-                </a>
-                <span class="ml-auto">
-                  <ProjectCardActions client:visible projectId={project.id} title={project.title} />
-                </span>
-              </div>
+                {project.isInGallery ? 'En la galería' : 'Privado'} · {haceTiempo(project.updatedAt)}
+              </span>
+              <a
+                href={`/p/${project.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Abrir el link público de ${project.title}`}
+                title="Abrir el link público"
+                class="relative z-10 ml-auto grid h-9 w-9 place-items-center rounded-lg text-ink-500 transition-colors hover:bg-sutil hover:text-ink-900"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M7 17 17 7M8 7h9v9" />
+                </svg>
+              </a>
+              <span class="relative z-10">
+                <ProjectCardActions client:visible projectId={project.id} title={project.title} />
+              </span>
             </div>
           </li>
         ))}
       </ul>
-    )
-  }
+
+      <p class="mt-8 text-center text-sm text-ink-500" data-sin-resultados hidden>
+        Ningún recurso coincide con la búsqueda.
+      </p>
+    </section>
+  )}
     </>
   )}
 </BaseLayout>
+
+<script>
+  // Búsqueda y filtro de "Todos tus recursos", sin ir al servidor: la lista
+  // entera ya está en la página. Mientras hay un filtro puesto, el destacado
+  // de arriba se esconde y su tarjeta aparece en la grilla.
+  const grilla = document.querySelector<HTMLElement>('[data-grilla]');
+  const buscar = document.querySelector<HTMLInputElement>('[data-buscar]');
+  const botones = [...document.querySelectorAll<HTMLButtonElement>('[data-filtro]')];
+  const destacado = document.querySelector<HTMLElement>('[data-destacado]');
+  const sinResultados = document.querySelector<HTMLElement>('[data-sin-resultados]');
+
+  if (grilla && buscar) {
+    let filtro = 'todos';
+
+    const aplicar = () => {
+      const texto = buscar.value.trim().toLowerCase();
+      const activo = texto !== '' || filtro !== 'todos';
+      let visibles = 0;
+
+      for (const tarjeta of grilla.querySelectorAll<HTMLElement>('[data-recurso]')) {
+        const coincide =
+          (filtro === 'todos' || tarjeta.dataset.estado === filtro) &&
+          (texto === '' || (tarjeta.dataset.texto ?? '').includes(texto));
+        const mostrar = coincide && (activo || !tarjeta.hasAttribute('data-es-destacado'));
+        tarjeta.hidden = !mostrar;
+        if (mostrar) visibles++;
+      }
+
+      if (destacado) destacado.hidden = activo;
+      if (sinResultados) sinResultados.hidden = visibles > 0;
+    };
+
+    buscar.addEventListener('input', aplicar);
+    for (const boton of botones) {
+      boton.addEventListener('click', () => {
+        filtro = boton.dataset.filtro ?? 'todos';
+        for (const otro of botones) otro.setAttribute('aria-pressed', String(otro === boton));
+        aplicar();
+      });
+    }
+  }
+</script>

@@ -4,16 +4,24 @@ import StreamedText from '../workspace/StreamedText.tsx';
 import PreguntasTaller from './PreguntasTaller.tsx';
 import FichaTaller from './FichaTaller.tsx';
 import { apiRequest, leerEventosSse } from '../../lib/client/api.ts';
-import { armarRespuesta, type FichaIdea } from '../../lib/taller/ficha.ts';
+import { armarRespuestas, respuestaParaMostrar, type FichaIdea } from '../../lib/taller/ficha.ts';
 import { NOMBRE_TALLER } from '../../lib/taller/prompt.ts';
 import type { AdjuntoTallerCliente, EventoTaller, MensajeTaller, SesionTaller } from '../../lib/taller/tipos.ts';
 
 /**
  * La charla del Taller de ideas (odd/tasks/taller-de-ideas.md): el chat a la
- * izquierda, con las preguntas de Kodu y sus respuestas para tocar, y la
- * ficha "Tu idea" a la derecha, que termina en el pedido y en "Crear mi
- * recurso". En el celular, chat y ficha son dos pestañas.
+ * izquierda y, abajo, la pregunta que espera respuesta, sola y en foco (es a
+ * la vez la caja para contestar). A la derecha, la ficha "Tu idea", que
+ * termina en el pedido y en "Crear mi recurso". En el celular, chat y ficha
+ * son dos pestañas.
+ *
+ * Kodu hace una pregunta por turno. Si un turno trae más de una (la apertura,
+ * charlas guardadas antes de este cambio), igual salen de a una: se contestan
+ * en orden y se mandan juntas con la última.
  */
+
+/** Cuántas preguntas apunta a hacer Kodu antes del pedido (ver el prompt). */
+const PREGUNTAS_ESPERADAS = 6;
 
 const MENSAJE_ARMAR_PEDIDO = 'Ya está, armá el pedido con lo que tenemos.';
 /** Mientras la IA termina un turno que quedó en camino (recarga, corte). */
@@ -50,6 +58,10 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
 
   const [borrador, setBorrador] = useState('');
   const [elegidas, setElegidas] = useState<Record<number, string[]>>({});
+  /** "Otra respuesta" escrita a mano, por pregunta. */
+  const [escritas, setEscritas] = useState<Record<number, string>>({});
+  /** Qué pregunta del turno se está mostrando. */
+  const [paso, setPaso] = useState(0);
   const [textoEnVivo, setTextoEnVivo] = useState('');
   const [ocupado, setOcupado] = useState(props.enCurso);
   const [esperandoTurnoAnterior, setEsperandoTurnoAnterior] = useState(props.enCurso);
@@ -73,17 +85,46 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
     !soloLectura && !ocupado && ultimo?.role === 'assistant' ? ultimo.questions : [];
   const idUltimaIa = ultimo?.role === 'assistant' ? ultimo.id : null;
   const yaContesto = mensajes.some((mensaje) => mensaje.role === 'user');
-  const hayElegidas = Object.values(elegidas).some((lista) => lista.length > 0);
+  const respuestasDadas = mensajes.filter((mensaje) => mensaje.role === 'user').length;
+
+  const preguntaActual = preguntasActivas[Math.min(paso, preguntasActivas.length - 1)] ?? null;
+  const esUltimoPaso = paso >= preguntasActivas.length - 1;
+  const contestada = (indice: number) =>
+    (elegidas[indice]?.length ?? 0) > 0 || (escritas[indice] ?? '').trim().length > 0;
+  const algunaContestada = preguntasActivas.some((_, indice) => contestada(indice));
+  const numeroDePregunta = respuestasDadas + paso + 1;
+
+  // Llegó otra respuesta de Kodu: se arranca de cero con sus preguntas.
+  useEffect(() => {
+    setPaso(0);
+    setElegidas({});
+    setEscritas({});
+  }, [idUltimaIa]);
 
   // Al abrir, directo al final (sin animación, que se corta si la página
   // todavía se está acomodando); después, suave mientras llega cada respuesta.
+  // En escritorio alto scrollea el chat; en el celular y en ventanas bajas
+  // (variante `alto` de global.css) la página entera, así la pregunta de
+  // abajo queda a la vista.
   const yaBajo = useRef(false);
   useEffect(() => {
     const contenedor = scroll.current;
     if (!contenedor) return;
-    contenedor.scrollTo({ top: contenedor.scrollHeight, behavior: yaBajo.current ? 'smooth' : 'auto' });
+    const comportamiento = yaBajo.current ? 'smooth' : 'auto';
+    if (getComputedStyle(contenedor).overflowY === 'auto') {
+      contenedor.scrollTo({ top: contenedor.scrollHeight, behavior: comportamiento });
+    } else {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: comportamiento });
+    }
     yaBajo.current = true;
   }, [mensajes.length, textoEnVivo, ocupado]);
+
+  // Al pasar a la pregunta siguiente del mismo turno, que se vea entera
+  // (puede tener más respuestas que la anterior).
+  const panelPregunta = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (paso > 0) panelPregunta.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [paso]);
 
   // El título de la pestaña lo arma el servidor al cargar; cuando la IA le
   // pone nombre a la idea, se actualiza acá sin recargar.
@@ -160,6 +201,10 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
     };
   }, []);
 
+  function escribir(indice: number, texto: string) {
+    setEscritas((actuales) => ({ ...actuales, [indice]: texto }));
+  }
+
   function elegir(indice: number, opcion: string) {
     const pregunta = preguntasActivas[indice];
     if (!pregunta) return;
@@ -200,6 +245,8 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
       },
     ]);
     setElegidas({});
+    setEscritas({});
+    setPaso(0);
     setAdjuntosPendientes([]);
 
     const deshacerOptimista = (mensajeError: string) => {
@@ -277,11 +324,35 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
     event?.preventDefault();
     if (ocupado || soloLectura) return;
 
-    const texto = armarRespuesta(preguntasActivas, elegidas, borrador);
+    // Con preguntas: lo contestado en el panel. Sin preguntas (Kodu propuso
+    // ideas, o el pedido ya está): lo que se escribió en la caja libre.
+    const texto =
+      preguntasActivas.length > 0 ? armarRespuestas(preguntasActivas, elegidas, escritas) : borrador.trim();
     if (!texto.trim()) return;
 
     setBorrador('');
     void enviar(texto, adjuntosPendientes);
+  }
+
+  /** El botón principal del panel: pasa a la pregunta siguiente o manda todo. */
+  function avanzar() {
+    if (ocupado) return;
+    if (!esUltimoPaso) {
+      if (contestada(paso)) setPaso(paso + 1);
+      return;
+    }
+    if (algunaContestada) enviarDesdeElFormulario();
+  }
+
+  /** "Saltear": sigue sin contestar; en la última, manda lo que haya (o avisa que la salteó). */
+  function saltear() {
+    if (ocupado) return;
+    if (!esUltimoPaso) {
+      setPaso(paso + 1);
+      return;
+    }
+    if (algunaContestada) enviarDesdeElFormulario();
+    else void enviar('Prefiero saltear esta pregunta.', adjuntosPendientes);
   }
 
   function alApretarTecla(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -363,21 +434,89 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
     />
   );
 
+  const iconoKodu = (
+    <span
+      aria-hidden="true"
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-brand-600 text-white"
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+      </svg>
+    </span>
+  );
+
+  const botonAdjuntar = (
+    <>
+      <input
+        ref={archivo}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+        onChange={(event) => void subir(event)}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={() => archivo.current?.click()}
+        disabled={subiendo || ocupado}
+        aria-label={subiendo ? 'Subiendo archivos' : 'Adjuntar una imagen o un PDF'}
+        title="Sumá una imagen o un PDF: una ficha de trabajo, una foto del pizarrón, un texto"
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-linea text-ink-500 transition-colors hover:border-ink-500 hover:text-ink-900 disabled:opacity-60"
+      >
+        {subiendo ? (
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-linea border-t-brand-600" />
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m21 11-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7L10.2 17a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" />
+          </svg>
+        )}
+      </button>
+    </>
+  );
+
+  const flecha = (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+
   return (
-    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[32rem] flex-col lg:h-[calc(100dvh-9.5rem)]">
-      <div className="mb-2 flex items-center gap-3">
+    <div className="flex flex-col alto:h-[calc(100dvh-9.5rem)] alto:min-h-[32rem]">
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         <a
           href="/app/taller"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-linea bg-superficie px-3 py-1 text-sm text-ink-700 transition-colors hover:border-brand-300 hover:text-brand-600"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-linea bg-superficie py-1.5 pr-3 pl-2 text-sm font-semibold text-ink-700 transition-colors hover:border-brand-300 hover:text-brand-600"
         >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <path d="M7.5 2.5 4 6l3.5 3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m15 18-6-6 6-6" />
           </svg>
           {NOMBRE_TALLER}
         </a>
-        <p className="truncate text-sm text-ink-500">
-          {props.sesion.mode === 'TOPIC' ? 'Tengo un tema, busco una idea' : 'Ya tengo una idea'}
+        <p className="truncate text-sm font-semibold text-ink-500 max-sm:hidden">
+          {props.sesion.mode === 'TOPIC' ? 'Tengo el tema' : 'Ya tengo la idea'}
         </p>
+
+        {!soloLectura && !pedido && (
+          <div className="ml-auto flex items-center gap-2.5 text-sm text-ink-500">
+            {numeroDePregunta <= PREGUNTAS_ESPERADAS
+              ? `Pregunta ${numeroDePregunta} de unas ${PREGUNTAS_ESPERADAS}`
+              : `Pregunta ${numeroDePregunta}`}
+            <span aria-hidden="true" className="flex gap-1 max-sm:hidden">
+              {Array.from({ length: PREGUNTAS_ESPERADAS }, (_, indice) => (
+                <span
+                  key={indice}
+                  className={`h-1.5 w-5 rounded-full ${
+                    indice < numeroDePregunta - 1
+                      ? 'bg-brand-600'
+                      : indice === numeroDePregunta - 1
+                        ? 'bg-brand-300'
+                        : 'bg-linea'
+                  }`}
+                />
+              ))}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* En el celular: dos pestañas. La de la idea avisa cuando el pedido está listo. */}
@@ -405,26 +544,27 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
         {anuncio}
       </p>
 
-      <div className="kodu-card flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex items-start gap-5 alto:min-h-0 alto:flex-1 alto:items-stretch">
         {/* Charla */}
         <section
-          className={`min-h-0 flex-1 flex-col border-linea lg:flex lg:border-r ${vistaMovil === 'charla' ? 'flex' : 'hidden'}`}
+          className={`min-w-0 flex-1 flex-col lg:flex alto:min-h-0 ${vistaMovil === 'charla' ? 'flex' : 'hidden'}`}
           aria-label="Charla con Kodu"
         >
-          <div ref={scroll} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-            {mensajes.map((mensaje) => {
+          <div ref={scroll} className="space-y-3 pr-1 pb-4 alto:min-h-0 alto:flex-1 alto:overflow-y-auto">
+            {mensajes.map((mensaje, indiceMensaje) => {
               const esUltimaIa = mensaje.id === idUltimaIa;
-              return (
-                <div key={mensaje.id} className={mensaje.role === 'user' ? 'ml-8' : 'mr-4 space-y-3'}>
-                  {mensaje.content && (
-                    <article
-                      className={
-                        mensaje.role === 'user'
-                          ? 'rounded-xl bg-brand-600 px-3 py-2 text-sm whitespace-pre-wrap text-white'
-                          : 'rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900'
-                      }
-                    >
-                      {conNegritas(mensaje.content)}
+              // El avatar de Kodu va en el primer mensaje de cada tanda suya.
+              const conAvatar = mensaje.role === 'assistant' && mensajes[indiceMensaje - 1]?.role !== 'assistant';
+              // Las preguntas que esperan respuesta están abajo, en el panel:
+              // en el chat se muestran sólo las ya contestadas.
+              const preguntasEnElChat =
+                esUltimaIa && preguntasActivas.length > 0 ? [] : mensaje.questions;
+
+              if (mensaje.role === 'user') {
+                return (
+                  <div key={mensaje.id} className="flex justify-end pl-10">
+                    <article className="rounded-[18px] rounded-br-[4px] bg-brand-600 px-4 py-2.5 text-[15px] whitespace-pre-wrap text-white">
+                      {respuestaParaMostrar(mensaje.content)}
                       {mensaje.attachments.length > 0 && (
                         <ul className="mt-2 space-y-0.5 text-xs opacity-80">
                           {mensaje.attachments.map((url) => (
@@ -433,67 +573,75 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
                         </ul>
                       )}
                     </article>
-                  )}
+                  </div>
+                );
+              }
 
-                  {mensaje.proposals.length > 0 && (
-                    <ul className="grid gap-2" aria-label="Ideas que propuso Kodu">
-                      {mensaje.proposals.map((idea) => (
-                        <li key={idea.nombre} className="rounded-xl border border-linea bg-superficie p-3">
-                          <p className="font-semibold text-ink-900">{idea.nombre}</p>
-                          <p className="mt-1 text-sm text-ink-700">{idea.resumen}</p>
-                          {idea.porQue && <p className="mt-1 text-sm text-ink-500">{idea.porQue}</p>}
-                          {esUltimaIa && !soloLectura && (
-                            <button
-                              type="button"
-                              disabled={ocupado}
-                              onClick={() => void enviar(`Me quedo con la idea «${idea.nombre}».`, [])}
-                              className="kodu-btn-ghost mt-2 px-3 py-1.5 text-sm"
-                            >
-                              Elegir esta idea
-                            </button>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+              return (
+                <div key={mensaje.id} className="flex items-start gap-2.5 pr-6">
+                  {conAvatar ? iconoKodu : <span className="w-8 shrink-0" aria-hidden="true" />}
+                  <div className="min-w-0 flex-1 space-y-2">
+                    {mensaje.content && (
+                      <article className="w-fit max-w-full rounded-[18px] rounded-tl-[4px] border border-linea bg-superficie px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-700">
+                        {conNegritas(mensaje.content)}
+                      </article>
+                    )}
 
-                  {mensaje.role === 'assistant' && mensaje.questions.length > 0 && (
-                    esUltimaIa && preguntasActivas.length > 0 ? (
-                      <PreguntasTaller
-                        preguntas={preguntasActivas}
-                        elegidas={elegidas}
-                        onElegir={elegir}
-                        deshabilitado={ocupado}
-                      />
-                    ) : (
-                      <ul className="space-y-0.5 px-1 text-xs text-ink-500">
-                        {mensaje.questions.map((pregunta) => (
-                          <li key={pregunta.texto}>{pregunta.texto}</li>
+                    {preguntasEnElChat.map((pregunta) => (
+                      <p
+                        key={pregunta.texto}
+                        className="w-fit max-w-full rounded-[18px] border border-linea bg-superficie px-4 py-2.5 text-[15px] font-semibold text-ink-900"
+                      >
+                        {pregunta.texto}
+                      </p>
+                    ))}
+
+                    {mensaje.proposals.length > 0 && (
+                      <ul className="grid gap-2.5 sm:grid-cols-2" aria-label="Ideas que propuso Kodu">
+                        {mensaje.proposals.map((idea) => (
+                          <li key={idea.nombre} className="kodu-card flex flex-col rounded-2xl p-4">
+                            <p className="font-bold text-ink-900">{idea.nombre}</p>
+                            <p className="mt-1 text-sm text-ink-700">{idea.resumen}</p>
+                            {idea.porQue && <p className="mt-1 text-sm text-ink-500">{idea.porQue}</p>}
+                            {esUltimaIa && !soloLectura && (
+                              <button
+                                type="button"
+                                disabled={ocupado}
+                                onClick={() => void enviar(`Me quedo con la idea «${idea.nombre}».`, [])}
+                                className="kodu-btn-primary mt-3 self-start px-3 py-2 text-sm"
+                              >
+                                Elegir esta idea
+                              </button>
+                            )}
+                          </li>
                         ))}
                       </ul>
-                    )
-                  )}
+                    )}
+                  </div>
                 </div>
               );
             })}
 
             {ocupado && textoEnVivo && (
-              <article className="mr-4 rounded-xl bg-sutil px-3 py-2 text-sm whitespace-pre-wrap text-ink-900">
-                <StreamedText text={textoEnVivo} render={conNegritas} />
-              </article>
+              <div className="flex items-start gap-2.5 pr-6">
+                {mensajes[mensajes.length - 1]?.role === 'assistant' ? <span className="w-8 shrink-0" /> : iconoKodu}
+                <article className="w-fit max-w-full rounded-[18px] rounded-tl-[4px] border border-linea bg-superficie px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-ink-700">
+                  <StreamedText text={textoEnVivo} render={conNegritas} />
+                </article>
+              </div>
             )}
 
             {ocupado && !textoEnVivo && (
-              <div className="flex items-center gap-2 px-1 text-sm text-ink-500" role="status">
+              <div className="flex items-center gap-2 pl-10 text-sm text-ink-500" role="status">
                 <ThinkingOrb state="composing" size={20} theme="auto" aria-label="" />
                 {esperandoTurnoAnterior ? 'Kodu está terminando de contestar tu mensaje anterior…' : 'Kodu está pensando…'}
               </div>
             )}
 
-            {aviso && <p className="px-1 text-xs text-ink-500" role="status">{aviso}</p>}
+            {aviso && <p className="pl-10 text-xs text-ink-500" role="status">{aviso}</p>}
 
             {error && (
-              <div role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
+              <div role="alert" className="ml-10 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
                 <p>{error}</p>
                 {fallido && (
                   <button
@@ -511,7 +659,7 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
             {/* En el celular la ficha está en la otra pestaña: el pedido listo
                 se avisa acá, donde está la atención. */}
             {pedido && !soloLectura && (
-              <div className="rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm text-ink-900 lg:hidden">
+              <div className="ml-10 rounded-xl border border-brand-300 bg-brand-50 p-3 text-sm text-ink-900 lg:hidden">
                 Tu pedido está listo.
                 <button
                   type="button"
@@ -525,20 +673,65 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
           </div>
 
           {soloLectura ? (
-            <p className="border-t border-linea p-3 text-sm text-ink-500">
+            <p className="kodu-card rounded-2xl p-4 text-sm text-ink-500">
               Esta idea ya se convirtió en un recurso: la charla queda para consultar.{' '}
-              <a href={`/app/project/${projectId}`} className="font-medium text-brand-600 hover:underline">
+              <a href={`/app/project/${projectId}`} className="font-semibold text-brand-600 hover:underline">
                 Ir al recurso
               </a>
             </p>
           ) : (
-            <form onSubmit={enviarDesdeElFormulario} className="space-y-2 border-t border-linea p-3">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (preguntaActual) avanzar();
+                else enviarDesdeElFormulario();
+              }}
+              ref={panelPregunta}
+              className={`flex shrink-0 flex-col gap-4 rounded-[20px] border-2 bg-superficie p-4 sm:p-5 ${
+                preguntaActual
+                  ? 'kodu-elev border-brand-600 shadow-[0_0_0_5px_var(--color-brand-50)]'
+                  : 'border-linea'
+              }`}
+            >
+              {/* La pregunta va siempre entera, sin scroll propio: con uno, las
+                  últimas respuestas quedaban escondidas y nadie las encontraba. */}
+              <div className="space-y-4">
+              {preguntaActual ? (
+                <PreguntasTaller
+                  pregunta={preguntaActual}
+                  numero={paso + 1}
+                  total={preguntasActivas.length}
+                  elegidas={elegidas[paso] ?? []}
+                  escrita={escritas[paso] ?? ''}
+                  onElegir={(opcion) => elegir(paso, opcion)}
+                  onEscribir={(texto) => escribir(paso, texto)}
+                  onEnter={avanzar}
+                  deshabilitado={ocupado}
+                />
+              ) : (
+                <>
+                  <label htmlFor="respuesta-taller" className="sr-only">
+                    Tu mensaje
+                  </label>
+                  <textarea
+                    id="respuesta-taller"
+                    value={borrador}
+                    onChange={(event) => setBorrador(event.target.value)}
+                    onKeyDown={alApretarTecla}
+                    rows={2}
+                    disabled={ocupado}
+                    placeholder={ocupado ? 'Kodu está contestando…' : 'Escribile a Kodu…'}
+                    className="kodu-input resize-none rounded-[14px] px-3.5 py-3 text-base"
+                  />
+                </>
+              )}
+
               {adjuntosPendientes.length > 0 && (
                 <ul className="flex flex-wrap gap-2">
                   {adjuntosPendientes.map((adjunto) => (
                     <li
                       key={adjunto.id}
-                      className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-1 text-xs text-brand-700"
+                      className="flex items-center gap-1 rounded-full bg-brand-50 px-2.5 py-1 text-xs text-brand-700"
                     >
                       {adjunto.filename}
                       <button
@@ -555,49 +748,52 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
                   ))}
                 </ul>
               )}
+              </div>
 
-              <label htmlFor="respuesta-taller" className="sr-only">
-                Tu respuesta
-              </label>
-              <textarea
-                id="respuesta-taller"
-                value={borrador}
-                onChange={(event) => setBorrador(event.target.value)}
-                onKeyDown={alApretarTecla}
-                rows={2}
-                disabled={ocupado}
-                placeholder={
-                  preguntasActivas.some((pregunta) => pregunta.opciones.length > 0)
-                    ? 'Tocá una respuesta de arriba, o escribí con tus palabras…'
-                    : 'Escribí tu respuesta con tus palabras…'
-                }
-                className="kodu-input resize-none"
-              />
-
-              <div className="flex items-center gap-2">
-                <input
-                  ref={archivo}
-                  type="file"
-                  multiple
-                  accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
-                  onChange={(event) => void subir(event)}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => archivo.current?.click()}
-                  disabled={subiendo || ocupado}
-                  className="kodu-btn-ghost px-3 py-2 text-sm"
-                  title="Sumá una imagen o un PDF: una ficha de trabajo, una foto del pizarrón, un texto"
-                >
-                  {subiendo ? 'Subiendo…' : 'Adjuntar'}
-                </button>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {botonAdjuntar}
+                {preguntaActual && paso > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPaso(paso - 1)}
+                    disabled={ocupado}
+                    className="h-11 px-2 text-sm font-semibold text-ink-500 transition-colors hover:text-ink-900"
+                  >
+                    Atrás
+                  </button>
+                )}
+                {preguntaActual && (
+                  <button
+                    type="button"
+                    onClick={saltear}
+                    disabled={ocupado}
+                    className="h-11 px-2 text-sm font-semibold text-ink-500 transition-colors hover:text-ink-900"
+                  >
+                    Saltear
+                  </button>
+                )}
                 <button
                   type="submit"
-                  disabled={ocupado || (!hayElegidas && borrador.trim().length === 0)}
-                  className="kodu-btn-primary flex-1"
+                  disabled={
+                    ocupado ||
+                    (preguntaActual
+                      ? esUltimoPaso
+                        ? !algunaContestada
+                        : !contestada(paso)
+                      : borrador.trim().length === 0)
+                  }
+                  className="kodu-btn-primary ml-auto h-11 rounded-xl px-5"
                 >
-                  {ocupado ? 'Kodu está contestando…' : 'Enviar'}
+                  {ocupado
+                    ? 'Kodu está contestando…'
+                    : preguntaActual && !esUltimoPaso
+                      ? 'Siguiente'
+                      : preguntaActual?.multiple && (elegidas[paso]?.length ?? 0) > 0
+                        ? `Responder · ${elegidas[paso]!.length} ${elegidas[paso]!.length === 1 ? 'elegida' : 'elegidas'}`
+                        : preguntaActual
+                          ? 'Responder'
+                          : 'Enviar'}
+                  {!ocupado && flecha}
                 </button>
               </div>
             </form>
@@ -606,7 +802,7 @@ export default function TallerDeIdeas(props: { sesion: SesionTaller; enCurso: bo
 
         {/* Ficha */}
         <aside
-          className={`min-h-0 w-full overflow-y-auto p-4 lg:block lg:w-[26rem] lg:shrink-0 ${vistaMovil === 'idea' ? 'block' : 'hidden'}`}
+          className={`kodu-card w-full rounded-[20px] p-5 lg:sticky lg:top-20 lg:block lg:w-[22rem] lg:shrink-0 alto:static alto:min-h-0 alto:overflow-y-auto ${vistaMovil === 'idea' ? 'block' : 'hidden'}`}
           aria-label="Tu idea"
         >
           {panelFicha}

@@ -22,6 +22,8 @@ interface ModalProps {
   descartable?: boolean;
   children: ReactNode;
   pie?: ReactNode;
+  /** "ancho" para diálogos con dos columnas (ej. "Crear recurso"). */
+  ancho?: 'normal' | 'ancho';
 }
 
 export default function Modal(props: ModalProps) {
@@ -118,14 +120,16 @@ export default function Modal(props: ModalProps) {
       aria-label={props.titulo}
     >
       <div
-        className="absolute inset-0 bg-carbon/40 backdrop-blur-[2px]"
+        // Negro y no `bg-carbon`: el carbón se invierte en modo oscuro y el
+        // velo quedaba blanquecino, lavando la página de atrás.
+        className="absolute inset-0 bg-black/45 backdrop-blur-[2px]"
         onClick={() => props.descartable !== false && props.onCerrar()}
         aria-hidden="true"
       />
 
       <div
         ref={panel}
-        className={`kodu-card relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden shadow-xl transition-all duration-200 ease-out ${
+        className={`kodu-card relative flex max-h-[90vh] w-full ${props.ancho === 'ancho' ? 'max-w-3xl' : 'max-w-lg'} flex-col overflow-hidden shadow-xl transition-all duration-200 ease-out ${
           visible ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-2 scale-[0.98] opacity-0'
         }`}
       >

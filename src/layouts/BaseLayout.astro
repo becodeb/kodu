@@ -3,6 +3,8 @@ import '../styles/global.css';
 import { getEnv } from '../lib/env.ts';
 import { prisma } from '../lib/db.ts';
 import { ensureGrants, balance } from '../lib/billing/creditos-servicio.ts';
+import { resolverAccesoIa } from '../lib/orgs/acceso.ts';
+import NewProjectButton from '../components/NewProjectButton.tsx';
 
 interface Props {
   title?: string;
@@ -42,8 +44,10 @@ const {
 const user = Astro.locals.user;
 // Para marcar el enlace de la seccion en la que esta parado el docente.
 const ruta = Astro.url.pathname;
-// El Taller de ideas vive bajo /app pero es otro destino del menú.
-const enElTaller = ruta === '/app/taller' || ruta.startsWith('/app/taller/');
+// "Mis recursos" marca su sección y el editor, pero no el plan, las reglas ni
+// el Taller de ideas: viven bajo /app pero son otros destinos.
+const enMisRecursos =
+  ruta.startsWith('/app') && !['/app/plan', '/app/rules', '/app/taller'].some((otra) => ruta.startsWith(otra));
 
 /**
  * odd/tasks/organizaciones.md (T8): "Mi organización" — sólo para un DOCENTE
@@ -84,6 +88,36 @@ const saldoCreditos =
         return balance(user.id);
       })()
     : null;
+
+/**
+ * "Crear recurso" es la acción principal de la barra, así que sólo aparece si
+ * de verdad se puede crear: una cuenta personal sin créditos o una institución
+ * en sólo-lectura no lo ven (en /app se les explica por qué). Misma regla que
+ * `POST /api/projects`, para que el botón nunca prometa algo que el servidor
+ * después rechaza.
+ */
+const accesoIa = user ? await resolverAccesoIa(user) : null;
+const puedeCrear = accesoIa?.allowed ?? false;
+
+/**
+ * Un docente cuya institución le cubre el uso (licencia vigente) no tiene
+ * créditos propios: en vez del saldo, la barra le muestra que está en el plan
+ * de su institución, sin límite. Sólo con la licencia habilitando la IA (las
+ * razones `license_*` con `allowed`): una licencia vencida no promete nada.
+ */
+const planInstitucional =
+  user && user.organizationId && accesoIa?.allowed && accesoIa.reason.startsWith('license_')
+    ? await prisma.organization.findUnique({
+        where: { id: user.organizationId },
+        select: { name: true, parent: { select: { name: true } } },
+      })
+    : null;
+// El plan es de la raíz (la red, si la sede cuelga de una): ese es el nombre
+// que figura en lo que se contrató.
+const nombrePlanInstitucional = planInstitucional ? (planInstitucional.parent?.name ?? planInstitucional.name) : null;
+// Quien administra la institución va a ver el plan contratado; un docente
+// miembro, a "Mi plan", que le explica que lo paga la institución.
+const enlacePlanInstitucional = esPotencialAdminDeOrganizacion ? '/org/plan' : '/app/plan';
 
 // Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
 // salir de PUBLIC_SITE_URL: detrás del proxy, Astro.url cree que el sitio es
@@ -137,34 +171,40 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
   <body class="min-h-screen">
     {
       !bare && (
-        <header class="border-b border-linea bg-superficie">
-          {/* Tres columnas de igual ancho: asi los enlaces del medio quedan
-              centrados respecto de la pagina y no respecto del hueco que dejan
-              el logo y los botones, que es lo que los corria a la derecha. */}
-          <nav class="mx-auto grid max-w-6xl grid-cols-[1fr_auto_1fr] items-center gap-2 px-4 py-3 sm:gap-4">
+        <header class="kodu-elev sticky top-0 z-40 border-b border-linea bg-superficie">
+          {/* Tres botones de destino agrupados en una cápsula, y a la derecha
+              una sola acción principal ("Crear recurso"). Todo lo que es
+              ajuste o cuenta (organización, reglas, tema, salir) vive en el
+              menú del avatar: la barra se queda con los lugares a los que uno
+              va y con lo único que uno viene a hacer. */}
+          <nav
+            aria-label="Navegación principal"
+            class="mx-auto flex max-w-6xl items-center gap-2 px-4 py-2 sm:gap-4 sm:py-2.5 lg:gap-6"
+          >
+            {/* Con sesión, el logo lleva al Taller de ideas: la portada pública
+                (/) es la de alguien sin cuenta y, vista ya adentro, parecía
+                que te había cerrado la sesión. */}
             <a
-              href="/"
-              class="flex min-w-[85px] shrink-0 items-center justify-self-start"
-              aria-label="Kodu, ir al inicio"
+              href={user ? '/app/taller' : '/'}
+              class="flex shrink-0 items-center"
+              aria-label={user ? 'Kodu, ir al Taller de ideas' : 'Kodu, ir al inicio'}
             >
               <img
                 src="/brand/kodu-logo.webp"
                 alt="Kodu"
                 width="420"
                 height="158"
-                class="h-8 w-auto shrink-0"
+                class="h-8 w-auto max-sm:hidden"
               />
+              {/* En el celular, sólo el ícono: el logo entero no deja lugar a
+                  los tres destinos y al botón de crear. */}
+              <img src="/brand/kodu-icono.png" alt="Kodu" width="32" height="32" class="h-8 w-8 sm:hidden" />
             </a>
 
-            {/* odd/tasks/planes-y-cobros.md (T6): "Precios" sumó un cuarto
-                enlace al centro y, con "Mis recursos"/"Taller" puestos
-                (docente logueado), a 390px ya no entraban todos en una
-                línea — `min-w-0` (sin esto, un item de grid no se achica
-                nunca por debajo de su contenido) + `overflow-x-auto` acá
-                contienen el scroll DENTRO de esta franja en vez de ensanchar
-                la página entera, que es lo que de verdad importa (no debe
-                haber scroll horizontal del documento). */}
-            <div class="flex min-w-0 items-center gap-2.5 overflow-x-auto text-sm whitespace-nowrap sm:gap-6">
+            {/* odd/tasks/planes-y-cobros.md (T6): a 360px los destinos pueden no
+                entrar en una línea — `min-w-0` + `overflow-x-auto` contienen el
+                scroll DENTRO de la cápsula en vez de ensanchar la página. */}
+            <div class="kodu-nav-grupo min-w-0 overflow-x-auto [scrollbar-width:none]">
               <a
                 href="/gallery"
                 class="kodu-nav-link"
@@ -172,110 +212,118 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
               >
                 Galería
               </a>
-              {/* odd/tasks/planes-y-cobros.md (T6): precios públicos, visible
-                  para todos — con o sin sesión, docente u organización. */}
-              <a
-                href="/precios"
-                class="kodu-nav-link"
-                aria-current={ruta.startsWith('/precios') ? 'page' : undefined}
-              >
-                Precios
-              </a>
-              {user && (
-                /* odd/tasks/taller-de-ideas.md: un destino más, no un ajuste. En
-                   el celular se achica a "Taller" para que la barra entre. */
-                <a
-                  href="/app/taller"
-                  class="kodu-nav-link"
-                  aria-current={enElTaller ? 'page' : undefined}
-                >
-                  <span class="hidden sm:inline">Taller de ideas</span>
-                  <span class="sm:hidden">Taller</span>
-                </a>
-              )}
               {user && (
                 <a
                   href="/app"
                   class="kodu-nav-link"
-                  aria-current={ruta.startsWith('/app') && !enElTaller ? 'page' : undefined}
+                  aria-current={enMisRecursos ? 'page' : undefined}
                 >
-                  {/* Con el Taller, la barra no entra en un celular con
-                      "Mis recursos" entero (se partía en dos líneas). */}
-                  <span class="hidden sm:inline">Mis recursos</span>
+                  <span class="max-sm:hidden">Mis recursos</span>
                   <span class="sm:hidden">Recursos</span>
                 </a>
               )}
+              {/* odd/tasks/planes-y-cobros.md (T6): precios públicos, visible
+                  para todos — con o sin sesión, docente u organización. */}
+              <a
+                href="/precios"
+                class={`kodu-nav-link ${user ? "max-sm:hidden" : ""}`}
+                aria-current={ruta.startsWith('/precios') ? 'page' : undefined}
+              >
+                Precios
+              </a>
             </div>
 
-            <div class="flex items-center gap-2 justify-self-end text-sm">
+            <div class="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
               {saldoCreditos !== null && (
                 <a
                   href="/app/plan"
-                  class="flex items-center gap-1.5 rounded-lg border border-linea bg-sutil px-2 py-1.5 text-sm text-ink-700 hover:border-ink-500 sm:px-2.5"
+                  aria-current={ruta.startsWith('/app/plan') ? 'page' : undefined}
+                  class="flex items-center gap-2 rounded-lg border border-linea px-3 py-2 text-sm font-semibold whitespace-nowrap text-ink-700 transition-colors hover:border-ink-500 hover:text-ink-900 max-md:hidden"
                 >
-                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
-                  <span class="hidden sm:inline">Te quedan {saldoCreditos} créditos</span>
-                  <span class="sm:hidden">{saldoCreditos} créditos</span>
+                  <span class="h-2 w-2 rounded-full bg-brand-600" aria-hidden="true" />
+                  {saldoCreditos} créditos
                 </a>
               )}
-              {esPotencialAdminDeOrganizacion && (
+              {nombrePlanInstitucional && (
                 <a
-                  href="/org"
-                  aria-current={ruta.startsWith('/org') ? 'page' : undefined}
-                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2 py-1.5 text-sm sm:px-2.5 ${
-                    ruta.startsWith('/org')
-                      ? 'border-brand-300 text-brand-700'
-                      : 'border-linea text-ink-700 hover:border-ink-500'
-                  }`}
+                  href={enlacePlanInstitucional}
+                  title={`Tu institución cubre el uso de Kodu: no tenés límite de créditos.`}
+                  aria-label={`Plan ${nombrePlanInstitucional}: sin límite de créditos`}
+                  aria-current={ruta.startsWith(enlacePlanInstitucional) ? 'page' : undefined}
+                  class="flex max-w-[15rem] items-center gap-2 rounded-lg border border-linea px-3 py-2 text-sm font-semibold whitespace-nowrap text-ink-700 transition-colors hover:border-ink-500 hover:text-ink-900 max-md:hidden"
                 >
-                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
-                  <span class="hidden sm:inline">Mi organización</span>
-                  <span class="sm:hidden">Org</span>
+                  {/* Infinito: la marca de "sin límite", en el lugar donde
+                      una cuenta personal ve su saldo. */}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="shrink-0 text-brand-600">
+                    <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z" />
+                  </svg>
+                  <span class="truncate">Plan {nombrePlanInstitucional}</span>
                 </a>
               )}
               {user?.role === 'ADMIN' && (
-                /* Distinto por tipo, no por volumen: un objeto con borde y un
-                   punto, contra los enlaces de texto pelado del centro — así
-                   se lee de un vistazo que este es otro tipo de destino. */
+                /* Sólo para el superadmin: otro tipo de destino, con borde y
+                   punto, distinto de los botones de la cápsula. */
                 <a
                   href="/admin"
                   aria-current={ruta.startsWith('/admin') ? 'page' : undefined}
-                  class={`flex items-center gap-1.5 rounded-lg border bg-sutil px-2 py-1.5 text-sm sm:px-2.5 ${
+                  class={`flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-sm font-semibold ${
                     ruta.startsWith('/admin')
                       ? 'border-brand-300 text-brand-700'
                       : 'border-linea text-ink-700 hover:border-ink-500'
                   }`}
                 >
-                  <span class="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
-                  {/* En el celular, sólo el punto: con el Taller en la barra, el
-                      texto no entra junto con el resto. */}
-                  <span class="hidden sm:inline">Panel</span>
+                  <span class="h-2 w-2 rounded-full bg-brand-600" aria-hidden="true" />
+                  <span class="max-sm:hidden">Panel</span>
                   <span class="sr-only sm:hidden">Panel de administración</span>
                 </a>
               )}
+              {puedeCrear && <NewProjectButton client:load />}
               {user ? (
-                /* Reglas y el tema viven acá adentro: son ajustes, no destinos.
-                   La barra se queda solo con los dos lugares a los que uno va. */
                 <details class="relative" data-menu>
                   <summary
-                    class="flex cursor-pointer list-none items-center gap-2 rounded-lg border border-linea px-2.5 py-1.5 text-ink-700 hover:border-ink-500"
+                    class="flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-linea p-1 text-ink-700 sm:pr-2 transition-colors hover:border-ink-500"
+                    aria-label={`Menú de cuenta: ${user.name}`}
                   >
                     <span
-                      class="grid h-6 w-6 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white"
+                      class="grid h-8 w-8 place-items-center rounded-full bg-brand-600 text-sm font-bold text-white"
                       aria-hidden="true"
                     >
                       {user.name.trim().charAt(0).toUpperCase()}
                     </span>
-                    <span class="hidden sm:inline">{user.name}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" class="max-sm:hidden">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
                   </summary>
 
-                  <div
-                    class="kodu-card absolute right-0 z-50 mt-2 w-60 overflow-hidden p-1 shadow-lg"
-                  >
-                    <a
-                      href="/app/rules"
-                      class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil"
-                    >
+                  <div class="kodu-card absolute right-0 z-50 mt-2 w-64 overflow-hidden p-1 text-sm shadow-lg">
+                    <div class="px-3 py-2">
+                      <p class="truncate font-semibold text-ink-900">{user.name}</p>
+                      <p class="truncate text-xs text-ink-500">{user.email}</p>
+                    </div>
+
+                    <div class="my-1 h-px bg-linea" />
+
+                    {saldoCreditos !== null && (
+                      /* En pantallas chicas el saldo no entra en la barra. */
+                      <a href="/app/plan" class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil md:hidden">
+                        Te quedan {saldoCreditos} créditos
+                      </a>
+                    )}
+                    {nombrePlanInstitucional && (
+                      <a href={enlacePlanInstitucional} class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil md:hidden">
+                        Plan {nombrePlanInstitucional} · sin límite de créditos
+                      </a>
+                    )}
+                    {/* En el celular "Precios" no entra en la cápsula de la barra. */}
+                    <a href="/precios" class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil sm:hidden">
+                      Precios
+                    </a>
+                    {esPotencialAdminDeOrganizacion && (
+                      <a href="/org" class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil">
+                        Mi organización
+                      </a>
+                    )}
+                    <a href="/app/rules" class="block rounded-md px-3 py-2 text-ink-700 hover:bg-sutil">
                       Reglas de la IA
                     </a>
 
@@ -311,10 +359,10 @@ const canonical = new URL(rutaCanonica, getEnv().PUBLIC_SITE_URL).href;
                 </details>
               ) : sinAccesoEnBarra ? null : (
                 <>
-                  <a href="/login" class="text-ink-700 hover:text-brand-600">
+                  <a href="/login" class="px-1 text-sm font-semibold whitespace-nowrap text-ink-700 hover:text-brand-600">
                     Ingresar
                   </a>
-                  <a href="/register" class="kodu-btn-primary py-1.5">
+                  <a href="/register" class="kodu-btn-primary py-2 whitespace-nowrap">
                     Crear cuenta
                   </a>
                 </>

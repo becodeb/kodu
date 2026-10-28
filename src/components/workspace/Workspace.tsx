@@ -18,6 +18,7 @@ import type { OpcionesCaptura } from '../../lib/preview.ts';
 import type { Problema } from '../../lib/ai/verificador.ts';
 import { esRecursoInicial } from '../../lib/ai/versiones.ts';
 import { estadoDeChecklist } from '../../lib/client/checklist.ts';
+import { tomarPedidoDirecto } from '../../lib/client/pedido-directo.ts';
 import type { ItemChecklist } from '../../lib/ai/checklist.ts';
 import type {
   AiPhase,
@@ -633,12 +634,21 @@ export default function Workspace(props: WorkspaceProps) {
    * UNA vez, al montar. La condición "sin mensajes" la decide el servidor
    * (`pedidoInicial` sólo llega con el hilo vacío), así que recargar después
    * de que se mandó no lo repite: ya hay un mensaje del docente guardado.
+   *
+   * Lo mismo para el pedido escrito en "Crear recurso → Ya sé lo que quiero"
+   * (NewProjectButton.tsx), que llega por sessionStorage y se borra al leerlo.
    */
   const pedidoInicialEnviado = useRef(false);
   useEffect(() => {
-    if (!props.pedidoInicial || pedidoInicialEnviado.current || props.messages.length > 0) return;
-    pedidoInicialEnviado.current = true;
-    void handleSend(props.pedidoInicial.texto, false, props.pedidoInicial.adjuntos);
+    if (pedidoInicialEnviado.current || props.messages.length > 0) return;
+    const pedidoDirecto = tomarPedidoDirecto(props.project.id);
+    if (props.pedidoInicial) {
+      pedidoInicialEnviado.current = true;
+      void handleSend(props.pedidoInicial.texto, false, props.pedidoInicial.adjuntos);
+    } else if (pedidoDirecto) {
+      pedidoInicialEnviado.current = true;
+      void handleSend(pedidoDirecto);
+    }
     // Sólo al montar.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
