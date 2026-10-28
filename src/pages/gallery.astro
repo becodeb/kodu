@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import DuplicateButton from '../components/DuplicateButton.tsx';
 import BotonLike from '../components/BotonLike.tsx';
+import VistaPrevia from '../components/VistaPrevia.astro';
 import { prisma } from '../lib/db.ts';
 import { ejemplos, CELULA_EJEMPLO_ID } from '../lib/ejemplos.ts';
 
@@ -41,103 +42,194 @@ const likeados = user
       ).map((fila) => fila.projectId),
     )
   : new Set<string>();
+
+const textoDeBusqueda = (...partes: (string | null | undefined)[]) => partes.filter(Boolean).join(' ').toLowerCase();
+const inicial = (nombre: string) => nombre.trim().charAt(0).toUpperCase() || '?';
 ---
 
 <BaseLayout
   title="Galería"
   description="Recursos didácticos interactivos compartidos por docentes de la red."
 >
-  <header class="max-w-2xl">
-    <h1 class="text-2xl font-bold text-ink-900">Galería institucional</h1>
-    <p class="mt-1 text-sm text-ink-500">
-      Recursos publicados por docentes de la red. Podés abrirlos a pantalla completa para
-      proyectarlos, o duplicarlos en tu cuenta para adaptarlos.
-    </p>
+  <header class="flex flex-wrap items-end gap-4">
+    <div class="max-w-2xl">
+      <h1 class="font-display text-3xl leading-tight text-ink-900 sm:text-4xl">Galería</h1>
+      <p class="mt-2 text-base text-ink-500">Tocá un recurso para probarlo a pantalla completa.</p>
+    </div>
+    <label class="flex h-11 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-xl border border-linea bg-superficie px-3.5 text-ink-500 focus-within:border-brand-500 sm:ml-auto sm:max-w-sm">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+      <span class="sr-only">Buscar en la galería</span>
+      <input
+        type="search"
+        placeholder="Buscar por tema, materia o docente"
+        class="min-w-0 flex-1 bg-transparent text-[15px] text-ink-900 outline-none placeholder:text-ink-500"
+        data-buscar
+      />
+    </label>
   </header>
 
-  <section class="mt-8" aria-labelledby="ejemplos-title">
-    <h2 id="ejemplos-title" class="text-lg font-semibold text-ink-900">Para explorar con Kodu</h2>
-    <p class="mt-1 text-sm text-ink-500">Ejemplos interactivos. Abrilos, probalos y llevá nuevas ideas a tu clase.</p>
-    <ul class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {/* Los ejemplos de Kodu van en su propia vitrina, teñida y con la K del
+      logo, para que nunca se confundan con lo que publicaron los docentes. */}
+  <section
+    class="mt-10 rounded-3xl border border-brand-100 bg-brand-50/60 p-5 sm:p-7"
+    aria-labelledby="ejemplos-title"
+    data-seccion
+  >
+    <div class="flex items-center gap-3.5">
+      <img
+        src="/brand/kodu-icono.png"
+        alt=""
+        width="44"
+        height="44"
+        class="h-11 w-11 shrink-0 rounded-[13px] shadow-[0_4px_12px_rgb(0_0_0/0.2)]"
+      />
+      <div>
+        <h2 id="ejemplos-title" class="text-xl font-bold text-ink-900">Ejemplos de Kodu</h2>
+        <p class="mt-0.5 text-sm text-ink-700">
+          Hechos por el equipo de Kodu para inspirarte. Probalos o duplicalos para adaptarlos.
+        </p>
+      </div>
+    </div>
+
+    <ul class="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
       {ejemplos.map((ejemplo) => (
-        <li class="kodu-card flex flex-col overflow-hidden">
-          <a href={ejemplo.url} target="_blank" rel="noopener noreferrer">
-            <img src={ejemplo.imagen} alt={ejemplo.alt} width="900" height="600" loading="lazy" class="h-48 w-full border-b border-linea object-cover" />
+        <li
+          class="kodu-card kodu-elev kodu-alza relative flex flex-col overflow-hidden rounded-[18px]"
+          data-item
+          data-texto={textoDeBusqueda(ejemplo.titulo, ejemplo.area, ejemplo.descripcion, 'kodu')}
+        >
+          {/* Toda la tarjeta abre el recurso (el `after:` estira el link sobre
+              la tarjeta). "Duplicar" queda por encima, como única otra acción. */}
+          <a
+            href={ejemplo.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex flex-1 flex-col after:absolute after:inset-0"
+          >
+            <VistaPrevia src={ejemplo.imagen} alt={ejemplo.alt} carga="eager" />
+            <span class="px-4.5 pt-4 text-[13px] font-semibold text-brand-600">{ejemplo.area}</span>
+            <span class="px-4.5 pt-1 text-lg leading-snug font-bold text-ink-900">{ejemplo.titulo}</span>
           </a>
-          <div class="flex flex-1 flex-col p-4">
-            <p class="text-xs font-medium text-brand-600">{ejemplo.area}</p>
-            <h3 class="mt-2 font-semibold text-ink-900">{ejemplo.titulo}</h3>
-            <p class="mt-1 text-xs text-ink-500">por Kodu · Recurso de ejemplo</p>
-            <p class="mt-3 flex-1 text-sm text-ink-700">{ejemplo.descripcion}</p>
-            <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-linea pt-3">
-              <a href={ejemplo.url} target="_blank" rel="noopener noreferrer" class="kodu-btn-primary px-2.5 py-1.5 text-xs">Probar a pantalla completa</a>
-              {ejemplo.id === CELULA_EJEMPLO_ID && <DuplicateButton client:visible projectId={CELULA_EJEMPLO_ID} isLoggedIn={Boolean(user)} />}
-            </div>
+          <div class="mt-auto flex items-center gap-2 px-4.5 pt-3.5 pb-4">
+            {/* La marca de Kodu va siempre sobre blanco: la K azul se pierde
+                sobre el azul de la marca. */}
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-[#ffffff] py-1 pr-2.5 pl-2 text-xs font-bold text-[#3b2ce7] shadow-[0_1px_3px_rgb(0_0_0/0.2)]">
+              <img src="/brand/kodu-marca.png" alt="" width="10" height="14" class="h-3.5 w-auto" />
+              Kodu
+            </span>
+            {ejemplo.id === CELULA_EJEMPLO_ID && (
+              <span class="relative z-10 ml-auto">
+                <DuplicateButton client:visible projectId={CELULA_EJEMPLO_ID} isLoggedIn={Boolean(user)} />
+              </span>
+            )}
           </div>
         </li>
       ))}
     </ul>
   </section>
-  <h2 class="mt-10 text-lg font-semibold text-ink-900">Compartidos por la comunidad</h2>
 
-  {
-    projects.length === 0 ? (
-      <div class="kodu-card mt-6 p-10 text-center">
-        <h3 class="text-lg font-semibold text-ink-900">Todavía no hay recursos de la comunidad</h3>
-        <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
-          Cuando publiques un recurso desde el editor va a aparecer acá para el resto de la red.
+  <section class="mt-12" aria-labelledby="comunidad-title" data-seccion>
+    <div class="flex items-center gap-3.5">
+      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-[13px] bg-sutil text-ink-700" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      </span>
+      <div>
+        <h2 id="comunidad-title" class="text-xl font-bold text-ink-900">De la comunidad</h2>
+        <p class="mt-0.5 text-sm text-ink-500">
+          Lo que publicaron docentes de la red{projects.length > 1 ? ' · primero, los que más gustaron' : ''}.
         </p>
       </div>
-    ) : (
-      <ul class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
-          <li class="kodu-card flex flex-col overflow-hidden">
-            <a href={`/p/${project.slug}`} target="_blank" rel="noopener noreferrer">
-              {project.screenshotUrl ? (
-                <img
-                  src={project.screenshotUrl}
-                  alt={`Captura de ${project.title}`}
-                  class="h-40 w-full border-b border-linea object-cover object-top"
-                  loading="lazy"
-                />
-              ) : (
-                <div class="grid h-40 w-full place-items-center border-b border-linea bg-sutil text-xs text-ink-500">
-                  Sin captura
-                </div>
-              )}
-            </a>
+    </div>
 
-            <div class="flex flex-1 flex-col p-4">
-              <h2 class="font-semibold text-ink-900">{project.title}</h2>
-              <p class="mt-0.5 text-xs text-ink-500">por {project.user.name}</p>
+    {
+      projects.length === 0 ? (
+        <div class="kodu-card mt-6 rounded-2xl p-10 text-center">
+          <h3 class="text-lg font-semibold text-ink-900">Todavía no hay recursos de la comunidad</h3>
+          <p class="mx-auto mt-2 max-w-md text-sm text-ink-500">
+            Cuando publiques un recurso desde el editor va a aparecer acá para el resto de la red.
+          </p>
+        </div>
+      ) : (
+        <ul class="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {projects.map((project) => (
+            <li
+              class="kodu-card kodu-alza relative flex flex-col overflow-hidden rounded-2xl"
+              data-item
+              data-texto={textoDeBusqueda(project.title, project.description, project.user.name)}
+            >
+              <a
+                href={`/p/${project.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="flex flex-1 flex-col after:absolute after:inset-0"
+              >
+                <VistaPrevia src={project.screenshotUrl} alt={`Vista previa de ${project.title}`} chico vacio="Sin captura" />
+                <span class="block px-4 pt-3.5 font-bold text-ink-900">{project.title}</span>
+                {project.description && (
+                  <span class="mt-1 line-clamp-2 block px-4 text-sm text-ink-500">{project.description}</span>
+                )}
+              </a>
 
-              {project.description && (
-                <p class="mt-2 line-clamp-3 flex-1 text-sm text-ink-700">{project.description}</p>
-              )}
-
-              <div class="mt-4 flex flex-wrap items-center gap-2 border-t border-linea pt-3">
-                <BotonLike
-                  client:visible
-                  projectId={project.id}
-                  title={project.title}
-                  inicial={project._count.likes}
-                  likeadoInicial={likeados.has(project.id)}
-                  isLoggedIn={Boolean(user)}
-                />
-                <a
-                  href={`/p/${project.slug}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="kodu-btn-primary ml-auto px-2.5 py-1.5 text-xs"
+              <div class="mt-auto flex items-center gap-2 pt-3 pr-3 pb-3 pl-4">
+                <span
+                  class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sutil text-[11px] font-bold text-ink-700"
+                  aria-hidden="true"
                 >
-                  Probar a pantalla completa
-                </a>
-                <DuplicateButton client:visible projectId={project.id} isLoggedIn={Boolean(user)} />
+                  {inicial(project.user.name)}
+                </span>
+                <span class="min-w-0 truncate text-[13px] text-ink-500">{project.user.name}</span>
+                <span class="relative z-10 ml-auto">
+                  <BotonLike
+                    client:visible
+                    projectId={project.id}
+                    title={project.title}
+                    inicial={project._count.likes}
+                    likeadoInicial={likeados.has(project.id)}
+                    isLoggedIn={Boolean(user)}
+                  />
+                </span>
+                <span class="relative z-10">
+                  <DuplicateButton client:visible projectId={project.id} isLoggedIn={Boolean(user)} />
+                </span>
               </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-    )
-  }
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </section>
+
+  <p class="mt-10 text-center text-sm text-ink-500" data-sin-resultados hidden>
+    Nada en la galería coincide con la búsqueda.
+  </p>
 </BaseLayout>
+
+<script>
+  // Búsqueda en la galería, sin ir al servidor: los ejemplos y los 60
+  // recursos de la comunidad ya están en la página.
+  const buscar = document.querySelector<HTMLInputElement>('[data-buscar]');
+  const items = [...document.querySelectorAll<HTMLElement>('[data-item]')];
+  const secciones = [...document.querySelectorAll<HTMLElement>('[data-seccion]')];
+  const sinResultados = document.querySelector<HTMLElement>('[data-sin-resultados]');
+
+  buscar?.addEventListener('input', () => {
+    const texto = buscar.value.trim().toLowerCase();
+    let visibles = 0;
+
+    for (const item of items) {
+      item.hidden = texto !== '' && !(item.dataset.texto ?? '').includes(texto);
+      if (!item.hidden) visibles++;
+    }
+    // Una sección sin nada que mostrar se esconde entera, título incluido.
+    for (const seccion of secciones) {
+      const tieneItems = seccion.querySelector('[data-item]') !== null;
+      seccion.hidden = texto !== '' && tieneItems && seccion.querySelector('[data-item]:not([hidden])') === null;
+    }
+    if (sinResultados) sinResultados.hidden = visibles > 0;
+  });
+</script>

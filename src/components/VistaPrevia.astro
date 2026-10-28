@@ -1,0 +1,46 @@
+---
+/**
+ * La vista previa de un recurso en una tarjeta (galería, Mis recursos).
+ *
+ * La captura se toma con el tamaño de la vista previa del editor, así que
+ * cada recurso tiene una proporción distinta. Antes se recortaba con
+ * `object-cover` en una caja de alto fijo y se veía una franja cualquiera del
+ * recurso. Ahora la caja tiene siempre 16:10 y la captura entra ENTERA
+ * (`object-contain`), adentro de una ventanita de navegador: si la
+ * proporción no coincide, sobra un margen blanco, nunca se corta nada.
+ */
+interface Props {
+  src: string | null;
+  alt: string;
+  /** Marco más chico, para tarjetas angostas. */
+  chico?: boolean;
+  /** Texto cuando el recurso todavía no tiene captura. */
+  vacio?: string;
+  carga?: 'lazy' | 'eager';
+}
+
+const { src, alt, chico = false, vacio = 'Sin vista previa todavía', carga = 'lazy' } = Astro.props;
+---
+
+{/* `overflow-hidden` no es decorativo: sin él, una caja con aspect-ratio
+    crece hasta el alto de su contenido (una captura cuadrada la estiraba). */}
+<span class={`block aspect-[16/10] overflow-hidden bg-sutil ${chico ? 'px-3 pt-3' : 'px-3.5 pt-3.5'}`}>
+  {/* Blanco a propósito (no `bg-superficie`): es el papel del recurso, que
+      casi siempre es claro; en modo oscuro un margen gris lo haría ver sucio. */}
+  <span
+    class="flex h-full flex-col overflow-hidden rounded-t-[10px] border border-b-0 border-linea bg-[#ffffff] shadow-[0_8px_22px_rgb(0_0_0/0.18)]"
+  >
+    <span aria-hidden="true" class="flex h-5 shrink-0 items-center gap-1.5 border-b border-linea bg-superficie px-2.5">
+      <span class="h-1.5 w-1.5 rounded-full bg-linea"></span>
+      <span class="h-1.5 w-1.5 rounded-full bg-linea"></span>
+      <span class="h-1.5 w-1.5 rounded-full bg-linea"></span>
+    </span>
+    {
+      src ? (
+        <img src={src} alt={alt} loading={carga} class="min-h-0 w-full flex-1 object-contain" />
+      ) : (
+        <span class="grid flex-1 place-items-center bg-sutil text-xs text-ink-500">{vacio}</span>
+      )
+    }
+  </span>
+</span>

@@ -214,7 +214,7 @@ await prueba('la puerta "tengo un tema" arranca con la pregunta fija, sin gastar
   };
   assert.equal(estado.session.messages.length, 1);
   assert.equal(estado.session.messages[0]!.role, 'assistant');
-  assert.equal(estado.session.messages[0]!.questions.length, 3);
+  assert.equal(estado.session.messages[0]!.questions.length, 2);
   assert.equal(mock.llamadas.length, llamadasAntes, 'abrir una charla no le pega al proveedor');
 
   const pagina = await docente.get(`/app/taller/${sesionId}`);

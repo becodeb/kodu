@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   armarRespuesta,
+  armarRespuestas,
+  CAMPOS_ESENCIALES,
   CAMPOS_FICHA,
   fusionarFicha,
   leerFichaGuardada,
@@ -9,6 +11,7 @@ import {
   nombreDeLaIdea,
   prefijoVisible,
   progresoFicha,
+  respuestaParaMostrar,
   separarRespuesta,
 } from '../src/lib/taller/ficha.ts';
 import {
@@ -192,6 +195,44 @@ await prueba('armarRespuesta junta respuestas tocadas y texto libre, cada una co
   assert.equal(armarRespuesta(preguntas, {}, '  '), '');
 });
 
+await prueba('armarRespuestas: por pregunta, lo tocado y lo escrito juntos; las salteadas no van', () => {
+  const preguntas = [
+    { texto: '¿Grado?', opciones: ['4.º', '5.º'], multiple: false },
+    { texto: '¿Qué hacen?', opciones: ['Arrastran', 'Eligen'], multiple: true },
+    { texto: '¿Tema?', opciones: [], multiple: false },
+  ];
+  assert.equal(
+    armarRespuestas(preguntas, { 1: ['Arrastran'] }, { 1: '  y ordenan  ', 2: 'Fracciones' }),
+    '¿Qué hacen? → Arrastran, y ordenan\n¿Tema? → Fracciones',
+  );
+  assert.equal(armarRespuestas(preguntas, {}, { 0: '  ' }), '');
+});
+
+await prueba('respuestaParaMostrar deja sólo lo contestado, sin la pregunta', () => {
+  assert.equal(respuestaParaMostrar('¿Grado? → 4.º\n¿Tema? → Fracciones'), '4.º\nFracciones');
+  // Lo que no es "pregunta → respuesta" queda tal cual.
+  assert.equal(respuestaParaMostrar('Me quedo con la idea «A → B».'), 'Me quedo con la idea «A → B».');
+});
+
+await prueba('recomendada: posición o texto de una opción; cualquier otra cosa es ninguna', () => {
+  const leer = (recomendada: unknown) =>
+    separarRespuesta(
+      `x<taller>${JSON.stringify({ preguntas: [{ texto: '¿Dónde?', opciones: ['Proyector', 'Tablets'], recomendada }] })}</taller>`,
+    ).datos.preguntas[0]!.recomendada;
+  assert.equal(leer(1), 1);
+  assert.equal(leer('Proyector'), 0);
+  assert.equal(leer(5), null);
+  assert.equal(leer('Celular'), null);
+  assert.equal(leer(undefined), null);
+  // Una charla guardada antes de la recomendada se lee igual.
+  assert.equal(leerPreguntasGuardadas('[{"texto":"¿Ok?","opciones":["Sí"],"multiple":false}]')[0]!.recomendada, null);
+});
+
+await prueba('lo esencial de la ficha son campos que existen', () => {
+  const ids = new Set<string>(CAMPOS_FICHA.map((campo) => campo.id));
+  assert.ok(CAMPOS_ESENCIALES.length > 0 && CAMPOS_ESENCIALES.every((id) => ids.has(id)));
+});
+
 // ─────────────────────────────────────────────────────────────
 // prompt
 // ─────────────────────────────────────────────────────────────
@@ -203,11 +244,18 @@ await prueba('el system prompt arranca con el marcador y no menciona jerga técn
   assert.ok(prompt.includes('Quiero'));
 });
 
-await prueba('las aperturas de las dos puertas traen entre 1 y 3 preguntas', () => {
+await prueba('las aperturas de las dos puertas traen 1 o 2 preguntas', () => {
   for (const apertura of Object.values(APERTURAS)) {
     assert.ok(apertura.content.length > 0);
-    assert.ok(apertura.questions.length >= 1 && apertura.questions.length <= 3);
+    assert.ok(apertura.questions.length >= 1 && apertura.questions.length <= 2);
   }
+});
+
+await prueba('el prompt pide una sola pregunta por turno y explica la recomendada', () => {
+  const prompt = systemPromptTaller();
+  assert.ok(prompt.includes('UNA sola pregunta'));
+  assert.ok(prompt.includes('"recomendada"'));
+  assert.ok(!prompt.includes('de 1 a 3 preguntas'));
 });
 
 await prueba('construirMensajesTaller: system, historial con bloques, y el estado en el último mensaje', () => {

@@ -1,10 +1,15 @@
 import { useEffect, useRef } from 'react';
-import { CAMPOS_FICHA, progresoFicha, type FichaIdea } from '../../lib/taller/ficha.ts';
+import { CAMPOS_ESENCIALES, CAMPOS_FICHA, type FichaIdea } from '../../lib/taller/ficha.ts';
 
 /**
  * El panel "Tu idea" del Taller (odd/tasks/taller-de-ideas.md): la ficha que
  * se completa sola mientras se charla y, cuando existe, el pedido final
  * editable con el botón para crear el recurso.
+ *
+ * Muestra siempre lo esencial (`CAMPOS_ESENCIALES`): lo ya hablado con una
+ * tilde y su valor, lo que falta sólo con su nombre. Lo demás aparece recién
+ * cuando se habló: diez renglones de "Todavía no lo hablamos" eran mucho para
+ * leer y no decían nada.
  */
 export default function FichaTaller(props: {
   ficha: FichaIdea;
@@ -21,8 +26,10 @@ export default function FichaTaller(props: {
   onCrear: () => void;
   creando: boolean;
 }) {
-  const progreso = progresoFicha(props.ficha);
-  const completos = CAMPOS_FICHA.filter((campo) => props.ficha[campo.id]).length;
+  const tiene = (id: string) => (props.ficha[id as keyof FichaIdea] ?? '').trim().length > 0;
+  const esenciales = CAMPOS_FICHA.filter((campo) => CAMPOS_ESENCIALES.includes(campo.id));
+  const extras = CAMPOS_FICHA.filter((campo) => !CAMPOS_ESENCIALES.includes(campo.id) && tiene(campo.id));
+  const completos = esenciales.filter((campo) => tiene(campo.id)).length;
   const areaPedido = useRef<HTMLTextAreaElement>(null);
 
   // El pedido crece con su contenido: un textarea de 4 líneas con scroll
@@ -53,29 +60,20 @@ export default function FichaTaller(props: {
   return (
     <div className="space-y-5">
       <header>
-        <p className="text-xs font-semibold tracking-wide text-brand-600">Tu idea</p>
-        <h2 className="font-display mt-0.5 text-lg text-ink-900">{props.titulo ?? 'Todavía sin nombre'}</h2>
-
-        <div className="mt-3">
-          <div
-            className="h-1.5 w-full overflow-hidden rounded-full bg-sutil"
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="font-display text-xl text-ink-900">Tu idea</h2>
+          <span
+            className="text-sm font-semibold text-brand-600"
             role="progressbar"
             aria-valuemin={0}
-            aria-valuemax={CAMPOS_FICHA.length}
+            aria-valuemax={esenciales.length}
             aria-valuenow={completos}
-            aria-label="Cuánto de la idea ya está definido"
+            aria-label="Cuánto de lo esencial ya está definido"
           >
-            <div
-              className="h-full rounded-full bg-brand-600 transition-all duration-500"
-              style={{ width: `${Math.round(progreso * 100)}%` }}
-            />
-          </div>
-          <p className="mt-1 text-xs text-ink-500">
-            {props.pedido
-              ? 'El pedido está listo.'
-              : `${completos} de ${CAMPOS_FICHA.length} cosas definidas. Kodu te va preguntando el resto.`}
-          </p>
+            {props.pedido ? 'Pedido listo' : `${completos} de ${esenciales.length}`}
+          </span>
         </div>
+        {props.titulo && <p className="mt-1 text-[15px] font-semibold text-ink-700">{props.titulo}</p>}
       </header>
 
       {props.pedido !== null && (
@@ -137,14 +135,30 @@ export default function FichaTaller(props: {
       )}
 
       <dl className="space-y-3">
-        {CAMPOS_FICHA.map((campo) => {
+        {[...esenciales, ...extras].map((campo) => {
           const valor = props.ficha[campo.id];
           return (
-            <div key={campo.id}>
-              <dt className="text-xs font-semibold text-ink-700">{campo.etiqueta}</dt>
-              <dd className={`mt-0.5 text-sm whitespace-pre-wrap ${valor ? 'text-ink-900' : 'text-ink-500'}`}>
-                {valor ?? `Todavía no lo hablamos (${campo.ayuda.toLowerCase()}).`}
-              </dd>
+            <div key={campo.id} className="flex items-start gap-3">
+              {valor ? (
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-brand-600 text-white"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m5 12 5 5 9-10" />
+                  </svg>
+                </span>
+              ) : (
+                <span aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 border-dashed border-linea" />
+              )}
+              <div className="min-w-0">
+                <dt className="text-sm font-semibold text-ink-500">{campo.etiqueta}</dt>
+                {valor ? (
+                  <dd className="mt-0.5 text-[15px] whitespace-pre-wrap text-ink-900">{valor}</dd>
+                ) : (
+                  <dd className="sr-only">Todavía no lo hablamos</dd>
+                )}
+              </div>
             </div>
           );
         })}
@@ -160,10 +174,7 @@ export default function FichaTaller(props: {
           >
             Ya está, armá el pedido
           </button>
-          <p className="mt-1.5 text-xs text-ink-500">
-            Si preferís no seguir contestando, Kodu arma el pedido con lo que tiene y te avisa qué quedó sin
-            definir.
-          </p>
+          <p className="mt-1.5 text-xs text-ink-500">Kodu completa lo que falte con buen criterio.</p>
         </div>
       )}
     </div>
