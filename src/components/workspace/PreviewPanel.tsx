@@ -97,21 +97,21 @@ type Tab = 'preview' | 'code';
 
 /** La etiqueta que acompaña a la vista previa mientras la IA trabaja. */
 function textoFaseGenerando(fase: AiPhase): string {
-  if (fase === 'coding') return 'Generando el recurso…';
-  if (fase === 'probando') return 'Probando el recurso…';
-  if (fase === 'corrigiendo') return 'Corrigiendo detalles…';
+  if (fase === 'coding') return 'Sin terminar: se sigue armando';
+  if (fase === 'probando') return 'Casi listo: lo estoy probando';
+  if (fase === 'corrigiendo') return 'Casi listo: corrigiendo detalles';
   return 'Preparando el recurso…';
 }
 
 /**
- * Señal de "esto todavía se está armando" encima de la vista previa. Dos
- * formas: sin código propio todavía (el recurso de arranque), un skeleton
- * opaco que tapa el "Tu recurso aparecerá acá"; con código (el parcial en
- * vivo, o el recurso anterior en un ajuste), un velo translúcido con un
- * barrido, para que se siga viendo cómo cambia. Nunca captura el puntero:
- * el docente puede scrollear lo que ya hay.
+ * Señal de "esto todavía se está armando" en la vista previa. Dos formas:
+ * sin código propio todavía (el recurso de arranque), un skeleton opaco que
+ * tapa el "Tu recurso aparecerá acá"; con código (el parcial en vivo, o el
+ * recurso anterior en un ajuste), sólo el borde: un marco que late y una
+ * barra de progreso arriba. El recurso queda a la vista y usable — el
+ * docente lo puede ir probando — y nada de esto captura el puntero.
  */
-function CapaGenerando({ fase, sinCodigo }: { fase: AiPhase; sinCodigo: boolean }) {
+function CapaGenerando({ fase, sinCodigo, enPausa }: { fase: AiPhase; sinCodigo: boolean; enPausa: boolean }) {
   return (
     <>
       {sinCodigo ? (
@@ -129,15 +129,17 @@ function CapaGenerando({ fase, sinCodigo }: { fase: AiPhase; sinCodigo: boolean 
           </div>
         </div>
       ) : (
-        <div aria-hidden="true" className="kodu-velo-generando pointer-events-none absolute inset-0 z-[5]" />
+        <div aria-hidden="true" className="kodu-marco-generando pointer-events-none absolute inset-0 z-[5]">
+          <span className="kodu-barra-generando" />
+        </div>
       )}
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-[6] flex justify-center">
+      <div className="pointer-events-none absolute inset-x-0 bottom-3 z-[6] flex justify-center">
         <span
           role="status"
           className="flex items-center gap-2 rounded-full border border-linea bg-superficie px-3 py-1.5 text-xs font-medium text-ink-700 shadow-sm"
         >
           <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-linea border-t-brand-600 motion-reduce:animate-none" />
-          {textoFaseGenerando(fase)}
+          {enPausa ? 'Sin terminar · en pausa mientras lo probás' : textoFaseGenerando(fase)}
         </span>
       </div>
     </>
@@ -435,9 +437,20 @@ function PreviewPanel(props: PreviewPanelProps) {
   function alCargarParcial(indice: 0 | 1, contenido: string) {
     return () => {
       if (!contenido) return;
+      // El docente está probando el parcial de adelante: dar vuelta el búfer
+      // le borraría lo que hizo. Queda anotado y se muestra al soltar.
+      if (probandoParcialRef.current) {
+        parcialEnEsperaRef.current = indice;
+        return;
+      }
       if (swapTimerRef.current != null) window.clearTimeout(swapTimerRef.current);
       swapTimerRef.current = window.setTimeout(() => {
         swapTimerRef.current = null;
+        // La pausa pudo empezar mientras corría este margen.
+        if (probandoParcialRef.current) {
+          parcialEnEsperaRef.current = indice;
+          return;
+        }
         setDobleBufer((actual) => (actual.frente === indice ? actual : { ...actual, frente: indice }));
       }, PARTIAL_SWAP_DELAY_MS);
     };
@@ -447,6 +460,63 @@ function PreviewPanel(props: PreviewPanelProps) {
   // contenido real: si no, con el turno recién arrancado (buffer todavía
   // `['','']`) se vería un iframe en blanco tapando al de siempre.
   const parcialListoParaMostrar = hayParcial && dobleBufer.srcDocs[dobleBufer.frente] !== '';
+
+  // Pausa del doble búfer mientras el docente prueba el parcial: un clic
+  // adentro le da el foco al iframe de adelante (y la página pierde el
+  // suyo); salir del panel o volver a la página la levanta. Mientras tanto
+  // los parciales nuevos se siguen cargando en el frame de atrás.
+  const [probandoParcial, setProbandoParcial] = useState(false);
+  const probandoParcialRef = useRef(false);
+  const parcialEnEsperaRef = useRef<0 | 1 | null>(null);
+  const parcialesRef = useRef<[HTMLIFrameElement | null, HTMLIFrameElement | null]>([null, null]);
+  const contenedorVistaRef = useRef<HTMLDivElement | null>(null);
+
+  function pausarSiPrueba() {
+    const activo = document.activeElement;
+    const enFrente = parcialesRef.current[dobleBufer.frente];
+    if (!parcialListoParaMostrar || activo == null || activo !== enFrente) return;
+    probandoParcialRef.current = true;
+    setProbandoParcial(true);
+  }
+
+  function soltarPrueba() {
+    if (!probandoParcialRef.current) return;
+    probandoParcialRef.current = false;
+    setProbandoParcial(false);
+    const enEspera = parcialEnEsperaRef.current;
+    parcialEnEsperaRef.current = null;
+    if (enEspera != null) setDobleBufer((actual) => ({ ...actual, frente: enEspera }));
+  }
+
+  useEffect(() => {
+    if (!parcialListoParaMostrar) {
+      probandoParcialRef.current = false;
+      parcialEnEsperaRef.current = null;
+      setProbandoParcial(false);
+      return;
+    }
+    // `blur` llega antes de que `activeElement` apunte al iframe.
+    const alPerderFoco = () => window.setTimeout(pausarSiPrueba, 0);
+    // Los iframes tapan el panel entero, así que el contenedor nunca recibe
+    // `pointerleave`: la salida se nota cuando la página vuelve a ver el
+    // puntero sobre algo de afuera. Se le saca el foco al iframe para que un
+    // clic nuevo adentro vuelva a pausar (si no, no hay `blur` que lo note).
+    const alSalirDelPanel = (event: PointerEvent) => {
+      if (!probandoParcialRef.current) return;
+      if (contenedorVistaRef.current?.contains(event.target as Node)) return;
+      parcialesRef.current.forEach((frame) => frame?.blur());
+      soltarPrueba();
+    };
+    window.addEventListener('blur', alPerderFoco);
+    window.addEventListener('focus', soltarPrueba);
+    document.addEventListener('pointerover', alSalirDelPanel);
+    return () => {
+      window.removeEventListener('blur', alPerderFoco);
+      window.removeEventListener('focus', soltarPrueba);
+      document.removeEventListener('pointerover', alSalirDelPanel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parcialListoParaMostrar, dobleBufer.frente]);
 
   // Un HTML nuevo es un documento nuevo por renderizar: hasta que no llegue
   // su propio "load", una captura saldría del documento anterior o de uno en
@@ -634,7 +704,7 @@ function PreviewPanel(props: PreviewPanelProps) {
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1">
+      <div ref={contenedorVistaRef} className="relative min-h-0 flex-1">
         {/* El iframe queda SIEMPRE montado y a tamaño completo; las otras
             pestañas se dibujan ENCIMA, opacas. Dos motivos:
              - desmontarlo reiniciaba el recurso al cambiar de pestaña (adiós al
@@ -669,6 +739,9 @@ function PreviewPanel(props: PreviewPanelProps) {
           return (
             <iframe
               key={indice}
+              ref={(el) => {
+                parcialesRef.current[indice] = el;
+              }}
               title={`Vista previa parcial ${indice + 1}`}
               srcDoc={dobleBufer.srcDocs[indice]}
               onLoad={alCargarParcial(indice, dobleBufer.srcDocs[indice])}
@@ -686,6 +759,7 @@ function PreviewPanel(props: PreviewPanelProps) {
           <CapaGenerando
             fase={props.aiPhase}
             sinCodigo={!parcialListoParaMostrar && esRecursoInicial(props.html)}
+            enPausa={probandoParcial}
           />
         )}
 
