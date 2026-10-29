@@ -1,11 +1,12 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, Prisma, type UsagePurpose } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, conTema, iniciarSesion } from './harness.ts';
-import { consumoDelPanel } from '../src/lib/orgs/panel.ts';
+import { consumoDelPanel, docentesDelPanel, serieDelPanel } from '../src/lib/orgs/panel.ts';
 import type { Frame, Page } from 'playwright';
 
 /**
@@ -126,20 +127,20 @@ function fechaFixture(diaMes: string): Date {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 360px vía iframe (chromium-headless-500px-clamp.md) — mismo arnés que
+// 390px vía iframe (chromium-headless-500px-clamp.md) — mismo arnés que
 // admin-organizaciones.ts / admin-metricas.ts.
 // ─────────────────────────────────────────────────────────────
 
-async function entrarAIframe360(page: Page, url: string): Promise<{ frame: Frame; handle: import('playwright').ElementHandle }> {
+async function entrarAIframe390(page: Page, url: string): Promise<{ frame: Frame; handle: import('playwright').ElementHandle }> {
   await page.setContent(
-    `<!doctype html><html><body style="margin:0;padding:0;background:#0000"><iframe id="f" style="display:block;width:360px;height:3600px;border:0"></iframe></body></html>`,
+    `<!doctype html><html><body style="margin:0;padding:0;background:#0000"><iframe id="f" style="display:block;width:390px;height:3900px;border:0"></iframe></body></html>`,
   );
   const handle = (await page.$('#f'))!;
   await handle.evaluate((el: HTMLIFrameElement, src: string) => {
     el.src = src;
   }, url);
   const frame = await handle.contentFrame();
-  if (!frame) throw new Error('no se pudo entrar al iframe de 360px');
+  if (!frame) throw new Error('no se pudo entrar al iframe de 390px');
   await frame.waitForLoadState('load');
   await frame.waitForSelector('h1, h2', { timeout: 5_000 });
   await frame.waitForTimeout(300);
@@ -151,7 +152,8 @@ async function sinOverflowHorizontal(evaluable: Page | Frame, mensaje: string): 
   assert.ok(!overflow, mensaje);
 }
 
-const DIR_CAPTURAS = '/tmp/claude-1001/-home-opencode-projects/559ab3ac-5ab1-58a2-813b-6a7d83cae4e4/scratchpad/t8';
+const DIR_CAPTURAS = process.env.KODU_CAPTURAS_DIR ?? '/tmp/kodu-e2e-org-panel';
+mkdirSync(DIR_CAPTURAS, { recursive: true });
 
 async function capturarResponsive(page: Page, ruta: string, etiqueta: string): Promise<void> {
   const url = `${BASE_URL}${ruta}`;
@@ -164,9 +166,9 @@ async function capturarResponsive(page: Page, ruta: string, etiqueta: string): P
     await page.screenshot({ path: `${DIR_CAPTURAS}/${etiqueta}-desktop-${tema}.png` });
     await sinOverflowHorizontal(page, `${etiqueta} (desktop, ${tema}): no debería scrollear horizontal`);
 
-    const { frame, handle } = await entrarAIframe360(page, url);
-    await handle.screenshot({ path: `${DIR_CAPTURAS}/${etiqueta}-360-${tema}.png` });
-    await sinOverflowHorizontal(frame, `${etiqueta} (360px, ${tema}): no debería scrollear horizontal`);
+    const { frame, handle } = await entrarAIframe390(page, url);
+    await handle.screenshot({ path: `${DIR_CAPTURAS}/${etiqueta}-390-${tema}.png` });
+    await sinOverflowHorizontal(frame, `${etiqueta} (390px, ${tema}): no debería scrollear horizontal`);
   }
 }
 
@@ -242,6 +244,23 @@ async function main(): Promise<void> {
     assert.equal(consumoRed.total.docentesActivos, 2, 'total de red: profeA + profeMovido, cada uno UNA vez (no 3)');
     assert.equal(consumoRed.total.costoTotal.suma.toString(), '0.06', 'total de red: 0.06 (N1 exacto + N2 nulo)');
     assert.equal(consumoRed.total.costoTotal.filasSinPrecio, 1);
+    // Adopción + serie (T-uso-docentes): Y = docentes ACTUALES de las sedes del
+    // alcance (N1: adminN1, adminRed, profeA, profePlano; N2: profeMovido).
+    assert.equal(await docentesDelPanel([n1.id]), 4, 'N1 tiene 4 docentes hoy');
+    assert.equal(await docentesDelPanel([n2.id]), 1, 'N2 tiene 1 docente hoy (profeMovido)');
+    assert.equal(await docentesDelPanel([n1.id, n2.id]), 5, 'la red suma sus sedes');
+    assert.equal(await docentesDelPanel([]), 0);
+
+    const mesesSerie = ['2025-09', '2025-10', '2025-11', '2025-12', '2026-01', MES_FIXTURE];
+    const serieN1 = await serieDelPanel([n1.id], mesesSerie);
+    assert.deepEqual(serieN1.map((p) => p.mes), mesesSerie, 'la serie respeta el orden pedido');
+    assert.deepEqual(serieN1.at(-1), { mes: MES_FIXTURE, recursosNuevos: 2, docentesActivos: 2 }, 'N1 en el mes de fixture: 2 recursos, 2 docentes');
+    assert.ok(serieN1.slice(0, -1).every((p) => p.recursosNuevos === 0 && p.docentesActivos === 0), 'N1: los meses sin uso quedan en 0');
+    const serieRed = await serieDelPanel([n1.id, n2.id], mesesSerie);
+    assert.deepEqual(serieRed.at(-1), { mes: MES_FIXTURE, recursosNuevos: 2, docentesActivos: 2 }, 'red: profeMovido cuenta UNA vez aunque esté en dos sedes');
+    const serieN2 = await serieDelPanel([n2.id], mesesSerie);
+    assert.deepEqual(serieN2.at(-1), { mes: MES_FIXTURE, recursosNuevos: 0, docentesActivos: 1 }, 'N2: sólo un ajuste, 0 recursos nuevos');
+    assert.deepEqual(await serieDelPanel([], mesesSerie), mesesSerie.map((mes) => ({ mes, recursosNuevos: 0, docentesActivos: 0 })));
     console.log('✔ 3. consumoDelPanel: sede única (sin desglose), sede con NULL (piso), red (desglose + par docente-sede + total único)');
 
     // ───────────────────────────────────────────────────────────
@@ -296,6 +315,18 @@ async function main(): Promise<void> {
     assert.ok(!htmlN1.includes(TITULO_RECURSO_SECRETO), 'el título de un recurso NUNCA debe aparecer en /org — sólo conteos');
     assert.ok(htmlN1.includes('Profe A OrgPanel'), 'adminN1 debe ver a profeA en su lista de docentes');
     assert.ok(!htmlN1.includes('Profe S OrgPanel'), 'adminN1 NO debe ver a profeS (sede ajena)');
+
+    // El panel muestra RECURSOS, no tokens ni plata: ni columnas ni valores.
+    await adminN1.goto(`${BASE_URL}/org?mes=${MES_FIXTURE}`, { waitUntil: 'domcontentloaded' });
+    const consumoN1Texto = (await adminN1.locator('section:has(h2:text-is("Consumo"))').textContent()) ?? '';
+    assert.match(consumoN1Texto, /2\s*de\s*4\s*docentes usaron Kodu en febrero de 2026/, `línea de adopción de N1 (llegó: ${consumoN1Texto.slice(0, 160)})`);
+    assert.match(consumoN1Texto, /Últimos 6 meses/, 'el gráfico de 6 meses está');
+    assert.equal(await adminN1.locator('section:has(h2:text-is("Consumo")) ol > li').count(), 6, 'el gráfico tiene 6 meses');
+    assert.ok(!/tokens|costo|US\$|≥/i.test(consumoN1Texto), 'el Consumo de /org no muestra tokens ni costo');
+    assert.match(consumoN1Texto, /Recursos nuevos/);
+    assert.match(consumoN1Texto, /Ajustes/);
+    assert.match(consumoN1Texto, /Turnos/);
+    console.log('✔ 7b. /org (Consumo): adopción "2 de 4", gráfico de 6 meses, sin tokens ni costo');
     console.log('✔ 7. /org de un admin de sede: sólo su sede, sin selector de red, sin filtrar título de recursos');
 
     // ───────────────────────────────────────────────────────────
@@ -308,6 +339,10 @@ async function main(): Promise<void> {
     assert.ok(htmlRed.includes(`Sede N1 OrgPanel E2E ${SUFIJO}`) && htmlRed.includes(`Sede N2 OrgPanel E2E ${SUFIJO}`), 'admin de red debe ver las dos sedes en el desglose');
     assert.ok(!htmlRed.includes(`Sede S OrgPanel E2E ${SUFIJO}`), 'admin de red NO debe ver la sede standalone (no es de su red)');
     assert.ok(!htmlRed.includes(TITULO_RECURSO_SECRETO), 'tampoco acá debería filtrar el título del recurso');
+    await adminRed.goto(`${BASE_URL}/org?sede=${red.id}&mes=${MES_FIXTURE}`, { waitUntil: 'domcontentloaded' });
+    const consumoRedTexto = (await adminRed.locator('section:has(h2:text-is("Consumo"))').textContent()) ?? '';
+    assert.match(consumoRedTexto, /2\s*de\s*5\s*docentes usaron Kodu en febrero de 2026/, `adopción de la red: suma de sus sedes (llegó: ${consumoRedTexto.slice(0, 160)})`);
+    assert.ok(!/tokens|costo|US\$|≥/i.test(consumoRedTexto), 'la vista de red tampoco muestra tokens ni costo');
     console.log('✔ 8. /org?sede=<red> de un admin de red: desglose por sede, sin la sede ajena, sin filtrar título');
 
     // ───────────────────────────────────────────────────────────
@@ -411,8 +446,8 @@ async function main(): Promise<void> {
     // 11. Capturas: /org (adminN1), /org?sede=<red> (adminRed, Toda la red),
     //     y el detalle de superadmin con el componente de miembros nuevo.
     // ───────────────────────────────────────────────────────────
-    await capturarResponsive(adminN1, '/org', 'org-campus');
-    await capturarResponsive(adminRed, `/org?sede=${red.id}`, 'org-red');
+    await capturarResponsive(adminN1, `/org?mes=${MES_FIXTURE}`, 'org-campus');
+    await capturarResponsive(adminRed, `/org?sede=${red.id}&mes=${MES_FIXTURE}`, 'org-red');
     await capturarResponsive(superadmin, `/admin/organizaciones/${n1.id}`, 'admin-detalle-miembros');
     console.log('✔ 11. capturas de /org (admin de sede), /org?sede=<red> (admin de red) y el detalle de superadmin, sin overflow');
   } finally {

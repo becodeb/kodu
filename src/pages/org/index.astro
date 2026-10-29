@@ -15,10 +15,9 @@ import {
   type DetalleOrganizacion,
 } from '../../lib/orgs/gestion.ts';
 import { listarInvitaciones } from '../../lib/orgs/invitaciones.ts';
-import { consumoDelPanel } from '../../lib/orgs/panel.ts';
+import GraficoUsoOrg from '../../components/orgs/GraficoUsoOrg.astro';
+import { consumoDelPanel, docentesDelPanel, serieDelPanel } from '../../lib/orgs/panel.ts';
 import { mesActualBA, ultimosMeses, etiquetaMes } from '../../lib/metricas/consumo.ts';
-import { formatearSumaUsd } from '../../lib/admin/metricas.ts';
-import { formatearTokensCompacto } from '../../lib/format/tokens.ts';
 
 /**
  * odd/tasks/organizaciones.md (T8): panel de la organización — para
@@ -94,7 +93,13 @@ const campusIdsConsumo = detalle ? (esRed ? detalle.sedes.map((s) => s.id) : [de
 const mesesDisponibles = ultimosMeses(12);
 const mesPedido = Astro.url.searchParams.get('mes');
 const mes = mesPedido && mesesDisponibles.includes(mesPedido) ? mesPedido : mesActualBA();
-const consumo = detalle ? await consumoDelPanel(campusIdsConsumo, mes) : null;
+const [consumo, docentesTotales, serie] = detalle
+  ? await Promise.all([
+      consumoDelPanel(campusIdsConsumo, mes),
+      docentesDelPanel(campusIdsConsumo),
+      serieDelPanel(campusIdsConsumo, ultimosMeses(6, mes)),
+    ])
+  : [null, 0, []];
 
 // T4b: aviso de renovación del ciclo — sólo si quien mira administra la RAÍZ
 // (misma lógica de alcance que `/org/plan.astro`), nunca a un admin de sede
@@ -276,9 +281,19 @@ function urlConSede(sede: string | null, mesParam?: string): string {
             <div class="mb-3 flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 class="text-sm font-semibold text-ink-900">Consumo</h2>
-                <p class="mt-1 text-xs text-ink-500">
-                  {consumo!.etiquetaMes.toLowerCase()} · {consumo!.total.docentesActivos} docente
-                  {consumo!.total.docentesActivos === 1 ? '' : 's'} activo{consumo!.total.docentesActivos === 1 ? '' : 's'}
+                <p class="mt-1 text-sm text-ink-700">
+                  {consumo!.total.docentesActivos <= docentesTotales ? (
+                    <>
+                      <strong class="text-ink-900">{consumo!.total.docentesActivos}</strong> de{' '}
+                      <strong class="text-ink-900">{docentesTotales}</strong> docentes usaron Kodu en{' '}
+                      {consumo!.etiquetaMes.toLowerCase()}
+                    </>
+                  ) : (
+                    <>
+                      <strong class="text-ink-900">{consumo!.total.docentesActivos}</strong> docentes usaron Kodu en{' '}
+                      {consumo!.etiquetaMes.toLowerCase()}
+                    </>
+                  )}
                 </p>
               </div>
               <form method="get" class="flex items-center gap-2">
@@ -300,20 +315,23 @@ function urlConSede(sede: string | null, mesParam?: string): string {
               </form>
             </div>
 
+            <div class="mb-6">
+              <h3 class="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">Últimos 6 meses</h3>
+              <GraficoUsoOrg puntos={serie} />
+            </div>
+
             {consumo!.porCampus && (
               <div class="mb-6">
                 <h3 class="mb-2 text-xs font-semibold tracking-wide text-ink-500 uppercase">Por sede</h3>
 
                 <div class="hidden overflow-x-auto sm:block">
-                  <table class="w-full min-w-[640px] text-left text-sm">
+                  <table class="w-full min-w-[480px] text-left text-sm">
                     <thead class="border-b border-linea text-xs text-ink-500 uppercase">
                       <tr>
                         <th class="py-2 pr-3 font-medium">Sede</th>
                         <th class="py-2 px-3 text-right font-medium">Recursos nuevos</th>
                         <th class="py-2 px-3 text-right font-medium">Ajustes</th>
-                        <th class="py-2 px-3 text-right font-medium">Turnos</th>
-                        <th class="py-2 px-3 text-right font-medium">Tokens</th>
-                        <th class="py-2 pl-3 text-right font-medium">Costo</th>
+                        <th class="py-2 pl-3 text-right font-medium">Turnos</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -322,13 +340,7 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                           <td class="py-2 pr-3 text-ink-900">{fila.nombre}</td>
                           <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.recursosNuevos}</td>
                           <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.ajustes}</td>
-                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
-                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">
-                            {formatearTokensCompacto(fila.agregado.tokens)}
-                          </td>
-                          <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
-                            {formatearSumaUsd(fila.agregado.costoTotal)}
-                          </td>
+                          <td class="py-2 pl-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -352,12 +364,7 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                           <dt class="text-ink-500">Turnos</dt>
                           <dd class="tabular-nums">{fila.agregado.turnos}</dd>
                         </div>
-                        <div class="flex justify-between gap-2">
-                          <dt class="text-ink-500">Tokens</dt>
-                          <dd class="tabular-nums">{formatearTokensCompacto(fila.agregado.tokens)}</dd>
-                        </div>
                       </dl>
-                      <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(fila.agregado.costoTotal)}</p>
                     </div>
                   ))}
                 </div>
@@ -370,16 +377,14 @@ function urlConSede(sede: string | null, mesParam?: string): string {
             ) : (
               <>
                 <div class="hidden overflow-x-auto sm:block">
-                  <table class="w-full min-w-[720px] text-left text-sm">
+                  <table class="w-full min-w-[560px] text-left text-sm">
                     <thead class="border-b border-linea text-xs text-ink-500 uppercase">
                       <tr>
                         <th class="py-2 pr-3 font-medium">Docente</th>
                         {consumo!.porCampus && <th class="py-2 px-3 font-medium">Sede</th>}
                         <th class="py-2 px-3 text-right font-medium">Recursos nuevos</th>
                         <th class="py-2 px-3 text-right font-medium">Ajustes</th>
-                        <th class="py-2 px-3 text-right font-medium">Turnos</th>
-                        <th class="py-2 px-3 text-right font-medium">Tokens</th>
-                        <th class="py-2 pl-3 text-right font-medium">Costo</th>
+                        <th class="py-2 pl-3 text-right font-medium">Turnos</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -392,13 +397,7 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                           {consumo!.porCampus && <td class="py-2 px-3 text-ink-700">{fila.organizationNombre}</td>}
                           <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.recursosNuevos}</td>
                           <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.ajustes}</td>
-                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
-                          <td class="py-2 px-3 text-right tabular-nums text-ink-700">
-                            {formatearTokensCompacto(fila.agregado.tokens)}
-                          </td>
-                          <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
-                            {formatearSumaUsd(fila.agregado.costoTotal)}
-                          </td>
+                          <td class="py-2 pl-3 text-right tabular-nums text-ink-700">{fila.agregado.turnos}</td>
                         </tr>
                       ))}
                       <tr class="bg-sutil font-semibold">
@@ -407,13 +406,7 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                         </td>
                         <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.recursosNuevos}</td>
                         <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.ajustes}</td>
-                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">{consumo!.total.turnos}</td>
-                        <td class="py-2 px-3 text-right tabular-nums text-ink-700">
-                          {formatearTokensCompacto(consumo!.total.tokens)}
-                        </td>
-                        <td class="py-2 pl-3 text-right tabular-nums text-ink-900">
-                          {formatearSumaUsd(consumo!.total.costoTotal)}
-                        </td>
+                        <td class="py-2 pl-3 text-right tabular-nums text-ink-700">{consumo!.total.turnos}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -440,25 +433,32 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                           <dt class="text-ink-500">Turnos</dt>
                           <dd class="tabular-nums">{fila.agregado.turnos}</dd>
                         </div>
-                        <div class="flex justify-between gap-2">
-                          <dt class="text-ink-500">Tokens</dt>
-                          <dd class="tabular-nums">{formatearTokensCompacto(fila.agregado.tokens)}</dd>
-                        </div>
                       </dl>
-                      <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(fila.agregado.costoTotal)}</p>
                     </div>
                   ))}
                   <div class="kodu-card bg-sutil p-3">
                     <p class="font-semibold text-ink-900">Total</p>
-                    <p class="mt-1 text-sm font-semibold text-ink-900">{formatearSumaUsd(consumo!.total.costoTotal)}</p>
+                    <dl class="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-ink-700">
+                      <div class="flex justify-between gap-2">
+                        <dt class="text-ink-500">Recursos nuevos</dt>
+                        <dd class="tabular-nums">{consumo!.total.recursosNuevos}</dd>
+                      </div>
+                      <div class="flex justify-between gap-2">
+                        <dt class="text-ink-500">Ajustes</dt>
+                        <dd class="tabular-nums">{consumo!.total.ajustes}</dd>
+                      </div>
+                      <div class="flex justify-between gap-2">
+                        <dt class="text-ink-500">Turnos</dt>
+                        <dd class="tabular-nums">{consumo!.total.turnos}</dd>
+                      </div>
+                    </dl>
                   </div>
                 </div>
               </>
             )}
 
             <p class="mt-3 text-xs text-ink-500">
-              "≥" significa que alguna fila no tiene precio conocido y nunca se suma como si fuera 0. Sólo se cuentan
-              recursos y consumo — nunca su contenido.
+              Sólo se cuentan recursos y consumo — nunca su contenido.
             </p>
           </section>
         </>

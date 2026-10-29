@@ -1,0 +1,67 @@
+---
+import type { PuntoSerieDelPanel } from '../../lib/orgs/panel.ts';
+import { etiquetaMes } from '../../lib/metricas/consumo.ts';
+
+/**
+ * "Uso de los últimos 6 meses" de `/org`: columnas = recursos nuevos del
+ * mes; debajo de cada mes, cuántos docentes distintos usaron Kodu. Es HTML +
+ * CSS servido por el servidor (sin JavaScript, sin librería de gráficos): a
+ * diferencia de un SVG escalado, el texto conserva su tamaño en pantallas
+ * angostas. Los colores salen de los tokens, así que sigue el tema oscuro.
+ */
+interface Props {
+  puntos: PuntoSerieDelPanel[];
+}
+
+const { puntos } = Astro.props;
+const max = Math.max(...puntos.map((p) => p.recursosNuevos), 0);
+const ALTO_AREA_PX = 96;
+
+function etiquetaCorta(mes: string): string {
+  return etiquetaMes(mes).split(' ')[0]!.slice(0, 3);
+}
+const hayActividad = puntos.some((p) => p.recursosNuevos > 0 || p.docentesActivos > 0);
+---
+
+<figure>
+  {
+    hayActividad ? (
+      <>
+        <ol class="grid grid-cols-6 gap-1.5 sm:gap-3">
+          {puntos.map((punto) => {
+            const alto = max > 0 ? Math.round((punto.recursosNuevos / max) * ALTO_AREA_PX) : 0;
+            return (
+              <li
+                class="min-w-0 text-center"
+                title={`${etiquetaMes(punto.mes)}: ${punto.recursosNuevos} recursos nuevos, ${punto.docentesActivos} docentes activos`}
+              >
+                <p class="text-xs font-semibold text-ink-900 tabular-nums">{punto.recursosNuevos}</p>
+                <div class="mt-1 flex items-end justify-center" style={`height:${ALTO_AREA_PX}px`}>
+                  <div
+                    class="w-full max-w-10 rounded-t bg-brand-600"
+                    style={`height:${Math.max(alto, punto.recursosNuevos > 0 ? 3 : 1)}px`}
+                    aria-hidden="true"
+                  >
+                  </div>
+                </div>
+                <div class="border-t border-linea pt-1">
+                  <p class="text-xs text-ink-700 capitalize">{etiquetaCorta(punto.mes)}</p>
+                  <p class="text-[11px] leading-tight text-ink-500 tabular-nums">
+                    {punto.docentesActivos}
+                    <span class="hidden sm:inline">{punto.docentesActivos === 1 ? ' docente' : ' docentes'}</span>
+                    <span class="sm:hidden"> doc.</span>
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        <figcaption class="mt-2 text-xs text-ink-500">
+          Columnas: recursos nuevos por mes. Debajo de cada mes: docentes que usaron Kodu.
+        </figcaption>
+      </>
+    ) : (
+      <p class="text-sm text-ink-500">Todavía no hay uso en los últimos 6 meses.</p>
+    )
+  }
+</figure>

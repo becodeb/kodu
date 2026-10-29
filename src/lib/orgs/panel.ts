@@ -4,6 +4,7 @@ import {
   agruparPorOrganizacion,
   agruparPorUsuario,
   cargarFilasConsumoDelMes,
+  docentesHoyPorOrganizacion,
   etiquetaMes,
   type AgregadoConsumo,
 } from '../metricas/consumo.ts';
@@ -112,4 +113,41 @@ export async function consumoDelPanel(campusIds: string[], mes: string): Promise
       : null;
 
   return { mes, etiquetaMes: etiquetaMes(mes), porCampus, porDocente, total: agregarConsumo(filas) };
+}
+
+/**
+ * "Docentes hoy" de las sedes del alcance (membresía ACTUAL, sin demo): el
+ * denominador de "X de Y docentes usaron Kodu". Para una red es la suma de
+ * sus sedes — un docente pertenece a UNA sola sede, así que no se cuenta dos
+ * veces.
+ */
+export async function docentesDelPanel(campusIds: string[]): Promise<number> {
+  const porOrganizacion = await docentesHoyPorOrganizacion(campusIds);
+  let total = 0;
+  for (const cantidad of porOrganizacion.values()) total += cantidad;
+  return total;
+}
+
+export interface PuntoSerieDelPanel {
+  mes: string;
+  recursosNuevos: number;
+  docentesActivos: number;
+}
+
+/**
+ * Serie mensual (uno por mes de `meses`, en el orden recibido) de recursos
+ * nuevos y docentes activos, acotada a `campusIds` igual que `consumoDelPanel`
+ * (el filtro vive en `cargarFilasConsumoDelMes`, nunca ve otra organización).
+ * Un docente que usó Kodu en dos sedes de la red el mismo mes cuenta UNA vez.
+ */
+export async function serieDelPanel(campusIds: string[], meses: string[]): Promise<PuntoSerieDelPanel[]> {
+  if (campusIds.length === 0) {
+    return meses.map((mes) => ({ mes, recursosNuevos: 0, docentesActivos: 0 }));
+  }
+  return Promise.all(
+    meses.map(async (mes) => {
+      const { recursosNuevos, docentesActivos } = agregarConsumo(await cargarFilasConsumoDelMes(mes, campusIds));
+      return { mes, recursosNuevos, docentesActivos };
+    }),
+  );
 }
