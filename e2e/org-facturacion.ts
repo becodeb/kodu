@@ -6,7 +6,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.ts';
 import { hashPassword } from '../src/lib/auth/password.ts';
 import { abrirNavegador, BASE_URL, conTema, iniciarSesion } from './harness.ts';
-import type { Frame, Page } from 'playwright';
+import type { Frame, Locator, Page } from 'playwright';
 
 /**
  * Verificación de odd/tasks/org-admin-facturacion.md: "Admin" vs "Admin con
@@ -122,6 +122,22 @@ async function rutasDeFacturacion(page: Page): Promise<Respuesta[]> {
     await llamar(page, 'POST', '/api/billing/org/cancel', {}),
     await llamar(page, 'POST', '/api/billing/org/renovar', {}),
   ];
+}
+
+/** Abre el menú "⋯" de una fila de la lista de docentes y devuelve el menú. */
+async function abrirMenuDeFila(fila: Locator): Promise<Locator> {
+  const boton = fila.getByRole('button', { name: /^Acciones para / });
+  await boton.click();
+  const menu = fila.page().getByRole('menu');
+  await menu.waitFor({ state: 'visible', timeout: 5_000 });
+  return menu;
+}
+
+/** Elige una acción del menú "⋯" de una fila (se cierra solo al elegirla). */
+async function elegirAccionDeFila(fila: Locator, accion: string): Promise<void> {
+  const menu = await abrirMenuDeFila(fila);
+  await menu.getByRole('menuitem', { name: accion }).click();
+  await menu.waitFor({ state: 'detached', timeout: 5_000 });
 }
 
 const DIR_CAPTURAS = process.env.KODU_CAPTURAS_DIR ?? '';
@@ -258,13 +274,25 @@ async function main(): Promise<void> {
     // ── 5. UI del coordinador: insignia, sin botones sobre el titular ─
     await coord.setViewportSize({ width: 1280, height: 900 });
     await coord.goto(`${BASE_URL}/org`, { waitUntil: 'domcontentloaded' });
+    await coord.waitForLoadState('networkidle'); // la isla (client:load) tiene que estar hidratada
     const filaTitular = coord.locator('tr', { hasText: EMAILS.titular });
     await filaTitular.waitFor({ state: 'visible' });
     assert.ok((await filaTitular.textContent())?.includes('Facturación'), 'el titular lleva la insignia "Facturación"');
-    assert.equal(await filaTitular.getByRole('button').count(), 0, 'el coordinador no ve ningún botón sobre el titular');
+    // El titular está protegido: su menú no ofrece ninguna acción, sólo la nota (deshabilitada).
+    const menuTitular = await abrirMenuDeFila(filaTitular);
+    assert.equal(await menuTitular.getByRole('menuitem').count(), 1, 'el menú del titular sólo tiene la nota');
+    assert.equal(await menuTitular.getByRole('menuitem').first().getAttribute('aria-disabled'), 'true', 'y está deshabilitada');
+    assert.match((await menuTitular.textContent()) ?? '', /Sólo otro admin con facturación/);
+    assert.equal(await menuTitular.getByRole('menuitem', { name: /baja|admin$|facturación$/i }).count(), 0, 'sin Dar de baja ni Sacar admin sobre el titular');
+    await coord.keyboard.press('Escape');
     const filaProfe = coord.locator('tr', { hasText: EMAILS.profe });
-    assert.ok((await filaProfe.getByRole('button', { name: 'Dar de baja' }).count()) === 1, 'sí ve "Dar de baja" sobre un docente común');
-    assert.equal(await coord.getByRole('button', { name: /facturación/i }).count(), 0, 'el coordinador no ve el control Dar/Quitar facturación');
+    const menuProfe = await abrirMenuDeFila(filaProfe);
+    assert.equal(await menuProfe.getByRole('menuitem', { name: 'Dar de baja' }).count(), 1, 'sí ve "Dar de baja" sobre un docente común');
+    assert.equal(await menuProfe.getByRole('menuitem', { name: /facturación/i }).count(), 0, 'el coordinador no ve el control Dar/Quitar facturación');
+    await coord.keyboard.press('Escape');
+    const menuCoordMismo = await abrirMenuDeFila(coord.locator('tr', { hasText: EMAILS.coord }));
+    assert.equal(await menuCoordMismo.getByRole('menuitem', { name: /facturación/i }).count(), 0, 'ni siquiera sobre otro admin');
+    await coord.keyboard.press('Escape');
     console.log('✔ 5. UI del coordinador: insignia en el titular y sus botones ocultos');
 
     // ── 6. El titular reparte y la última no se puede quitar ─
@@ -312,11 +340,15 @@ async function main(): Promise<void> {
     await titular.waitForLoadState('networkidle'); // la isla (client:load) tiene que estar hidratada
     const filaCoord = titular.locator('tr', { hasText: EMAILS.coord });
     await filaCoord.waitFor({ state: 'visible' });
-    await filaCoord.getByRole('button', { name: 'Quitar facturación' }).click();
-    await filaCoord.getByRole('button', { name: 'Dar facturación' }).waitFor({ state: 'visible', timeout: 5_000 });
-    assert.equal((await filaAdmin('coord', s.id))?.canManageBilling, false, 'el botón quita la facturación en la base');
-    await filaCoord.getByRole('button', { name: 'Dar facturación' }).click();
-    await filaCoord.getByRole('button', { name: 'Quitar facturación' }).waitFor({ state: 'visible', timeout: 5_000 });
+    assert.ok((await filaCoord.textContent())?.includes('Facturación'), 'la coordinadora lleva la insignia mientras tiene facturación');
+    await elegirAccionDeFila(filaCoord, 'Quitar facturación');
+    await filaCoord.locator('span:text-is("Facturación")').waitFor({ state: 'detached', timeout: 5_000 });
+    assert.equal((await filaAdmin('coord', s.id))?.canManageBilling, false, 'el menú quita la facturación en la base');
+    const menuSinFact = await abrirMenuDeFila(filaCoord);
+    await menuSinFact.getByRole('menuitem', { name: 'Dar facturación' }).waitFor({ state: 'visible', timeout: 5_000 });
+    await titular.keyboard.press('Escape');
+    await elegirAccionDeFila(filaCoord, 'Dar facturación');
+    await filaCoord.locator('span:text-is("Facturación")').waitFor({ state: 'visible', timeout: 5_000 });
     assert.equal((await filaAdmin('coord', s.id))?.canManageBilling, true, 'y la vuelve a dar');
     console.log('✔ 8. UI del titular: Dar/Quitar facturación funciona');
 
@@ -353,11 +385,17 @@ async function main(): Promise<void> {
 
     await sedeAdmin.setViewportSize({ width: 1280, height: 900 });
     await sedeAdmin.goto(`${BASE_URL}/org?sede=${n1.id}`, { waitUntil: 'domcontentloaded' });
+    await sedeAdmin.waitForLoadState('networkidle');
     const filaRedTitular = sedeAdmin.locator('tr', { hasText: EMAILS.redTitular });
     await filaRedTitular.waitFor({ state: 'visible' });
     assert.ok((await filaRedTitular.textContent())?.includes('Facturación'), 'el titular de la red lleva la insignia en la lista de N1');
-    assert.equal(await filaRedTitular.getByRole('button').count(), 0, 'y el admin de sede no ve botones sobre él');
-    assert.ok((await sedeAdmin.locator('tr', { hasText: EMAILS.redCoord }).getByRole('button', { name: 'Dar de baja' }).count()) === 1, 'pero sí sobre un docente común');
+    const menuRedTitular = await abrirMenuDeFila(filaRedTitular);
+    assert.equal(await menuRedTitular.getByRole('menuitem').count(), 1, 'y el admin de sede sólo ve la nota en el menú del titular');
+    assert.equal(await menuRedTitular.getByRole('menuitem', { name: 'Dar de baja' }).count(), 0, 'sin Dar de baja sobre él');
+    await sedeAdmin.keyboard.press('Escape');
+    const menuRedCoord = await abrirMenuDeFila(sedeAdmin.locator('tr', { hasText: EMAILS.redCoord }));
+    assert.equal(await menuRedCoord.getByRole('menuitem', { name: 'Dar de baja' }).count(), 1, 'pero sí sobre un docente común');
+    await sedeAdmin.keyboard.press('Escape');
     console.log('✔ 10. el titular de la red está protegido (API y UI) también desde la lista de una sede');
 
     // El titular de red reparte desde la vista de la red.

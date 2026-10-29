@@ -547,6 +547,7 @@ export default function OrganizacionDetalle(props: Props) {
               organizationNombre={org.name}
               pending={pending}
               puedeMover
+              mostrarVerificacion
               onPromover={promoverDocenteInline}
               onDegradar={degradarDocenteInline}
               onQuitar={quitarDocente}
