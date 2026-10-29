@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ChatPanel from './ChatPanel.tsx';
 import PreviewPanel from './PreviewPanel.tsx';
 import FichaDialog from './FichaDialog.tsx';
+import DivisorChat from './DivisorChat.tsx';
+import { ANCHO_CHAT_INICIAL, ANCHO_RECURSO_MIN, guardarAnchoChat, leerAnchoChat } from '../../lib/client/ancho-chat.ts';
 import { apiRequest, streamAutocorreccion, streamChat, uploadFiles } from '../../lib/client/api.ts';
 import { htmlParcialDeArgumentos } from '../../lib/client/html-parcial.ts';
 import { ejecutarAutopruebaEnIframe, type ResultadoAutopruebaCliente } from '../../lib/client/autoprueba.ts';
@@ -139,6 +141,13 @@ export default function Workspace(props: WorkspaceProps) {
   const [title, setTitle] = useState(props.project.title);
   const [description, setDescription] = useState(props.project.description ?? '');
   const [isInGallery, setIsInGallery] = useState(props.project.isInGallery);
+  // Ancho del chat en pantallas grandes (DivisorChat). Arranca en el de
+  // siempre y recién al montar lee la preferencia guardada: el HTML del
+  // servidor no conoce el localStorage del docente.
+  const [anchoChat, setAnchoChat] = useState(ANCHO_CHAT_INICIAL);
+  const [grillaPaneles, setGrillaPaneles] = useState<HTMLDivElement | null>(null);
+  useEffect(() => setAnchoChat(leerAnchoChat()), []);
+
   const [screenshotUrl, setScreenshotUrl] = useState(props.project.screenshotUrl);
   // El recurso cambió después de la última portada (design §6). Semilla del
   // SSR; de acá en más sólo la mueve el contenido: la IA devolviendo código,
@@ -1726,7 +1735,18 @@ export default function Workspace(props: WorkspaceProps) {
         ))}
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[minmax(18rem,24rem)_1fr]">
+      {/* El `min()` acota también al achicar la ventana: el chat nunca le
+          come al recurso más de lo que deja `ANCHO_RECURSO_MIN`. */}
+      <div
+        ref={setGrillaPaneles}
+        style={
+          {
+            '--ancho-chat': `${anchoChat}px`,
+            '--ancho-recurso-min': `${ANCHO_RECURSO_MIN}px`,
+          } as React.CSSProperties
+        }
+        className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden rounded-2xl border border-linea bg-superficie shadow-sm lg:grid-cols-[min(var(--ancho-chat),calc(100%_-_var(--ancho-recurso-min)))_1fr]"
+      >
       <FichaDialog
         abierto={fichaAbierta}
         tituloInicial={props.project.title}
@@ -1744,7 +1764,15 @@ export default function Workspace(props: WorkspaceProps) {
         }}
       />
 
-      <div className={`min-h-0 ${vistaMovil === 'chat' ? 'flex' : 'hidden'} lg:flex`}>
+      <div className={`relative min-h-0 min-w-0 ${vistaMovil === 'chat' ? 'flex' : 'hidden'} lg:flex`}>
+      <DivisorChat
+        ancho={anchoChat}
+        contenedor={grillaPaneles}
+        onCambio={(ancho) => {
+          setAnchoChat(ancho);
+          guardarAnchoChat(ancho);
+        }}
+      />
       <ChatPanel
         messages={messages}
         streamingText={streamingText}

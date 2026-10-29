@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { ThinkingOrb } from 'thinking-orbs';
 import AiStatus from './AiStatus.tsx';
 import StreamedText from './StreamedText.tsx';
@@ -147,6 +147,19 @@ export default function ChatPanel(props: ChatPanelProps) {
   const [arrastrando, setArrastrando] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // El cuadro crece con lo que se escribe, hasta casi media pantalla; recién
+  // ahí aparece el scroll. Se mide después del render para que el alto siga
+  // al texto también al vaciarse (envío) o al cargarse un starter.
+  useLayoutEffect(() => {
+    const cuadro = textareaRef.current;
+    if (!cuadro) return;
+    cuadro.style.height = 'auto';
+    const techo = Math.max(160, Math.round(window.innerHeight * 0.45));
+    cuadro.style.height = `${Math.min(cuadro.scrollHeight + 2, techo)}px`;
+    cuadro.style.overflowY = cuadro.scrollHeight + 2 > techo ? 'auto' : 'hidden';
+  }, [draft]);
 
   // T4: el único mensaje que puede ofrecer "Deshacer" ahora mismo — nunca
   // mientras hay un turno corriendo, aunque técnicamente ya sea deshacible.
@@ -565,6 +578,7 @@ export default function ChatPanel(props: ChatPanelProps) {
         )}
 
         <textarea
+          ref={textareaRef}
           onPaste={onPaste}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
