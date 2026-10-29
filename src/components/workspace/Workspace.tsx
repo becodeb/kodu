@@ -876,6 +876,10 @@ export default function Workspace(props: WorkspaceProps) {
       const htmlParaAutoprueba = ultimoHtmlDelTurno;
       if (cambioElHtml && !pedirVersiones && htmlParaAutoprueba && mensajeIdDelTurno) {
         const htmlTrasAutoprueba = await ejecutarAutopruebaYCorreccion(htmlParaAutoprueba);
+        // El turno que crea el recurso deja portada sola. Se ESPERA la
+        // captura antes de arrancar el verificador: los dos usan el mismo
+        // capturador silencioso, que atiende un pedido a la vez.
+        if (!screenshotUrl && esRecursoInicial(htmlAlInicioDelTurno)) await sacarPortadaAutomatica();
         // T4 (`odd/tasks/verificador.md`): en SEGUNDO PLANO — a propósito
         // NUNCA esperada (`void`): el chat se reactiva en el `finally` de
         // abajo sin importar cuánto tarde el verificador (hasta 150s por
@@ -1645,6 +1649,25 @@ export default function Workspace(props: WorkspaceProps) {
     }
     // patchProject ya dejó el error en pantalla si falló; el switch queda
     // como estaba, nunca se mueve optimistamente.
+  }
+
+  /**
+   * Portada automática del primer turno: misma foto que "Sacar portada"
+   * (webp a `SNAPSHOT_WIDTH`), pero silenciosa. Si la captura o el guardado
+   * fallan no se avisa nada: el recurso queda sin portada, como antes, y el
+   * botón sigue ahí. Sólo espera la captura; el POST va en segundo plano.
+   */
+  async function sacarPortadaAutomatica(): Promise<void> {
+    const captura = await (capturadorRevisorRef.current?.({ formato: 'webp' }) ?? Promise.resolve(null));
+    const dataUrl = captura?.[0];
+    if (!dataUrl) return;
+    void apiRequest<{ screenshotUrl: string }>(`/api/projects/${projectId}/screenshot`, 'POST', { dataUrl }).then(
+      (guardada) => {
+        if (!guardada.ok) return;
+        setScreenshotUrl(guardada.data.screenshotUrl);
+        setPortadaVieja(false);
+      },
+    );
   }
 
   /** Sólo despublica: un PATCH, un gesto, sin captura (design §3.2). */
