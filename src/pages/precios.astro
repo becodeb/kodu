@@ -189,13 +189,8 @@ const faqs = [
 
     <div class="mt-8 grid gap-4 lg:grid-cols-4" id="bandas-grid">
       {
-        bandasData.map((b, i) => (
+        bandasData.map((b) => (
           <div class="kodu-card banda-card flex flex-col p-5" data-band-key={b.key}>
-            {i === 1 && (
-              <span class="mb-2 w-fit rounded-full bg-brand-600 px-2.5 py-0.5 text-[0.7rem] font-semibold text-white">
-                Más elegido
-              </span>
-            )}
             <h3 class="font-display text-lg text-ink-900">{b.name}</h3>
             <p class="text-xs text-ink-500">
               {b.minStudents}
