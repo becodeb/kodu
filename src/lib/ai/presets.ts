@@ -246,7 +246,7 @@ const CLAUDE_HAIKU_5_5: ModelPreset = {
   // un motor creado desde este preset tiene que poder ver la captura
   // sin que el admin se acuerde de tildar "Admite imágenes" a mano.
   defaultSupportsVision: true,
-  maxOutputTokens: 32_000,
+  maxOutputTokens: 128_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',
   sourceUrl: FUENTE_ANTHROPIC,
@@ -263,7 +263,7 @@ const CLAUDE_SONNET_5_5: ModelPreset = {
   // selector del docente, el dueño lo prende a mano si quiere ofrecerlo.
   defaultSelectableByTeacher: false,
   defaultSupportsVision: false,
-  maxOutputTokens: 32_000,
+  maxOutputTokens: 128_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',
   sourceUrl: FUENTE_ANTHROPIC,
@@ -279,7 +279,7 @@ const CLAUDE_OPUS_5_5: ModelPreset = {
   // Hallazgo de revisión: premium — mismo criterio que Sonnet arriba.
   defaultSelectableByTeacher: false,
   defaultSupportsVision: false,
-  maxOutputTokens: 32_000,
+  maxOutputTokens: 128_000,
   schedule: null,
   pricesVerifiedAt: '2026-10-13',
   sourceUrl: FUENTE_ANTHROPIC,
