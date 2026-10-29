@@ -1810,6 +1810,7 @@ export default function Workspace(props: WorkspaceProps) {
       <PreviewPanel
         html={html}
         partialHtml={partialHtml}
+        aiPhase={aiPhase}
         onHtmlChange={(value) => {
           setHtml(value);
           // Sólo llega acá la edición manual: el HTML que manda la IA se aplica

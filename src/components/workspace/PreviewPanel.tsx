@@ -3,6 +3,8 @@ import { CAPTURE_REQUEST, CAPTURE_RESULT, buildPreviewDocument, type OpcionesCap
 import { aplicarKitConRedDeSeguridad, temaDe } from '../../lib/ai/kit.ts';
 import { contarChecklistOk, type ItemChecklistConEstado } from '../../lib/client/checklist.ts';
 import { textoCantidadProblemas, type EstadoPanelVerificador } from '../../lib/client/verificador.ts';
+import { esRecursoInicial } from '../../lib/ai/versiones.ts';
+import type { AiPhase } from '../../lib/workspace-types.ts';
 
 const CodeEditor = lazy(() => import('./CodeEditor.tsx'));
 
@@ -86,9 +88,61 @@ interface PreviewPanelProps {
    * visible en este panel.
    */
   onCapturadorListo?: (capturar: (opciones?: OpcionesCaptura) => Promise<string[] | null>) => void;
+  /** En qué anda la IA: mientras no sea `idle`, la vista previa se marca
+   *  como "en construcción" (ver `CapaGenerando`). */
+  aiPhase: AiPhase;
 }
 
 type Tab = 'preview' | 'code';
+
+/** La etiqueta que acompaña a la vista previa mientras la IA trabaja. */
+function textoFaseGenerando(fase: AiPhase): string {
+  if (fase === 'coding') return 'Generando el recurso…';
+  if (fase === 'probando') return 'Probando el recurso…';
+  if (fase === 'corrigiendo') return 'Corrigiendo detalles…';
+  return 'Preparando el recurso…';
+}
+
+/**
+ * Señal de "esto todavía se está armando" encima de la vista previa. Dos
+ * formas: sin código propio todavía (el recurso de arranque), un skeleton
+ * opaco que tapa el "Tu recurso aparecerá acá"; con código (el parcial en
+ * vivo, o el recurso anterior en un ajuste), un velo translúcido con un
+ * barrido, para que se siga viendo cómo cambia. Nunca captura el puntero:
+ * el docente puede scrollear lo que ya hay.
+ */
+function CapaGenerando({ fase, sinCodigo }: { fase: AiPhase; sinCodigo: boolean }) {
+  return (
+    <>
+      {sinCodigo ? (
+        <div aria-hidden="true" className="absolute inset-0 z-[5] overflow-hidden bg-superficie p-6">
+          <div className="mx-auto flex max-w-2xl flex-col gap-4">
+            <span className="kodu-skeleton-bloque h-8 w-2/3 self-center" />
+            <span className="kodu-skeleton-bloque h-4 w-5/6 self-center" />
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <span className="kodu-skeleton-bloque h-28" />
+              <span className="kodu-skeleton-bloque h-28" />
+              <span className="kodu-skeleton-bloque h-28" />
+              <span className="kodu-skeleton-bloque h-28" />
+            </div>
+            <span className="kodu-skeleton-bloque mt-2 h-10 w-40 self-center" />
+          </div>
+        </div>
+      ) : (
+        <div aria-hidden="true" className="kodu-velo-generando pointer-events-none absolute inset-0 z-[5]" />
+      )}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-[6] flex justify-center">
+        <span
+          role="status"
+          className="flex items-center gap-2 rounded-full border border-linea bg-superficie px-3 py-1.5 text-xs font-medium text-ink-700 shadow-sm"
+        >
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-linea border-t-brand-600 motion-reduce:animate-none" />
+          {textoFaseGenerando(fase)}
+        </span>
+      </div>
+    </>
+  );
+}
 
 /**
  * T18: un ícono chico por estado de ítem del checklist, mismo trazo que el
@@ -627,6 +681,13 @@ function PreviewPanel(props: PreviewPanelProps) {
             />
           );
         })}
+
+        {props.aiPhase !== 'idle' && props.aiPhase !== 'uploading' && (
+          <CapaGenerando
+            fase={props.aiPhase}
+            sinCodigo={!parcialListoParaMostrar && esRecursoInicial(props.html)}
+          />
+        )}
 
         {tab === 'code' && (
           <div className="absolute inset-0 z-10 overflow-auto bg-sutil">

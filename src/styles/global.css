@@ -166,6 +166,53 @@
   }
 }
 
+/* Vista previa "en construcción" (PreviewPanel, CapaGenerando). El velo baja
+   el contraste del recurso con el color de la superficie —no con opacidad del
+   iframe, que dejaría ver el fondo del panel— y un brillo diagonal lo recorre.
+   El skeleton es para cuando todavía no hay ningún código que mostrar. */
+.kodu-velo-generando {
+  background-color: color-mix(in srgb, var(--color-superficie) 45%, transparent);
+  background-image: linear-gradient(
+    105deg,
+    transparent 35%,
+    color-mix(in srgb, var(--color-brand-500) 10%, transparent) 50%,
+    transparent 65%
+  );
+  background-size: 250% 100%;
+  animation: kodu-barrido 2.2s linear infinite;
+}
+
+.kodu-skeleton-bloque {
+  display: block;
+  border-radius: 10px;
+  background-color: var(--color-sutil);
+  background-image: linear-gradient(
+    105deg,
+    transparent 30%,
+    color-mix(in srgb, var(--color-superficie) 70%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 250% 100%;
+  animation: kodu-barrido 1.6s linear infinite;
+}
+
+@keyframes kodu-barrido {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kodu-velo-generando,
+  .kodu-skeleton-bloque {
+    animation: none;
+    background-image: none;
+  }
+}
+
 /* Elevación de la barra y de las tarjetas destacadas. Es una variable y no un
    token de @theme: Tailwind copia el valor de las sombras adentro de cada
    utilidad, así que redefinirla en modo oscuro no le llegaría. */
