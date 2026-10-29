@@ -1,12 +1,12 @@
 import type { APIRoute } from 'astro';
 import { fail, ok } from '../../../../lib/http.ts';
 import { requireFreshUser } from '../../../../lib/auth/guards.ts';
-import { requireFreshOrgAdmin } from '../../../../lib/orgs/alcance.ts';
+import { requireFreshOrgBilling } from '../../../../lib/orgs/alcance.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { cancelarOrg } from '../../../../lib/billing/aplicar.ts';
 
 /** POST /api/billing/org/cancel (odd/tasks/planes-y-cobros.md T4) — cancela
- *  al fin del período, sólo el admin de la organización RAÍZ. */
+ *  al fin del período, sólo un admin de la organización RAÍZ con facturación. */
 export const POST: APIRoute = async ({ locals }) => {
   const user = requireFreshUser(locals);
   if (user instanceof Response) return user;
@@ -17,7 +17,7 @@ export const POST: APIRoute = async ({ locals }) => {
   const org = await prisma.organization.findUnique({ where: { id: fila.organizationId }, select: { parentId: true } });
   const rootId = org?.parentId ?? fila.organizationId;
 
-  const autorizado = await requireFreshOrgAdmin(locals, rootId);
+  const autorizado = await requireFreshOrgBilling(locals, rootId);
   if (autorizado instanceof Response) return autorizado;
 
   const resultado = await cancelarOrg(rootId);

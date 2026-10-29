@@ -2,6 +2,7 @@
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import PanelDocentes from '../../components/orgs/PanelDocentes.tsx';
 import AccesoOrganizacion from '../../components/orgs/AccesoOrganizacion.tsx';
+import AdminsRed from '../../components/orgs/AdminsRed.tsx';
 import AvisoRenovacion from '../../components/billing/AvisoRenovacion.astro';
 import { alcanceDeAdmin, requireOrgAdmin } from '../../lib/orgs/alcance.ts';
 import { prisma } from '../../lib/db.ts';
@@ -101,15 +102,18 @@ const [consumo, docentesTotales, serie] = detalle
     ])
   : [null, 0, []];
 
-// T4b: aviso de renovación del ciclo — sólo si quien mira administra la RAÍZ
-// (misma lógica de alcance que `/org/plan.astro`), nunca a un admin de sede
-// suelta, que no puede pagar.
+// Facturación (odd/tasks/org-admin-facturacion.md): la licencia vive en la
+// RAÍZ, y sólo la ve quien la gestiona (misma regla que `/org/plan.astro`, la
+// de `puedeGestionarFacturacion` en alcance.ts). Un admin sin ese permiso no
+// ve ni el link al plan ni el aviso de renovación.
+const rootId = detalle ? (detalle.padre?.id ?? detalle.id) : null;
+const puedeFacturacion = rootId !== null && (alcance.esSuperadmin || alcance.facturacionIds.has(rootId));
+
+// T4b: aviso de renovación del ciclo — sólo para quien gestiona la facturación.
 let mostrarAvisoRenovacion = false;
 let licenciaParaAviso: { currentPeriodEnd: Date } | null = null;
-if (detalle) {
-  const rootId = detalle.padre?.id ?? detalle.id;
-  const esAdminDeEsaRaiz = alcance.esSuperadmin || alcance.redIds.has(rootId) || alcance.campusIds.has(rootId);
-  if (esAdminDeEsaRaiz) {
+if (detalle && rootId !== null) {
+  if (puedeFacturacion) {
     const now = billingNow();
     await reconciliarLicenciaOrgVencida(rootId, now);
     const license = await prisma.organizationLicense.findUnique({
@@ -196,15 +200,15 @@ function urlConSede(sede: string | null, mesParam?: string): string {
               {detalle.archivada && <span class="text-red-600">· Archivada</span>}
             </p>
             {/* odd/tasks/planes-y-cobros.md (T6): licencia y pagos — vive en
-                la RAÍZ, por eso nunca lleva `?sede=` cuando ya estamos
-                parados en una sede propia (el admin de sede entra igual,
-                pero en modo lectura — ver /org/plan). */}
-            <a
-              href={organizationId ? `/org/plan?sede=${organizationId}` : '/org/plan'}
-              class="text-sm text-brand-600 hover:underline"
-            >
-              Plan y facturación →
-            </a>
+                la RAÍZ. Sólo el link para quien la gestiona. */}
+            {puedeFacturacion && (
+              <a
+                href={organizationId ? `/org/plan?sede=${organizationId}` : '/org/plan'}
+                class="text-sm text-brand-600 hover:underline"
+              >
+                Plan y facturación →
+              </a>
+            )}
           </div>
 
           {redDetalle && (
@@ -240,10 +244,31 @@ function urlConSede(sede: string | null, mesParam?: string): string {
                   organizationNombre={detalle.name}
                   initialMiembros={miembros}
                   puedeMover={puedeMover}
+                  esRaiz={detalle.padre === null}
+                  puedeGestionarFacturacion={puedeFacturacion}
                 />
               </div>
             )}
           </section>
+
+          {esRed && (
+            <section class="kodu-card p-4">
+              <h2 class="text-sm font-semibold text-ink-900">Admins de la red</h2>
+              <p class="mt-1 text-xs text-ink-500">
+                {puedeFacturacion
+                  ? 'Quien tiene facturación ve el plan y los pagos de la institución y puede repartir ese permiso.'
+                  : 'La insignia "Facturación" marca a quien ve el plan y los pagos de la institución.'}
+              </p>
+              <div class="mt-3">
+                <AdminsRed
+                  client:load
+                  organizationId={detalle.id}
+                  initialAdmins={detalle.adminsLista}
+                  puedeGestionarFacturacion={puedeFacturacion}
+                />
+              </div>
+            </section>
+          )}
 
           <section>
             <h2 class="mb-3 text-sm font-semibold text-ink-900">Acceso</h2>

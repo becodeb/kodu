@@ -243,7 +243,7 @@ async function main(): Promise<void> {
     });
 
     // ───────────────────────────────────────────────────────
-    // /org/plan — admin TRIAL (preview + pago), admin de sede (lectura).
+    // /org/plan — admin TRIAL (preview + pago), admin de sede (redirect).
     // ───────────────────────────────────────────────────────
     const orgAdminTrial = await prepararOrgTrial(500); // MEDIANA
     console.log('… esperando 11s la caché de organizaciones del dev server…');
@@ -251,7 +251,7 @@ async function main(): Promise<void> {
 
     const { page: adminPage, userId: adminUserId } = await registrar(`admin@${orgAdminTrial.dominio}`);
     emailsCreados.push(`admin@${orgAdminTrial.dominio}`);
-    await prisma.organizationAdmin.create({ data: { userId: adminUserId, organizationId: orgAdminTrial.orgId } });
+    await prisma.organizationAdmin.create({ data: { userId: adminUserId, organizationId: orgAdminTrial.orgId, canManageBilling: true } });
 
     await prueba('/org/plan: admin TRIAL ve el estado de prueba y la vista previa de firstCharge', async () => {
       await adminPage.goto(`${BASE_URL}/org/plan`);
@@ -271,7 +271,7 @@ async function main(): Promise<void> {
       assert.equal(license.status, 'ACTIVE');
     });
 
-    // Admin de UNA sede (sin ser admin de la red) — sólo lectura.
+    // Admin de UNA sede (sin ser admin de la red) — no gestiona la facturación.
     const red = await prisma.organization.create({ data: { name: `Red páginas E2E ${SUFIJO}`, kind: 'NETWORK' }, select: { id: true } });
     organizacionesCreadas.push(red.id);
     await prisma.organizationLicense.create({
@@ -286,13 +286,13 @@ async function main(): Promise<void> {
     emailsCreados.push(`admin@${dominioSede}`);
     await prisma.organizationAdmin.create({ data: { userId: sedeAdminId, organizationId: sede.id } });
 
-    await prueba('/org/plan: un admin de sede (no de la red) ve todo en modo lectura, sin botón de pagar', async () => {
-      await sedeAdminPage.goto(`${BASE_URL}/org/plan?sede=${sede.id}`);
-      await sedeAdminPage.waitForTimeout(400);
-      const texto = await sedeAdminPage.textContent('body');
-      assert.ok(texto?.includes('administrador de una sede'), 'debe avisar que está en modo lectura');
-      const hayBotonPagar = await sedeAdminPage.evaluate(() => Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.includes('Pagar')));
-      assert.equal(hayBotonPagar, false, 'un admin de sede no debe ver botones de pagar');
+    // odd/tasks/org-admin-facturacion.md: ya no hay vista de sólo lectura. Un
+    // admin de sede no gestiona la facturación de la red: lo manda al /app,
+    // igual que a un extraño, y no ve ninguna página de plan.
+    await prueba('/org/plan: un admin de sede (no de la red) no ve el plan: redirect, sin botón de pagar', async () => {
+      const respuesta = await sedeAdminPage.request.get(`${BASE_URL}/org/plan?sede=${sede.id}`, { maxRedirects: 0 });
+      assert.equal(respuesta.status(), 302);
+      assert.ok((respuesta.headers().location ?? '').endsWith('/app'), 'debe redirigir a /app');
     });
 
     // ───────────────────────────────────────────────────────

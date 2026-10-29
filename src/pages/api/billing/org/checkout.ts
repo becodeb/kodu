@@ -2,14 +2,14 @@ import type { APIRoute } from 'astro';
 import { z } from 'zod';
 import { fail, ok, readBody } from '../../../../lib/http.ts';
 import { requireFreshUser } from '../../../../lib/auth/guards.ts';
-import { requireFreshOrgAdmin } from '../../../../lib/orgs/alcance.ts';
+import { requireFreshOrgBilling } from '../../../../lib/orgs/alcance.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { crearCheckoutOrg } from '../../../../lib/billing/aplicar.ts';
 
 /**
  * POST /api/billing/org/checkout (odd/tasks/planes-y-cobros.md T4): contrata
  * la licencia institucional de la organización RAÍZ de quien llama —
- * SOLO un admin de esa raíz (`requireFreshOrgAdmin`), nunca de un
+ * SOLO un admin de esa raíz CON facturación (`requireFreshOrgBilling`), nunca de un
  * `organizationId` que mande el cliente (evita que un docente cualquiera
  * arranque un cobro de una institución ajena).
  */
@@ -31,7 +31,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const org = await prisma.organization.findUnique({ where: { id: fila.organizationId }, select: { parentId: true } });
   const rootId = org?.parentId ?? fila.organizationId;
 
-  const autorizado = await requireFreshOrgAdmin(locals, rootId);
+  const autorizado = await requireFreshOrgBilling(locals, rootId);
   if (autorizado instanceof Response) return autorizado;
 
   const parsed = schema.safeParse(await readBody(request));

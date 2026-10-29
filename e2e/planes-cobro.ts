@@ -99,7 +99,7 @@ async function prepararOrg(
 async function registrarAdminDe(org: { orgId: string; dominio: string }): Promise<{ page: Page; userId: string }> {
   const { page, body } = await registrar(`admin@${org.dominio}`);
   assert.equal(body.user.organizationId, org.orgId, `admin@${org.dominio} debe unirse a la organización por dominio`);
-  await prisma.organizationAdmin.create({ data: { userId: body.user.id, organizationId: org.orgId } });
+  await prisma.organizationAdmin.create({ data: { userId: body.user.id, organizationId: org.orgId, canManageBilling: true } });
   return { page, userId: body.user.id };
 }
 

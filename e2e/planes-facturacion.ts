@@ -81,7 +81,7 @@ async function prepararOrg(declaredStudents: number): Promise<{ orgId: string; d
 
 async function registrarAdminDe(org: { orgId: string; dominio: string }): Promise<{ page: Page; userId: string }> {
   const { page, body } = await registrar(`admin@${org.dominio}`);
-  await prisma.organizationAdmin.create({ data: { userId: body.user.id, organizationId: org.orgId } });
+  await prisma.organizationAdmin.create({ data: { userId: body.user.id, organizationId: org.orgId, canManageBilling: true } });
   return { page, userId: body.user.id };
 }
 

@@ -19,6 +19,10 @@ interface Props {
   initialMiembros: MiembroOrganizacion[];
   /** Sólo un admin de RED (o el superadmin visitando `/org`) puede mover. */
   puedeMover: boolean;
+  /** `organizationId` es una organización RAÍZ (colegio standalone): ahí se reparte la facturación. */
+  esRaiz: boolean;
+  /** Quien mira gestiona la facturación de la raíz de esta sede (o es superadmin). */
+  puedeGestionarFacturacion: boolean;
 }
 
 export default function PanelDocentes(props: Props) {
@@ -28,7 +32,8 @@ export default function PanelDocentes(props: Props) {
 
   async function promover(miembro: MiembroOrganizacion) {
     setPending(true);
-    const result = await apiRequest(`/api/org/organizaciones/${props.organizationId}/admins`, 'POST', {
+    setError(null);
+    const result = await apiRequest<{ canManageBilling: boolean }>(`/api/org/organizaciones/${props.organizationId}/admins`, 'POST', {
       userId: miembro.id,
     });
     setPending(false);
@@ -36,7 +41,9 @@ export default function PanelDocentes(props: Props) {
       setError(result.error);
       return;
     }
-    setMiembros((actuales) => actuales.map((m) => (m.id === miembro.id ? { ...m, esAdmin: true } : m)));
+    setMiembros((actuales) =>
+      actuales.map((m) => (m.id === miembro.id ? { ...m, esAdmin: true, facturacion: m.facturacion || result.data.canManageBilling } : m)),
+    );
   }
 
   async function degradar(miembro: MiembroOrganizacion) {
@@ -47,7 +54,25 @@ export default function PanelDocentes(props: Props) {
       setError(result.error);
       return;
     }
-    setMiembros((actuales) => actuales.map((m) => (m.id === miembro.id ? { ...m, esAdmin: false } : m)));
+    // Sacar el admin de una raíz le saca también la facturación de esa raíz;
+    // en una sede de una red, la del titular de la red no cambia.
+    setMiembros((actuales) =>
+      actuales.map((m) => (m.id === miembro.id ? { ...m, esAdmin: false, facturacion: props.esRaiz ? false : m.facturacion } : m)),
+    );
+  }
+
+  async function cambiarFacturacion(miembro: MiembroOrganizacion, canManageBilling: boolean) {
+    setPending(true);
+    setError(null);
+    const result = await apiRequest(`/api/org/organizaciones/${props.organizationId}/admins/${miembro.id}`, 'PATCH', {
+      canManageBilling,
+    });
+    setPending(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setMiembros((actuales) => actuales.map((m) => (m.id === miembro.id ? { ...m, facturacion: canManageBilling } : m)));
   }
 
   async function quitar(miembro: MiembroOrganizacion) {
@@ -93,6 +118,8 @@ export default function PanelDocentes(props: Props) {
         organizationNombre={props.organizationNombre}
         pending={pending}
         puedeMover={props.puedeMover}
+        puedeGestionarFacturacion={props.puedeGestionarFacturacion}
+        onFacturacion={props.esRaiz && props.puedeGestionarFacturacion ? cambiarFacturacion : undefined}
         onPromover={promover}
         onDegradar={degradar}
         onQuitar={quitar}

@@ -59,18 +59,27 @@ const enMisRecursos =
  * Opción MÁS BARATA que sigue siendo correcta: en vez de llamar a
  * `alcanceDeAdmin` (2-3 queries, remembering archivado/membresía vigente —
  * ver alcance.ts) en CADA página del sitio para un docente logueado, alcanza
- * con una existencia de fila `OrganizationAdmin` (`findFirst`, un solo índice
- * por `userId`). La única diferencia observable: un docente que dejó de ser
+ * con las filas `OrganizationAdmin` del usuario (una sola query por el índice
+ * de `userId`). La única diferencia observable: un docente que dejó de ser
  * elegible (se fue de la sede/red que administraba, fila "colgada" — ver el
  * comentario de `alcance.ts`) puede ver el link un instante de más hasta que
  * alguien borre esa fila vieja; al entrar, `/org` hace el chequeo COMPLETO y
  * lo manda de vuelta a `/app` si ya no le sirve. Nunca al revés: no puede
  * FALTAR el link para alguien que sigue siendo un admin vigente.
  */
-const esPotencialAdminDeOrganizacion =
+const filasAdminDeOrganizacion =
   user && user.role !== 'ADMIN'
-    ? (await prisma.organizationAdmin.findFirst({ where: { userId: user.id }, select: { userId: true } })) !== null
-    : false;
+    ? await prisma.organizationAdmin.findMany({
+        where: { userId: user.id },
+        select: { canManageBilling: true, organization: { select: { parentId: true } } },
+      })
+    : [];
+const esPotencialAdminDeOrganizacion = filasAdminDeOrganizacion.length > 0;
+// Mismo criterio de "no puede faltar" para el atajo de facturación: sólo quien
+// tiene el permiso en alguna fila entra a /org/plan (la página decide igual).
+const esPotencialTitularDeFacturacion = filasAdminDeOrganizacion.some(
+  (fila) => fila.canManageBilling && fila.organization.parentId === null,
+);
 const pageTitle = title === 'Kodu' ? title : `${title} · Kodu`;
 
 /**
@@ -115,9 +124,10 @@ const planInstitucional =
 // El plan es de la raíz (la red, si la sede cuelga de una): ese es el nombre
 // que figura en lo que se contrató.
 const nombrePlanInstitucional = planInstitucional ? (planInstitucional.parent?.name ?? planInstitucional.name) : null;
-// Quien administra la institución va a ver el plan contratado; un docente
-// miembro, a "Mi plan", que le explica que lo paga la institución.
-const enlacePlanInstitucional = esPotencialAdminDeOrganizacion ? '/org/plan' : '/app/plan';
+// Quien gestiona la facturación va a ver el plan contratado; un docente
+// miembro (o un admin sin facturación), a "Mi plan", que le explica que lo paga
+// la institución.
+const enlacePlanInstitucional = esPotencialTitularDeFacturacion ? '/org/plan' : '/app/plan';
 
 // Los scrapers de WhatsApp y compañía necesitan la URL absoluta, y tiene que
 // salir de PUBLIC_SITE_URL: detrás del proxy, Astro.url cree que el sitio es

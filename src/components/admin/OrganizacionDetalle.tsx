@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import Modal from '../workspace/Modal.tsx';
 import MiembrosLista from '../orgs/MiembrosLista.tsx';
+import InsigniaFacturacion from '../orgs/InsigniaFacturacion.tsx';
 import { apiRequest } from '../../lib/client/api.ts';
 import type {
   DetalleOrganizacion,
@@ -216,17 +217,24 @@ export default function OrganizacionDetalle(props: Props) {
    *  lista se muestra — ver el `{org.kind === 'CAMPUS' && ...}` de abajo). */
   async function promoverDocenteInline(miembro: MiembroOrganizacion) {
     setPending(true);
-    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/admins`, 'POST', { userId: miembro.id });
+    const result = await apiRequest<{ canManageBilling: boolean }>(`/api/admin/organizaciones/${org.id}/admins`, 'POST', {
+      userId: miembro.id,
+    });
     setPending(false);
     if (!result.ok) {
       reportarError(result.error);
       return;
     }
-    setMiembros((actuales) => actuales.map((item) => (item.id === miembro.id ? { ...item, esAdmin: true } : item)));
+    const { canManageBilling } = result.data;
+    setMiembros((actuales) =>
+      actuales.map((item) =>
+        item.id === miembro.id ? { ...item, esAdmin: true, facturacion: item.facturacion || canManageBilling } : item,
+      ),
+    );
     setOrg((actual) => ({
       ...actual,
       admins: actual.admins + 1,
-      adminsLista: [...actual.adminsLista, { id: miembro.id, name: miembro.name, email: miembro.email }],
+      adminsLista: [...actual.adminsLista, { id: miembro.id, name: miembro.name, email: miembro.email, canManageBilling }],
     }));
   }
 
@@ -238,7 +246,11 @@ export default function OrganizacionDetalle(props: Props) {
       reportarError(result.error);
       return;
     }
-    setMiembros((actuales) => actuales.map((item) => (item.id === miembro.id ? { ...item, esAdmin: false } : item)));
+    setMiembros((actuales) =>
+      actuales.map((item) =>
+        item.id === miembro.id ? { ...item, esAdmin: false, facturacion: org.parentId === null ? false : item.facturacion } : item,
+      ),
+    );
     setOrg((actual) => ({
       ...actual,
       admins: Math.max(0, actual.admins - 1),
@@ -249,22 +261,29 @@ export default function OrganizacionDetalle(props: Props) {
   // ── Admins ─────────────────────────────────────────────────
   async function promover(miembro: { id: string; name: string; email: string }) {
     setPending(true);
-    const result = await apiRequest(`/api/admin/organizaciones/${org.id}/admins`, 'POST', { userId: miembro.id });
+    const result = await apiRequest<{ canManageBilling: boolean }>(`/api/admin/organizaciones/${org.id}/admins`, 'POST', {
+      userId: miembro.id,
+    });
     setPending(false);
     if (!result.ok) {
       reportarError(result.error);
       return;
     }
+    const { canManageBilling } = result.data;
     setPromoviendo(false);
     setSedeElegida('');
     setMiembrosDeSede(null);
     setOrg((actual) => ({
       ...actual,
       admins: actual.admins + 1,
-      adminsLista: [...actual.adminsLista, { id: miembro.id, name: miembro.name, email: miembro.email }],
+      adminsLista: [...actual.adminsLista, { id: miembro.id, name: miembro.name, email: miembro.email, canManageBilling }],
     }));
     if (org.kind === 'CAMPUS') {
-      setMiembros((actuales) => actuales.map((item) => (item.id === miembro.id ? { ...item, esAdmin: true } : item)));
+      setMiembros((actuales) =>
+        actuales.map((item) =>
+          item.id === miembro.id ? { ...item, esAdmin: true, facturacion: item.facturacion || canManageBilling } : item,
+        ),
+      );
     }
   }
 
@@ -498,6 +517,12 @@ export default function OrganizacionDetalle(props: Props) {
                 <span className="min-w-0 break-all">
                   <span className="text-ink-900">{admin.name}</span>{' '}
                   <span className="text-xs text-ink-500">{admin.email}</span>
+                  {admin.canManageBilling && (
+                    <>
+                      {' '}
+                      <InsigniaFacturacion />
+                    </>
+                  )}
                 </span>
                 <button
                   type="button"

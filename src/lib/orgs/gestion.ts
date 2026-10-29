@@ -2,7 +2,7 @@ import { prisma } from '../db.ts';
 import { Prisma } from '../../generated/prisma/client.ts';
 import { normalizeEmail, emailDomain } from '../auth/domains.ts';
 import { emailConfiable } from './membresia.ts';
-import { alcanceDeAdmin, puedeAdministrar } from './alcance.ts';
+import { alcanceDeAdmin, puedeAdministrar, puedeGestionarFacturacion } from './alcance.ts';
 import { invalidarCacheOrganizaciones } from './resolucion.ts';
 import type { OrganizationKind } from '../../generated/prisma/client.ts';
 
@@ -331,6 +331,13 @@ export interface MiembroOrganizacion {
   createdAt: string;
   esAdmin: boolean;
   /**
+   * odd/tasks/org-admin-facturacion.md: gestiona la facturación de alguna
+   * organización RAÍZ (fila con `canManageBilling`) — no necesariamente ésta:
+   * el titular de una red es docente de una de sus sedes y tiene que verse
+   * (y protegerse) también en la lista de esa sede.
+   */
+  facturacion: boolean;
+  /**
    * odd/tasks/organizaciones.md (T8): CONTEO de recursos, nunca el recurso en
    * sí — "el admin de organización ve conteos, no contenido" (decisión del
    * dueño). Mismo criterio que `listarUsuariosAdmin` (src/lib/admin/usuarios.ts).
@@ -356,6 +363,16 @@ export async function listarMiembros(actor: ActorGestion, organizationId: string
   const adminIds = new Set(admins.map((fila) => fila.userId));
 
   const ids = miembros.map((m) => m.id);
+  const titulares = new Set(
+    ids.length > 0
+      ? (
+          await prisma.organizationAdmin.findMany({
+            where: { userId: { in: ids }, canManageBilling: true, organization: { parentId: null } },
+            select: { userId: true },
+          })
+        ).map((fila) => fila.userId)
+      : [],
+  );
   // Un solo `groupBy` para TODOS los docentes de la sede (mismo criterio que
   // `listarUsuariosAdmin`), no un `count`/`aggregate` por fila.
   const proyectosPorUsuario =
@@ -373,6 +390,7 @@ export async function listarMiembros(actor: ActorGestion, organizationId: string
       emailVerificationSource: miembro.emailVerificationSource,
       createdAt: miembro.createdAt.toISOString(),
       esAdmin: adminIds.has(miembro.id),
+      facturacion: titulares.has(miembro.id),
       recursos: proyectoInfo?._count._all ?? 0,
       ultimaActividad: proyectoInfo?._max.updatedAt ? proyectoInfo._max.updatedAt.toISOString() : null,
     };
@@ -396,6 +414,8 @@ export async function quitarMiembro(actor: ActorGestion, userId: string): Promis
   if (!miembro.organizationId) throw new GestionError('Ese docente ya es una cuenta personal.', 409);
 
   await exigirPuedeAdministrar(actor, miembro.organizationId);
+  // Borra TODAS sus filas de admin, la de facturación incluida.
+  await exigirTitularProtegido(actor, userId, { borraFilas: true });
   const campusId = miembro.organizationId;
   const email = normalizeEmail(miembro.email);
 
@@ -434,6 +454,7 @@ export async function moverMiembro(actor: ActorGestion, userId: string, destinoC
 
   await exigirPuedeAdministrar(actor, miembro.organizationId);
   await exigirPuedeAdministrar(actor, destinoCampusId);
+  await exigirTitularProtegido(actor, userId, { borraFilas: false });
 
   if (miembro.organizationId === destinoCampusId) return;
 
@@ -461,7 +482,19 @@ async function targetPerteneceAOrganizacion(targetUserId: string, organizationId
   return target.organization?.parentId === organizationId;
 }
 
-export async function promoverAdmin(actor: ActorGestion, organizationId: string, targetUserId: string) {
+/**
+ * Promover a admin NUNCA da facturación cuando lo hace un admin de la
+ * organización (odd/tasks/org-admin-facturacion.md): el titular se la da
+ * después, a propósito, con `fijarFacturacionAdmin`. La única excepción es el
+ * superadmin nombrando al primer admin de una organización RAÍZ que todavía
+ * no tiene a nadie con facturación — sin eso, esa institución no podría pagar.
+ * Devuelve si la fila quedó con facturación.
+ */
+export async function promoverAdmin(
+  actor: ActorGestion,
+  organizationId: string,
+  targetUserId: string,
+): Promise<{ canManageBilling: boolean }> {
   await exigirPuedeAdministrar(actor, organizationId);
 
   const pertenece = await targetPerteneceAOrganizacion(targetUserId, organizationId);
@@ -469,10 +502,112 @@ export async function promoverAdmin(actor: ActorGestion, organizationId: string,
     throw new GestionError('Ese docente no pertenece a esta organización.', 422);
   }
 
-  await prisma.organizationAdmin.upsert({
+  const org = await obtenerOrganizacionOFallar(organizationId);
+  const sinTitular =
+    actor.role === 'ADMIN' &&
+    org.parentId === null &&
+    (await prisma.organizationAdmin.count({ where: { organizationId, canManageBilling: true } })) === 0;
+
+  const fila = await prisma.organizationAdmin.upsert({
     where: { userId_organizationId: { userId: targetUserId, organizationId } },
-    create: { userId: targetUserId, organizationId, createdById: actor.id },
+    create: { userId: targetUserId, organizationId, createdById: actor.id, canManageBilling: sinTitular },
     update: {},
+    select: { canManageBilling: true },
+  });
+  return { canManageBilling: fila.canManageBilling };
+}
+
+/** Raíces (red, o colegio standalone) cuya facturación gestiona `userId`. */
+async function raicesConFacturacion(userId: string): Promise<string[]> {
+  const filas = await prisma.organizationAdmin.findMany({
+    where: { userId, canManageBilling: true, organization: { parentId: null } },
+    select: { organizationId: true },
+  });
+  return filas.map((fila) => fila.organizationId);
+}
+
+/**
+ * Protege al titular de la facturación: quien no gestiona esa misma
+ * facturación no puede sacarle el admin, darlo de baja ni moverlo; y NADIE
+ * (salvo el superadmin) puede dejar una raíz sin titular, ni siquiera sobre sí
+ * mismo. `raiz` limita la mirada a una sola raíz (degradar una fila);
+ * `borraFilas` activa el "último titular" (la baja borra la fila de
+ * facturación, mover no).
+ */
+async function exigirTitularProtegido(
+  actor: ActorGestion,
+  targetUserId: string,
+  opciones: { raiz?: string; borraFilas: boolean },
+): Promise<void> {
+  const alcance = await alcanceDeAdmin(actor);
+  if (alcance.esSuperadmin) return;
+
+  let raices = await raicesConFacturacion(targetUserId);
+  if (opciones.raiz) raices = raices.filter((raiz) => raiz === opciones.raiz);
+
+  for (const raiz of raices) {
+    if (!alcance.facturacionIds.has(raiz)) {
+      throw new GestionError(
+        'Esa persona gestiona la facturación de la institución. Sólo otro admin con facturación puede hacer esto.',
+        403,
+      );
+    }
+    if (opciones.borraFilas) {
+      const titulares = await prisma.organizationAdmin.count({ where: { organizationId: raiz, canManageBilling: true } });
+      if (titulares <= 1) {
+        throw new GestionError(
+          'Es la única persona con facturación de la institución. Dale facturación a otro admin antes.',
+          409,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Da o quita la facturación a un admin de la organización RAÍZ
+ * `organizationId` (odd/tasks/org-admin-facturacion.md). Sólo el superadmin o
+ * un admin que ya la gestiona; el destino tiene que ser admin de esa raíz; y
+ * la raíz nunca se queda sin titular. El `FOR UPDATE` sobre la organización
+ * serializa dos revocaciones simultáneas (si no, cada una vería al otro
+ * titular todavía en pie y la raíz quedaría sin ninguno).
+ */
+export async function fijarFacturacionAdmin(
+  actor: ActorGestion,
+  organizationId: string,
+  targetUserId: string,
+  canManageBilling: boolean,
+): Promise<void> {
+  await exigirPuedeAdministrar(actor, organizationId);
+  const org = await obtenerOrganizacionOFallar(organizationId);
+  if (org.parentId !== null) {
+    throw new GestionError('La facturación se gestiona a nivel de la institución, no de una sede.', 422);
+  }
+  if (!(await puedeGestionarFacturacion(actor, organizationId))) {
+    throw new GestionError('Sólo quien gestiona la facturación puede cambiar esto.', 403);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT "id" FROM "Organization" WHERE "id" = ${organizationId} FOR UPDATE`;
+
+    const fila = await tx.organizationAdmin.findUnique({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+      select: { canManageBilling: true },
+    });
+    if (!fila) throw new GestionError('Esa persona no es admin de esta organización.', 404);
+    if (fila.canManageBilling === canManageBilling) return;
+
+    if (!canManageBilling) {
+      const titulares = await tx.organizationAdmin.count({ where: { organizationId, canManageBilling: true } });
+      if (titulares <= 1) {
+        throw new GestionError('Tiene que quedar al menos un admin con facturación.', 409);
+      }
+    }
+
+    await tx.organizationAdmin.update({
+      where: { userId_organizationId: { userId: targetUserId, organizationId } },
+      data: { canManageBilling },
+    });
   });
 }
 
@@ -484,6 +619,7 @@ export async function promoverAdmin(actor: ActorGestion, organizationId: string,
  */
 export async function degradarAdmin(actor: ActorGestion, organizationId: string, targetUserId: string) {
   await exigirPuedeAdministrar(actor, organizationId);
+  await exigirTitularProtegido(actor, targetUserId, { raiz: organizationId, borraFilas: true });
 
   if (targetUserId === actor.id) {
     const alcance = await alcanceDeAdmin(actor);
@@ -559,6 +695,8 @@ export interface AdminDeOrganizacion {
   id: string;
   name: string;
   email: string;
+  /** Sólo puede ser `true` en una organización RAÍZ (ver `canManageBilling` en schema.prisma). */
+  canManageBilling: boolean;
 }
 
 export interface DetalleOrganizacion extends OrganizacionResumen {
@@ -597,13 +735,16 @@ export async function obtenerDetalleOrganizacion(
       : Promise.resolve([]),
     prisma.organizationAdmin.findMany({
       where: { organizationId },
-      select: { user: { select: { id: true, name: true, email: true } } },
+      select: { canManageBilling: true, user: { select: { id: true, name: true, email: true } } },
       orderBy: { user: { name: 'asc' } },
     }),
   ]);
 
   const sedesResumen = await Promise.all(sedes.map(serializarResumen));
-  const adminsLista = adminsFilas.map((fila) => fila.user);
+  const adminsLista = adminsFilas.map((fila) => ({
+    ...fila.user,
+    canManageBilling: fila.canManageBilling && org.parentId === null,
+  }));
 
   return { ...resumen, dominios, listaBlanca, padre, sedes: sedesResumen, adminsLista };
 }

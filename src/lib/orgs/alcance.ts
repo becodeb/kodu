@@ -22,6 +22,14 @@ import type { SessionUser } from '../auth/session.ts';
  *    es una NETWORK) — un admin de una sede de la que ya se fue no arrastra
  *    el permiso, y un admin de una red que cambió de sede sigue sirviendo
  *    mientras la nueva sede sea de la MISMA red.
+ *
+ * Facturación (odd/tasks/org-admin-facturacion.md): administrar NO implica
+ * ver ni pagar el plan. La licencia vive en la RAÍZ (red, o colegio
+ * standalone) y sólo la gestiona el superadmin o quien tiene, en la fila de
+ * `OrganizationAdmin` de esa raíz, `canManageBilling = true`
+ * (`facturacionIds` / `puedeGestionarFacturacion` / `requireFreshOrgBilling`
+ * son LA regla: ninguna página ni API la reimplementa). El flag en la fila de
+ * una sede de una red no cuenta nunca.
  */
 
 export interface AlcanceAdmin {
@@ -30,6 +38,13 @@ export interface AlcanceAdmin {
   redIds: Set<string>;
   /** ids de CAMPUS que administra, directo o heredado de una red (ídem). */
   campusIds: Set<string>;
+  /**
+   * ids de organizaciones RAÍZ (red, o colegio standalone) cuya facturación
+   * gestiona: tiene la fila con `canManageBilling`, la fila CUENTA (mismo
+   * criterio de arriba) y la organización es de tope. Siempre vacío para el
+   * superadmin (que gestiona todas: mirar `esSuperadmin`).
+   */
+  facturacionIds: Set<string>;
 }
 
 interface ActorAlcance {
@@ -50,19 +65,24 @@ async function propioCampusYRed(userId: string): Promise<{ campusId: string | nu
 
 export async function alcanceDeAdmin(actor: ActorAlcance): Promise<AlcanceAdmin> {
   if (actor.role === 'ADMIN') {
-    return { esSuperadmin: true, redIds: new Set(), campusIds: new Set() };
+    return { esSuperadmin: true, redIds: new Set(), campusIds: new Set(), facturacionIds: new Set() };
   }
 
   const [propio, filas] = await Promise.all([
     propioCampusYRed(actor.id),
     prisma.organizationAdmin.findMany({
       where: { userId: actor.id },
-      select: { organizationId: true, organization: { select: { kind: true, archivedAt: true } } },
+      select: {
+        organizationId: true,
+        canManageBilling: true,
+        organization: { select: { kind: true, archivedAt: true, parentId: true } },
+      },
     }),
   ]);
 
   const redIds = new Set<string>();
   const campusIds = new Set<string>();
+  const facturacionIds = new Set<string>();
 
   for (const fila of filas) {
     // "Archivada = sólo superadmin" (decisión del dueño): una fila de
@@ -70,10 +90,19 @@ export async function alcanceDeAdmin(actor: ActorAlcance): Promise<AlcanceAdmin>
     // ni siquiera para su propio dueño.
     if (fila.organization.archivedAt !== null) continue;
 
+    let cuenta = false;
     if (fila.organization.kind === 'CAMPUS') {
-      if (propio.campusId === fila.organizationId) campusIds.add(fila.organizationId);
+      if (propio.campusId === fila.organizationId) {
+        campusIds.add(fila.organizationId);
+        cuenta = true;
+      }
     } else if (propio.redId === fila.organizationId) {
       redIds.add(fila.organizationId);
+      cuenta = true;
+    }
+
+    if (cuenta && fila.canManageBilling && fila.organization.parentId === null) {
+      facturacionIds.add(fila.organizationId);
     }
   }
 
@@ -85,7 +114,7 @@ export async function alcanceDeAdmin(actor: ActorAlcance): Promise<AlcanceAdmin>
     for (const sede of sedes) campusIds.add(sede.id);
   }
 
-  return { esSuperadmin: false, redIds, campusIds };
+  return { esSuperadmin: false, redIds, campusIds, facturacionIds };
 }
 
 /**
@@ -101,6 +130,17 @@ export async function puedeAdministrar(actor: ActorAlcance, organizationId: stri
   if (!org || org.archivedAt !== null) return false;
 
   return alcance.campusIds.has(organizationId) || alcance.redIds.has(organizationId);
+}
+
+/**
+ * ¿Puede `actor` ver y gestionar la facturación (plan, matrícula, pagos,
+ * cancelación, renovación) de `rootId`? `rootId` es la organización RAÍZ:
+ * la red, o el colegio standalone. Superadmin, o un admin de esa raíz con
+ * `canManageBilling`.
+ */
+export async function puedeGestionarFacturacion(actor: ActorAlcance, rootId: string): Promise<boolean> {
+  const alcance = await alcanceDeAdmin(actor);
+  return alcance.esSuperadmin || alcance.facturacionIds.has(rootId);
 }
 
 /** Las sedes (CAMPUS, no archivadas) que `actor` puede administrar — para ofrecerlas en un selector (T4/T6). */
@@ -158,6 +198,24 @@ export async function requireFreshOrgAdmin(
 
   if (!locals.identityFresh) {
     return fail('No pudimos confirmar tus permisos. Probá de nuevo en unos segundos.', 503);
+  }
+  return resultado;
+}
+
+/**
+ * Guarda de TODA ruta `/api/billing/org/**`: `requireFreshOrgAdmin` + el
+ * permiso de facturación de la raíz. Un admin sin facturación recibe
+ * exactamente el mismo 404 que un extraño — la ruta no confirma que exista.
+ */
+export async function requireFreshOrgBilling(
+  locals: App.Locals,
+  rootId: string,
+): Promise<SessionUser | Response> {
+  const resultado = await requireFreshOrgAdmin(locals, rootId);
+  if (resultado instanceof Response) return resultado;
+
+  if (!(await puedeGestionarFacturacion(resultado, rootId))) {
+    return fail('No encontramos esa organización.', 404);
   }
   return resultado;
 }

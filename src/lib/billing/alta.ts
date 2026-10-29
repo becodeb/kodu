@@ -241,7 +241,11 @@ export async function altaInstitucion(
         },
       });
 
-      await tx.organizationAdmin.create({ data: { userId: actor.id, organizationId: raiz.id } });
+      // El creador de la institución es su primer admin Y el titular de la
+      // facturación (odd/tasks/org-admin-facturacion.md): después lo reparte.
+      await tx.organizationAdmin.create({
+        data: { userId: actor.id, organizationId: raiz.id, canManageBilling: true },
+      });
 
       // El creador queda como DOCENTE de la primera sede (una red todavía no
       // tiene a nadie para elegir sede — T4/organizaciones.md: "el admin de

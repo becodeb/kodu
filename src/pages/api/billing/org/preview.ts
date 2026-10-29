@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { fail, ok } from '../../../../lib/http.ts';
 import { requireFreshUser } from '../../../../lib/auth/guards.ts';
-import { requireFreshOrgAdmin } from '../../../../lib/orgs/alcance.ts';
+import { requireFreshOrgBilling } from '../../../../lib/orgs/alcance.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { billingNow } from '../../../../lib/env.ts';
 import { bandForStudents } from '../../../../lib/billing/bandas.ts';
@@ -12,7 +12,7 @@ import { firstCharge } from '../../../../lib/billing/ciclo.ts';
  * T6): la vista previa de "lo que pagás hoy y qué período cubre" ANTES de
  * tocar "Pagar" — exactamente lo que calcula `firstCharge` (ciclo.ts), para
  * que `/org/plan` lo muestre sin crear ningún `Payment`. Sólo lectura (no usa
- * `crearCheckoutOrg`, que sí escribe) — admin de la organización RAÍZ.
+ * `crearCheckoutOrg`, que sí escribe) — admin de la organización RAÍZ con facturación.
  */
 export const GET: APIRoute = async ({ url, locals }) => {
   const user = requireFreshUser(locals);
@@ -27,7 +27,7 @@ export const GET: APIRoute = async ({ url, locals }) => {
   const org = await prisma.organization.findUnique({ where: { id: fila.organizationId }, select: { parentId: true } });
   const rootId = org?.parentId ?? fila.organizationId;
 
-  const autorizado = await requireFreshOrgAdmin(locals, rootId);
+  const autorizado = await requireFreshOrgBilling(locals, rootId);
   if (autorizado instanceof Response) return autorizado;
 
   const license = await prisma.organizationLicense.findUnique({ where: { organizationId: rootId } });

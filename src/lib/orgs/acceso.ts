@@ -50,9 +50,10 @@ export interface ResultadoAccesoIa {
   reason: RazonAccesoIa;
   /**
    * Sólo tiene sentido cuando `reason` es de organización/licencia: si quien
-   * mira es admin de ESA organización raíz (decisión del dueño, T3: el
-   * mensaje de "licencia no activa" es distinto para un admin de la
-   * institución que para un docente miembro cualquiera).
+   * mira es admin de ESA organización raíz CON facturación (decisión del
+   * dueño, T3: el mensaje de "licencia no activa" es distinto para quien
+   * puede contratar que para un docente miembro cualquiera — un admin sin
+   * facturación cuenta como docente miembro).
    */
   esAdminOrg?: boolean;
 }
@@ -110,12 +111,15 @@ async function licenciaDeLaRaiz(
   return {
     rootId,
     license,
+    // "Puede contratar": admin de la raíz CON facturación. Un admin sin ese
+    // permiso ve el mismo mensaje que un docente y no recibe el botón
+    // "Contratar" (odd/tasks/org-admin-facturacion.md).
     esAdminDeLaRaiz: async (userId: string) => {
       const fila = await prisma.organizationAdmin.findUnique({
         where: { userId_organizationId: { userId, organizationId: rootId } },
-        select: { userId: true },
+        select: { canManageBilling: true },
       });
-      return fila !== null;
+      return fila?.canManageBilling === true;
     },
   };
 }

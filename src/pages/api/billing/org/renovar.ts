@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { fail, ok } from '../../../../lib/http.ts';
 import { requireFreshUser } from '../../../../lib/auth/guards.ts';
-import { requireFreshOrgAdmin } from '../../../../lib/orgs/alcance.ts';
+import { requireFreshOrgBilling } from '../../../../lib/orgs/alcance.ts';
 import { prisma } from '../../../../lib/db.ts';
 import { crearCheckoutRenovacionOrg } from '../../../../lib/billing/aplicar.ts';
 
@@ -9,7 +9,7 @@ import { crearCheckoutRenovacionOrg } from '../../../../lib/billing/aplicar.ts';
  * POST /api/billing/org/renovar (odd/tasks/planes-y-cobros.md T4b): renueva
  * el ciclo lectivo de la organización RAÍZ de quien llama, antes o después
  * de que venza — mismo criterio de autorización que `org/checkout.ts` (sólo
- * un admin de la raíz). Sin body: el monto y el período los calcula el
+ * un admin de la raíz con facturación). Sin body: el monto y el período los calcula el
  * servidor a partir de la licencia ya contratada.
  */
 export const POST: APIRoute = async ({ locals }) => {
@@ -22,7 +22,7 @@ export const POST: APIRoute = async ({ locals }) => {
   const org = await prisma.organization.findUnique({ where: { id: fila.organizationId }, select: { parentId: true } });
   const rootId = org?.parentId ?? fila.organizationId;
 
-  const autorizado = await requireFreshOrgAdmin(locals, rootId);
+  const autorizado = await requireFreshOrgBilling(locals, rootId);
   if (autorizado instanceof Response) return autorizado;
 
   const resultado = await crearCheckoutRenovacionOrg({ id: user.id, email: fila.email }, rootId);

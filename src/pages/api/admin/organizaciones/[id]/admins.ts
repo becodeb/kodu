@@ -18,8 +18,8 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
 
   try {
-    await promoverAdmin(actor, params.id!, parsed.data.userId);
-    return ok({});
+    const { canManageBilling } = await promoverAdmin(actor, params.id!, parsed.data.userId);
+    return ok({ canManageBilling });
   } catch (error) {
     if (error instanceof GestionError) return fail(error.message, error.status);
     throw error;

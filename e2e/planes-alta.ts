@@ -189,6 +189,7 @@ async function faseA(): Promise<void> {
       where: { userId_organizationId: { userId: body.user.id, organizationId: resultado.body.organizationId } },
     });
     assert.ok(admin, 'el creador tiene que quedar como admin de la organización');
+    assert.equal(admin.canManageBilling, true, 'el creador nace como admin CON facturación');
 
     const miembro = await prisma.user.findUnique({ where: { id: body.user.id }, select: { organizationId: true } });
     assert.equal(miembro?.organizationId, resultado.body.organizationId);

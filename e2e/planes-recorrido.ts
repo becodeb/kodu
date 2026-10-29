@@ -442,7 +442,7 @@ async function recorridoVencimiento(): Promise<void> {
 
   const adminOrgPage = await nuevaPagina();
   const { user: adminOrgUser } = await registrarViaApi(adminOrgPage, `admin-vencida-${SUFIJO}@${dominio}`, 'Admin Vencida Recorrido');
-  await prisma.organizationAdmin.create({ data: { userId: adminOrgUser.id, organizationId: org.id } });
+  await prisma.organizationAdmin.create({ data: { userId: adminOrgUser.id, organizationId: org.id, canManageBilling: true } });
 
   const docentePage = await nuevaPagina();
   await registrarViaApi(docentePage, `docente-vencida-${SUFIJO}@${dominio}`, 'Docente Vencida Recorrido');

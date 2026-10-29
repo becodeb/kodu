@@ -69,7 +69,8 @@ export async function enviarRecordatoriosDeRenovacion(now: Date = new Date()): P
       if (!registrado || !hasResendApiKey()) continue;
 
       const admins = await prisma.organizationAdmin.findMany({
-        where: { organizationId: licencia.organizationId },
+        // Sólo a quien puede pagar: un admin sin facturación no recibe el aviso.
+        where: { organizationId: licencia.organizationId, canManageBilling: true },
         select: { user: { select: { email: true } } },
       });
       const siguienteAno = licencia.currentPeriodEnd!.getUTCFullYear() + 1;

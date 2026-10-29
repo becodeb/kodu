@@ -24,8 +24,8 @@ export const POST: APIRoute = async ({ params, request, locals }) => {
   if (resultado instanceof Response) return resultado;
 
   try {
-    await promoverAdmin(resultado, organizationId, parsed.data.userId);
-    return ok({});
+    const { canManageBilling } = await promoverAdmin(resultado, organizationId, parsed.data.userId);
+    return ok({ canManageBilling });
   } catch (error) {
     if (error instanceof GestionError) return fail(error.message, error.status);
     throw error;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Modal from '../workspace/Modal.tsx';
 import type { MiembroOrganizacion } from '../../lib/orgs/gestion.ts';
 import { haceTiempo } from '../../lib/format/fecha.ts';
+import InsigniaFacturacion from './InsigniaFacturacion.tsx';
 
 /**
  * Deliberadamente MÁS CHICO que `OrganizacionResumen` (gestion.ts): esto sólo
@@ -61,6 +62,15 @@ export interface MiembrosListaProps {
   onDegradar: (miembro: MiembroOrganizacion) => void | Promise<void>;
   /** Ya confirmado por ESTE componente (ver `mensajeBaja`) — el llamador no vuelve a preguntar. */
   onQuitar: (miembro: MiembroOrganizacion) => void | Promise<void>;
+  /**
+   * odd/tasks/org-admin-facturacion.md: ¿quien mira gestiona la facturación?
+   * Si NO, el titular de la facturación (insignia "Facturación") queda
+   * protegido: sin "Sacar admin", "Mover" ni "Dar de baja" (el servidor lo
+   * vuelve a exigir). Por defecto sí: el superadmin no tiene restricción.
+   */
+  puedeGestionarFacturacion?: boolean;
+  /** Si viene, un admin de la raíz muestra "Dar/Quitar facturación". Sólo para quien la gestiona. */
+  onFacturacion?: (miembro: MiembroOrganizacion, canManageBilling: boolean) => void | Promise<void>;
   /** Sólo hace falta si `puedeMover`. */
   cargarDestinos?: () => Promise<SedeDestino[]>;
   onMover?: (miembro: MiembroOrganizacion, destinoCampusId: string) => void | Promise<void>;
@@ -68,6 +78,8 @@ export interface MiembrosListaProps {
 
 export default function MiembrosLista(props: MiembrosListaProps) {
   const { miembros, organizationNombre, pending, puedeMover } = props;
+  const puedeGestionarFacturacion = props.puedeGestionarFacturacion ?? true;
+  const titulares = miembros.filter((m) => m.esAdmin && m.facturacion).length;
   const [moviendo, setMoviendo] = useState<MiembroOrganizacion | null>(null);
   const [destinos, setDestinos] = useState<SedeDestino[] | null>(null);
 
@@ -91,6 +103,27 @@ export default function MiembrosLista(props: MiembrosListaProps) {
     void props.onQuitar(miembro);
   }
 
+  /** Titular de la facturación que quien mira no puede tocar. */
+  function protegido(miembro: MiembroOrganizacion): boolean {
+    return miembro.facturacion && !puedeGestionarFacturacion;
+  }
+
+  function botonFacturacion(miembro: MiembroOrganizacion, clase: string) {
+    if (!props.onFacturacion || !miembro.esAdmin) return null;
+    const unico = miembro.facturacion && titulares <= 1;
+    return (
+      <button
+        type="button"
+        disabled={pending || unico}
+        title={unico ? 'Tiene que quedar al menos un admin con facturación.' : undefined}
+        onClick={() => void props.onFacturacion!(miembro, !miembro.facturacion)}
+        className={clase}
+      >
+        {miembro.facturacion ? 'Quitar facturación' : 'Dar facturación'}
+      </button>
+    );
+  }
+
   if (miembros.length === 0) {
     return <p className="text-sm text-ink-500">Todavía no tiene ningún docente.</p>;
   }
@@ -101,12 +134,12 @@ export default function MiembrosLista(props: MiembrosListaProps) {
       <div className="hidden sm:block">
         <table className="w-full table-fixed text-left text-sm">
           <colgroup>
-            <col className="w-[30%]" />
-            <col className="w-[18%]" />
-            <col className="w-[12%]" />
-            <col className="w-[14%]" />
-            <col className="w-[8%]" />
-            <col className="w-[18%]" />
+            <col className="w-[26%]" />
+            <col className="w-[15%]" />
+            <col className="w-[10%]" />
+            <col className="w-[13%]" />
+            <col className="w-[16%]" />
+            <col className="w-[20%]" />
           </colgroup>
           <thead className="border-b border-linea text-xs text-ink-500 uppercase">
             <tr>
@@ -135,41 +168,51 @@ export default function MiembrosLista(props: MiembrosListaProps) {
                 <td className="py-2 pr-2 text-right tabular-nums text-ink-700">{miembro.recursos}</td>
                 <td className="py-2 pr-2 text-xs text-ink-700">{haceTiempo(miembro.ultimaActividad)}</td>
                 <td className="py-2 pr-2 text-ink-700">
-                  {miembro.esAdmin ? (
-                    <span className="rounded-full bg-sutil px-2 py-0.5 text-xs font-medium text-brand-700">Admin</span>
+                  {miembro.esAdmin || miembro.facturacion ? (
+                    <div className="flex flex-wrap gap-1">
+                      {miembro.esAdmin && (
+                        <span className="rounded-full bg-sutil px-2 py-0.5 text-xs font-medium text-brand-700">Admin</span>
+                      )}
+                      {miembro.facturacion && <InsigniaFacturacion />}
+                    </div>
                   ) : (
                     '—'
                   )}
                 </td>
                 <td className="py-2 text-right">
-                  <div className="flex flex-col items-end gap-1">
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => void (miembro.esAdmin ? props.onDegradar(miembro) : props.onPromover(miembro))}
-                      className="kodu-btn-ghost px-2 py-1 text-xs"
-                    >
-                      {miembro.esAdmin ? 'Sacar admin' : 'Hacer admin'}
-                    </button>
-                    {puedeMover && (
+                  {protegido(miembro) ? (
+                    <p className="text-xs text-ink-500">Sólo otro admin con facturación puede cambiarlo.</p>
+                  ) : (
+                    <div className="flex flex-col items-end gap-1">
                       <button
                         type="button"
                         disabled={pending}
-                        onClick={() => void abrirMover(miembro)}
+                        onClick={() => void (miembro.esAdmin ? props.onDegradar(miembro) : props.onPromover(miembro))}
                         className="kodu-btn-ghost px-2 py-1 text-xs"
                       >
-                        Mover
+                        {miembro.esAdmin ? 'Sacar admin' : 'Hacer admin'}
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => quitar(miembro)}
-                      className="kodu-btn-ghost px-2 py-1 text-xs text-red-600"
-                    >
-                      Dar de baja
-                    </button>
-                  </div>
+                      {botonFacturacion(miembro, 'kodu-btn-ghost px-2 py-1 text-xs')}
+                      {puedeMover && (
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => void abrirMover(miembro)}
+                          className="kodu-btn-ghost px-2 py-1 text-xs"
+                        >
+                          Mover
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() => quitar(miembro)}
+                        className="kodu-btn-ghost px-2 py-1 text-xs text-red-600"
+                      >
+                        Dar de baja
+                      </button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
@@ -187,10 +230,13 @@ export default function MiembrosLista(props: MiembrosListaProps) {
                 <p className="truncate font-medium text-ink-900">{miembro.name}</p>
                 <p className="truncate text-xs text-ink-500">{miembro.email}</p>
               </div>
-              {miembro.esAdmin && (
-                <span className="shrink-0 rounded-full bg-sutil px-2 py-0.5 text-xs font-medium text-brand-700">
-                  Admin
-                </span>
+              {(miembro.esAdmin || miembro.facturacion) && (
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {miembro.esAdmin && (
+                    <span className="rounded-full bg-sutil px-2 py-0.5 text-xs font-medium text-brand-700">Admin</span>
+                  )}
+                  {miembro.facturacion && <InsigniaFacturacion />}
+                </div>
               )}
             </div>
 
@@ -209,34 +255,39 @@ export default function MiembrosLista(props: MiembrosListaProps) {
               </div>
             </dl>
 
-            <div className="mt-3 flex flex-col gap-1.5">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => void (miembro.esAdmin ? props.onDegradar(miembro) : props.onPromover(miembro))}
-                className="kodu-btn-ghost w-full text-xs"
-              >
-                {miembro.esAdmin ? 'Sacar admin' : 'Hacer admin'}
-              </button>
-              {puedeMover && (
+            {protegido(miembro) ? (
+              <p className="mt-3 text-xs text-ink-500">Sólo otro admin con facturación puede cambiarlo.</p>
+            ) : (
+              <div className="mt-3 flex flex-col gap-1.5">
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => void abrirMover(miembro)}
+                  onClick={() => void (miembro.esAdmin ? props.onDegradar(miembro) : props.onPromover(miembro))}
                   className="kodu-btn-ghost w-full text-xs"
                 >
-                  Mover a otra sede
+                  {miembro.esAdmin ? 'Sacar admin' : 'Hacer admin'}
                 </button>
-              )}
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => quitar(miembro)}
-                className="kodu-btn-ghost w-full text-xs text-red-600"
-              >
-                Dar de baja
-              </button>
-            </div>
+                {botonFacturacion(miembro, 'kodu-btn-ghost w-full text-xs')}
+                {puedeMover && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => void abrirMover(miembro)}
+                    className="kodu-btn-ghost w-full text-xs"
+                  >
+                    Mover a otra sede
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() => quitar(miembro)}
+                  className="kodu-btn-ghost w-full text-xs text-red-600"
+                >
+                  Dar de baja
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

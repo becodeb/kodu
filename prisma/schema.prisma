@@ -160,6 +160,11 @@ model OrganizationAdmin {
   createdAt      DateTime     @default(now())
   createdById    String?
   createdBy      User?        @relation("OrganizationAdminCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// odd/tasks/org-admin-facturacion.md: "Admin con facturación". Sólo cuenta
+  /// en una fila de una organización RAÍZ (red, o colegio standalone): ahí
+  /// vive la licencia. Un admin sin esto administra todo lo demás de `/org`,
+  /// pero no ve ni puede llamar a nada de facturación.
+  canManageBilling Boolean    @default(false)
 
   @@id([userId, organizationId])
   @@index([organizationId])

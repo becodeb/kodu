@@ -10,9 +10,11 @@ import { reconciliarLicenciaOrgVencida } from '../../lib/billing/vencimiento.ts'
 /**
  * odd/tasks/planes-y-cobros.md (T6): plan y facturación de la institución —
  * la licencia vive SIEMPRE en la organización RAÍZ (comentario de
- * `OrganizationLicense` en schema.prisma), nunca en una sede. Un admin de la
- * red (o de un colegio standalone) edita y paga; un admin de UNA sede nada
- * más ve todo en modo lectura (mismo criterio de alcance que `/org`).
+ * `OrganizationLicense` en schema.prisma), nunca en una sede. Sólo la ve y la
+ * edita el superadmin o un admin de la raíz (la red, o el colegio standalone)
+ * con `canManageBilling` (odd/tasks/org-admin-facturacion.md); cualquier otro
+ * admin, de sede o de raíz sin facturación, recibe el mismo redirect que un
+ * extraño (`puedeGestionarFacturacion` en alcance.ts es LA regla).
  */
 const actor = Astro.locals.user!;
 const alcance = await alcanceDeAdmin(actor);
@@ -44,8 +46,9 @@ const rootId = org.parentId ?? organizationId;
 const rootOrg =
   org.parentId === null ? org : await prisma.organization.findUniqueOrThrow({ where: { id: rootId }, select: { kind: true, parentId: true, name: true } });
 
-const esAdminDeRaiz = alcance.esSuperadmin || (rootOrg.kind === 'NETWORK' ? alcance.redIds.has(rootId) : alcance.campusIds.has(rootId));
-const soloLectura = !esAdminDeRaiz;
+if (!alcance.esSuperadmin && !alcance.facturacionIds.has(rootId)) {
+  return Astro.redirect('/app', 302);
+}
 
 await reconciliarLicenciaOrgVencida(rootId, billingNow());
 
@@ -71,8 +74,7 @@ const mostrarAvisoRenovacion =
   license !== null &&
   license.interval === 'CYCLE' &&
   license.currentPeriodEnd !== null &&
-  now.getTime() >= license.currentPeriodEnd.getTime() - TREINTA_DIAS_MS &&
-  esAdminDeRaiz;
+  now.getTime() >= license.currentPeriodEnd.getTime() - TREINTA_DIAS_MS;
 const formateador = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 const formateadorFecha = new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' });
 
@@ -141,14 +143,8 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
           <section class="kodu-card p-4">
             <h2 class="text-sm font-semibold text-ink-900">Estado</h2>
             <p class="mt-2 text-lg text-ink-900">{etiquetaEstado(license)}</p>
-            {license.status === 'PENDING_PAYMENT' && esAdminDeRaiz && (
+            {license.status === 'PENDING_PAYMENT' && (
               <p class="mt-2 text-sm text-ink-600">Contratá para empezar a usar Kodu con tu institución.</p>
-            )}
-            {soloLectura && (
-              <p class="mt-2 text-xs text-ink-500">
-                Estás viendo esto como administrador de una sede. Sólo quien administra toda la institución puede
-                editar y pagar.
-              </p>
             )}
           </section>
 
@@ -162,7 +158,7 @@ function etiquetaEstado(l: NonNullable<typeof license>): string {
               cuit={license.cuit}
               ivaCondition={license.ivaCondition}
               cancelAtPeriodEnd={license.cancelAtPeriodEnd}
-              soloLectura={soloLectura}
+              soloLectura={false}
             />
           </section>
 
