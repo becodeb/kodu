@@ -129,7 +129,10 @@ function CapaGenerando({ fase, sinCodigo, enPausa }: { fase: AiPhase; sinCodigo:
           </div>
         </div>
       ) : (
-        <div aria-hidden="true" className="kodu-marco-generando pointer-events-none absolute inset-0 z-[5]">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-[5] overflow-hidden">
+          <span className="kodu-ola-generando" />
+          <span className="kodu-brillo-generando" />
+          <span className="kodu-marco-generando" />
           <span className="kodu-barra-generando" />
         </div>
       )}

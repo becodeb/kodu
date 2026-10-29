@@ -171,15 +171,72 @@
    progreso indeterminada arriba— para no tapar ni atenuar el recurso, que el
    docente puede ir probando. El skeleton es para cuando todavía no hay ningún
    código que mostrar. */
+@property --kodu-giro {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Borde de 6px con una luz que da la vuelta: un degradado cónico recortado
+   con máscara al anillo (content-box excluido), y un brillo interior. */
 .kodu-marco-generando {
-  box-shadow: inset 0 0 0 3px var(--color-brand-500);
+  position: absolute;
+  inset: 0;
+  padding: 6px;
+  background: conic-gradient(
+    from var(--kodu-giro),
+    var(--color-brand-600),
+    var(--color-brand-300),
+    var(--color-brand-600) 35%,
+    var(--color-brand-500) 65%,
+    var(--color-brand-600)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  animation: kodu-giro 2.4s linear infinite;
+}
+
+/* Aparte del marco y no como su ::after: la máscara del marco recortaría
+   el brillo al anillo. */
+.kodu-brillo-generando {
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 32px 6px color-mix(in srgb, var(--color-brand-500) 40%, transparent);
   animation: kodu-latido 1.6s ease-in-out infinite;
+}
+
+/* La ola: una franja diagonal translúcida que cruza el recurso. Baja
+   opacidad a propósito: se nota el movimiento sin tapar lo que hay abajo. */
+.kodu-ola-generando {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    105deg,
+    transparent 38%,
+    color-mix(in srgb, var(--color-brand-400) 18%, transparent) 47%,
+    color-mix(in srgb, var(--color-brand-300) 26%, transparent) 50%,
+    color-mix(in srgb, var(--color-brand-400) 18%, transparent) 53%,
+    transparent 62%
+  );
+  background-size: 300% 100%;
+  animation: kodu-barrido 2.2s ease-in-out infinite;
+}
+
+@keyframes kodu-giro {
+  to {
+    --kodu-giro: 360deg;
+  }
 }
 
 .kodu-barra-generando {
   position: absolute;
   inset: 0 0 auto;
-  height: 4px;
+  height: 5px;
   overflow: hidden;
   background-color: color-mix(in srgb, var(--color-brand-500) 20%, transparent);
 }
@@ -237,6 +294,14 @@
 
 @media (prefers-reduced-motion: reduce) {
   .kodu-marco-generando,
+  .kodu-brillo-generando {
+    animation: none;
+  }
+
+  .kodu-ola-generando {
+    display: none;
+  }
+
   .kodu-skeleton-bloque {
     animation: none;
     background-image: none;
