@@ -1,0 +1,1582 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITULO__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   COLECCIÓN MISIONES 3D · base común
+   Cada juego cambia sólo --acento / --acento-2 / --cielo-* en :root.
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --acento:#f2b23a; --acento-2:#5fe0b5;
+  --tinta:#0f1b2d; --tinta-2:#1c2b44; --tinta-3:#2a3c5c;
+  --texto:#eef3fb; --texto-2:#b6c3d9; --texto-3:#7d8ca6;
+  --ok:#3ddc97; --error:#ff5d6c; --aviso:#ffc43d;
+  --papel:#fbf6ea; --papel-tinta:#2b2418; --papel-linea:#d9cfb8;
+  --radio:14px;
+  --f-titulo:'Bricolage Grotesque',system-ui,sans-serif;
+  --f-texto:'Atkinson Hyperlegible',system-ui,sans-serif;
+  --f-num:'JetBrains Mono',ui-monospace,monospace;
+  --panel-w:380px; --barra-h:58px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--tinta);color:var(--texto);font-family:var(--f-texto);font-size:15px;line-height:1.45}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+input,select{font:inherit}
+.num{font-family:var(--f-num);font-weight:700}
+
+/* ── Barra superior ─────────────────────────────────────────── */
+#barra{position:fixed;inset:0 0 auto 0;height:var(--barra-h);display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:linear-gradient(180deg,rgba(15,27,45,.96),rgba(15,27,45,.86));border-bottom:1px solid rgba(255,255,255,.07);z-index:30;backdrop-filter:blur(8px)}
+#barra .marca{display:flex;align-items:center;gap:10px;min-width:0}
+#barra .marca .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--acento);color:var(--tinta);font-family:var(--f-titulo);font-weight:800;font-size:18px;flex:none}
+#barra h1{font-family:var(--f-titulo);font-weight:800;font-size:18px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#barra .sub{font-size:12px;color:var(--texto-3)}
+#niveles{display:flex;gap:6px;margin-left:auto}
+.chip-nivel{height:34px;min-width:34px;padding:0 10px;border-radius:10px;background:var(--tinta-2);border:1px solid var(--tinta-3);font-family:var(--f-num);font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;color:var(--texto-2)}
+.chip-nivel[aria-current="true"]{background:var(--acento);border-color:var(--acento);color:var(--tinta)}
+.chip-nivel.hecho:not([aria-current="true"]){border-color:var(--ok);color:var(--ok)}
+.chip-nivel:disabled{opacity:.45;cursor:not-allowed}
+.chip-nivel svg{width:13px;height:13px}
+#modos{display:flex;background:var(--tinta-2);border:1px solid var(--tinta-3);border-radius:12px;padding:3px}
+#modos button{padding:6px 12px;border-radius:9px;font-size:13px;font-weight:700;color:var(--texto-2);display:flex;gap:6px;align-items:center}
+#modos button[aria-pressed="true"]{background:var(--texto);color:var(--tinta)}
+
+/* ── Panel de misión ────────────────────────────────────────── */
+#panel{position:fixed;top:calc(var(--barra-h) + 12px);left:12px;bottom:12px;width:var(--panel-w);z-index:20;display:flex;flex-direction:column;
+  background:rgba(15,27,45,.92);border:1px solid rgba(255,255,255,.08);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);backdrop-filter:blur(10px);overflow:hidden}
+#panel .cab{padding:16px 18px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
+#panel .etiqueta{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--acento);font-weight:700}
+#panel h2{font-family:var(--f-titulo);font-weight:800;font-size:22px;line-height:1.15;margin-top:4px}
+#panel .cuerpo{flex:1;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:14px}
+#panel .cuerpo::-webkit-scrollbar{width:8px}#panel .cuerpo::-webkit-scrollbar-thumb{background:var(--tinta-3);border-radius:8px}
+.relato{color:var(--texto-2);font-size:14.5px}
+.relato b,.relato strong{color:var(--texto)}
+.objetivo{background:rgba(255,255,255,.04);border-left:3px solid var(--acento);border-radius:0 10px 10px 0;padding:10px 12px;font-size:14px}
+.objetivo .t{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--texto-3);font-weight:700;margin-bottom:3px}
+.datos{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px;background:var(--tinta-2);border-radius:12px;padding:10px 12px}
+.datos dt{color:var(--texto-3)} .datos dd{font-family:var(--f-num);font-weight:700}
+.controles{display:flex;flex-direction:column;gap:10px}
+.campo{display:flex;flex-direction:column;gap:5px}
+.campo label{font-size:13px;color:var(--texto-2);font-weight:700}
+.campo .fila{display:flex;gap:8px;align-items:center}
+.entrada{width:100%;height:40px;border-radius:10px;border:1px solid var(--tinta-3);background:var(--tinta);color:var(--texto);padding:0 12px;font-family:var(--f-num);font-weight:700;font-size:15px}
+.entrada:focus{outline:2px solid var(--acento);outline-offset:1px}
+.entrada.mal{border-color:var(--error)} .entrada.bien{border-color:var(--ok)}
+input[type=range]{width:100%;accent-color:var(--acento)}
+.btn{height:42px;padding:0 16px;border-radius:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .08s,filter .15s}
+.btn:active{transform:translateY(1px)}
+.btn-pri{background:var(--acento);color:var(--tinta)} .btn-pri:hover{filter:brightness(1.08)}
+.btn-sec{background:var(--tinta-2);border:1px solid var(--tinta-3);color:var(--texto)} .btn-sec:hover{background:var(--tinta-3)}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.btn svg{width:17px;height:17px}
+.btn-chico{height:32px;padding:0 10px;font-size:13px;border-radius:9px}
+.grupo-btn{display:flex;flex-wrap:wrap;gap:6px}
+.grupo-btn .btn[aria-pressed="true"]{background:var(--acento);color:var(--tinta);border-color:var(--acento)}
+#panel .pie{padding:12px 18px 16px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:10px}
+#panel .pie .acciones{display:flex;gap:8px}
+#panel .pie .acciones .btn-pri{flex:1}
+#mensaje{font-size:14px;border-radius:12px;padding:10px 12px;display:none}
+#mensaje.ver{display:block}
+#mensaje.ok{background:rgba(61,220,151,.12);border:1px solid rgba(61,220,151,.4);color:#c9f7e2}
+#mensaje.error{background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4);color:#ffd5da}
+#mensaje.info{background:rgba(255,196,61,.1);border:1px solid rgba(255,196,61,.35);color:#ffeec4}
+#pistas{display:flex;flex-direction:column;gap:8px}
+.pista{background:rgba(255,209,102,.08);border:1px dashed rgba(255,209,102,.45);border-radius:12px;padding:9px 12px;font-size:14px;color:#ffeec4}
+.pista .n{font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:var(--acento-2);display:block;margin-bottom:2px}
+.intentos{font-size:12px;color:var(--texto-3)}
+
+/* ── Escena ─────────────────────────────────────────────────── */
+#escena{position:fixed;inset:0;z-index:1}
+#escena canvas{display:block}
+#etiquetas{position:fixed;inset:0;pointer-events:none;z-index:2}
+.lbl{font-family:var(--f-num);font-weight:700;font-size:13px;background:rgba(15,27,45,.85);color:#fff;padding:3px 7px;border-radius:7px;white-space:nowrap;border:1px solid rgba(255,255,255,.15)}
+.lbl.acento{background:var(--acento);color:var(--tinta);border-color:transparent}
+.lbl.claro{background:rgba(255,255,255,.92);color:var(--tinta)}
+.lbl.grande{font-size:15px;padding:5px 9px}
+.ayuda-camara{position:fixed;right:16px;bottom:14px;z-index:15;font-size:12px;color:var(--texto-2);background:rgba(15,27,45,.75);padding:6px 10px;border-radius:9px;pointer-events:none}
+
+/* ── Vista matemática ───────────────────────────────────────── */
+#vistaMat{position:fixed;top:calc(var(--barra-h) + 12px);right:12px;bottom:12px;width:min(46vw,620px);z-index:18;display:none;flex-direction:column;
+  background:#fdfcf8;color:#1b2333;border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden}
+body.modo-mat #vistaMat{display:flex}
+body.modo-mat .ayuda-camara{display:none}
+#vistaMat .cab{padding:12px 16px;border-bottom:1px solid #e6e1d4;display:flex;align-items:center;gap:10px}
+#vistaMat .cab b{font-family:var(--f-titulo);font-size:16px}
+#vistaMat .cab span{font-size:12px;color:#6b7280}
+#vistaMat .lienzo{flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+#vistaMat svg{width:100%;height:100%;min-height:260px;display:block}
+#vistaMat .nota{font-size:13px;color:#4b5563;padding:0 4px}
+#vistaMat .formula{font-family:var(--f-num);font-weight:700;font-size:15px;background:#f2efe6;border-radius:10px;padding:8px 12px;color:#1b2333}
+
+/* ── Pantallas (portada, bitácora, final) ───────────────────── */
+.capa{position:fixed;inset:0;z-index:50;display:none;place-items:center;padding:20px;background:rgba(8,14,26,.72);backdrop-filter:blur(6px)}
+.capa.ver{display:grid}
+.tarjeta{width:min(640px,100%);max-height:calc(100vh - 40px);overflow:auto;background:var(--tinta);border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.tarjeta h2{font-family:var(--f-titulo);font-weight:800;font-size:34px;line-height:1.05;letter-spacing:-.02em}
+.tarjeta .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--acento);font-weight:700;margin-bottom:8px}
+.tarjeta p{color:var(--texto-2);margin-top:12px}
+.tarjeta .misiones{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:18px}
+.tarjeta .misiones div{background:var(--tinta-2);border-radius:12px;padding:10px 12px;font-size:13.5px}
+.tarjeta .misiones b{display:block;font-family:var(--f-num);color:var(--acento);font-size:12px}
+.tarjeta .acciones{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.contenidos{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.contenidos span{font-size:12px;border:1px solid var(--tinta-3);border-radius:99px;padding:3px 10px;color:var(--texto-2)}
+
+/* Bitácora: hoja de papel */
+#bitacora .tarjeta{background:var(--papel);color:var(--papel-tinta);border:0;position:relative;
+  background-image:repeating-linear-gradient(180deg,transparent 0 31px,rgba(217,207,184,.55) 31px 32px);background-position:0 112px}
+#bitacora .tarjeta::before{content:"";position:absolute;left:52px;top:0;bottom:0;width:2px;background:rgba(220,90,90,.35)}
+#bitacora .contenido{padding-left:44px}
+#bitacora .kicker{color:#b4541a}
+#bitacora h2{font-size:30px;color:var(--papel-tinta)}
+#bitacora h3{font-family:var(--f-titulo);font-size:18px;margin-top:18px}
+#bitacora ol{margin:10px 0 0 20px;display:flex;flex-direction:column;gap:9px;font-size:16px;line-height:1.4}
+#bitacora .aclaracion{font-size:14px;color:#6b5b3e;margin-top:14px;font-style:italic}
+#bitacora .confirmar{display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;background:#fff;border:2px solid #e3d8bf;border-radius:12px;cursor:pointer;font-weight:700}
+#bitacora .confirmar input{width:22px;height:22px;accent-color:#b4541a;flex:none;margin-top:1px}
+#bitacora .btn-pri{background:#b4541a;color:#fff}
+#bitacora .resumen{font-size:13.5px;background:rgba(255,255,255,.7);border:1px solid #e3d8bf;border-radius:10px;padding:8px 12px;margin-top:12px;color:#4d4230}
+
+/* Toast */
+#toast{position:fixed;left:50%;top:calc(var(--barra-h) + 18px);transform:translateX(-50%) translateY(-20px);opacity:0;z-index:60;background:var(--ok);color:var(--tinta);font-weight:700;padding:10px 18px;border-radius:12px;transition:.3s;pointer-events:none}
+#toast.ver{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.lbl.mini{font-size:10px;padding:0 4px;background:rgba(20,26,22,.55);border:0;border-radius:4px;color:#f4e7c2}
+.lbl.jade{background:#5fe0b5;color:var(--tinta);border-color:transparent}
+.tabla-mat{width:100%;border-collapse:collapse;font-size:12.5px;font-family:var(--f-num)}
+.tabla-mat th,.tabla-mat td{border-bottom:1px solid #e6e1d4;padding:3px 6px;text-align:left}
+.tabla-mat th{font-family:var(--f-texto);color:#6b7280;font-weight:700}
+.secuencia{font-family:var(--f-num);font-weight:700;background:var(--tinta-2);border-radius:10px;padding:8px 12px;min-height:38px}
+.vec{display:flex;align-items:center;gap:6px;font-family:var(--f-num);font-weight:700;font-size:18px}
+.vec .entrada{width:84px;text-align:center}
+#vistaMat .lienzo svg{height:auto;min-height:0;flex:none;max-height:54vh}
+/* ── Responsive: panel abajo en pantallas chicas ─────────────── */
+@media (max-width:860px){
+  :root{--barra-h:96px}
+  #barra{flex-wrap:wrap;height:auto;min-height:var(--barra-h);padding:8px 12px;row-gap:6px}
+  #niveles{margin-left:0}
+  #panel{top:auto;left:8px;right:8px;width:auto;height:46vh;bottom:8px}
+  #vistaMat{left:8px;right:8px;width:auto;bottom:calc(46vh + 16px)}
+  .ayuda-camara{display:none}
+  .tarjeta{padding:20px}.tarjeta h2{font-size:26px}
+  .tarjeta .misiones{grid-template-columns:1fr}
+  #bitacora .contenido{padding-left:30px}#bitacora .tarjeta::before{left:34px}
+}
+</style>
+</head>
+<body>
+<div id="escena"></div>
+<div id="etiquetas"></div>
+
+<header id="barra">
+  <div class="marca"><div class="ico" id="marcaIco">?</div><div style="min-width:0"><h1 id="tituloJuego"></h1><div class="sub" id="subJuego"></div></div></div>
+  <nav id="niveles" aria-label="Niveles"></nav>
+  <div id="modos" role="group" aria-label="Modo de visualización">
+    <button id="modoAventura" aria-pressed="true" title="Ver el escenario">Aventura</button>
+    <button id="modoMat" aria-pressed="false" title="Ver la representación matemática">Matemático</button>
+  </div>
+</header>
+
+<aside id="panel" aria-live="polite">
+  <div class="cab"><div class="etiqueta" id="pnEtiqueta"></div><h2 id="pnTitulo"></h2></div>
+  <div class="cuerpo">
+    <div class="relato" id="pnRelato"></div>
+    <div class="objetivo" id="pnObjetivo"><div class="t">Objetivo</div><div id="pnObjetivoTxt"></div></div>
+    <div class="controles" id="pnControles"></div>
+    <div id="pistas"></div>
+  </div>
+  <div class="pie">
+    <div id="mensaje" role="status"></div>
+    <div class="acciones">
+      <button class="btn btn-sec" id="btnPista" title="Pedir una pista">Pista</button>
+      <button class="btn btn-pri" id="btnComprobar">Comprobar</button>
+    </div>
+    <div class="intentos" id="intentos"></div>
+  </div>
+</aside>
+
+<section id="vistaMat" aria-label="Representación matemática">
+  <div class="cab"><b id="vmTitulo">Modo matemático</b><span id="vmSub"></span></div>
+  <div class="lienzo" id="vmLienzo"></div>
+</section>
+
+<div class="ayuda-camara" id="ayudaCamara">Arrastrá el fondo para girar · rueda para acercar</div>
+<div id="toast"></div>
+
+<div class="capa" id="portada"><div class="tarjeta" id="portadaTarjeta"></div></div>
+
+<div class="capa" id="bitacora" role="dialog" aria-modal="true" aria-labelledby="bitTitulo">
+  <div class="tarjeta"><div class="contenido">
+    <div class="kicker" id="bitKicker"></div>
+    <h2 id="bitTitulo">Bitácora de misión</h2>
+    <div class="resumen" id="bitResumen"></div>
+    <h3>Antes de continuar, registrá en tu hoja:</h3>
+    <ol id="bitPreguntas"></ol>
+    <p class="aclaracion">Incluí tus cálculos, representaciones gráficas o esquemas cuando corresponda. Explicá con tus propias palabras.</p>
+    <label class="confirmar"><input type="checkbox" id="bitCheck"> <span>Confirmo que registré mis respuestas en papel.</span></label>
+    <div class="acciones" style="margin-top:16px;display:flex;gap:10px">
+      <button class="btn btn-pri" id="bitContinuar" disabled>Continuar la misión</button>
+    </div>
+  </div></div>
+</div>
+
+<div class="capa" id="final"><div class="tarjeta" id="finalTarjeta"></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/* ════════════════════════════════════════════════════════════════════
+   MOTOR COMÚN — no depende del juego. Cada juego define JUEGO más abajo.
+   ════════════════════════════════════════════════════════════════════ */
+const $ = (s, r = document) => r.querySelector(s);
+const h = (tag, attrs = {}, ...hijos) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') el.className = v;
+    else if (k === 'html') el.innerHTML = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of hijos.flat()) if (c != null) el.append(c instanceof Node ? c : document.createTextNode(c));
+  return el;
+};
+const SVGNS = 'http://www.w3.org/2000/svg';
+const s = (tag, attrs = {}, ...hijos) => {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v);
+  for (const c of hijos.flat()) if (c != null) el.append(c instanceof Node ? c : document.createTextNode(c));
+  return el;
+};
+
+// Almacenamiento: el iframe de Kodu no tiene allow-same-origin, así que
+// localStorage tira. Siempre detrás de try/catch, con memoria de respaldo.
+const memoria = {};
+const guardar = (k, v) => { memoria[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const leer = (k, def) => { try { const v = localStorage.getItem(k); if (v != null) return JSON.parse(v); } catch {} return k in memoria ? memoria[k] : def; };
+
+// ── Three.js: renderer, cámara, luces ──
+const contenedor = $('#escena');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+contenedor.append(renderer.domElement);
+const etiquetas = new CSS2DRenderer({ element: $('#etiquetas') });
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.48;
+
+const hemi = new THREE.HemisphereLight(0xdfefff, 0x6b5a45, 1.1);
+scene.add(hemi);
+const sol = new THREE.DirectionalLight(0xfff1dc, 2.2);
+sol.position.set(30, 50, 20);
+sol.castShadow = true;
+sol.shadow.mapSize.set(2048, 2048);
+Object.assign(sol.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 200 });
+scene.add(sol);
+
+// El panel izquierdo (y la vista matemática) tapan parte del canvas: corremos
+// el centro óptico para que lo importante quede en la zona visible.
+function ajustarTamano() {
+  const w = innerWidth, hgt = innerHeight;
+  renderer.setSize(w, hgt);
+  etiquetas.setSize(w, hgt);
+  camera.aspect = w / hgt;
+  const angosto = w <= 860;
+  const izq = angosto ? 0 : 392;
+  const der = angosto ? 0 : (document.body.classList.contains('modo-mat') ? Math.min(w * 0.46, 620) + 12 : 0);
+  const abajo = angosto ? hgt * 0.46 + 8 : 0;
+  const libreW = w - izq - der, libreH = hgt - abajo;
+  camera.clearViewOffset();
+  if (izq || der || abajo) camera.setViewOffset(w, hgt, (der - izq) / 2, abajo / 2, w, hgt);
+  camera.updateProjectionMatrix();
+  return { libreW, libreH };
+}
+addEventListener('resize', ajustarTamano);
+
+// ── Bucle ──
+const tics = new Set();
+const reloj = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(reloj.getDelta(), 0.05), t = reloj.elapsedTime;
+  for (const f of tics) f(dt, t);
+  controls.update();
+  renderer.render(scene, camera);
+  etiquetas.render(scene, camera);
+});
+
+// ── Grupo del nivel: todo lo que crea un nivel cuelga de acá y se limpia solo ──
+let grupoNivel = new THREE.Group();
+scene.add(grupoNivel);
+let ticsNivel = [];
+let limpiezasNivel = [];
+function limpiarNivel() {
+  for (const f of ticsNivel) tics.delete(f);
+  ticsNivel = [];
+  for (const f of limpiezasNivel) try { f(); } catch {}
+  limpiezasNivel = [];
+  grupoNivel.traverse(o => {
+    if (o.isCSS2DObject) o.element.remove();
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) [].concat(o.material).forEach(m => m.dispose());
+  });
+  scene.remove(grupoNivel);
+  grupoNivel = new THREE.Group();
+  scene.add(grupoNivel);
+  arrastrables.length = 0;
+  clicables.length = 0;
+}
+
+// ── Interacción: arrastrar sobre un plano, con imán a grilla ──
+const raycaster = new THREE.Raycaster();
+const puntero = new THREE.Vector2();
+const arrastrables = []; // {obj, plano:THREE.Plane, snap, limites, alMover, alSoltar, filtro}
+const clicables = [];    // {obj, alClic}
+let arrastre = null;
+function rayoDesde(ev) {
+  const r = renderer.domElement.getBoundingClientRect();
+  puntero.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+  puntero.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(puntero, camera);
+}
+function buscarRaiz(obj, lista) {
+  for (let o = obj; o; o = o.parent) { const e = lista.find(a => a.obj === o); if (e) return e; }
+  return null;
+}
+renderer.domElement.addEventListener('pointerdown', ev => {
+  rayoDesde(ev);
+  const objs = [...arrastrables.map(a => a.obj), ...clicables.map(c => c.obj)];
+  const hit = raycaster.intersectObjects(objs, true)[0];
+  if (!hit) return;
+  const a = buscarRaiz(hit.object, arrastrables);
+  if (a && (!a.activo || a.activo())) {
+    const p = new THREE.Vector3();
+    raycaster.ray.intersectPlane(a.plano, p);
+    arrastre = { a, desfase: a.obj.position.clone().sub(p) };
+    controls.enabled = false;
+    renderer.domElement.setPointerCapture(ev.pointerId);
+    a.alTomar?.();
+    return;
+  }
+  const c = buscarRaiz(hit.object, clicables);
+  if (c) c.alClic(hit);
+});
+renderer.domElement.addEventListener('pointermove', ev => {
+  rayoDesde(ev);
+  if (!arrastre) {
+    const objs = [...arrastrables.map(a => a.obj), ...clicables.map(c => c.obj)];
+    renderer.domElement.style.cursor = raycaster.intersectObjects(objs, true).length ? 'grab' : '';
+    return;
+  }
+  const { a, desfase } = arrastre;
+  const p = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(a.plano, p)) return;
+  p.add(desfase);
+  if (a.snap) for (const eje of a.ejes) p[eje] = Math.round(p[eje] / a.snap) * a.snap;
+  if (a.limites) for (const [eje, [min, max]] of Object.entries(a.limites)) p[eje] = Math.max(min, Math.min(max, p[eje]));
+  for (const eje of ['x', 'y', 'z']) if (!a.ejes.includes(eje)) p[eje] = a.obj.position[eje];
+  if (!p.equals(a.obj.position)) { a.obj.position.copy(p); a.alMover?.(p); }
+});
+const soltar = () => { if (arrastre) { arrastre.a.alSoltar?.(arrastre.a.obj.position); arrastre = null; controls.enabled = true; } };
+renderer.domElement.addEventListener('pointerup', soltar);
+renderer.domElement.addEventListener('pointercancel', soltar);
+
+/* ════════════════════════════════════════════════════════════════════
+   K — la API que usan los juegos
+   ════════════════════════════════════════════════════════════════════ */
+const K = {
+  THREE, scene, camera, controls, renderer, sol, hemi, h, s, $,
+  get grupo() { return grupoNivel; },
+  agregar(...objs) { grupoNivel.add(...objs); return objs[0]; },
+  tic(f) { tics.add(f); ticsNivel.push(f); return f; },
+  alLimpiar(f) { limpiezasNivel.push(f); },
+
+  /** Mueve la cámara (suave) a una posición mirando a un punto. */
+  camara(pos, mira, { suave = true, min = 5, max = 200 } = {}) {
+    controls.minDistance = min; controls.maxDistance = max;
+    const p0 = camera.position.clone(), m0 = controls.target.clone();
+    const p1 = new THREE.Vector3(...pos), m1 = new THREE.Vector3(...mira);
+    if (!suave) { camera.position.copy(p1); controls.target.copy(m1); return; }
+    let u = 0;
+    const f = dt => {
+      u = Math.min(1, u + dt * 1.4); const e = 1 - Math.pow(1 - u, 3);
+      camera.position.lerpVectors(p0, p1, e); controls.target.lerpVectors(m0, m1, e);
+      if (u >= 1) tics.delete(f);
+    };
+    tics.add(f);
+  },
+
+  /** Etiqueta HTML pegada a un punto 3D. clase: '', 'acento', 'claro', 'grande'. */
+  etiqueta(texto, pos, clase = '', padre = grupoNivel) {
+    const el = h('div', { class: 'lbl ' + clase, html: texto });
+    const o = new CSS2DObject(el);
+    o.position.set(...pos);
+    padre.add(o);
+    o.texto = t => { el.innerHTML = t; };
+    return o;
+  },
+
+  /** Material plano estilo low-poly. */
+  mat(color, extra = {}) { return new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, flatShading: true, ...extra }); },
+  caja(w, hgt, d, color, pos = [0, 0, 0], extra) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, d), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = m.receiveShadow = true; return m;
+  },
+  cilindro(rt, rb, hgt, color, pos = [0, 0, 0], seg = 12, extra) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, hgt, seg), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = m.receiveShadow = true; return m;
+  },
+  esfera(r, color, pos = [0, 0, 0], extra) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 12), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = true; return m;
+  },
+  /** Línea entre puntos (en el espacio). */
+  linea(puntos, color = 0xffffff, { discontinua = false, ancho = 1 } = {}) {
+    const g = new THREE.BufferGeometry().setFromPoints(puntos.map(p => new THREE.Vector3(...p)));
+    const m = discontinua ? new THREE.LineDashedMaterial({ color, dashSize: 0.6, gapSize: 0.35, linewidth: ancho }) : new THREE.LineBasicMaterial({ color, linewidth: ancho });
+    const l = new THREE.Line(g, m); if (discontinua) l.computeLineDistances(); return l;
+  },
+  /** Tubo grueso entre dos puntos (las líneas de WebGL miden 1px). */
+  barra(a, b, radio, color, extra) {
+    const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
+    const largo = va.distanceTo(vb);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(radio, radio, largo, 10), K.mat(color, extra));
+    m.position.copy(va).add(vb).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+    m.castShadow = true; return m;
+  },
+  /** Árbol low-poly. */
+  arbol(pos, escala = 1, color = 0x3f8f5a) {
+    const g = new THREE.Group();
+    g.add(K.cilindro(0.18, 0.25, 1.2, 0x7a5235, [0, 0.6, 0], 6));
+    const copa = new THREE.Mesh(new THREE.ConeGeometry(0.95, 2.2, 7), K.mat(color)); copa.position.y = 2.1; copa.castShadow = true; g.add(copa);
+    g.position.set(...pos); g.scale.setScalar(escala); return g;
+  },
+  roca(pos, escala = 1, color = 0x8a8f99) {
+    const m = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 0), K.mat(color));
+    m.position.set(...pos); m.scale.set(escala, escala * 0.7, escala); m.rotation.set(Math.random(), Math.random(), 0);
+    m.castShadow = m.receiveShadow = true; return m;
+  },
+  /** Personita low-poly (para escala y narrativa). */
+  persona(pos, color = 0xff8a3d) {
+    const g = new THREE.Group();
+    g.add(K.cilindro(0.22, 0.28, 0.9, color, [0, 0.45, 0], 8));
+    g.add(K.esfera(0.22, 0xf2c9a0, [0, 1.12, 0]));
+    g.position.set(...pos); return g;
+  },
+  /** Suelo amplio. */
+  suelo(color = 0x7fb069, tam = 400) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(tam, tam), K.mat(color));
+    m.rotation.x = -Math.PI / 2; m.receiveShadow = true; return m;
+  },
+  /** Cielo con degradé + niebla. */
+  cielo(arriba = 0x7ec8ff, abajo = 0xdff3ff, niebla = [80, 260]) {
+    const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+    const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#' + new THREE.Color(arriba).getHexString()); g.addColorStop(1, '#' + new THREE.Color(abajo).getHexString());
+    x.fillStyle = g; x.fillRect(0, 0, 2, 256);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+    scene.fog = niebla ? new THREE.Fog(abajo, niebla[0], niebla[1]) : null;
+  },
+
+  /** Hace arrastrable un objeto sobre un plano. ejes: los que se mueven ('xz' por defecto).
+   *  snap: paso de la grilla. limites: {x:[min,max], z:[...]}. activo(): si se puede tomar ahora. */
+  arrastrable(obj, { ejes = 'xz', snap = 1, limites, alMover, alSoltar, alTomar, activo, plano } = {}) {
+    const ej = ejes.split('');
+    const normal = plano || (ej.includes('y') ? (ej.includes('x') ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)) : new THREE.Vector3(0, 1, 0));
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, obj.getWorldPosition(new THREE.Vector3()));
+    const a = { obj, plano: pl, ejes: ej, snap, limites, alMover, alSoltar, alTomar, activo };
+    arrastrables.push(a); return a;
+  },
+  clicable(obj, alClic) { clicables.push({ obj, alClic }); },
+
+  // ── Panel ──
+  controles() { return $('#pnControles'); },
+  /** Campo numérico. Devuelve el <input>. */
+  campoNumero(etiqueta, { id, valor = '', paso = 'any', min, max, sufijo, ancho } = {}) {
+    const inp = h('input', { class: 'entrada', type: 'number', inputmode: 'decimal', step: paso, id, value: valor, min, max, style: ancho ? `width:${ancho}` : null });
+    const fila = h('div', { class: 'fila' }, inp, sufijo ? h('span', { class: 'num', style: 'color:var(--texto-2)' }, sufijo) : null);
+    $('#pnControles').append(h('div', { class: 'campo' }, h('label', { for: id }, etiqueta), fila));
+    return inp;
+  },
+  /** Deslizador con lectura del valor. */
+  deslizador(etiqueta, { id, min, max, paso = 1, valor, formato = v => v, alCambiar } = {}) {
+    const lec = h('span', { class: 'num', style: 'min-width:64px;text-align:right' }, formato(valor));
+    const inp = h('input', { type: 'range', id, min, max, step: paso, value: valor });
+    inp.addEventListener('input', () => { lec.textContent = formato(+inp.value); alCambiar?.(+inp.value); });
+    $('#pnControles').append(h('div', { class: 'campo' }, h('label', { for: id }, etiqueta), h('div', { class: 'fila' }, inp, lec)));
+    inp.leer = () => +inp.value;
+    inp.poner = v => { inp.value = v; lec.textContent = formato(+v); };
+    return inp;
+  },
+  /** Grupo de botones de opción (uno elegido). */
+  opciones(etiqueta, opciones, { alElegir, elegida } = {}) {
+    const grupo = h('div', { class: 'grupo-btn', role: 'group' });
+    const btns = opciones.map(([valor, texto]) => {
+      const b = h('button', { class: 'btn btn-sec btn-chico', 'aria-pressed': valor === elegida ? 'true' : 'false' }, texto);
+      b.addEventListener('click', () => { btns.forEach(x => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); grupo.valor = valor; alElegir?.(valor); });
+      grupo.append(b); return b;
+    });
+    grupo.valor = elegida;
+    $('#pnControles').append(h('div', { class: 'campo' }, etiqueta ? h('label', {}, etiqueta) : null, grupo));
+    return grupo;
+  },
+  /** Bloque de datos (dt/dd). pares: [[clave, valor], ...] */
+  datos(pares) {
+    const dl = h('dl', { class: 'datos' }, pares.flatMap(([k, v]) => [h('dt', {}, k), h('dd', { html: String(v) })]));
+    $('#pnControles').append(dl); return dl;
+  },
+  html(contenido) { const d = h('div', { html: contenido }); $('#pnControles').append(d); return d; },
+
+  /** Mensaje bajo los botones. tipo: 'ok' | 'error' | 'info'. */
+  mensaje(texto, tipo = 'info') { const m = $('#mensaje'); m.className = 'ver ' + tipo; m.innerHTML = texto; },
+  limpiarMensaje() { $('#mensaje').className = ''; },
+  toast(texto) { const t = $('#toast'); t.textContent = texto; t.classList.add('ver'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('ver'), 2200); },
+
+  // ── Vista matemática ──
+  /** El juego llama a esto cada vez que cambia el estado: si la vista está abierta se redibuja. */
+  refrescarMat() { if (document.body.classList.contains('modo-mat')) dibujarMat(); },
+  get modoMat() { return document.body.classList.contains('modo-mat'); },
+
+  /** SVG de un plano cartesiano listo para dibujar. Devuelve {svg, X(x), Y(y), g} con
+   *  X/Y que pasan de coordenadas matemáticas a píxeles. */
+  planoCartesiano({ xMin = -10, xMax = 10, yMin = -10, yMax = 10, paso = 1, pasoEtiqueta = 1, ejeX = 'x', ejeY = 'y', ancho = 560, alto = 420, margen = 34 } = {}) {
+    const W = ancho, H = alto;
+    const X = x => margen + (x - xMin) / (xMax - xMin) * (W - 2 * margen);
+    const Y = y => H - margen - (y - yMin) / (yMax - yMin) * (H - 2 * margen);
+    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', 'font-family': 'JetBrains Mono, monospace', 'font-size': 11 });
+    const grilla = s('g', { stroke: '#e7e2d6', 'stroke-width': 1 });
+    for (let x = Math.ceil(xMin / paso) * paso; x <= xMax + 1e-9; x += paso) grilla.append(s('line', { x1: X(x), x2: X(x), y1: Y(yMin), y2: Y(yMax) }));
+    for (let y = Math.ceil(yMin / paso) * paso; y <= yMax + 1e-9; y += paso) grilla.append(s('line', { y1: Y(y), y2: Y(y), x1: X(xMin), x2: X(xMax) }));
+    svg.append(grilla);
+    const ejes = s('g', { stroke: '#1b2333', 'stroke-width': 1.6 });
+    const y0 = Math.max(yMin, Math.min(yMax, 0)), x0 = Math.max(xMin, Math.min(xMax, 0));
+    ejes.append(s('line', { x1: X(xMin), x2: X(xMax) + 8, y1: Y(y0), y2: Y(y0), 'marker-end': 'url(#flecha)' }));
+    ejes.append(s('line', { x1: X(x0), x2: X(x0), y1: Y(yMin), y2: Y(yMax) - 8, 'marker-end': 'url(#flecha)' }));
+    svg.append(s('defs', {}, s('marker', { id: 'flecha', viewBox: '0 0 10 10', refX: 6, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, s('path', { d: 'M0,0 L10,5 L0,10 z', fill: '#1b2333' }))));
+    svg.append(ejes);
+    const et = s('g', { fill: '#6b7280' });
+    for (let x = Math.ceil(xMin / pasoEtiqueta) * pasoEtiqueta; x <= xMax + 1e-9; x += pasoEtiqueta) if (Math.abs(x) > 1e-9) et.append(s('text', { x: X(x), y: Y(y0) + 15, 'text-anchor': 'middle' }, +x.toFixed(4)));
+    for (let y = Math.ceil(yMin / pasoEtiqueta) * pasoEtiqueta; y <= yMax + 1e-9; y += pasoEtiqueta) if (Math.abs(y) > 1e-9) et.append(s('text', { x: X(x0) - 6, y: Y(y) + 4, 'text-anchor': 'end' }, +y.toFixed(4)));
+    et.append(s('text', { x: X(xMax) + 2, y: Y(y0) - 8, 'text-anchor': 'end', fill: '#1b2333', 'font-weight': 700 }, ejeX));
+    et.append(s('text', { x: X(x0) + 8, y: Y(yMax) + 4, fill: '#1b2333', 'font-weight': 700 }, ejeY));
+    svg.append(et);
+    const g = s('g'); svg.append(g);
+    return { svg, X, Y, g };
+  },
+
+  // ── Aritmética exacta (fracciones) para validar sin redondeos ──
+  frac(n, d = 1) { if (d < 0) { n = -n; d = -d; } const m = mcd(Math.abs(n), d) || 1; return { n: n / m, d: d / m }; },
+  /** Lee "3/4", "-2", "1,5" o "0.25" como fracción exacta; null si no se puede. */
+  leerFrac(texto) {
+    const t = String(texto).trim().replace(',', '.').replace(/\s+/g, '');
+    if (!t) return null;
+    let m = t.match(/^(-?\d+)\/(-?\d+)$/);
+    if (m) { const d = +m[2]; return d === 0 ? null : K.frac(+m[1], d); }
+    m = t.match(/^(-?)(\d*)\.?(\d*)$/);
+    if (m && (m[2] || m[3])) { const dec = m[3] || ''; const d = 10 ** dec.length; const n = +(m[2] || 0) * d + +(dec || 0); return K.frac((m[1] ? -1 : 1) * n, d); }
+    return null;
+  },
+  igualFrac(a, b) { return a && b && a.n * b.d === b.n * a.d; },
+  /** Número leído del input (acepta coma decimal). NaN si está vacío o es inválido. */
+  num(inp) { const t = String(inp.value ?? inp).trim().replace(',', '.'); return t === '' ? NaN : Number(t); },
+  fmt(x, dec = 2) { return (+x.toFixed(dec)).toLocaleString('es-AR'); },
+};
+function mcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+window.K = K;
+
+/* ════════════════════════════════════════════════════════════════════
+   FLUJO: portada → nivel → comprobar → bitácora → siguiente nivel → final
+   ════════════════════════════════════════════════════════════════════ */
+let J;            // el juego
+let nivel = 0;    // índice actual
+let progreso;     // {resueltos:[bool], registrados:[bool]}
+let pistasVistas = 0, intentos = 0, resuelto = false;
+const docente = /docente/i.test(location.hash + location.search);
+
+function claveProgreso() { return 'kodu-juego-' + J.id; }
+function desbloqueado(i) { return docente || i === 0 || progreso.registrados[i - 1]; }
+
+function pintarNiveles() {
+  const nav = $('#niveles'); nav.innerHTML = '';
+  J.niveles.forEach((n, i) => {
+    const libre = desbloqueado(i);
+    const b = h('button', { class: 'chip-nivel' + (progreso.registrados[i] ? ' hecho' : ''), 'aria-current': i === nivel ? 'true' : 'false', disabled: !libre, title: libre ? n.titulo : 'Se desbloquea al completar el nivel anterior' },
+      libre ? '' : h('span', { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' }),
+      String(i + 1));
+    b.addEventListener('click', () => libre && cargarNivel(i));
+    nav.append(b);
+  });
+}
+
+function cargarNivel(i) {
+  nivel = i; pistasVistas = 0; intentos = 0; resuelto = false;
+  limpiarNivel();
+  const n = J.niveles[i];
+  $('#pnEtiqueta').textContent = `Nivel ${i + 1} de ${J.niveles.length}`;
+  $('#pnTitulo').textContent = n.titulo;
+  $('#pnRelato').innerHTML = n.relato;
+  $('#pnObjetivoTxt').innerHTML = n.objetivo;
+  $('#pnControles').innerHTML = '';
+  $('#pistas').innerHTML = '';
+  $('#vmLienzo').innerHTML = '';
+  $('#vmTitulo').textContent = n.tituloMat || 'Modo matemático';
+  $('#vmSub').textContent = n.subMat || '';
+  K.limpiarMensaje();
+  actualizarPie();
+  $('#btnComprobar').textContent = n.textoComprobar || 'Comprobar';
+  n.armar(K);
+  pintarNiveles();
+  ajustarTamano();
+  K.refrescarMat();
+  if (!docente) guardar(claveProgreso() + '-ultimo', i);
+}
+
+function actualizarPie() {
+  const n = J.niveles[nivel];
+  const quedan = n.pistas.length - pistasVistas;
+  $('#btnPista').disabled = quedan <= 0 || resuelto;
+  $('#btnPista').textContent = quedan > 0 ? `Pista (${pistasVistas + 1}/${n.pistas.length})` : 'Sin más pistas';
+  $('#intentos').textContent = intentos ? `Intentos: ${intentos} · Pistas usadas: ${pistasVistas}` : '';
+  $('#btnComprobar').disabled = resuelto;
+}
+
+$('#btnPista').addEventListener('click', () => {
+  const n = J.niveles[nivel];
+  if (pistasVistas >= n.pistas.length) return;
+  const txt = n.pistas[pistasVistas];
+  pistasVistas++;
+  $('#pistas').append(h('div', { class: 'pista' }, h('span', { class: 'n' }, `Pista ${pistasVistas}`), h('span', { html: typeof txt === 'function' ? txt(K) : txt })));
+  $('#pistas').lastChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  actualizarPie();
+});
+
+$('#btnComprobar').addEventListener('click', () => {
+  if (resuelto) return;
+  const n = J.niveles[nivel];
+  const r = n.comprobar(K);
+  if (!r) return;               // el nivel puede manejar pasos intermedios
+  if (r.parcial) { K.mensaje(r.msg, r.ok ? 'ok' : 'error'); return; } // paso intermedio de un nivel con fases
+  intentos++;
+  if (r.ok) {
+    resuelto = true;
+    K.mensaje(r.msg || '¡Misión cumplida!', 'ok');
+    progreso.resueltos[nivel] = true; guardar(claveProgreso(), progreso);
+    actualizarPie();
+    const demora = n.alResolver ? n.alResolver(K) ?? 1600 : 900;
+    const nivelResuelto = nivel;
+    setTimeout(() => { if (nivel === nivelResuelto && resuelto) abrirBitacora(); }, demora);
+  } else {
+    K.mensaje(r.msg || 'Todavía no. Revisá tus datos.', 'error');
+    actualizarPie();
+  }
+});
+
+function abrirBitacora() {
+  const n = J.niveles[nivel];
+  $('#bitKicker').textContent = `Nivel ${nivel + 1} · Fundamentación matemática`;
+  $('#bitResumen').innerHTML = n.resumenBitacora ? n.resumenBitacora(K) : `Resolviste: <b>${n.titulo}</b>`;
+  $('#bitPreguntas').innerHTML = '';
+  n.bitacora.forEach(q => $('#bitPreguntas').append(h('li', { html: q })));
+  $('#bitCheck').checked = false;
+  $('#bitContinuar').disabled = true;
+  $('#bitContinuar').textContent = nivel < J.niveles.length - 1 ? 'Continuar la misión' : 'Terminar la misión';
+  $('#bitacora').classList.add('ver');
+  $('#bitCheck').focus();
+}
+$('#bitCheck').addEventListener('change', e => { $('#bitContinuar').disabled = !e.target.checked; });
+$('#bitContinuar').addEventListener('click', () => {
+  if (!$('#bitCheck').checked) return;
+  progreso.registrados[nivel] = true; guardar(claveProgreso(), progreso);
+  $('#bitacora').classList.remove('ver');
+  if (nivel < J.niveles.length - 1) { K.toast(`Nivel ${nivel + 2} desbloqueado`); cargarNivel(nivel + 1); }
+  else mostrarFinal();
+});
+
+function mostrarFinal() {
+  pintarNiveles();
+  const t = $('#finalTarjeta'); t.innerHTML = '';
+  t.append(
+    h('div', { class: 'kicker' }, 'Misión completa'),
+    h('h2', {}, J.final?.titulo || '¡Lo lograron!'),
+    h('p', { html: J.final?.texto || '' }),
+    h('div', { class: 'misiones' }, J.niveles.map((n, i) => h('div', {}, h('b', {}, `Nivel ${i + 1} ✓`), n.titulo))),
+    h('p', { html: 'Llevá tu bitácora a la clase: vamos a comparar los procedimientos que usó cada grupo.' }),
+    h('div', { class: 'acciones' },
+      h('button', { class: 'btn btn-sec', onclick: () => { $('#final').classList.remove('ver'); } }, 'Volver al escenario'),
+      h('button', { class: 'btn btn-pri', onclick: () => { progreso = { resueltos: J.niveles.map(() => false), registrados: J.niveles.map(() => false) }; guardar(claveProgreso(), progreso); $('#final').classList.remove('ver'); cargarNivel(0); } }, 'Empezar de nuevo')));
+  $('#final').classList.add('ver');
+}
+
+function mostrarPortada() {
+  const t = $('#portadaTarjeta'); t.innerHTML = '';
+  const hayAvance = progreso.registrados.some(Boolean);
+  t.append(
+    h('div', { class: 'kicker' }, J.kicker || 'Matemática · 3.er año'),
+    h('h2', {}, J.titulo),
+    h('p', { html: J.portada }),
+    h('div', { class: 'contenidos' }, J.contenidos.map(c => h('span', {}, c))),
+    h('div', { class: 'misiones' }, J.niveles.map((n, i) => h('div', {}, h('b', {}, `Nivel ${i + 1}`), n.titulo))),
+    h('p', { html: 'Cada nivel termina con una <b>bitácora</b>: antes de seguir, registrás en tu hoja cómo lo resolviste. Usá el botón <b>Matemático</b> para ver la representación geométrica o algebraica de lo que pasa en el escenario.' }),
+    h('div', { class: 'acciones' },
+      h('button', { class: 'btn btn-pri', onclick: () => { $('#portada').classList.remove('ver'); const u = leer(claveProgreso() + '-ultimo', 0); cargarNivel(desbloqueado(u) ? u : 0); } }, hayAvance ? 'Continuar la misión' : 'Comenzar la misión'),
+      docente ? h('span', { style: 'font-size:12px;color:var(--texto-3);align-self:center' }, 'Modo docente: todos los niveles abiertos') : null));
+  $('#portada').classList.add('ver');
+}
+
+function setModo(mat) {
+  document.body.classList.toggle('modo-mat', mat);
+  $('#modoMat').setAttribute('aria-pressed', mat); $('#modoAventura').setAttribute('aria-pressed', !mat);
+  ajustarTamano();
+  if (mat) dibujarMat();
+  J.niveles[nivel]?.alCambiarModo?.(K, mat);
+}
+function dibujarMat() {
+  const n = J.niveles[nivel]; if (!n?.mat) return;
+  const l = $('#vmLienzo'); l.innerHTML = '';
+  n.mat(K, l);
+}
+$('#modoMat').addEventListener('click', () => setModo(true));
+$('#modoAventura').addEventListener('click', () => setModo(false));
+
+/** Punto de entrada: el juego llama a iniciar(JUEGO). */
+function iniciar(juego) {
+  J = juego;
+  document.title = J.titulo;
+  $('#tituloJuego').textContent = J.titulo;
+  $('#subJuego').textContent = J.subtitulo || '';
+  $('#marcaIco').textContent = J.icono || J.titulo[0];
+  progreso = leer(claveProgreso(), null) || { resueltos: J.niveles.map(() => false), registrados: J.niveles.map(() => false) };
+  J.escenaBase?.(K);
+  ajustarTamano();
+  pintarNiveles();
+  // El escenario se ve detrás de la portada: cargamos el primer nivel abierto.
+  cargarNivel(0);
+  mostrarPortada();
+  // Gancho para las pruebas automáticas (probar.mjs). No lo usa el alumno.
+  window.__motor = { J, K, cargarNivel, setModo, comprobar: () => J.niveles[nivel].comprobar(K), get nivel() { return nivel; } };
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   JUEGO — todo lo que sigue es específico de este recurso
+   ════════════════════════════════════════════════════════════════════ */
+/* ── Utilidades del templo ─────────────────────────────────────────── */
+const TH = THREE;
+const neg = n => (n < 0 ? '−' + Math.abs(n) : String(n));
+const nd = n => { const r = Math.round(n * 100) / 100; return (r < 0 ? '−' : '') + String(Math.abs(r)).replace('.', ','); };
+const fmtP = (x, y) => `(${neg(x)}, ${neg(y)})`;
+const fmtPd = (x, y) => `(${nd(x)} ; ${nd(y)})`;
+const igualP = (a, b) => a[0] === b[0] && a[1] === b[1];
+let semilla = 11;
+const rnd = () => (semilla = (semilla * 16807) % 2147483647) / 2147483647;
+const PRIMA = '′';
+/** Cámara: en pantallas angostas (celular) se aleja para que entre el tablero. */
+function cam(pos, mira, op = {}) {
+  const k = innerWidth <= 860 ? 1.75 : 1;
+  K.camara(pos.map((v, i) => mira[i] + (v - mira[i]) * k), mira, { ...op, max: (op.max || 60) * k });
+}
+
+/** Tablero con coordenadas: mapea (x, y) matemáticos a la escena (en una pared o en el piso). */
+function tablero({ xMin, xMax, yMin, yMax, ox = 0, oy = 0, oz = 0, pared = false, losa = 0x8f8573, linea = 0xf1e2b0, padre }) {
+  const base = new TH.Matrix4();
+  if (pared) base.makeTranslation(ox, oy, oz);
+  else base.set(1, 0, 0, ox, 0, 0, 1, oy, 0, -1, 0, oz, 0, 0, 0, 1);
+  const rot = new TH.Matrix4().extractRotation(base);
+  const inv = base.clone().invert();
+  const a3d = (x, y, h = 0) => new TH.Vector3(x, y, h).applyMatrix4(base);
+  const am = v => { const p = v.clone().applyMatrix4(inv); return [Math.round(p.x), Math.round(p.y)]; };
+  const g = new TH.Group(); (padre || K.grupo).add(g);
+  const losaM = new TH.Mesh(new TH.BoxGeometry(xMax - xMin + 1.6, yMax - yMin + 1.6, 0.3), K.mat(losa));
+  losaM.position.copy(a3d((xMin + xMax) / 2, (yMin + yMax) / 2, -0.16));
+  losaM.quaternion.setFromRotationMatrix(base);
+  losaM.receiveShadow = true; g.add(losaM);
+  const pts = [];
+  for (let x = xMin; x <= xMax; x++) pts.push(a3d(x, yMin, 0.01), a3d(x, yMax, 0.01));
+  for (let y = yMin; y <= yMax; y++) pts.push(a3d(xMin, y, 0.01), a3d(xMax, y, 0.01));
+  g.add(new TH.LineSegments(new TH.BufferGeometry().setFromPoints(pts), new TH.LineBasicMaterial({ color: linea, transparent: true, opacity: 0.6 })));
+  if (xMin <= 0 && xMax >= 0) g.add(K.barra(a3d(0, yMin, 0.03).toArray(), a3d(0, yMax + 0.5, 0.03).toArray(), 0.045, 0x262a33));
+  if (yMin <= 0 && yMax >= 0) g.add(K.barra(a3d(xMin, 0, 0.03).toArray(), a3d(xMax + 0.5, 0, 0.03).toArray(), 0.045, 0x262a33));
+  for (let x = xMin; x <= xMax; x++) K.etiqueta(neg(x), a3d(x, yMin - 0.62, 0.05).toArray(), 'mini', g);
+  for (let y = yMin; y <= yMax; y++) K.etiqueta(neg(y), a3d(xMin - 0.65, y, 0.05).toArray(), 'mini', g);
+  K.etiqueta('x', a3d(xMax + 0.75, Math.max(yMin, Math.min(yMax, 0)), 0.05).toArray(), 'mini', g);
+  K.etiqueta('y', a3d(Math.max(xMin, Math.min(xMax, 0)), yMax + 0.8, 0.05).toArray(), 'mini', g);
+  const lim = pared ? { x: [xMin + ox, xMax + ox], y: [yMin + oy, yMax + oy] } : { x: [xMin + ox, xMax + ox], z: [oz - yMax, oz - yMin] };
+  return { base, rot, inv, a3d, am, g, xMin, xMax, yMin, yMax, pared, lim, ejes: pared ? 'xy' : 'xz' };
+}
+
+/** Polígono (plano o extruido) en coordenadas del tablero. */
+function malla(tab, pts, color, { h = 0.02, opac = 1, emis = 0, grosor = 0, local = false } = {}) {
+  const sh = new TH.Shape(pts.map(([x, y]) => new TH.Vector2(x, y)));
+  const geo = grosor ? new TH.ExtrudeGeometry(sh, { depth: grosor, bevelEnabled: false }) : new TH.ShapeGeometry(sh);
+  if (grosor) geo.translate(0, 0, -grosor / 2);
+  const m = new TH.Mesh(geo, K.mat(color, { transparent: opac < 1, opacity: opac, emissive: color, emissiveIntensity: emis, side: TH.DoubleSide, depthWrite: opac >= 1 }));
+  m.matrixAutoUpdate = false;
+  m.matrix.copy(local ? tab.rot : tab.base).multiply(new TH.Matrix4().makeTranslation(0, 0, h));
+  m.castShadow = grosor > 0; m.receiveShadow = true;
+  return m;
+}
+/** Bordes gruesos de un polígono. */
+function bordes(tab, pts, color, r = 0.06, h = 0.05, cerrar = true) {
+  const g = new TH.Group();
+  const n = cerrar ? pts.length : pts.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    g.add(K.barra(tab.a3d(a[0], a[1], h).toArray(), tab.a3d(b[0], b[1], h).toArray(), r, color, { emissive: color, emissiveIntensity: 0.25 }));
+  }
+  return g;
+}
+/** Saca un grupo de la escena y borra sus etiquetas HTML. */
+function quitar(g) {
+  if (!g) return;
+  g.traverse(o => { if (o.isCSS2DObject) o.element.remove(); if (o.geometry) o.geometry.dispose(); });
+  g.parent?.remove(g);
+}
+/** Gema arrastrable que marca un vértice imagen. */
+function gema(tab, nombre, x, y, color, { alMover, alSoltar, h = 0.4, padre, tam = 0.32 } = {}) {
+  const g = new TH.Group();
+  const m = new TH.Mesh(new TH.OctahedronGeometry(tam), K.mat(color, { emissive: color, emissiveIntensity: 0.35 }));
+  m.castShadow = true; g.add(m);
+  g.add(new TH.Mesh(new TH.SphereGeometry(0.55, 8, 6), new TH.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false })));
+  const base = K.cilindro(0.2, 0.26, 0.08, 0x2b2418, [0, tab.pared ? 0 : -h + 0.05, tab.pared ? -h + 0.05 : 0], 10);
+  if (tab.pared) base.rotation.x = Math.PI / 2;
+  g.add(base);
+  (padre || K.grupo).add(g);
+  const lbl = K.etiqueta('', [0, 0.72, 0], 'acento', g);
+  const gm = {
+    obj: g, nombre, vivo: true,
+    get p() { return tab.am(g.position); },
+    poner(px, py, avisar = true) { g.position.copy(tab.a3d(px, py, h)); gm.rotular(); if (avisar) alMover?.(gm); },
+    rotular() { const [a, b] = gm.p; lbl.texto(`${nombre} ${fmtP(a, b)}`); },
+  };
+  gm.poner(x, y, false);
+  K.arrastrable(g, { ejes: tab.ejes, snap: 1, limites: tab.lim, activo: () => gm.vivo, alMover: () => { gm.rotular(); alMover?.(gm); }, alSoltar: () => alSoltar?.(gm) });
+  K.tic((dt, t) => { m.rotation.y += dt * 1.2; m.position.y = tab.pared ? Math.sin(t * 2 + x) * 0.04 : 0.06 * Math.sin(t * 2 + x); });
+  return gm;
+}
+
+/* ── Vista matemática: plano con unidades cuadradas ── */
+function plano(xMin, xMax, yMin, yMax) {
+  const ancho = 560, margen = 34, u = (ancho - 2 * margen) / (xMax - xMin);
+  const alto = Math.round(u * (yMax - yMin) + 2 * margen);
+  const p = K.planoCartesiano({ xMin, xMax, yMin, yMax, ancho, alto, margen });
+  return p;
+}
+function mPoly(p, pts, { fill = 'none', stroke = '#1b2333', dash, op = 1, w = 2 } = {}) {
+  p.g.append(K.s('polygon', { points: pts.map(([x, y]) => `${p.X(x)},${p.Y(y)}`).join(' '), fill, 'fill-opacity': op, stroke, 'stroke-width': w, 'stroke-dasharray': dash, 'stroke-linejoin': 'round' }));
+}
+function mSeg(p, a, b, { color = '#1b2333', dash, w = 1.5, flecha } = {}) {
+  p.g.append(K.s('line', { x1: p.X(a[0]), y1: p.Y(a[1]), x2: p.X(b[0]), y2: p.Y(b[1]), stroke: color, 'stroke-width': w, 'stroke-dasharray': dash, 'marker-end': flecha ? 'url(#flecha)' : null }));
+}
+function mPunto(p, x, y, txt, color = '#1b2333', { dx = 6, dy = -6, r = 4, anchor = 'start' } = {}) {
+  p.g.append(K.s('circle', { cx: p.X(x), cy: p.Y(y), r, fill: color, stroke: '#fff', 'stroke-width': 1.5 }));
+  if (txt) p.g.append(K.s('text', { x: p.X(x) + dx, y: p.Y(y) + dy, fill: color, 'font-weight': 700, 'font-size': 11.5, 'text-anchor': anchor, stroke: '#fdfcf8', 'stroke-width': 3, 'paint-order': 'stroke' }, txt));
+}
+function formula(el, html) { el.append(K.h('div', { class: 'formula', html })); }
+function nota(el, html) { el.append(K.h('div', { class: 'nota', html })); }
+function tabla(el, cab, filas) {
+  el.append(K.h('table', { class: 'tabla-mat', html: `<tr>${cab.map(c => `<th>${c}</th>`).join('')}</tr>` + filas.map(f => `<tr>${f.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') }));
+}
+function animar(ms, f, fin) {
+  let u = 0; const tf = K.tic(dt => { if (u >= 1) return; u = Math.min(1, u + dt * 1000 / ms); f(u); if (u >= 1) fin?.(); });
+  return tf;
+}
+
+/* ── Decorado del templo (permanente) ── */
+function escenaTemplo(K) {
+  const S = K.scene;
+  K.cielo(0x5aa7b8, 0xf6e3b4, [70, 230]);
+  K.hemi.color.set(0xfff3d6); K.hemi.groundColor.set(0x4a5a34); K.hemi.intensity = 1.0;
+  K.sol.color.set(0xffe2b0); K.sol.intensity = 2.4; K.sol.position.set(-26, 44, 24);
+  const pasto = K.suelo(0x3f6b33); pasto.position.y = -0.3; S.add(pasto);
+  // Plaza de piedra con escalones
+  const cv = document.createElement('canvas'); cv.width = cv.height = 512; const cx = cv.getContext('2d');
+  for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) { cx.fillStyle = `hsl(${34 + rnd() * 8}, ${12 + rnd() * 10}%, ${50 + rnd() * 12}%)`; cx.fillRect(i * 64, j * 64, 64, 64); }
+  cx.strokeStyle = 'rgba(52,44,30,.6)'; cx.lineWidth = 4;
+  for (let i = 0; i <= 8; i++) { cx.beginPath(); cx.moveTo(i * 64, 0); cx.lineTo(i * 64, 512); cx.moveTo(0, i * 64); cx.lineTo(512, i * 64); cx.stroke(); }
+  for (let i = 0; i < 70; i++) { cx.fillStyle = `rgba(${60 + rnd() * 30},${100 + rnd() * 40},55,${0.15 + rnd() * 0.3})`; cx.beginPath(); cx.arc(rnd() * 512, rnd() * 512, 3 + rnd() * 14, 0, 7); cx.fill(); }
+  const texPiso = new TH.CanvasTexture(cv); texPiso.colorSpace = TH.SRGBColorSpace; texPiso.wrapS = texPiso.wrapT = TH.RepeatWrapping; texPiso.repeat.set(2.6, 2.3);
+  for (let i = 0; i < 3; i++) S.add(K.caja(46 - i * 2.4, 0.4, 40 - i * 2.4, i === 2 ? 0xffffff : [0x857a66, 0x91866f][i], [0, -0.4 + i * 0.1, -2], i === 2 ? { map: texPiso } : undefined));
+  // Losetas sueltas en la plaza
+  for (let i = 0; i < 26; i++) {
+    const x = (rnd() - 0.5) * 40, z = (rnd() - 0.5) * 34 - 2;
+    if (Math.abs(x) < 13 && z > -12 && z < 12) continue;
+    S.add(K.caja(1 + rnd() * 1.4, 0.06, 1 + rnd() * 1.2, rnd() < 0.5 ? 0xa59a82 : 0x7f755f, [x, 0.03, z]));
+  }
+  // Columnas con enredaderas (algunas rotas)
+  const columna = (x, z, alto) => {
+    const g = new TH.Group();
+    g.add(K.caja(1.9, 0.5, 1.9, 0x8d8370, [0, 0.25, 0]));
+    g.add(K.cilindro(0.62, 0.72, alto, 0xb1a58a, [0, 0.5 + alto / 2, 0], 10));
+    if (alto > 6) g.add(K.caja(1.9, 0.5, 1.9, 0x8d8370, [0, alto + 0.75, 0]));
+    for (let k = 0; k < 5; k++) {
+      const hoja = new TH.Mesh(new TH.IcosahedronGeometry(0.32 + rnd() * 0.25, 0), K.mat(rnd() < 0.5 ? 0x2f7d45 : 0x4c9a4a));
+      const a = rnd() * Math.PI * 2; hoja.position.set(Math.cos(a) * 0.68, 0.6 + rnd() * alto, Math.sin(a) * 0.68); g.add(hoja);
+    }
+    g.position.set(x, 0, z); S.add(g);
+  };
+  [-15, -7.5, 0, 7.5].forEach((z, i) => { columna(-21, z, i === 1 ? 3.2 : 7.5); columna(21, z, i === 2 ? 4.4 : 7.5); });
+  // Pirámide escalonada al fondo con santuario
+  for (let i = 0; i < 6; i++) S.add(K.caja(30 - i * 4.4, 2.4, 16 - i * 2.2, i % 2 ? 0x8a7f69 : 0x968a72, [0, 1.2 + i * 2.4, -34]));
+  S.add(K.caja(5, 4, 4, 0x7a6f5a, [0, 16.4, -34]));
+  S.add(K.caja(2, 2.6, 0.3, 0x1f1a14, [0, 15.7, -31.9]));
+  S.add(K.caja(4.4, 3.5, 0.2, 0xe9c46a, [0, 10, -26.4]));
+  // Selva alrededor
+  for (let i = 0; i < 90; i++) {
+    const a = rnd() * Math.PI * 2, r = 27 + rnd() * 40;
+    const x = Math.cos(a) * r, z = Math.sin(a) * r - 4;
+    if (z > 18 && Math.abs(x) < 25) continue;
+    if (rnd() < 0.45) {
+      const p = new TH.Group(), alto = 4 + rnd() * 4;
+      const tronco = K.cilindro(0.18, 0.3, alto, 0x7a5a3a, [0, alto / 2, 0], 6); tronco.rotation.z = (rnd() - 0.5) * 0.25; p.add(tronco);
+      for (let k = 0; k < 6; k++) {
+        const hoja = new TH.Mesh(new TH.ConeGeometry(0.5, 3.2, 4), K.mat(k % 2 ? 0x2f8a4c : 0x3f9f55));
+        hoja.position.y = alto; hoja.rotation.set(Math.PI / 2.6, k * Math.PI / 3, 0, 'YXZ'); hoja.translateY(1.4); hoja.castShadow = true; p.add(hoja);
+      }
+      p.position.set(x, -0.3, z); S.add(p);
+    } else S.add(K.arbol([x, -0.3, z], 1.6 + rnd() * 1.8, [0x2d6e3e, 0x3d8a47, 0x245c34][Math.floor(rnd() * 3)]));
+  }
+  for (let i = 0; i < 18; i++) { const a = rnd() * Math.PI * 2, r = 24 + rnd() * 6; S.add(K.roca([Math.cos(a) * r, 0.2, Math.sin(a) * r - 3], 0.8 + rnd() * 1.3, 0x7d7a6c)); }
+  // Haces de luz entre los árboles
+  const matLuz = new TH.MeshBasicMaterial({ color: 0xfff1c4, transparent: true, opacity: 0.07, depthWrite: false, blending: TH.AdditiveBlending, side: TH.DoubleSide });
+  [[-12, -14], [10, -18], [16, 6], [-17, 9]].forEach(([x, z]) => {
+    const c = new TH.Mesh(new TH.CylinderGeometry(0.6, 3.2, 30, 12, 1, true), matLuz); c.position.set(x, 15, z); c.rotation.z = 0.35; S.add(c);
+  });
+  // Polvo dorado que flota
+  const n = 140, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { pos[i * 3] = (rnd() - 0.5) * 50; pos[i * 3 + 1] = rnd() * 12; pos[i * 3 + 2] = (rnd() - 0.5) * 40; }
+  const geo = new TH.BufferGeometry(); geo.setAttribute('position', new TH.BufferAttribute(pos, 3));
+  const polvo = new TH.Points(geo, new TH.PointsMaterial({ color: 0xffe08a, size: 0.13, transparent: true, opacity: 0.8, depthWrite: false }));
+  polvo.frustumCulled = false;
+  const reloj0 = performance.now();
+  polvo.onBeforeRender = () => { const t = (performance.now() - reloj0) / 1000; polvo.position.y = Math.sin(t * 0.4) * 0.6; polvo.rotation.y = t * 0.02; };
+  S.add(polvo);
+}
+
+/* ════════ NIVEL 1 · Vitral por simetría axial ════════ */
+const FASES_V = [
+  { eje: 'x = 2', ejePts: [[2, 0], [2, 9]], regla: (x, y) => [4 - x, y],
+    formula: '(x, y) → (2·2 − x, y) = (4 − x, y)',
+    fig: [['T', 2, 9], ['D', 1, 8], ['C', -1, 7], ['B', 0, 5], ['A', -2, 2], ['U', 2, 1]],
+    mov: ['A', 'B', 'C', 'D'], color: 0x3fbf9b },
+  { eje: 'y = x', ejePts: [[0, 0], [9, 9]], regla: (x, y) => [y, x],
+    formula: '(x, y) → (y, x)',
+    fig: [['U', 1, 1], ['E', 0, 3], ['F', 2, 5], ['G', 3, 8], ['H', 6, 8], ['W', 7, 7]],
+    mov: ['E', 'F', 'G', 'H'], color: 0x5b8fe0 },
+];
+const N1 = {
+  titulo: 'El vitral del espejo',
+  tituloMat: 'Simetría axial', subMat: 'Figura, eje e imagen con coordenadas',
+  relato: 'En la pared norte del templo, los vitrales están <b>rotos a la mitad</b>. Los antiguos constructores los diseñaban simétricos: cada mitad es el reflejo de la otra respecto de un <b>eje</b>. Hay que reponer los vértices de vidrio de la mitad perdida.',
+  objetivo: 'Arrastrá las gemas doradas (los vértices imagen) a su lugar en la grilla del vitral. Primero el vitral con eje vertical <b>x = 2</b>; después uno con el eje en diagonal <b>y = x</b>.',
+  armar(K) {
+    cam([0, 6.2, 14.5], [0, 5.4, -3], { suave: false, min: 6, max: 30 });
+    const muro = K.agregar(new TH.Group());
+    muro.add(K.caja(19, 13.5, 1.2, 0x8f8470, [0, 6.75, -3.95]));
+    muro.add(K.caja(20, 1, 1.6, 0x7a705e, [0, 13.8, -3.9]));
+    for (const x of [-8.3, 8.3]) {
+      muro.add(K.cilindro(0.55, 0.65, 12.6, 0xb3a68b, [x, 6.3, -2.9], 10));
+      for (let k = 0; k < 6; k++) muro.add(K.esfera(0.3 + (k % 3) * 0.08, k % 2 ? 0x2f7d45 : 0x4c9a4a, [x + Math.sin(k * 2.1) * 0.6, 1 + k * 2, -2.4]));
+      const ant = K.cilindro(0.14, 0.2, 1, 0x4a3a2a, [x, 2.2, -1.6], 6); muro.add(ant);
+      const llama = K.esfera(0.24, 0xffb347, [x, 2.85, -1.6], { emissive: 0xff8a1a, emissiveIntensity: 1.4 }); muro.add(llama);
+      const luz = new TH.PointLight(0xffa64d, 6, 12, 1.6); luz.position.set(x, 3.2, -1.2); muro.add(luz);
+      K.tic((dt, t) => { llama.scale.setScalar(1 + 0.15 * Math.sin(t * 13 + x)); luz.intensity = 5.5 + Math.sin(t * 9 + x) * 0.8; });
+    }
+    for (let i = 0; i < 9; i++) muro.add(K.caja(1.2, 0.5, 0.8, 0xa69a80, [-7.8 + i * 1.95, 13.1 + (i % 2) * 0.2, -3.2]));
+    this.tab = tablero({ xMin: -3, xMax: 9, yMin: 0, yMax: 9, ox: -3, oy: 1, oz: -3, pared: true, losa: 0x1f2c3a, linea: 0xd9b45a });
+    // Equipo de restauración
+    K.agregar(K.persona([-5.5, 0, 1.5], 0xf2b23a), K.persona([6, 0, 2], 0x5fe0b5));
+    this.irFase(K, 1);
+  },
+  irFase(K, f) {
+    quitar(this.gF); (this.gemas || []).forEach(g => { g.vivo = false; });
+    this.fase = f; const F = FASES_V[f - 1], tab = this.tab;
+    const gF = this.gF = new TH.Group(); tab.g.add(gF);
+    const pts = F.fig.map(([, x, y]) => [x, y]);
+    this.orig = Object.fromEntries(F.fig.map(([n, x, y]) => [n, [x, y]]));
+    gF.add(malla(tab, pts, F.color, { opac: 0.85, emis: 0.45, h: 0.03 }));
+    gF.add(bordes(tab, pts, 0x2a2420, 0.07, 0.06));
+    gF.add(K.barra(tab.a3d(...F.ejePts[0], 0.09).toArray(), tab.a3d(...F.ejePts[1], 0.09).toArray(), 0.09, 0xff5d6c, { emissive: 0xff5d6c, emissiveIntensity: 0.6 }));
+    K.etiqueta('eje ' + F.eje, tab.a3d(F.ejePts[1][0] + (f === 1 ? 0 : 0.4), F.ejePts[1][1] + 0.65, 0.1).toArray(), 'grande', gF);
+    F.fig.forEach(([n, x, y]) => {
+      gF.add(K.esfera(0.13, 0xfdfcf8, tab.a3d(x, y, 0.1).toArray()));
+      if (F.mov.includes(n)) K.etiqueta(`${n} ${fmtP(x, y)}`, tab.a3d(x, y, 0.1).toArray().map((v, i) => v + (i === 1 ? 0.45 : 0)), 'claro', gF);
+    });
+    this.imagen = null;
+    this.gemas = F.mov.map((n, i) => gema(tab, n + PRIMA, [-3, -1, 5, 7][i], 0, 0xf2b23a, { padre: gF, alMover: () => this.actualizar(K) }));
+    this.actualizar(K);
+    K.refrescarMat();
+  },
+  actualizar(K) {
+    const F = FASES_V[this.fase - 1];
+    const pts = F.fig.map(([n, x, y]) => { const i = F.mov.indexOf(n); return i < 0 ? [x, y] : this.gemas[i].p; });
+    if (this.imagen) { this.gF.remove(this.imagen); this.imagen.geometry.dispose(); }
+    this.imagen = malla(this.tab, pts, 0xf2b23a, { opac: 0.45, emis: 0.4, h: 0.025 });
+    this.gF.add(this.imagen);
+    K.refrescarMat();
+  },
+  diagnostico(n, P, Q, ok) {
+    const [x, y] = P, [u, v] = Q;
+    if (this.fase === 1) {
+      if (v !== y) return `${n}${PRIMA} no está a la misma altura que ${n}. Con un eje vertical, cada punto y su imagen quedan sobre una misma recta horizontal (perpendicular al eje).`;
+      if (u === -x) return `${n}${PRIMA} quedó reflejada respecto del eje y (x = 0), no respecto del eje x = 2 del vitral.`;
+      if ((u - 2) * (x - 2) > 0) return `${n}${PRIMA} quedó del mismo lado del eje que ${n}: la imagen tiene que estar del otro lado.`;
+      if (u === x + 4 || u === x + 2) return `Parece que desplazaste ${n} una cantidad fija de casillas. En la simetría lo que se conserva es la <b>distancia al eje</b>: contá desde ${n} hasta el eje y repetí del otro lado.`;
+      return `${n}${PRIMA} no está a la misma distancia del eje que ${n}. Contá las casillas desde ${n} hasta x = 2.`;
+    }
+    if (u === 2 * y - x && v === y) return `Mediste la distancia de ${n} al eje en <b>horizontal</b>. Con el eje y = x inclinado, el segmento ${n}${n}${PRIMA} tiene que ser perpendicular al eje, no horizontal.`;
+    if (u === x && v === 2 * x - y) return `Mediste la distancia de ${n} al eje en <b>vertical</b>. Con el eje y = x inclinado, el segmento ${n}${n}${PRIMA} tiene que ser perpendicular al eje.`;
+    if (u === -y && v === -x) return `Eso sería la simetría respecto de y = −x, no de y = x.`;
+    if ((v - u) * (y - x) > 0) return `${n}${PRIMA} quedó del mismo lado del eje y = x que ${n}.`;
+    return `Revisá ${n}${PRIMA}: el punto medio entre ${n} y ${n}${PRIMA} tiene que caer sobre el eje, y el segmento que los une tiene que ser perpendicular al eje.`;
+  },
+  comprobar(K) {
+    const F = FASES_V[this.fase - 1];
+    let malas = [];
+    F.mov.forEach((n, i) => { const P = this.orig[n], Q = this.gemas[i].p, R = F.regla(...P); if (!igualP(Q, R)) malas.push([n, P, Q]); });
+    const vistas = new Set(this.gemas.map(g => g.p.join(',')));
+    if (vistas.size < this.gemas.length) return { ok: false, msg: 'Hay dos gemas en el mismo lugar. Cada vértice de la figura tiene su propia imagen.' };
+    if (malas.length) {
+      const [n, P, Q] = malas[0];
+      return { ok: false, msg: `Vitral ${this.fase}: ${F.mov.length - malas.length} de ${F.mov.length} vértices bien. ${this.diagnostico(n, P, Q)}` };
+    }
+    if (this.fase === 1) {
+      K.toast('¡Primer vitral restaurado!');
+      setTimeout(() => { if (this.fase === 1) this.irFase(K, 2); }, 900);
+      this.imagen.material.opacity = 0.85;
+      return { parcial: true, ok: true, msg: 'El primer vitral quedó simétrico respecto de x = 2. Ahora viene uno más difícil: el eje está en diagonal (y = x).' };
+    }
+    return { ok: true, msg: '¡Los dos vitrales están completos! Cada vértice y su imagen están a la misma distancia del eje, sobre una perpendicular.' };
+  },
+  alResolver(K) {
+    this.imagen.material.opacity = 0.9; this.imagen.material.emissiveIntensity = 0.9;
+    const rayos = new TH.Group(); this.gF.add(rayos);
+    const mat = new TH.MeshBasicMaterial({ color: 0xfff1c4, transparent: true, opacity: 0, depthWrite: false, blending: TH.AdditiveBlending, side: TH.DoubleSide });
+    for (let i = 0; i < 5; i++) { const c = new TH.Mesh(new TH.CylinderGeometry(0.4, 1.6, 12, 10, 1, true), mat); c.position.set(-3 + i * 2.2, 5, 3); c.rotation.x = Math.PI / 2.4; rayos.add(c); }
+    animar(1400, u => { mat.opacity = 0.16 * u; });
+    cam([0, 5.5, 12], [0, 5.4, -3]);
+    return 2000;
+  },
+  mat(K, el) {
+    const F = FASES_V[this.fase - 1];
+    const p = plano(-3, 9, 0, 9);
+    mPoly(p, F.fig.map(([, x, y]) => [x, y]), { fill: '#3fbf9b', op: 0.3, stroke: '#1d7a62' });
+    const img = F.fig.map(([n, x, y]) => { const i = F.mov.indexOf(n); return i < 0 ? [x, y] : this.gemas[i].p; });
+    mPoly(p, img, { fill: '#f2b23a', op: 0.25, stroke: '#b4541a', dash: '5 4' });
+    const [a, b] = F.ejePts; mSeg(p, a, b, { color: '#e0364a', w: 2.5 });
+    p.g.append(K.s('text', { x: p.X(b[0]) + 6, y: p.Y(b[1]) + 14, fill: '#e0364a', 'font-weight': 700 }, 'eje ' + F.eje));
+    const filas = [];
+    F.mov.forEach((n, i) => {
+      const P = this.orig[n], Q = this.gemas[i].p;
+      mSeg(p, P, Q, { color: '#9aa3b2', dash: '3 3', w: 1 });
+      const M = [(P[0] + Q[0]) / 2, (P[1] + Q[1]) / 2];
+      p.g.append(K.s('rect', { x: p.X(M[0]) - 3, y: p.Y(M[1]) - 3, width: 6, height: 6, fill: '#e0364a', opacity: 0.6 }));
+      mPunto(p, ...P, `${n}${fmtP(...P)}`, '#1d7a62', { anchor: 'end', dx: -6 });
+      mPunto(p, ...Q, `${n}${PRIMA}${fmtP(...Q)}`, '#b4541a');
+      filas.push([n + ' ' + fmtP(...P), `${n}${PRIMA} ${fmtP(...Q)}`, fmtPd(...M)]);
+    });
+    el.append(p.svg);
+    formula(el, `Vitral ${this.fase} · eje ${F.eje} · regla: ${F.formula}`);
+    tabla(el, ['Vértice', 'Imagen colocada', 'Punto medio ▪'], filas);
+    nota(el, 'Comprobación punto a punto: el punto medio de cada par tiene que caer sobre el eje y el segmento que los une, ser perpendicular al eje.');
+  },
+  pistas: [
+    'En una simetría axial, cada punto y su imagen están a la <b>misma distancia del eje</b>, en lados opuestos, y el segmento que los une es <b>perpendicular</b> al eje.',
+    'Con el eje vertical x = 2 la altura (la y) no cambia: sólo contás casillas en horizontal hasta el eje y seguís la misma cantidad del otro lado. Con el eje y = x, el segmento que une un punto con su imagen va en diagonal, perpendicular al eje.',
+    'Paso concreto: A = (−2, 2) está a 4 casillas del eje x = 2, así que su imagen está 4 casillas a la derecha del eje, a la misma altura. Para y = x, probá con un punto cualquiera como (1, 4): su reflejo es (4, 1). ¿Qué les pasa a las coordenadas?',
+  ],
+  bitacora: [
+    '¿Cómo ubicaste la imagen de cada vértice en el vitral de eje x = 2? Escribí la regla (x, y) → (…, …) y explicá de dónde sale cada parte.',
+    '¿Por qué en el vitral con eje y = x no alcanza con contar casillas en horizontal? ¿Qué relación tiene que haber entre el segmento PP′ y el eje?',
+    'Elegí un vértice y su imagen y mostrá con cuentas que el punto medio del segmento está sobre el eje y que los dos puntos están a la misma distancia de él.',
+  ],
+  resumenBitacora() { return 'Restauraste los dos vitrales: uno simétrico respecto de <b>x = 2</b> con la regla (x, y) → (4 − x, y) y otro respecto de <b>y = x</b> con la regla (x, y) → (y, x).'; },
+  prueba: {
+    mal: [
+      function (K) { this.irFase(K, 1); [[2, 2], [0, 5], [1, 7], [-1, 8]].forEach((q, i) => this.gemas[i].poner(...q)); },
+      function (K) { this.irFase(K, 1); [[6, 2], [4, 5], [5, 7], [4, 8]].forEach((q, i) => this.gemas[i].poner(...q)); },
+      function (K) { this.irFase(K, 2); [[6, 3], [8, 5], [8, 3], [8, 6]].forEach((q, i) => this.gemas[i].poner(...q)); },
+    ],
+    bien(K) { this.irFase(K, 2); [[3, 0], [5, 2], [8, 3], [8, 6]].forEach((q, i) => this.gemas[i].poner(...q)); },
+  },
+};
+
+/* ════════ NIVEL 2 · Mecanismo con giro de 180° ════════ */
+const FIG2 = [['A', -3, 2], ['B', -1, 0], ['C', 1, 3], ['D', -2, 5]];
+const O2 = [2, 1];
+const gira2 = (x, y) => [2 * O2[0] - x, 2 * O2[1] - y];
+function engranaje(r, dientes, color) {
+  const g = new TH.Group();
+  const c = K.cilindro(r, r, 0.5, color, [0, 0, 0], 24); g.add(c);
+  g.add(K.cilindro(r * 0.35, r * 0.35, 0.7, 0x3b3226, [0, 0, 0], 12));
+  for (let i = 0; i < dientes; i++) { const a = i / dientes * Math.PI * 2; const d = K.caja(0.5, 0.5, 0.45, color, [Math.cos(a) * (r + 0.2), 0, Math.sin(a) * (r + 0.2)]); d.rotation.y = -a; g.add(d); }
+  return g;
+}
+const N2 = {
+  titulo: 'El mecanismo del giro',
+  tituloMat: 'Simetría central', subMat: 'Giro de 180° alrededor del centro O',
+  relato: 'Bajo el piso del templo hay un mecanismo de piedra: una <b>palanca</b> que, al girar media vuelta (180°) alrededor de un perno, encaja en su gemela. Ya está instalado el vértice <b>A′</b>, la imagen de A. El perno se perdió y faltan los demás vértices imagen.',
+  objetivo: 'Clavá el perno <b>O</b> en el centro de simetría (no es el origen) y ubicá las gemas <b>B′, C′ y D′</b> para que la palanca dorada sea la imagen de la verde por un giro de 180° alrededor de O.',
+  armar(K) {
+    cam([0, 13, 16.5], [0.2, 0, -0.8], { suave: false, min: 8, max: 40 });
+    const tab = this.tab = tablero({ xMin: -4, xMax: 8, yMin: -4, yMax: 6, ox: -2, oy: 0.32, oz: 1, losa: 0x5d5446, linea: 0xe9cf86 });
+    const pts = FIG2.map(([, x, y]) => [x, y]);
+    K.agregar(malla(tab, pts, 0x3fbf9b, { grosor: 0.4, h: 0.2, emis: 0.15 }));
+    FIG2.forEach(([n, x, y]) => K.etiqueta(`${n} ${fmtP(x, y)}`, tab.a3d(x, y, 0.9).toArray(), 'claro'));
+    const Ap = gira2(-3, 2);
+    const fijo = K.agregar(K.esfera(0.3, 0xf2b23a, tab.a3d(...Ap, 0.4).toArray(), { emissive: 0xf2b23a, emissiveIntensity: 0.5 }));
+    K.agregar(K.cilindro(0.26, 0.3, 0.12, 0x2b2418, tab.a3d(...Ap, 0.06).toArray(), 10));
+    K.etiqueta(`A${PRIMA} ${fmtP(...Ap)} instalado`, [0, 0.7, 0], 'jade', fijo);
+    this.Ap = Ap;
+    this.gemas = ['B', 'C', 'D'].map((n, i) => gema(tab, n + PRIMA, -4 + 2 * i, -4, 0xf2b23a, { alMover: () => this.actualizar(K) }));
+    this.perno = gema(tab, 'O', -4, -2, 0xcd7f32, { alMover: () => this.actualizar(K), tam: 0.36 });
+    this.perno.obj.add(K.cilindro(0.09, 0.09, 1.2, 0x8a5a2b, [0, -0.1, 0], 8));
+    // Engranajes laterales y equipo
+    this.ruedas = [engranaje(2.2, 14, 0x9b6b3d), engranaje(1.5, 10, 0x7d5a35)];
+    this.ruedas[0].position.set(-3, 2.6, -8.2); this.ruedas[1].position.set(1.2, 1.9, -8.4); this.ruedas.forEach(r => { r.rotation.x = Math.PI / 2; });
+    K.agregar(...this.ruedas);
+    K.agregar(K.persona([9.5, 0, 3], 0xf2b23a), K.persona([10.2, 0, -1], 0x5fe0b5));
+    for (const [x, z] of [[-8, -6], [8, -6]]) { K.agregar(K.cilindro(0.5, 0.6, 3, 0xb1a58a, [x, 1.5, z], 8)); K.agregar(K.esfera(0.35, 0xffb347, [x, 3.3, z], { emissive: 0xff8a1a, emissiveIntensity: 1.2 })); }
+    this.imagen = null;
+    this.actualizar(K);
+  },
+  vertImagen() { return [this.Ap, ...this.gemas.map(g => g.p)]; },
+  actualizar(K) {
+    if (this.imagen) quitar(this.imagen);
+    this.imagen = K.agregar(malla(this.tab, this.vertImagen(), 0xf2b23a, { opac: 0.4, emis: 0.4, h: 0.03 }));
+    K.refrescarMat();
+  },
+  comprobar(K) {
+    const O = this.perno.p;
+    if (igualP(O, [0, 0])) return { ok: false, msg: 'Dejaste el perno en el origen. El centro de este mecanismo no es el (0, 0): usá la pieza A y su imagen A′, que ya está instalada, para encontrarlo.' };
+    if (!igualP(O, O2)) {
+      const M = [(-3 + this.Ap[0]) / 2, (2 + this.Ap[1]) / 2];
+      const enRecta = (O[0] + 3) * (this.Ap[1] - 2) === (O[1] - 2) * (this.Ap[0] + 3);
+      return { ok: false, msg: enRecta ? 'El perno está sobre la recta AA′, pero no en el lugar justo: el centro de simetría está a la misma distancia de A que de A′.' : 'El perno no está en el centro de simetría. En un giro de 180°, A, el centro y A′ quedan alineados y el centro es el <b>punto medio</b> de AA′.' };
+    }
+    const malas = [];
+    FIG2.slice(1).forEach(([n, x, y], i) => { const Q = this.gemas[i].p; if (!igualP(Q, gira2(x, y))) malas.push([n, x, y, Q]); });
+    if (!malas.length) return { ok: true, msg: '¡El mecanismo gira! O es el punto medio de cada par de vértices: la palanca y su imagen son simétricas respecto de O.' };
+    const [n, x, y, [u, v]] = malas[0], [a, b] = O2;
+    const pre = `${3 - malas.length} de 3 vértices bien. `;
+    if (u === -x && v === -y) return { ok: false, msg: pre + `${n}${PRIMA} está girada alrededor del origen, no alrededor del perno O.` };
+    if (u === 2 * a - x && v === y) return { ok: false, msg: pre + `${n}${PRIMA} es el reflejo de ${n} en la recta vertical que pasa por O (una simetría axial). En el giro de 180° también cambia la altura.` };
+    if (u === x && v === 2 * b - y) return { ok: false, msg: pre + `${n}${PRIMA} es el reflejo de ${n} en la recta horizontal que pasa por O. En el giro de 180° también cambia la posición horizontal.` };
+    if ((u === a - (y - b) && v === b + (x - a)) || (u === a + (y - b) && v === b - (x - a))) return { ok: false, msg: pre + `${n}${PRIMA} quedó girada 90°, no 180°: ${n}, O y ${n}${PRIMA} tienen que quedar alineados.` };
+    if (u === x + 10 && v === y - 2) return { ok: false, msg: pre + `Moviste ${n} lo mismo que se movió A: eso es una traslación. En el giro de 180° la figura queda dada vuelta.` };
+    return { ok: false, msg: pre + `Revisá ${n}${PRIMA}: O tiene que ser el punto medio entre ${n} y ${n}${PRIMA}.` };
+  },
+  alResolver(K) {
+    const tab = this.tab, Ow = tab.a3d(...O2, 0);
+    const piv = K.agregar(new TH.Group()); piv.position.copy(Ow);
+    const copia = malla(tab, FIG2.map(([, x, y]) => [x, y]), 0x7ff0c8, { grosor: 0.4, h: 0.25, emis: 0.5, opac: 0.85 });
+    copia.matrix.premultiply(new TH.Matrix4().makeTranslation(-Ow.x, -Ow.y, -Ow.z));
+    piv.add(copia);
+    animar(1800, u => { const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; piv.rotation.y = Math.PI * e; piv.position.y = Ow.y + Math.sin(Math.PI * u) * 0.8; this.ruedas[0].rotation.y = e * 4; this.ruedas[1].rotation.y = -e * 5.6; },
+      () => { this.imagen.material.opacity = 0.95; });
+    return 2400;
+  },
+  mat(K, el) {
+    const p = plano(-4, 8, -4, 6), O = this.perno.p;
+    const orig = FIG2.map(([, x, y]) => [x, y]), img = this.vertImagen();
+    mPoly(p, orig, { fill: '#3fbf9b', op: 0.3, stroke: '#1d7a62' });
+    mPoly(p, img, { fill: '#f2b23a', op: 0.25, stroke: '#b4541a', dash: '5 4' });
+    const filas = [];
+    FIG2.forEach(([n, x, y], i) => {
+      const Q = img[i]; mSeg(p, [x, y], Q, { color: '#9aa3b2', dash: '3 3', w: 1 });
+      const M = [(x + Q[0]) / 2, (y + Q[1]) / 2];
+      p.g.append(K.s('rect', { x: p.X(M[0]) - 3, y: p.Y(M[1]) - 3, width: 6, height: 6, fill: '#e0364a', opacity: 0.6 }));
+      mPunto(p, x, y, `${n}${fmtP(x, y)}`, '#1d7a62', { anchor: 'end', dx: -6 });
+      mPunto(p, ...Q, `${n}${PRIMA}${fmtP(...Q)}`, '#b4541a');
+      filas.push([`${n} ${fmtP(x, y)}`, `${n}${PRIMA} ${fmtP(...Q)}${i === 0 ? ' (fijo)' : ''}`, fmtPd(...M)]);
+    });
+    mPunto(p, ...O, `O${fmtP(...O)}`, '#8a5a2b', { r: 6, dy: 16 });
+    el.append(p.svg);
+    formula(el, `Centro O = (a, b) = ${fmtP(...O)} · regla del giro de 180°: (x, y) → (2a − x, 2b − y) = (${2 * O[0]} − x, ${2 * O[1]} − y)`);
+    tabla(el, ['Vértice', 'Imagen', 'Punto medio ▪'], filas);
+    nota(el, 'En la simetría central, el centro O es el punto medio de cada par vértice–imagen: los cuatro ▪ tienen que coincidir con O.');
+  },
+  pistas: [
+    'Un giro de 180° alrededor de O es una <b>simetría central</b>: cada punto, el centro y su imagen quedan alineados, y el centro está justo en el medio.',
+    'Ya conocés un par completo: A y A′. El centro O es el <b>punto medio</b> de ese segmento: promediá las x y promediá las y. Después, con O ubicado, buscá cada imagen del otro lado de O a la misma distancia.',
+    'Paso concreto: para ir de B a O avanzás cierta cantidad en x y en y; para llegar a B′ repetís ese mismo avance desde O. Es lo mismo que la regla (x, y) → (2a − x, 2b − y).',
+  ],
+  bitacora: [
+    '¿Cómo encontraste el centro del giro a partir de A y A′? Escribí la cuenta que hiciste.',
+    '¿Por qué un giro de 180° alrededor de O es lo mismo que una simetría central? ¿Qué diferencia hay con reflejar la figura en una recta que pasa por O?',
+    'Elegí un vértice y su imagen y comprobá con la regla (x, y) → (2a − x, 2b − y) y con el punto medio que tu ubicación es correcta.',
+  ],
+  resumenBitacora() { return 'Ubicaste el perno en <b>O = (2, 1)</b>, punto medio de A(−3, 2) y A′(7, 0), y completaste la palanca imagen con la regla (x, y) → (4 − x, 2 − y): B′(5, 2), C′(3, −1), D′(6, −3).'; },
+  prueba: {
+    mal: [
+      function () { this.perno.poner(0, 0); [[1, 0], [-1, -3], [2, -5]].forEach((q, i) => this.gemas[i].poner(...q)); },
+      function () { this.perno.poner(2, 1); [[5, 0], [3, 3], [6, 5]].forEach((q, i) => this.gemas[i].poner(...q)); },
+      function () { this.perno.poner(3, 1); [[5, 2], [3, -1], [6, -3]].forEach((q, i) => this.gemas[i].poner(...q)); },
+    ],
+    bien() { this.perno.poner(2, 1); [[5, 2], [3, -1], [6, -3]].forEach((q, i) => this.gemas[i].poner(...q)); },
+  },
+};
+
+/* ════════ NIVEL 3 · Mosaico trasladado ════════ */
+const L0 = [[0, 0], [4, 0], [4, 1], [1, 1], [1, 3], [0, 3]];
+const NOMBRES3 = ['A', 'B', 'C', 'D', 'E', 'F'];
+const ORIG3 = [-7, -5], S3 = [-4, 2], S3p = [3, 5], V3 = [S3p[0] - S3[0], S3p[1] - S3[1]];
+const DESTINO3 = [ORIG3[0] + V3[0], ORIG3[1] + V3[1]];
+const PIEZAS3 = [
+  { tipo: 'reflH', desc: 'reflejada (dada vuelta de arriba hacia abajo)', rel: L0.map(([x, y]) => [x, 3 - y]), ini: [-9, 9] },
+  { tipo: 'rot180', desc: 'girada 180°', rel: L0.map(([x, y]) => [4 - x, 3 - y]), ini: [-4, 9] },
+  { tipo: 'ok', desc: '', rel: L0, ini: [1, 9] },
+  { tipo: 'reflV', desc: 'reflejada (dada vuelta de izquierda a derecha)', rel: L0.map(([x, y]) => [4 - x, y]), ini: [6, 9] },
+];
+const N3 = {
+  titulo: 'El mosaico trasladado',
+  tituloMat: 'Traslación', subMat: 'Vector, figura e imagen',
+  relato: 'El piso del patio tiene un <b>mosaico</b> que se repite corrido siempre igual. El sello del sol muestra el corrimiento: pasó de <b>S(−4, 2)</b> a <b>S′(3, 5)</b>. En la bandeja hay cuatro piezas en forma de L que <b>parecen</b> iguales... pero sólo una sirve.',
+  objetivo: 'Calculá el vector de traslación <b>v</b> a partir de S y S′, y llevá la pieza correcta al lugar donde v traslada la L original (vértice A en (−7, −5)). Ojo: la traslación no gira ni da vuelta las piezas.',
+  armar(K) {
+    cam([0, 17, 19], [0, 0, -1.5], { suave: false, min: 8, max: 45 });
+    const tab = this.tab = tablero({ xMin: -8, xMax: 8, yMin: -6, yMax: 7, ox: 0, oy: 0.32, oz: 2, losa: 0x7b6a55, linea: 0xf3dfa8 });
+    // bandeja de piedra
+    K.agregar(K.caja(22, 0.5, 5, 0x6a5d4b, tab.a3d(0.5, 10.5, -0.35).toArray()));
+    K.etiqueta('Bandeja de piezas', tab.a3d(-10.6, 10.5, 0.4).toArray(), 'mini');
+    // L original
+    const orig = L0.map(([x, y]) => [x + ORIG3[0], y + ORIG3[1]]);
+    this.orig = orig;
+    K.agregar(malla(tab, orig, 0xc8643b, { grosor: 0.3, h: 0.15, emis: 0.1 }));
+    K.agregar(bordes(tab, orig, 0x3a2416, 0.05, 0.31));
+    K.etiqueta(`A ${fmtP(...orig[0])}`, tab.a3d(orig[0][0] - 0.2, orig[0][1] - 0.1, 0.7).toArray(), 'claro');
+    K.etiqueta('mosaico original', tab.a3d(-5.4, -3.6, 0.6).toArray(), 'mini');
+    // Sellos del sol
+    for (const [P, n] of [[S3, 'S'], [S3p, 'S' + PRIMA]]) {
+      const sol = K.agregar(K.cilindro(0.42, 0.42, 0.14, 0xffc94a, tab.a3d(...P, 0.08).toArray(), 16, { emissive: 0xffb02e, emissiveIntensity: 0.6 }));
+      for (let k = 0; k < 8; k++) { const r = K.caja(0.12, 0.1, 0.3, 0xffc94a, [Math.cos(k * Math.PI / 4) * 0.6, 0, Math.sin(k * Math.PI / 4) * 0.6]); r.rotation.y = -k * Math.PI / 4 + Math.PI / 2; sol.add(r); }
+      K.etiqueta(`${n} ${fmtP(...P)}`, [0, 0.6, 0], 'acento', sol);
+    }
+    K.agregar(K.linea([tab.a3d(...S3, 0.2).toArray(), tab.a3d(...S3p, 0.2).toArray()], 0xffe08a, { discontinua: true }));
+    // Piezas sueltas
+    this.piezas = PIEZAS3.map((pz, i) => {
+      const g = new TH.Group(); K.agregar(g);
+      g.add(malla(tab, pz.rel, 0xc8643b, { grosor: 0.3, h: 0.17, emis: 0.1, local: true }));
+      const b = bordes({ a3d: (x, y, h) => new TH.Vector3(x, y, h).applyMatrix4(tab.rot) }, pz.rel, 0x3a2416, 0.05, 0.33); g.add(b);
+      K.etiqueta(`Pieza ${i + 1}`, new TH.Vector3(2, 1.5, 0.9).applyMatrix4(tab.rot).toArray(), '', g);
+      const obj = { ...pz, n: i + 1, g, get a() { return tab.am(g.position); }, poner: (x, y) => { g.position.copy(tab.a3d(x, y, 0)); } };
+      obj.poner(...pz.ini);
+      K.arrastrable(g, { ejes: 'xz', snap: 1, limites: { x: [-10, 10], z: [2 - 10, 2 + 6] }, alTomar: () => { g.position.y += 0.4; }, alSoltar: () => { g.position.y = tab.a3d(0, 0, 0).y; this.sel = obj; K.refrescarMat(); }, alMover: () => { this.sel = obj; K.refrescarMat(); } });
+      return obj;
+    });
+    this.sel = null;
+    const fila = K.html(`<div class="campo"><label>Vector de traslación v = S′ − S</label><div class="vec">v = ( <input class="entrada" id="v3a" inputmode="numeric" aria-label="componente x"> , <input class="entrada" id="v3b" inputmode="numeric" aria-label="componente y"> )</div></div>`);
+    this.inA = fila.querySelector('#v3a'); this.inB = fila.querySelector('#v3b');
+    [this.inA, this.inB].forEach(i => i.addEventListener('input', () => K.refrescarMat()));
+    K.agregar(K.persona([-11.5, 0, 4], 0xf2b23a), K.persona([11, 0, -2], 0x5fe0b5));
+  },
+  verts(pz) { const [ax, ay] = pz.a; return pz.rel.map(([x, y]) => [x + ax, y + ay]); },
+  comprobar(K) {
+    const a = K.num(this.inA), b = K.num(this.inB);
+    if (Number.isNaN(a) || Number.isNaN(b)) return { ok: false, msg: 'Escribí las dos componentes del vector v (cuánto se corre en x y cuánto en y).' };
+    if (!(a === V3[0] && b === V3[1])) {
+      if (a === -V3[0] && b === -V3[1]) return { ok: false, msg: 'Tu vector va de S′ a S: invertiste el sentido. El corrimiento va desde S hasta S′.' };
+      if (a === V3[1] && b === V3[0]) return { ok: false, msg: 'Intercambiaste las componentes: la primera es el corrimiento en x y la segunda, en y.' };
+      return { ok: false, msg: 'Revisá el vector: es lo que hay que sumarle a cada coordenada de S para llegar a S′ (restá coordenada a coordenada).' };
+    }
+    const enDestino = this.piezas.filter(p => igualP(p.a, DESTINO3));
+    const buena = enDestino.find(p => p.tipo === 'ok');
+    if (buena) return { ok: true, msg: `¡El mosaico encaja! Cada vértice de la Pieza ${buena.n} es el vértice original + (${V3[0]}, ${V3[1]}): misma forma, mismo tamaño y misma orientación.` };
+    if (enDestino.length) { const p = enDestino[0]; return { ok: false, msg: `La Pieza ${p.n} ocupa el lugar, pero está ${p.desc}. Una traslación no cambia la orientación: compará vértice a vértice, todos se tienen que mover lo mismo.` }; }
+    const ok = this.piezas.find(p => p.tipo === 'ok');
+    if (igualP(ok.a, [ORIG3[0] + V3[1], ORIG3[1] + V3[0]])) return { ok: false, msg: 'Corriste la pieza con las componentes del vector intercambiadas.' };
+    return { ok: false, msg: 'Ninguna pieza está donde el vector v lleva el mosaico original. Calculá la imagen del vértice A(−7, −5) sumándole v y llevá ahí la esquina de la pieza.' };
+  },
+  alResolver(K) {
+    const tab = this.tab;
+    const fant = K.agregar(malla(tab, L0, 0xffe08a, { grosor: 0.3, h: 0.5, emis: 0.7, opac: 0.7, local: true }));
+    const g = K.agregar(new TH.Group()); g.add(fant); fant.matrixAutoUpdate = false;
+    const p0 = tab.a3d(...ORIG3, 0), p1 = tab.a3d(...DESTINO3, 0);
+    animar(1600, u => { const e = 1 - Math.pow(1 - u, 3); g.position.lerpVectors(p0, p1, e); g.position.y += Math.sin(Math.PI * u) * 1.2; });
+    return 2200;
+  },
+  mat(K, el) {
+    const p = plano(-8, 8, -6, 7);
+    mPoly(p, this.orig, { fill: '#c8643b', op: 0.35, stroke: '#7a3a1e' });
+    this.orig.forEach(([x, y], i) => mPunto(p, x, y, i === 0 ? `A${fmtP(x, y)}` : NOMBRES3[i], '#7a3a1e', { r: 3, dx: i === 0 ? -4 : 5, dy: i === 0 ? 15 : -5 }));
+    mSeg(p, S3, S3p, { color: '#b4541a', w: 2.5, flecha: true });
+    mPunto(p, ...S3, `S${fmtP(...S3)}`, '#b4541a', { anchor: 'end', dx: -6 });
+    mPunto(p, ...S3p, `S${PRIMA}${fmtP(...S3p)}`, '#b4541a');
+    for (const pz of this.piezas) {
+      const v = this.verts(pz);
+      if (pz.a[1] > 7 || pz.a[1] < -9) continue;
+      const sel = pz === this.sel;
+      mPoly(p, v, { fill: sel ? '#f2b23a' : '#9aa3b2', op: sel ? 0.4 : 0.15, stroke: sel ? '#b4541a' : '#6b7280', dash: sel ? null : '4 3' });
+      p.g.append(K.s('text', { x: p.X(v[0][0] + 2), y: p.Y(v[0][1] + 1.5), 'text-anchor': 'middle', fill: '#1b2333', 'font-weight': 700 }, `P${pz.n}`));
+    }
+    el.append(p.svg);
+    const a = K.num(this.inA), b = K.num(this.inB);
+    const va = Number.isNaN(a) ? 'a' : neg(a), vb = Number.isNaN(b) ? 'b' : neg(b);
+    formula(el, `v = S′ − S = (${va}, ${vb}) · regla de la traslación: (x, y) → (x + ${va}, y + ${vb})`);
+    if (this.sel) {
+      const v = this.verts(this.sel);
+      tabla(el, ['Vértice', 'Original', `Pieza ${this.sel.n}`, 'Pieza − Original'], this.orig.map((o, i) => [NOMBRES3[i], fmtP(...o), fmtP(...v[i]), fmtP(v[i][0] - o[0], v[i][1] - o[1])]));
+      nota(el, 'En una traslación, <b>todos</b> los vértices se desplazan exactamente el mismo vector. Si la última columna cambia de fila en fila, la pieza está girada o reflejada.');
+    } else nota(el, 'Mové una pieza para comparar sus vértices con los del mosaico original.');
+  },
+  pistas: [
+    'Una traslación mueve todos los puntos la misma distancia, en la misma dirección y sentido. Por eso la figura no se gira ni se da vuelta: conserva su <b>orientación</b>.',
+    'El vector se obtiene restando coordenadas: v = S′ − S = (x de S′ − x de S, y de S′ − y de S). Después, sumale v a cada vértice de la L original. Para elegir la pieza, fijate hacia dónde apunta la pata larga y hacia dónde la corta.',
+    'Paso concreto: calculá A + v con A = (−7, −5) y llevá ahí la esquina de la pieza. En el modo Matemático, la columna "Pieza − Original" tiene que dar el mismo vector en los seis vértices.',
+  ],
+  bitacora: [
+    '¿Cómo calculaste el vector de traslación a partir de S y S′? ¿Qué significa cada componente?',
+    '¿Cómo te diste cuenta de cuál de las cuatro piezas era la correcta? ¿Qué transformación tenían las otras y por qué no sirven?',
+    'Comprobá con la regla (x, y) → (x + a, y + b) las coordenadas de dos vértices de la pieza colocada.',
+  ],
+  resumenBitacora() { return `Calculaste <b>v = (${V3[0]}, ${V3[1]})</b> y trasladaste la L: A(−7, −5) → A′(${DESTINO3[0]}, ${DESTINO3[1]}). Descartaste las piezas reflejadas y la girada 180°.`; },
+  prueba: {
+    mal: [
+      function () { this.inA.value = '7'; this.inB.value = '3'; this.piezas.forEach(p => p.poner(...p.ini)); this.piezas[1].poner(...DESTINO3); },
+      function () { this.inA.value = '-7'; this.inB.value = '-3'; this.piezas.forEach(p => p.poner(...p.ini)); this.piezas[2].poner(...DESTINO3); },
+      function () { this.inA.value = '7'; this.inB.value = '3'; this.piezas.forEach(p => p.poner(...p.ini)); this.piezas[2].poner(-4, 2); },
+      function () { this.inA.value = '7'; this.inB.value = '3'; this.piezas.forEach(p => p.poner(...p.ini)); this.piezas[3].poner(...DESTINO3); },
+    ],
+    bien() { this.inA.value = '7'; this.inB.value = '3'; this.piezas.forEach(p => p.poner(...p.ini)); this.piezas[2].poner(...DESTINO3); this.sel = this.piezas[2]; },
+  },
+};
+
+/* ════════ NIVEL 4 · La puerta: combinar transformaciones ════════ */
+const LLAVE = [[-3, 3], [-1, 3], [-1, 4], [2, 4], [2, 3], [3, 3], [3, 5], [-1, 5], [-1, 6], [-3, 6]];
+const IP = 5, IQ = 9; // P = punta del diente, Q = esquina del anillo
+const OPS4 = {
+  R: { f: (x, y) => [2 - x, y], nombre: 'Reflexión en el eje x = 1', corto: 'Reflejar', formula: '(x, y) → (2 − x, y)', color: 0x3fd19b, css: '#1d9a6c' },
+  H: { f: (x, y) => [-x, 4 - y], nombre: 'Giro de 180° con centro C(0, 2)', corto: 'Girar 180°', formula: '(x, y) → (−x, 4 − y)', color: 0xf2b23a, css: '#b4541a' },
+  T: { f: (x, y) => [x + 3, y - 1], nombre: 'Traslación según v = (3, −1)', corto: 'Trasladar', formula: '(x, y) → (x + 3, y − 1)', color: 0xff7a59, css: '#d2492a' },
+};
+const ORDEN4 = ['H', 'T', 'R'];
+const aplicar4 = (ops, pts) => ops.reduce((ps, o) => ps.map(([x, y]) => OPS4[o].f(x, y)), pts);
+const DESTINO4 = aplicar4(ORDEN4, LLAVE);
+/** Lee una expresión lineal en x e y ("3 − y", "x-1", "-x+4") → {x, y, c}; null si no se entiende. */
+function leerLineal(txt) {
+  const t = String(txt).toLowerCase().replace(/\s+/g, '').replace(/[−–]/g, '-');
+  if (!t || !/^[-+0-9xy]+$/.test(t)) return null;
+  const r = { x: 0, y: 0, c: 0 };
+  for (const term of t.match(/[+-]?[^+-]+/g) || []) {
+    const m = term.match(/^([+-]?)(\d+)?([xy])?$/);
+    if (!m || (!m[2] && !m[3])) return null;
+    const k = (m[1] === '-' ? -1 : 1) * (m[2] ? +m[2] : 1);
+    r[m[3] || 'c'] += k;
+  }
+  return r;
+}
+const N4 = {
+  titulo: 'La puerta del templo',
+  tituloMat: 'Composición de transformaciones', subMat: 'El orden cambia el resultado',
+  relato: 'La puerta del santuario se abre con una <b>llave de oro</b> que hay que llevar hasta el <b>encastre</b> del piso, con el diente en la posición justa. El templo deja usar tres movimientos, cada uno una sola vez: una <b>reflexión</b>, un <b>giro de 180°</b> y una <b>traslación</b>. Pero cuidado: no da lo mismo en qué orden se aplican.',
+  objetivo: 'Aplicá las tres transformaciones en el orden que lleve la llave exactamente al encastre (podés deshacer y probar). Después escribí la <b>regla única</b> (x, y) → (…, …) que hace todo el recorrido de una vez.',
+  textoComprobar: 'Abrir la puerta',
+  armar(K) {
+    cam([0, 14.5, 20.5], [0, 2, -2.8], { suave: false, min: 8, max: 45 });
+    const tab = this.tab = tablero({ xMin: -9, xMax: 9, yMin: -5, yMax: 7, ox: 0, oy: 0.32, oz: 1, losa: 0x5f6150, linea: 0xe9dca8 });
+    this.hK = 0.45;
+    // Encastre
+    K.agregar(malla(tab, DESTINO4, 0x16120d, { h: 0.02 }));
+    K.agregar(bordes(tab, DESTINO4, 0xf2b23a, 0.05, 0.05));
+    K.etiqueta('encastre', tab.a3d(-1, -3.7, 0.3).toArray(), 'acento');
+    // Eje, centro y vector
+    K.agregar(K.barra(tab.a3d(1, -5, 0.06).toArray(), tab.a3d(1, 7, 0.06).toArray(), 0.07, 0x3fd19b, { emissive: 0x3fd19b, emissiveIntensity: 0.6 }));
+    K.etiqueta('eje x = 1', tab.a3d(1, 7.6, 0.2).toArray(), 'jade');
+    const c = K.agregar(K.cilindro(0.16, 0.16, 1.1, 0xf2b23a, tab.a3d(0, 2, 0.5).toArray(), 10, { emissive: 0xf2b23a, emissiveIntensity: 0.4 }));
+    K.etiqueta('C (0, 2)', [0, 0.85, 0], 'acento', c);
+    const va = [-8, -3], vb = [-5, -4];
+    K.agregar(K.barra(tab.a3d(...va, 0.1).toArray(), tab.a3d(vb[0] - 0.3, vb[1] + 0.1, 0.1).toArray(), 0.08, 0xff7a59));
+    const punta = K.agregar(new TH.Mesh(new TH.ConeGeometry(0.22, 0.5, 10), K.mat(0xff7a59)));
+    const dir = tab.a3d(...vb).sub(tab.a3d(...va)).normalize();
+    punta.position.copy(tab.a3d(vb[0] - 0.2, vb[1] + 0.07, 0.1)); punta.quaternion.setFromUnitVectors(new TH.Vector3(0, 1, 0), dir);
+    K.etiqueta('v = (3, −1)', tab.a3d(-6.5, -2.3, 0.2).toArray(), '');
+    // Puerta con tres sellos
+    const pz = tab.a3d(0, 9.2, 0).z;
+    K.agregar(K.caja(2.2, 9, 2, 0x8a7f69, [-5.2, 4.5, pz]), K.caja(2.2, 9, 2, 0x8a7f69, [5.2, 4.5, pz]), K.caja(12.6, 2, 2.4, 0x7a705e, [0, 10, pz]));
+    K.agregar(K.caja(8.2, 9, 0.4, 0x0d0b08, [0, 4.5, pz - 0.6]));
+    this.hojas = [K.caja(4.1, 8.8, 0.6, 0x9a7a4a, [-2.05, 4.4, pz]), K.caja(4.1, 8.8, 0.6, 0x9a7a4a, [2.05, 4.4, pz])];
+    this.hojas.forEach((hj, i) => { hj.add(K.caja(0.3, 6, 0.2, 0x6b5232, [i ? -1.2 : 1.2, 0, 0.35])); K.agregar(hj); });
+    this.sellos = {};
+    ['R', 'H', 'T'].forEach((o, i) => {
+      const s = K.cilindro(0.55, 0.55, 0.2, OPS4[o].color, [-2.2 + i * 2.2, 10, pz + 1.25], 16, { emissive: OPS4[o].color, emissiveIntensity: 0.05 });
+      s.rotation.x = Math.PI / 2; this.sellos[o] = s; K.agregar(s);
+    });
+    this.luzPuerta = new TH.PointLight(0xffe2a0, 0, 30, 1.2); this.luzPuerta.position.set(0, 4, pz + 1); K.agregar(this.luzPuerta);
+    // Llave de oro (geometría en el plano matemático; se mueve con matrices = movimientos rígidos)
+    const sh = new TH.Shape(LLAVE.map(([x, y]) => new TH.Vector2(x, y)));
+    sh.holes.push(new TH.Path([[-2.4, 3.8], [-1.6, 3.8], [-1.6, 5.2], [-2.4, 5.2]].map(([x, y]) => new TH.Vector2(x, y))));
+    const geo = new TH.ExtrudeGeometry(sh, { depth: 0.3, bevelEnabled: false }); geo.translate(0, 0, -0.15);
+    this.llave = K.agregar(new TH.Mesh(geo, K.mat(0xf2c04a, { metalness: 0.55, roughness: 0.35, emissive: 0x6b4a00, emissiveIntensity: 0.3 })));
+    this.llave.castShadow = true; this.llave.matrixAutoUpdate = false;
+    this.key0 = tab.base.clone().multiply(new TH.Matrix4().makeTranslation(0, 0, this.hK));
+    K.agregar(malla(tab, LLAVE, 0xf2c04a, { h: 0.015, opac: 0.22 }));
+    this.lblP = K.etiqueta('', [0, 0, 0], 'claro'); this.lblQ = K.etiqueta('', [0, 0, 0], 'claro');
+    // Panel
+    const caja = K.html(`<div class="campo"><label>Movimientos (cada uno, una vez)</label><div class="grupo-btn" id="ops4"></div></div>
+      <div class="secuencia" id="sec4"></div>
+      <div class="grupo-btn"><button class="btn btn-sec btn-chico" id="des4">Deshacer el último</button><button class="btn btn-sec btn-chico" id="rei4">Volver al inicio</button></div>
+      <div class="campo"><label>Regla única que lleva la llave al encastre</label><div class="vec" style="font-size:15px">(x, y) → ( <input class="entrada" id="f4a" aria-label="primera coordenada" style="width:96px"> , <input class="entrada" id="f4b" aria-label="segunda coordenada" style="width:96px"> )</div></div>`);
+    this.btns = {};
+    ['R', 'H', 'T'].forEach(o => { const b = K.h('button', { class: 'btn btn-sec btn-chico', title: OPS4[o].nombre, html: `${OPS4[o].corto}` }); b.style.borderColor = OPS4[o].css; b.addEventListener('click', () => this.hacer(K, o)); caja.querySelector('#ops4').append(b); this.btns[o] = b; });
+    caja.querySelector('#des4').addEventListener('click', () => this.deshacer(K));
+    caja.querySelector('#rei4').addEventListener('click', () => { if (!this.animando) { this.ops = []; this.recalcular(K); } });
+    this.sec = caja.querySelector('#sec4'); this.fa = caja.querySelector('#f4a'); this.fb = caja.querySelector('#f4b');
+    [this.fa, this.fb].forEach(i => i.addEventListener('input', () => K.refrescarMat()));
+    K.agregar(K.persona([-11, 0, 3], 0xf2b23a), K.persona([11, 0, 2], 0x5fe0b5), K.persona([10.4, 0, -3], 0xff7a59));
+    this.ops = []; this.animando = false;
+    this.recalcular(K);
+  },
+  completa(o) {
+    const tab = this.tab, M = new TH.Matrix4();
+    if (o === 'T') return M.makeTranslation(3, 0, 1);
+    const p = tab.a3d(o === 'R' ? 1 : 0, 2, this.hK);
+    const eje = o === 'R' ? new TH.Vector3(0, 0, -1) : new TH.Vector3(0, 1, 0);
+    return new TH.Matrix4().makeTranslation(p.x, p.y, p.z).multiply(new TH.Matrix4().makeRotationAxis(eje, Math.PI)).multiply(new TH.Matrix4().makeTranslation(-p.x, -p.y, -p.z));
+  },
+  parcial(o, u, signo, inverso) {
+    const tab = this.tab;
+    if (o === 'T') { const k = inverso ? -u : u; return new TH.Matrix4().makeTranslation(3 * k, Math.sin(Math.PI * u) * 0.3, 1 * k); }
+    const p = tab.a3d(o === 'R' ? 1 : 0, 2, this.hK);
+    const eje = o === 'R' ? new TH.Vector3(0, 0, -1) : new TH.Vector3(0, 1, 0);
+    const pts = aplicar4(this.ops, LLAVE);
+    let lift = Math.sin(Math.PI * u) * 0.4;
+    if (o === 'R') { const ds = pts.map(([x]) => (x - 1) * signo); lift = Math.sin(Math.PI * u) * (Math.max(0, ...ds) + 0.5); }
+    return new TH.Matrix4().makeTranslation(p.x, p.y + lift, p.z).multiply(new TH.Matrix4().makeRotationAxis(eje, signo * Math.PI * u)).multiply(new TH.Matrix4().makeTranslation(-p.x, -p.y, -p.z));
+  },
+  matOps(ops) { return ops.reduce((M, o) => this.completa(o).multiply(M), new TH.Matrix4()); },
+  recalcular(K) {
+    this.llave.matrix.copy(this.matOps(this.ops)).multiply(this.key0);
+    const pts = aplicar4(this.ops, LLAVE), tab = this.tab;
+    const P = pts[IP], Q = pts[IQ];
+    this.lblP.position.copy(tab.a3d(...P, 1.1)); this.lblP.texto(`P ${fmtP(...P)}`);
+    this.lblQ.position.copy(tab.a3d(...Q, 1.1)); this.lblQ.texto(`Q ${fmtP(...Q)}`);
+    for (const o of ['R', 'H', 'T']) {
+      const usado = this.ops.includes(o);
+      this.btns[o].disabled = usado || this.animando;
+      this.sellos[o].material.emissiveIntensity = usado ? 1.2 : 0.05;
+    }
+    this.sec.innerHTML = this.ops.length ? 'Orden: ' + this.ops.map(o => `<span style="color:#${OPS4[o].color.toString(16)}">${OPS4[o].corto}</span>`).join(' → ') : '<span style="color:var(--texto-3)">Todavía no aplicaste movimientos.</span>';
+    K.refrescarMat();
+  },
+  signoR() { const pts = aplicar4(this.ops, LLAVE); const m = pts.reduce((s, [x]) => s + x - 1, 0); return m < 0 ? 1 : -1; },
+  hacer(K, o) {
+    if (this.animando || this.ops.includes(o)) return;
+    this.animando = true; this.recalcular(K);
+    const Mprev = this.matOps(this.ops), signo = this.signoR();
+    animar(1100, u => { const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; this.llave.matrix.copy(this.parcial(o, e, signo, false)).multiply(Mprev).multiply(this.key0); },
+      () => { this.ops.push(o); this.animando = false; this.recalcular(K); });
+  },
+  deshacer(K) {
+    if (this.animando || !this.ops.length) return;
+    const o = this.ops[this.ops.length - 1];
+    this.animando = true; this.recalcular(K);
+    const Mcur = this.matOps(this.ops);
+    const quedan = this.ops.slice(0, -1), signo = this.signoR();
+    animar(900, u => { const e = u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; this.llave.matrix.copy(this.parcial(o, e, signo, true)).multiply(Mcur).multiply(this.key0); },
+      () => { this.ops = quedan; this.animando = false; this.recalcular(K); });
+  },
+  comprobar(K) {
+    if (this.animando) return { parcial: true, ok: false, msg: 'Esperá a que termine el movimiento.' };
+    if (this.ops.length < 3) return { ok: false, msg: 'La puerta tiene tres sellos y se encienden con los tres movimientos: aplicá la reflexión, el giro y la traslación (en el orden que elijas).' };
+    const pts = aplicar4(this.ops, LLAVE);
+    if (!pts.every((p, i) => igualP(p, DESTINO4[i]))) {
+      return { ok: false, msg: `Con el orden ${this.ops.map(o => OPS4[o].corto).join(' → ')} la llave queda con la orientación del encastre, pero <b>corrida</b>: el orden de las transformaciones cambia dónde termina. Deshacé y probá otro orden, mirando dónde queda P.` };
+    }
+    const a = leerLineal(this.fa.value), b = leerLineal(this.fb.value);
+    if (!a || !b) return { ok: false, msg: '¡La llave encaja! Falta la regla única: escribí cada coordenada con x, y y números (por ejemplo, algo como 2 − x o y + 4).' };
+    const bienA = a.x === 1 && a.y === 0 && a.c === -1, bienB = b.x === 0 && b.y === -1 && b.c === 3;
+    if (bienA && bienB) return { ok: true, msg: '¡La puerta se abre! Tres movimientos en el orden giro → traslación → reflexión equivalen a una sola regla: (x, y) → (x − 1, 3 − y).' };
+    if (!bienB && b.y === 1) return { ok: false, msg: 'Revisá la segunda coordenada: la llave quedó dada vuelta (el diente apunta para el otro lado), así que cuando la y del punto original aumenta, la y de la imagen tiene que disminuir.' };
+    if (!bienA && a.x === -1) return { ok: false, msg: 'Revisá la primera coordenada: la reflexión y el giro invierten la x cada uno, así que al final la x no queda invertida.' };
+    if (a.y || b.x) return { ok: false, msg: 'En estos movimientos la x nueva depende sólo de x, y la y nueva sólo de y.' };
+    return { ok: false, msg: 'Casi: probá tu regla con P y con Q en su posición inicial. Tiene que darte las coordenadas de P y Q en el encastre.' };
+  },
+  alResolver(K) {
+    this.llave.material.emissiveIntensity = 1;
+    animar(2200, u => { const e = 1 - Math.pow(1 - u, 3); this.hojas[0].position.x = -2.05 - e * 3.9; this.hojas[1].position.x = 2.05 + e * 3.9; this.luzPuerta.intensity = e * 40; });
+    cam([0, 11, 12], [0, 3, -6]);
+    return 2600;
+  },
+  mat(K, el) {
+    const p = plano(-9, 9, -5, 7);
+    mSeg(p, [1, -5], [1, 7], { color: '#1d9a6c', w: 2.5 });
+    p.g.append(K.s('text', { x: p.X(1) + 5, y: p.Y(7) + 12, fill: '#1d9a6c', 'font-weight': 700 }, 'x = 1'));
+    mSeg(p, [-8, -3], [-5, -4], { color: '#d2492a', w: 2.5, flecha: true });
+    p.g.append(K.s('text', { x: p.X(-8), y: p.Y(-3) - 8, fill: '#d2492a', 'font-weight': 700 }, 'v = (3, −1)'));
+    mPoly(p, DESTINO4, { fill: '#1b2333', op: 0.12, stroke: '#1b2333', dash: '6 3' });
+    mPoly(p, LLAVE, { fill: 'none', stroke: '#9aa3b2', dash: '3 3', w: 1.5 });
+    const pts = aplicar4(this.ops, LLAVE);
+    mPoly(p, pts, { fill: '#f2b23a', op: 0.55, stroke: '#b4541a' });
+    mPunto(p, 0, 2, 'C(0, 2)', '#b4541a', { r: 5 });
+    mPunto(p, ...pts[IP], `P${fmtP(...pts[IP])}`, '#1b2333');
+    mPunto(p, ...pts[IQ], `Q${fmtP(...pts[IQ])}`, '#1b2333', { anchor: 'end', dx: -6 });
+    el.append(p.svg);
+    formula(el, ['R', 'H', 'T'].map(o => `<span style="color:${OPS4[o].css}">${OPS4[o].nombre}: ${OPS4[o].formula}</span>`).join('<br>'));
+    const filas = [['inicio', fmtP(...LLAVE[IP]), fmtP(...LLAVE[IQ])]];
+    this.ops.forEach((o, i) => { const q = aplicar4(this.ops.slice(0, i + 1), LLAVE); filas.push([`${i + 1}. ${OPS4[o].corto}`, fmtP(...q[IP]), fmtP(...q[IQ])]); });
+    tabla(el, ['Paso', 'P (diente)', 'Q (anillo)'], filas);
+    const a = leerLineal(this.fa.value), b = leerLineal(this.fb.value);
+    if (a && b) {
+      const r = ([x, y]) => [a.x * x + a.y * y + a.c, b.x * x + b.y * y + b.c];
+      nota(el, `Tu regla manda P${fmtP(...LLAVE[IP])} a ${fmtP(...r(LLAVE[IP]))} y Q${fmtP(...LLAVE[IQ])} a ${fmtP(...r(LLAVE[IQ]))}.`);
+    } else nota(el, 'Seguí el recorrido de P y Q paso a paso y compará el principio con el final para encontrar la regla única.');
+  },
+  pistas: [
+    'Cada movimiento tiene su regla. Componer es aplicar una regla al resultado de la anterior: por eso el orden puede cambiar el resultado. Probá un orden, mirá dónde queda P y compará con el encastre.',
+    'Las seis maneras de ordenar los tres movimientos dejan la llave con la misma orientación, pero en lugares distintos. Anotá en tu hoja, para cada orden que pruebes, dónde queda P, y fijate cuál coincide con el diente del encastre.',
+    'Para la regla única, compará P y Q al principio y al final: ¿cuánto cambió la x? ¿La y aumentó o disminuyó cuando la y original aumentaba? Una regla del tipo (x + m, n − y) se puede despejar con un solo punto.',
+  ],
+  bitacora: [
+    '¿En qué orden aplicaste los movimientos? Escribí cómo cambian las coordenadas de P en cada paso usando las reglas.',
+    'Mostrá con un ejemplo que el orden importa: ¿dónde queda P si aplicás primero la reflexión, después el giro y por último la traslación? ¿Por qué da distinto?',
+    '¿Cómo obtuviste la regla única (x, y) → (x − 1, 3 − y)? Comprobala con el punto Q.',
+  ],
+  resumenBitacora() { return 'Abriste la puerta con el orden <b>giro de 180° → traslación → reflexión</b>, que equivale a la regla única (x, y) → (x − 1, 3 − y). P(3, 3) terminó en (2, 0).'; },
+  prueba: {
+    mal: [
+      function (K) { this.ops = ['R', 'H', 'T']; this.recalcular(K); this.fa.value = 'x+1'; this.fb.value = '3-y'; },
+      function (K) { this.ops = ['H', 'T', 'R']; this.recalcular(K); this.fa.value = 'x-1'; this.fb.value = 'y-3'; },
+      function (K) { this.ops = ['H', 'T']; this.recalcular(K); this.fa.value = 'x-1'; this.fb.value = '3-y'; },
+      function (K) { this.ops = ['T', 'H', 'R']; this.recalcular(K); this.fa.value = 'x-1'; this.fb.value = '3-y'; },
+    ],
+    bien(K) { this.ops = ['H', 'T', 'R']; this.recalcular(K); this.fa.value = 'x − 1'; this.fb.value = '3 − y'; },
+  },
+};
+
+const JUEGO = {
+  id: 'templo-movimientos',
+  titulo: 'El templo de los movimientos',
+  subtitulo: 'Colección Misiones 3D · Transformaciones en el plano',
+  icono: 'T',
+  kicker: 'Matemática · 3.er año · Misión 2',
+  portada: 'En lo profundo de la selva, un templo de piedra guarda cuatro mecanismos que dejaron de funcionar. Los antiguos constructores los diseñaron con <b>movimientos</b>: reflejos, giros y corrimientos que no deforman nada. Tu equipo de restauración tiene que entender cada movimiento <b>punto por punto</b>, con coordenadas, para volver a ponerlos en marcha y abrir la puerta del santuario.',
+  contenidos: ['Simetría axial', 'Simetría central', 'Traslación', 'Composición de transformaciones', 'Coordenadas en el plano'],
+  final: { titulo: '¡El santuario está abierto!', texto: 'Restauraron los vitrales con <b>simetrías axiales</b>, hicieron girar el mecanismo con una <b>simetría central</b>, completaron el mosaico con una <b>traslación</b> y descubrieron que al <b>componer</b> movimientos el orden importa. Todos son movimientos rígidos: cambian la posición, pero conservan las distancias y los ángulos.' },
+  escenaBase: escenaTemplo,
+  niveles: [N1, N2, N3, N4],
+};
+iniciar(JUEGO);
+</script>
+</body>
+</html>

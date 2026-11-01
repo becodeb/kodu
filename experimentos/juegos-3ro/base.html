@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITULO__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<style>
+/* ════════════════════════════════════════════════════════════════════
+   COLECCIÓN MISIONES 3D · base común
+   Cada juego cambia sólo --acento / --acento-2 / --cielo-* en :root.
+   ════════════════════════════════════════════════════════════════════ */
+:root{
+  --acento:#ff8a3d; --acento-2:#ffd166;
+  --tinta:#0f1b2d; --tinta-2:#1c2b44; --tinta-3:#2a3c5c;
+  --texto:#eef3fb; --texto-2:#b6c3d9; --texto-3:#7d8ca6;
+  --ok:#3ddc97; --error:#ff5d6c; --aviso:#ffc43d;
+  --papel:#fbf6ea; --papel-tinta:#2b2418; --papel-linea:#d9cfb8;
+  --radio:14px;
+  --f-titulo:'Bricolage Grotesque',system-ui,sans-serif;
+  --f-texto:'Atkinson Hyperlegible',system-ui,sans-serif;
+  --f-num:'JetBrains Mono',ui-monospace,monospace;
+  --panel-w:380px; --barra-h:58px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--tinta);color:var(--texto);font-family:var(--f-texto);font-size:15px;line-height:1.45}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+input,select{font:inherit}
+.num{font-family:var(--f-num);font-weight:700}
+
+/* ── Barra superior ─────────────────────────────────────────── */
+#barra{position:fixed;inset:0 0 auto 0;height:var(--barra-h);display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:linear-gradient(180deg,rgba(15,27,45,.96),rgba(15,27,45,.86));border-bottom:1px solid rgba(255,255,255,.07);z-index:30;backdrop-filter:blur(8px)}
+#barra .marca{display:flex;align-items:center;gap:10px;min-width:0}
+#barra .marca .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--acento);color:var(--tinta);font-family:var(--f-titulo);font-weight:800;font-size:18px;flex:none}
+#barra h1{font-family:var(--f-titulo);font-weight:800;font-size:18px;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#barra .sub{font-size:12px;color:var(--texto-3)}
+#niveles{display:flex;gap:6px;margin-left:auto}
+.chip-nivel{height:34px;min-width:34px;padding:0 10px;border-radius:10px;background:var(--tinta-2);border:1px solid var(--tinta-3);font-family:var(--f-num);font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px;color:var(--texto-2)}
+.chip-nivel[aria-current="true"]{background:var(--acento);border-color:var(--acento);color:var(--tinta)}
+.chip-nivel.hecho:not([aria-current="true"]){border-color:var(--ok);color:var(--ok)}
+.chip-nivel:disabled{opacity:.45;cursor:not-allowed}
+.chip-nivel svg{width:13px;height:13px}
+#modos{display:flex;background:var(--tinta-2);border:1px solid var(--tinta-3);border-radius:12px;padding:3px}
+#modos button{padding:6px 12px;border-radius:9px;font-size:13px;font-weight:700;color:var(--texto-2);display:flex;gap:6px;align-items:center}
+#modos button[aria-pressed="true"]{background:var(--texto);color:var(--tinta)}
+
+/* ── Panel de misión ────────────────────────────────────────── */
+#panel{position:fixed;top:calc(var(--barra-h) + 12px);left:12px;bottom:12px;width:var(--panel-w);z-index:20;display:flex;flex-direction:column;
+  background:rgba(15,27,45,.92);border:1px solid rgba(255,255,255,.08);border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);backdrop-filter:blur(10px);overflow:hidden}
+#panel .cab{padding:16px 18px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
+#panel .etiqueta{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--acento);font-weight:700}
+#panel h2{font-family:var(--f-titulo);font-weight:800;font-size:22px;line-height:1.15;margin-top:4px}
+#panel .cuerpo{flex:1;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:14px}
+#panel .cuerpo::-webkit-scrollbar{width:8px}#panel .cuerpo::-webkit-scrollbar-thumb{background:var(--tinta-3);border-radius:8px}
+.relato{color:var(--texto-2);font-size:14.5px}
+.relato b,.relato strong{color:var(--texto)}
+.objetivo{background:rgba(255,255,255,.04);border-left:3px solid var(--acento);border-radius:0 10px 10px 0;padding:10px 12px;font-size:14px}
+.objetivo .t{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--texto-3);font-weight:700;margin-bottom:3px}
+.datos{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px;background:var(--tinta-2);border-radius:12px;padding:10px 12px}
+.datos dt{color:var(--texto-3)} .datos dd{font-family:var(--f-num);font-weight:700}
+.controles{display:flex;flex-direction:column;gap:10px}
+.campo{display:flex;flex-direction:column;gap:5px}
+.campo label{font-size:13px;color:var(--texto-2);font-weight:700}
+.campo .fila{display:flex;gap:8px;align-items:center}
+.entrada{width:100%;height:40px;border-radius:10px;border:1px solid var(--tinta-3);background:var(--tinta);color:var(--texto);padding:0 12px;font-family:var(--f-num);font-weight:700;font-size:15px}
+.entrada:focus{outline:2px solid var(--acento);outline-offset:1px}
+.entrada.mal{border-color:var(--error)} .entrada.bien{border-color:var(--ok)}
+input[type=range]{width:100%;accent-color:var(--acento)}
+.btn{height:42px;padding:0 16px;border-radius:12px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .08s,filter .15s}
+.btn:active{transform:translateY(1px)}
+.btn-pri{background:var(--acento);color:var(--tinta)} .btn-pri:hover{filter:brightness(1.08)}
+.btn-sec{background:var(--tinta-2);border:1px solid var(--tinta-3);color:var(--texto)} .btn-sec:hover{background:var(--tinta-3)}
+.btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
+.btn svg{width:17px;height:17px}
+.btn-chico{height:32px;padding:0 10px;font-size:13px;border-radius:9px}
+.grupo-btn{display:flex;flex-wrap:wrap;gap:6px}
+.grupo-btn .btn[aria-pressed="true"]{background:var(--acento);color:var(--tinta);border-color:var(--acento)}
+#panel .pie{padding:12px 18px 16px;border-top:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;gap:10px}
+#panel .pie .acciones{display:flex;gap:8px}
+#panel .pie .acciones .btn-pri{flex:1}
+#mensaje{font-size:14px;border-radius:12px;padding:10px 12px;display:none}
+#mensaje.ver{display:block}
+#mensaje.ok{background:rgba(61,220,151,.12);border:1px solid rgba(61,220,151,.4);color:#c9f7e2}
+#mensaje.error{background:rgba(255,93,108,.12);border:1px solid rgba(255,93,108,.4);color:#ffd5da}
+#mensaje.info{background:rgba(255,196,61,.1);border:1px solid rgba(255,196,61,.35);color:#ffeec4}
+#pistas{display:flex;flex-direction:column;gap:8px}
+.pista{background:rgba(255,209,102,.08);border:1px dashed rgba(255,209,102,.45);border-radius:12px;padding:9px 12px;font-size:14px;color:#ffeec4}
+.pista .n{font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;color:var(--acento-2);display:block;margin-bottom:2px}
+.intentos{font-size:12px;color:var(--texto-3)}
+
+/* ── Escena ─────────────────────────────────────────────────── */
+#escena{position:fixed;inset:0;z-index:1}
+#escena canvas{display:block}
+#etiquetas{position:fixed;inset:0;pointer-events:none;z-index:2}
+.lbl{font-family:var(--f-num);font-weight:700;font-size:13px;background:rgba(15,27,45,.85);color:#fff;padding:3px 7px;border-radius:7px;white-space:nowrap;border:1px solid rgba(255,255,255,.15)}
+.lbl.acento{background:var(--acento);color:var(--tinta);border-color:transparent}
+.lbl.claro{background:rgba(255,255,255,.92);color:var(--tinta)}
+.lbl.grande{font-size:15px;padding:5px 9px}
+.ayuda-camara{position:fixed;right:16px;bottom:14px;z-index:15;font-size:12px;color:var(--texto-2);background:rgba(15,27,45,.75);padding:6px 10px;border-radius:9px;pointer-events:none}
+
+/* ── Vista matemática ───────────────────────────────────────── */
+#vistaMat{position:fixed;top:calc(var(--barra-h) + 12px);right:12px;bottom:12px;width:min(46vw,620px);z-index:18;display:none;flex-direction:column;
+  background:#fdfcf8;color:#1b2333;border-radius:18px;box-shadow:0 20px 50px rgba(0,0,0,.35);overflow:hidden}
+body.modo-mat #vistaMat{display:flex}
+body.modo-mat .ayuda-camara{display:none}
+#vistaMat .cab{padding:12px 16px;border-bottom:1px solid #e6e1d4;display:flex;align-items:center;gap:10px}
+#vistaMat .cab b{font-family:var(--f-titulo);font-size:16px}
+#vistaMat .cab span{font-size:12px;color:#6b7280}
+#vistaMat .lienzo{flex:1;min-height:0;padding:10px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+#vistaMat svg{width:100%;height:100%;min-height:260px;display:block}
+#vistaMat .nota{font-size:13px;color:#4b5563;padding:0 4px}
+#vistaMat .formula{font-family:var(--f-num);font-weight:700;font-size:15px;background:#f2efe6;border-radius:10px;padding:8px 12px;color:#1b2333}
+
+/* ── Pantallas (portada, bitácora, final) ───────────────────── */
+.capa{position:fixed;inset:0;z-index:50;display:none;place-items:center;padding:20px;background:rgba(8,14,26,.72);backdrop-filter:blur(6px)}
+.capa.ver{display:grid}
+.tarjeta{width:min(640px,100%);max-height:calc(100vh - 40px);overflow:auto;background:var(--tinta);border:1px solid rgba(255,255,255,.1);border-radius:22px;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.tarjeta h2{font-family:var(--f-titulo);font-weight:800;font-size:34px;line-height:1.05;letter-spacing:-.02em}
+.tarjeta .kicker{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--acento);font-weight:700;margin-bottom:8px}
+.tarjeta p{color:var(--texto-2);margin-top:12px}
+.tarjeta .misiones{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:18px}
+.tarjeta .misiones div{background:var(--tinta-2);border-radius:12px;padding:10px 12px;font-size:13.5px}
+.tarjeta .misiones b{display:block;font-family:var(--f-num);color:var(--acento);font-size:12px}
+.tarjeta .acciones{display:flex;gap:10px;margin-top:22px;flex-wrap:wrap}
+.contenidos{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.contenidos span{font-size:12px;border:1px solid var(--tinta-3);border-radius:99px;padding:3px 10px;color:var(--texto-2)}
+
+/* Bitácora: hoja de papel */
+#bitacora .tarjeta{background:var(--papel);color:var(--papel-tinta);border:0;position:relative;
+  background-image:repeating-linear-gradient(180deg,transparent 0 31px,rgba(217,207,184,.55) 31px 32px);background-position:0 112px}
+#bitacora .tarjeta::before{content:"";position:absolute;left:52px;top:0;bottom:0;width:2px;background:rgba(220,90,90,.35)}
+#bitacora .contenido{padding-left:44px}
+#bitacora .kicker{color:#b4541a}
+#bitacora h2{font-size:30px;color:var(--papel-tinta)}
+#bitacora h3{font-family:var(--f-titulo);font-size:18px;margin-top:18px}
+#bitacora ol{margin:10px 0 0 20px;display:flex;flex-direction:column;gap:9px;font-size:16px;line-height:1.4}
+#bitacora .aclaracion{font-size:14px;color:#6b5b3e;margin-top:14px;font-style:italic}
+#bitacora .confirmar{display:flex;gap:10px;align-items:flex-start;margin-top:18px;padding:12px 14px;background:#fff;border:2px solid #e3d8bf;border-radius:12px;cursor:pointer;font-weight:700}
+#bitacora .confirmar input{width:22px;height:22px;accent-color:#b4541a;flex:none;margin-top:1px}
+#bitacora .btn-pri{background:#b4541a;color:#fff}
+#bitacora .resumen{font-size:13.5px;background:rgba(255,255,255,.7);border:1px solid #e3d8bf;border-radius:10px;padding:8px 12px;margin-top:12px;color:#4d4230}
+
+/* Toast */
+#toast{position:fixed;left:50%;top:calc(var(--barra-h) + 18px);transform:translateX(-50%) translateY(-20px);opacity:0;z-index:60;background:var(--ok);color:var(--tinta);font-weight:700;padding:10px 18px;border-radius:12px;transition:.3s;pointer-events:none}
+#toast.ver{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── Responsive: panel abajo en pantallas chicas ─────────────── */
+@media (max-width:860px){
+  :root{--barra-h:96px}
+  #barra{flex-wrap:wrap;height:auto;min-height:var(--barra-h);padding:8px 12px;row-gap:6px}
+  #niveles{margin-left:0}
+  #panel{top:auto;left:8px;right:8px;width:auto;height:46vh;bottom:8px}
+  #vistaMat{left:8px;right:8px;width:auto;bottom:calc(46vh + 16px)}
+  .ayuda-camara{display:none}
+  .tarjeta{padding:20px}.tarjeta h2{font-size:26px}
+  .tarjeta .misiones{grid-template-columns:1fr}
+  #bitacora .contenido{padding-left:30px}#bitacora .tarjeta::before{left:34px}
+}
+</style>
+</head>
+<body>
+<div id="escena"></div>
+<div id="etiquetas"></div>
+
+<header id="barra">
+  <div class="marca"><div class="ico" id="marcaIco">?</div><div style="min-width:0"><h1 id="tituloJuego"></h1><div class="sub" id="subJuego"></div></div></div>
+  <nav id="niveles" aria-label="Niveles"></nav>
+  <div id="modos" role="group" aria-label="Modo de visualización">
+    <button id="modoAventura" aria-pressed="true" title="Ver el escenario">Aventura</button>
+    <button id="modoMat" aria-pressed="false" title="Ver la representación matemática">Matemático</button>
+  </div>
+</header>
+
+<aside id="panel" aria-live="polite">
+  <div class="cab"><div class="etiqueta" id="pnEtiqueta"></div><h2 id="pnTitulo"></h2></div>
+  <div class="cuerpo">
+    <div class="relato" id="pnRelato"></div>
+    <div class="objetivo" id="pnObjetivo"><div class="t">Objetivo</div><div id="pnObjetivoTxt"></div></div>
+    <div class="controles" id="pnControles"></div>
+    <div id="pistas"></div>
+  </div>
+  <div class="pie">
+    <div id="mensaje" role="status"></div>
+    <div class="acciones">
+      <button class="btn btn-sec" id="btnPista" title="Pedir una pista">Pista</button>
+      <button class="btn btn-pri" id="btnComprobar">Comprobar</button>
+    </div>
+    <div class="intentos" id="intentos"></div>
+  </div>
+</aside>
+
+<section id="vistaMat" aria-label="Representación matemática">
+  <div class="cab"><b id="vmTitulo">Modo matemático</b><span id="vmSub"></span></div>
+  <div class="lienzo" id="vmLienzo"></div>
+</section>
+
+<div class="ayuda-camara" id="ayudaCamara">Arrastrá el fondo para girar · rueda para acercar</div>
+<div id="toast"></div>
+
+<div class="capa" id="portada"><div class="tarjeta" id="portadaTarjeta"></div></div>
+
+<div class="capa" id="bitacora" role="dialog" aria-modal="true" aria-labelledby="bitTitulo">
+  <div class="tarjeta"><div class="contenido">
+    <div class="kicker" id="bitKicker"></div>
+    <h2 id="bitTitulo">Bitácora de misión</h2>
+    <div class="resumen" id="bitResumen"></div>
+    <h3>Antes de continuar, registrá en tu hoja:</h3>
+    <ol id="bitPreguntas"></ol>
+    <p class="aclaracion">Incluí tus cálculos, representaciones gráficas o esquemas cuando corresponda. Explicá con tus propias palabras.</p>
+    <label class="confirmar"><input type="checkbox" id="bitCheck"> <span>Confirmo que registré mis respuestas en papel.</span></label>
+    <div class="acciones" style="margin-top:16px;display:flex;gap:10px">
+      <button class="btn btn-pri" id="bitContinuar" disabled>Continuar la misión</button>
+    </div>
+  </div></div>
+</div>
+
+<div class="capa" id="final"><div class="tarjeta" id="finalTarjeta"></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/* ════════════════════════════════════════════════════════════════════
+   MOTOR COMÚN — no depende del juego. Cada juego define JUEGO más abajo.
+   ════════════════════════════════════════════════════════════════════ */
+const $ = (s, r = document) => r.querySelector(s);
+const h = (tag, attrs = {}, ...hijos) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') el.className = v;
+    else if (k === 'html') el.innerHTML = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of hijos.flat()) if (c != null) el.append(c instanceof Node ? c : document.createTextNode(c));
+  return el;
+};
+const SVGNS = 'http://www.w3.org/2000/svg';
+const s = (tag, attrs = {}, ...hijos) => {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v);
+  for (const c of hijos.flat()) if (c != null) el.append(c instanceof Node ? c : document.createTextNode(c));
+  return el;
+};
+
+// Almacenamiento: el iframe de Kodu no tiene allow-same-origin, así que
+// localStorage tira. Siempre detrás de try/catch, con memoria de respaldo.
+const memoria = {};
+const guardar = (k, v) => { memoria[k] = v; try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const leer = (k, def) => { try { const v = localStorage.getItem(k); if (v != null) return JSON.parse(v); } catch {} return k in memoria ? memoria[k] : def; };
+
+// ── Three.js: renderer, cámara, luces ──
+const contenedor = $('#escena');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+contenedor.append(renderer.domElement);
+const etiquetas = new CSS2DRenderer({ element: $('#etiquetas') });
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.48;
+
+const hemi = new THREE.HemisphereLight(0xdfefff, 0x6b5a45, 1.1);
+scene.add(hemi);
+const sol = new THREE.DirectionalLight(0xfff1dc, 2.2);
+sol.position.set(30, 50, 20);
+sol.castShadow = true;
+sol.shadow.mapSize.set(2048, 2048);
+Object.assign(sol.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 1, far: 200 });
+scene.add(sol);
+
+// El panel izquierdo (y la vista matemática) tapan parte del canvas: corremos
+// el centro óptico para que lo importante quede en la zona visible.
+function ajustarTamano() {
+  const w = innerWidth, hgt = innerHeight;
+  renderer.setSize(w, hgt);
+  etiquetas.setSize(w, hgt);
+  camera.aspect = w / hgt;
+  const angosto = w <= 860;
+  const izq = angosto ? 0 : 392;
+  const der = angosto ? 0 : (document.body.classList.contains('modo-mat') ? Math.min(w * 0.46, 620) + 12 : 0);
+  const abajo = angosto ? hgt * 0.46 + 8 : 0;
+  const libreW = w - izq - der, libreH = hgt - abajo;
+  camera.clearViewOffset();
+  if (izq || der || abajo) camera.setViewOffset(w, hgt, (der - izq) / 2, abajo / 2, w, hgt);
+  camera.updateProjectionMatrix();
+  return { libreW, libreH };
+}
+addEventListener('resize', ajustarTamano);
+
+// ── Bucle ──
+const tics = new Set();
+const reloj = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(reloj.getDelta(), 0.05), t = reloj.elapsedTime;
+  for (const f of tics) f(dt, t);
+  controls.update();
+  renderer.render(scene, camera);
+  etiquetas.render(scene, camera);
+});
+
+// ── Grupo del nivel: todo lo que crea un nivel cuelga de acá y se limpia solo ──
+let grupoNivel = new THREE.Group();
+scene.add(grupoNivel);
+let ticsNivel = [];
+let limpiezasNivel = [];
+function limpiarNivel() {
+  for (const f of ticsNivel) tics.delete(f);
+  ticsNivel = [];
+  for (const f of limpiezasNivel) try { f(); } catch {}
+  limpiezasNivel = [];
+  grupoNivel.traverse(o => {
+    if (o.isCSS2DObject) o.element.remove();
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) [].concat(o.material).forEach(m => m.dispose());
+  });
+  scene.remove(grupoNivel);
+  grupoNivel = new THREE.Group();
+  scene.add(grupoNivel);
+  arrastrables.length = 0;
+  clicables.length = 0;
+}
+
+// ── Interacción: arrastrar sobre un plano, con imán a grilla ──
+const raycaster = new THREE.Raycaster();
+const puntero = new THREE.Vector2();
+const arrastrables = []; // {obj, plano:THREE.Plane, snap, limites, alMover, alSoltar, filtro}
+const clicables = [];    // {obj, alClic}
+let arrastre = null;
+function rayoDesde(ev) {
+  const r = renderer.domElement.getBoundingClientRect();
+  puntero.x = ((ev.clientX - r.left) / r.width) * 2 - 1;
+  puntero.y = -((ev.clientY - r.top) / r.height) * 2 + 1;
+  raycaster.setFromCamera(puntero, camera);
+}
+function buscarRaiz(obj, lista) {
+  for (let o = obj; o; o = o.parent) { const e = lista.find(a => a.obj === o); if (e) return e; }
+  return null;
+}
+renderer.domElement.addEventListener('pointerdown', ev => {
+  rayoDesde(ev);
+  const objs = [...arrastrables.map(a => a.obj), ...clicables.map(c => c.obj)];
+  const hit = raycaster.intersectObjects(objs, true)[0];
+  if (!hit) return;
+  const a = buscarRaiz(hit.object, arrastrables);
+  if (a && (!a.activo || a.activo())) {
+    const p = new THREE.Vector3();
+    raycaster.ray.intersectPlane(a.plano, p);
+    arrastre = { a, desfase: a.obj.position.clone().sub(p) };
+    controls.enabled = false;
+    renderer.domElement.setPointerCapture(ev.pointerId);
+    a.alTomar?.();
+    return;
+  }
+  const c = buscarRaiz(hit.object, clicables);
+  if (c) c.alClic(hit);
+});
+renderer.domElement.addEventListener('pointermove', ev => {
+  rayoDesde(ev);
+  if (!arrastre) {
+    const objs = [...arrastrables.map(a => a.obj), ...clicables.map(c => c.obj)];
+    renderer.domElement.style.cursor = raycaster.intersectObjects(objs, true).length ? 'grab' : '';
+    return;
+  }
+  const { a, desfase } = arrastre;
+  const p = new THREE.Vector3();
+  if (!raycaster.ray.intersectPlane(a.plano, p)) return;
+  p.add(desfase);
+  if (a.snap) for (const eje of a.ejes) p[eje] = Math.round(p[eje] / a.snap) * a.snap;
+  if (a.limites) for (const [eje, [min, max]] of Object.entries(a.limites)) p[eje] = Math.max(min, Math.min(max, p[eje]));
+  for (const eje of ['x', 'y', 'z']) if (!a.ejes.includes(eje)) p[eje] = a.obj.position[eje];
+  if (!p.equals(a.obj.position)) { a.obj.position.copy(p); a.alMover?.(p); }
+});
+const soltar = () => { if (arrastre) { arrastre.a.alSoltar?.(arrastre.a.obj.position); arrastre = null; controls.enabled = true; } };
+renderer.domElement.addEventListener('pointerup', soltar);
+renderer.domElement.addEventListener('pointercancel', soltar);
+
+/* ════════════════════════════════════════════════════════════════════
+   K — la API que usan los juegos
+   ════════════════════════════════════════════════════════════════════ */
+const K = {
+  THREE, scene, camera, controls, renderer, sol, hemi, h, s, $,
+  get grupo() { return grupoNivel; },
+  agregar(...objs) { grupoNivel.add(...objs); return objs[0]; },
+  tic(f) { tics.add(f); ticsNivel.push(f); return f; },
+  alLimpiar(f) { limpiezasNivel.push(f); },
+
+  /** Mueve la cámara (suave) a una posición mirando a un punto. */
+  camara(pos, mira, { suave = true, min = 5, max = 200 } = {}) {
+    controls.minDistance = min; controls.maxDistance = max;
+    const p0 = camera.position.clone(), m0 = controls.target.clone();
+    const p1 = new THREE.Vector3(...pos), m1 = new THREE.Vector3(...mira);
+    if (!suave) { camera.position.copy(p1); controls.target.copy(m1); return; }
+    let u = 0;
+    const f = dt => {
+      u = Math.min(1, u + dt * 1.4); const e = 1 - Math.pow(1 - u, 3);
+      camera.position.lerpVectors(p0, p1, e); controls.target.lerpVectors(m0, m1, e);
+      if (u >= 1) tics.delete(f);
+    };
+    tics.add(f);
+  },
+
+  /** Etiqueta HTML pegada a un punto 3D. clase: '', 'acento', 'claro', 'grande'. */
+  etiqueta(texto, pos, clase = '', padre = grupoNivel) {
+    const el = h('div', { class: 'lbl ' + clase, html: texto });
+    const o = new CSS2DObject(el);
+    o.position.set(...pos);
+    padre.add(o);
+    o.texto = t => { el.innerHTML = t; };
+    return o;
+  },
+
+  /** Material plano estilo low-poly. */
+  mat(color, extra = {}) { return new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05, flatShading: true, ...extra }); },
+  caja(w, hgt, d, color, pos = [0, 0, 0], extra) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, d), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = m.receiveShadow = true; return m;
+  },
+  cilindro(rt, rb, hgt, color, pos = [0, 0, 0], seg = 12, extra) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, hgt, seg), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = m.receiveShadow = true; return m;
+  },
+  esfera(r, color, pos = [0, 0, 0], extra) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 12), K.mat(color, extra));
+    m.position.set(...pos); m.castShadow = true; return m;
+  },
+  /** Línea entre puntos (en el espacio). */
+  linea(puntos, color = 0xffffff, { discontinua = false, ancho = 1 } = {}) {
+    const g = new THREE.BufferGeometry().setFromPoints(puntos.map(p => new THREE.Vector3(...p)));
+    const m = discontinua ? new THREE.LineDashedMaterial({ color, dashSize: 0.6, gapSize: 0.35, linewidth: ancho }) : new THREE.LineBasicMaterial({ color, linewidth: ancho });
+    const l = new THREE.Line(g, m); if (discontinua) l.computeLineDistances(); return l;
+  },
+  /** Tubo grueso entre dos puntos (las líneas de WebGL miden 1px). */
+  barra(a, b, radio, color, extra) {
+    const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
+    const largo = va.distanceTo(vb);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(radio, radio, largo, 10), K.mat(color, extra));
+    m.position.copy(va).add(vb).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+    m.castShadow = true; return m;
+  },
+  /** Árbol low-poly. */
+  arbol(pos, escala = 1, color = 0x3f8f5a) {
+    const g = new THREE.Group();
+    g.add(K.cilindro(0.18, 0.25, 1.2, 0x7a5235, [0, 0.6, 0], 6));
+    const copa = new THREE.Mesh(new THREE.ConeGeometry(0.95, 2.2, 7), K.mat(color)); copa.position.y = 2.1; copa.castShadow = true; g.add(copa);
+    g.position.set(...pos); g.scale.setScalar(escala); return g;
+  },
+  roca(pos, escala = 1, color = 0x8a8f99) {
+    const m = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8, 0), K.mat(color));
+    m.position.set(...pos); m.scale.set(escala, escala * 0.7, escala); m.rotation.set(Math.random(), Math.random(), 0);
+    m.castShadow = m.receiveShadow = true; return m;
+  },
+  /** Personita low-poly (para escala y narrativa). */
+  persona(pos, color = 0xff8a3d) {
+    const g = new THREE.Group();
+    g.add(K.cilindro(0.22, 0.28, 0.9, color, [0, 0.45, 0], 8));
+    g.add(K.esfera(0.22, 0xf2c9a0, [0, 1.12, 0]));
+    g.position.set(...pos); return g;
+  },
+  /** Suelo amplio. */
+  suelo(color = 0x7fb069, tam = 400) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(tam, tam), K.mat(color));
+    m.rotation.x = -Math.PI / 2; m.receiveShadow = true; return m;
+  },
+  /** Cielo con degradé + niebla. */
+  cielo(arriba = 0x7ec8ff, abajo = 0xdff3ff, niebla = [80, 260]) {
+    const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+    const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#' + new THREE.Color(arriba).getHexString()); g.addColorStop(1, '#' + new THREE.Color(abajo).getHexString());
+    x.fillStyle = g; x.fillRect(0, 0, 2, 256);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+    scene.fog = niebla ? new THREE.Fog(abajo, niebla[0], niebla[1]) : null;
+  },
+
+  /** Hace arrastrable un objeto sobre un plano. ejes: los que se mueven ('xz' por defecto).
+   *  snap: paso de la grilla. limites: {x:[min,max], z:[...]}. activo(): si se puede tomar ahora. */
+  arrastrable(obj, { ejes = 'xz', snap = 1, limites, alMover, alSoltar, alTomar, activo, plano } = {}) {
+    const ej = ejes.split('');
+    const normal = plano || (ej.includes('y') ? (ej.includes('x') ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0)) : new THREE.Vector3(0, 1, 0));
+    const pl = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, obj.getWorldPosition(new THREE.Vector3()));
+    const a = { obj, plano: pl, ejes: ej, snap, limites, alMover, alSoltar, alTomar, activo };
+    arrastrables.push(a); return a;
+  },
+  clicable(obj, alClic) { clicables.push({ obj, alClic }); },
+
+  // ── Panel ──
+  controles() { return $('#pnControles'); },
+  /** Campo numérico. Devuelve el <input>. */
+  campoNumero(etiqueta, { id, valor = '', paso = 'any', min, max, sufijo, ancho } = {}) {
+    const inp = h('input', { class: 'entrada', type: 'number', inputmode: 'decimal', step: paso, id, value: valor, min, max, style: ancho ? `width:${ancho}` : null });
+    const fila = h('div', { class: 'fila' }, inp, sufijo ? h('span', { class: 'num', style: 'color:var(--texto-2)' }, sufijo) : null);
+    $('#pnControles').append(h('div', { class: 'campo' }, h('label', { for: id }, etiqueta), fila));
+    return inp;
+  },
+  /** Deslizador con lectura del valor. */
+  deslizador(etiqueta, { id, min, max, paso = 1, valor, formato = v => v, alCambiar } = {}) {
+    const lec = h('span', { class: 'num', style: 'min-width:64px;text-align:right' }, formato(valor));
+    const inp = h('input', { type: 'range', id, min, max, step: paso, value: valor });
+    inp.addEventListener('input', () => { lec.textContent = formato(+inp.value); alCambiar?.(+inp.value); });
+    $('#pnControles').append(h('div', { class: 'campo' }, h('label', { for: id }, etiqueta), h('div', { class: 'fila' }, inp, lec)));
+    inp.leer = () => +inp.value;
+    inp.poner = v => { inp.value = v; lec.textContent = formato(+v); };
+    return inp;
+  },
+  /** Grupo de botones de opción (uno elegido). */
+  opciones(etiqueta, opciones, { alElegir, elegida } = {}) {
+    const grupo = h('div', { class: 'grupo-btn', role: 'group' });
+    const btns = opciones.map(([valor, texto]) => {
+      const b = h('button', { class: 'btn btn-sec btn-chico', 'aria-pressed': valor === elegida ? 'true' : 'false' }, texto);
+      b.addEventListener('click', () => { btns.forEach(x => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); grupo.valor = valor; alElegir?.(valor); });
+      grupo.append(b); return b;
+    });
+    grupo.valor = elegida;
+    $('#pnControles').append(h('div', { class: 'campo' }, etiqueta ? h('label', {}, etiqueta) : null, grupo));
+    return grupo;
+  },
+  /** Bloque de datos (dt/dd). pares: [[clave, valor], ...] */
+  datos(pares) {
+    const dl = h('dl', { class: 'datos' }, pares.flatMap(([k, v]) => [h('dt', {}, k), h('dd', { html: String(v) })]));
+    $('#pnControles').append(dl); return dl;
+  },
+  html(contenido) { const d = h('div', { html: contenido }); $('#pnControles').append(d); return d; },
+
+  /** Mensaje bajo los botones. tipo: 'ok' | 'error' | 'info'. */
+  mensaje(texto, tipo = 'info') { const m = $('#mensaje'); m.className = 'ver ' + tipo; m.innerHTML = texto; },
+  limpiarMensaje() { $('#mensaje').className = ''; },
+  toast(texto) { const t = $('#toast'); t.textContent = texto; t.classList.add('ver'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('ver'), 2200); },
+
+  // ── Vista matemática ──
+  /** El juego llama a esto cada vez que cambia el estado: si la vista está abierta se redibuja. */
+  refrescarMat() { if (document.body.classList.contains('modo-mat')) dibujarMat(); },
+  get modoMat() { return document.body.classList.contains('modo-mat'); },
+
+  /** SVG de un plano cartesiano listo para dibujar. Devuelve {svg, X(x), Y(y), g} con
+   *  X/Y que pasan de coordenadas matemáticas a píxeles. */
+  planoCartesiano({ xMin = -10, xMax = 10, yMin = -10, yMax = 10, paso = 1, pasoEtiqueta = 1, ejeX = 'x', ejeY = 'y', ancho = 560, alto = 420, margen = 34 } = {}) {
+    const W = ancho, H = alto;
+    const X = x => margen + (x - xMin) / (xMax - xMin) * (W - 2 * margen);
+    const Y = y => H - margen - (y - yMin) / (yMax - yMin) * (H - 2 * margen);
+    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', 'font-family': 'JetBrains Mono, monospace', 'font-size': 11 });
+    const grilla = s('g', { stroke: '#e7e2d6', 'stroke-width': 1 });
+    for (let x = Math.ceil(xMin / paso) * paso; x <= xMax + 1e-9; x += paso) grilla.append(s('line', { x1: X(x), x2: X(x), y1: Y(yMin), y2: Y(yMax) }));
+    for (let y = Math.ceil(yMin / paso) * paso; y <= yMax + 1e-9; y += paso) grilla.append(s('line', { y1: Y(y), y2: Y(y), x1: X(xMin), x2: X(xMax) }));
+    svg.append(grilla);
+    const ejes = s('g', { stroke: '#1b2333', 'stroke-width': 1.6 });
+    const y0 = Math.max(yMin, Math.min(yMax, 0)), x0 = Math.max(xMin, Math.min(xMax, 0));
+    ejes.append(s('line', { x1: X(xMin), x2: X(xMax) + 8, y1: Y(y0), y2: Y(y0), 'marker-end': 'url(#flecha)' }));
+    ejes.append(s('line', { x1: X(x0), x2: X(x0), y1: Y(yMin), y2: Y(yMax) - 8, 'marker-end': 'url(#flecha)' }));
+    svg.append(s('defs', {}, s('marker', { id: 'flecha', viewBox: '0 0 10 10', refX: 6, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, s('path', { d: 'M0,0 L10,5 L0,10 z', fill: '#1b2333' }))));
+    svg.append(ejes);
+    const et = s('g', { fill: '#6b7280' });
+    for (let x = Math.ceil(xMin / pasoEtiqueta) * pasoEtiqueta; x <= xMax + 1e-9; x += pasoEtiqueta) if (Math.abs(x) > 1e-9) et.append(s('text', { x: X(x), y: Y(y0) + 15, 'text-anchor': 'middle' }, +x.toFixed(4)));
+    for (let y = Math.ceil(yMin / pasoEtiqueta) * pasoEtiqueta; y <= yMax + 1e-9; y += pasoEtiqueta) if (Math.abs(y) > 1e-9) et.append(s('text', { x: X(x0) - 6, y: Y(y) + 4, 'text-anchor': 'end' }, +y.toFixed(4)));
+    et.append(s('text', { x: X(xMax) + 2, y: Y(y0) - 8, 'text-anchor': 'end', fill: '#1b2333', 'font-weight': 700 }, ejeX));
+    et.append(s('text', { x: X(x0) + 8, y: Y(yMax) + 4, fill: '#1b2333', 'font-weight': 700 }, ejeY));
+    svg.append(et);
+    const g = s('g'); svg.append(g);
+    return { svg, X, Y, g };
+  },
+
+  // ── Aritmética exacta (fracciones) para validar sin redondeos ──
+  frac(n, d = 1) { if (d < 0) { n = -n; d = -d; } const m = mcd(Math.abs(n), d) || 1; return { n: n / m, d: d / m }; },
+  /** Lee "3/4", "-2", "1,5" o "0.25" como fracción exacta; null si no se puede. */
+  leerFrac(texto) {
+    const t = String(texto).trim().replace(',', '.').replace(/\s+/g, '');
+    if (!t) return null;
+    let m = t.match(/^(-?\d+)\/(-?\d+)$/);
+    if (m) { const d = +m[2]; return d === 0 ? null : K.frac(+m[1], d); }
+    m = t.match(/^(-?)(\d*)\.?(\d*)$/);
+    if (m && (m[2] || m[3])) { const dec = m[3] || ''; const d = 10 ** dec.length; const n = +(m[2] || 0) * d + +(dec || 0); return K.frac((m[1] ? -1 : 1) * n, d); }
+    return null;
+  },
+  igualFrac(a, b) { return a && b && a.n * b.d === b.n * a.d; },
+  /** Número leído del input (acepta coma decimal). NaN si está vacío o es inválido. */
+  num(inp) { const t = String(inp.value ?? inp).trim().replace(',', '.'); return t === '' ? NaN : Number(t); },
+  fmt(x, dec = 2) { return (+x.toFixed(dec)).toLocaleString('es-AR'); },
+};
+function mcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+window.K = K;
+
+/* ════════════════════════════════════════════════════════════════════
+   FLUJO: portada → nivel → comprobar → bitácora → siguiente nivel → final
+   ════════════════════════════════════════════════════════════════════ */
+let J;            // el juego
+let nivel = 0;    // índice actual
+let progreso;     // {resueltos:[bool], registrados:[bool]}
+let pistasVistas = 0, intentos = 0, resuelto = false;
+const docente = /docente/i.test(location.hash + location.search);
+
+function claveProgreso() { return 'kodu-juego-' + J.id; }
+function desbloqueado(i) { return docente || i === 0 || progreso.registrados[i - 1]; }
+
+function pintarNiveles() {
+  const nav = $('#niveles'); nav.innerHTML = '';
+  J.niveles.forEach((n, i) => {
+    const libre = desbloqueado(i);
+    const b = h('button', { class: 'chip-nivel' + (progreso.registrados[i] ? ' hecho' : ''), 'aria-current': i === nivel ? 'true' : 'false', disabled: !libre, title: libre ? n.titulo : 'Se desbloquea al completar el nivel anterior' },
+      libre ? '' : h('span', { html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' }),
+      String(i + 1));
+    b.addEventListener('click', () => libre && cargarNivel(i));
+    nav.append(b);
+  });
+}
+
+function cargarNivel(i) {
+  nivel = i; pistasVistas = 0; intentos = 0; resuelto = false;
+  limpiarNivel();
+  const n = J.niveles[i];
+  $('#pnEtiqueta').textContent = `Nivel ${i + 1} de ${J.niveles.length}`;
+  $('#pnTitulo').textContent = n.titulo;
+  $('#pnRelato').innerHTML = n.relato;
+  $('#pnObjetivoTxt').innerHTML = n.objetivo;
+  $('#pnControles').innerHTML = '';
+  $('#pistas').innerHTML = '';
+  $('#vmLienzo').innerHTML = '';
+  $('#vmTitulo').textContent = n.tituloMat || 'Modo matemático';
+  $('#vmSub').textContent = n.subMat || '';
+  K.limpiarMensaje();
+  actualizarPie();
+  $('#btnComprobar').textContent = n.textoComprobar || 'Comprobar';
+  n.armar(K);
+  pintarNiveles();
+  ajustarTamano();
+  K.refrescarMat();
+  if (!docente) guardar(claveProgreso() + '-ultimo', i);
+}
+
+function actualizarPie() {
+  const n = J.niveles[nivel];
+  const quedan = n.pistas.length - pistasVistas;
+  $('#btnPista').disabled = quedan <= 0 || resuelto;
+  $('#btnPista').textContent = quedan > 0 ? `Pista (${pistasVistas + 1}/${n.pistas.length})` : 'Sin más pistas';
+  $('#intentos').textContent = intentos ? `Intentos: ${intentos} · Pistas usadas: ${pistasVistas}` : '';
+  $('#btnComprobar').disabled = resuelto;
+}
+
+$('#btnPista').addEventListener('click', () => {
+  const n = J.niveles[nivel];
+  if (pistasVistas >= n.pistas.length) return;
+  const txt = n.pistas[pistasVistas];
+  pistasVistas++;
+  $('#pistas').append(h('div', { class: 'pista' }, h('span', { class: 'n' }, `Pista ${pistasVistas}`), h('span', { html: typeof txt === 'function' ? txt(K) : txt })));
+  $('#pistas').lastChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  actualizarPie();
+});
+
+$('#btnComprobar').addEventListener('click', () => {
+  if (resuelto) return;
+  const n = J.niveles[nivel];
+  const r = n.comprobar(K);
+  if (!r) return;               // el nivel puede manejar pasos intermedios
+  if (r.parcial) { K.mensaje(r.msg, r.ok ? 'ok' : 'error'); return; } // paso intermedio de un nivel con fases
+  intentos++;
+  if (r.ok) {
+    resuelto = true;
+    K.mensaje(r.msg || '¡Misión cumplida!', 'ok');
+    progreso.resueltos[nivel] = true; guardar(claveProgreso(), progreso);
+    actualizarPie();
+    const demora = n.alResolver ? n.alResolver(K) ?? 1600 : 900;
+    const nivelResuelto = nivel;
+    setTimeout(() => { if (nivel === nivelResuelto && resuelto) abrirBitacora(); }, demora);
+  } else {
+    K.mensaje(r.msg || 'Todavía no. Revisá tus datos.', 'error');
+    actualizarPie();
+  }
+});
+
+function abrirBitacora() {
+  const n = J.niveles[nivel];
+  $('#bitKicker').textContent = `Nivel ${nivel + 1} · Fundamentación matemática`;
+  $('#bitResumen').innerHTML = n.resumenBitacora ? n.resumenBitacora(K) : `Resolviste: <b>${n.titulo}</b>`;
+  $('#bitPreguntas').innerHTML = '';
+  n.bitacora.forEach(q => $('#bitPreguntas').append(h('li', { html: q })));
+  $('#bitCheck').checked = false;
+  $('#bitContinuar').disabled = true;
+  $('#bitContinuar').textContent = nivel < J.niveles.length - 1 ? 'Continuar la misión' : 'Terminar la misión';
+  $('#bitacora').classList.add('ver');
+  $('#bitCheck').focus();
+}
+$('#bitCheck').addEventListener('change', e => { $('#bitContinuar').disabled = !e.target.checked; });
+$('#bitContinuar').addEventListener('click', () => {
+  if (!$('#bitCheck').checked) return;
+  progreso.registrados[nivel] = true; guardar(claveProgreso(), progreso);
+  $('#bitacora').classList.remove('ver');
+  if (nivel < J.niveles.length - 1) { K.toast(`Nivel ${nivel + 2} desbloqueado`); cargarNivel(nivel + 1); }
+  else mostrarFinal();
+});
+
+function mostrarFinal() {
+  pintarNiveles();
+  const t = $('#finalTarjeta'); t.innerHTML = '';
+  t.append(
+    h('div', { class: 'kicker' }, 'Misión completa'),
+    h('h2', {}, J.final?.titulo || '¡Lo lograron!'),
+    h('p', { html: J.final?.texto || '' }),
+    h('div', { class: 'misiones' }, J.niveles.map((n, i) => h('div', {}, h('b', {}, `Nivel ${i + 1} ✓`), n.titulo))),
+    h('p', { html: 'Llevá tu bitácora a la clase: vamos a comparar los procedimientos que usó cada grupo.' }),
+    h('div', { class: 'acciones' },
+      h('button', { class: 'btn btn-sec', onclick: () => { $('#final').classList.remove('ver'); } }, 'Volver al escenario'),
+      h('button', { class: 'btn btn-pri', onclick: () => { progreso = { resueltos: J.niveles.map(() => false), registrados: J.niveles.map(() => false) }; guardar(claveProgreso(), progreso); $('#final').classList.remove('ver'); cargarNivel(0); } }, 'Empezar de nuevo')));
+  $('#final').classList.add('ver');
+}
+
+function mostrarPortada() {
+  const t = $('#portadaTarjeta'); t.innerHTML = '';
+  const hayAvance = progreso.registrados.some(Boolean);
+  t.append(
+    h('div', { class: 'kicker' }, J.kicker || 'Matemática · 3.er año'),
+    h('h2', {}, J.titulo),
+    h('p', { html: J.portada }),
+    h('div', { class: 'contenidos' }, J.contenidos.map(c => h('span', {}, c))),
+    h('div', { class: 'misiones' }, J.niveles.map((n, i) => h('div', {}, h('b', {}, `Nivel ${i + 1}`), n.titulo))),
+    h('p', { html: 'Cada nivel termina con una <b>bitácora</b>: antes de seguir, registrás en tu hoja cómo lo resolviste. Usá el botón <b>Matemático</b> para ver la representación geométrica o algebraica de lo que pasa en el escenario.' }),
+    h('div', { class: 'acciones' },
+      h('button', { class: 'btn btn-pri', onclick: () => { $('#portada').classList.remove('ver'); const u = leer(claveProgreso() + '-ultimo', 0); cargarNivel(desbloqueado(u) ? u : 0); } }, hayAvance ? 'Continuar la misión' : 'Comenzar la misión'),
+      docente ? h('span', { style: 'font-size:12px;color:var(--texto-3);align-self:center' }, 'Modo docente: todos los niveles abiertos') : null));
+  $('#portada').classList.add('ver');
+}
+
+function setModo(mat) {
+  document.body.classList.toggle('modo-mat', mat);
+  $('#modoMat').setAttribute('aria-pressed', mat); $('#modoAventura').setAttribute('aria-pressed', !mat);
+  ajustarTamano();
+  if (mat) dibujarMat();
+  J.niveles[nivel]?.alCambiarModo?.(K, mat);
+}
+function dibujarMat() {
+  const n = J.niveles[nivel]; if (!n?.mat) return;
+  const l = $('#vmLienzo'); l.innerHTML = '';
+  n.mat(K, l);
+}
+$('#modoMat').addEventListener('click', () => setModo(true));
+$('#modoAventura').addEventListener('click', () => setModo(false));
+
+/** Punto de entrada: el juego llama a iniciar(JUEGO). */
+function iniciar(juego) {
+  J = juego;
+  document.title = J.titulo;
+  $('#tituloJuego').textContent = J.titulo;
+  $('#subJuego').textContent = J.subtitulo || '';
+  $('#marcaIco').textContent = J.icono || J.titulo[0];
+  progreso = leer(claveProgreso(), null) || { resueltos: J.niveles.map(() => false), registrados: J.niveles.map(() => false) };
+  J.escenaBase?.(K);
+  ajustarTamano();
+  pintarNiveles();
+  // El escenario se ve detrás de la portada: cargamos el primer nivel abierto.
+  cargarNivel(0);
+  mostrarPortada();
+  // Gancho para las pruebas automáticas (probar.mjs). No lo usa el alumno.
+  window.__motor = { J, K, cargarNivel, setModo, comprobar: () => J.niveles[nivel].comprobar(K), get nivel() { return nivel; } };
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   JUEGO — todo lo que sigue es específico de este recurso
+   ════════════════════════════════════════════════════════════════════ */
+const JUEGO = {
+  id: 'ejemplo',
+  titulo: 'Juego de ejemplo',
+  subtitulo: 'Colección Misiones 3D',
+  icono: 'E',
+  portada: 'Texto de la portada.',
+  contenidos: ['Contenido 1'],
+  escenaBase(K) { K.cielo(); K.scene.add(K.suelo()); },
+  niveles: [{
+    titulo: 'Nivel de ejemplo',
+    relato: 'Relato.',
+    objetivo: 'Objetivo.',
+    armar(K) {
+      K.camara([12, 10, 14], [0, 0, 0], { suave: false });
+      const c = K.agregar(K.caja(2, 2, 2, 0xff8a3d, [0, 1, 0]));
+      K.arrastrable(c, { snap: 1, alMover: () => K.refrescarMat() });
+      K.etiqueta('caja', [0, 1.6, 0], 'acento', c);
+      this.caja = c;
+    },
+    comprobar(K) { return this.caja.position.x === 3 ? { ok: true, msg: 'Bien.' } : { ok: false, msg: 'Llevá la caja a x = 3.' }; },
+    prueba: { mal(K) { this.caja.position.x = 1; }, bien(K) { this.caja.position.x = 3; } },
+    pistas: ['Pista 1', 'Pista 2', 'Pista 3'],
+    bitacora: ['¿Qué procedimiento utilizaste para resolver el desafío?', '¿Por qué elegiste ese procedimiento y qué conceptos matemáticos aplicaste?', '¿Cómo podés comprobar que tu solución es correcta?'],
+    mat(K, el) { const p = K.planoCartesiano(); el.append(p.svg); },
+  }],
+};
+iniciar(JUEGO);
+</script>
+</body>
+</html>
