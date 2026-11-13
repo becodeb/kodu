@@ -4,6 +4,7 @@ import { ALLOWED_CDNS } from '../../lib/cdn-allowlist.ts';
 import { CELULA_EJEMPLO_ID } from '../../lib/ejemplos.ts';
 import { leerCelulaEjemplo } from '../../lib/ejemplos-servidor.ts';
 import { getEnv } from '../../lib/env.ts';
+import { reescribirScriptsCdn } from '../../lib/cdn-proxy.ts';
 
 /**
  * GET /p/:slug — vista pública del recurso (SPEC §5.4).
@@ -77,7 +78,7 @@ export const GET: APIRoute = async ({ params, url }) => {
     );
   }
 
-  return new Response(asegurarViewport(project.currentHtml), {
+  return new Response(reescribirScriptsCdn(asegurarViewport(project.currentHtml)), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Security-Policy': resourceCsp(url.origin),
