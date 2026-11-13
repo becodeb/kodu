@@ -23,7 +23,7 @@ const MAX_ENTRADAS = 60;
 const TIMEOUT_MS = 12_000;
 
 interface Entrada {
-  cuerpo: Uint8Array;
+  cuerpo: Uint8Array<ArrayBuffer>;
   tipo: string;
   expira: number;
 }
@@ -88,8 +88,21 @@ export async function espejarCdn(host: string, rutaYQuery: string): Promise<Resp
 
 const SCRIPT_CDN = /(<script\b[^>]*?\bsrc=)(["'])https:\/\/(cdn\.tailwindcss\.com|cdn\.jsdelivr\.net|unpkg\.com)(\/[^"'\s]*)?\2/gi;
 
+const SHIM_IMPORTMAP = '<script async src="/cdn/cdn.jsdelivr.net/npm/es-module-shims@1.10.1/dist/es-module-shims.js"></script>';
+
+/**
+ * Safari anterior a 16.4 no entiende `<script type="importmap">` (los recursos
+ * con three por módulos quedaban en blanco). es-module-shims lo emula y no
+ * hace nada donde el navegador ya lo soporta.
+ */
+function conShimDeImportmap(html: string): string {
+  if (html.includes('es-module-shims')) return html;
+  const m = /<script\b[^>]*\btype=["']importmap["']/i.exec(html);
+  return m ? html.slice(0, m.index) + SHIM_IMPORTMAP + '\n' + html.slice(m.index) : html;
+}
+
 /** Reescribe los `<script src>` de CDN hacia el espejo `/cdn/<host>/...`. Las fuentes (CSS) quedan como están. */
 export function reescribirScriptsCdn(html: string): string {
-  return html.replace(SCRIPT_CDN, (_m, antes: string, q: string, host: string, ruta?: string) =>
+  return conShimDeImportmap(html).replace(SCRIPT_CDN, (_m, antes: string, q: string, host: string, ruta?: string) =>
     `${antes}${q}/cdn/${host.toLowerCase()}${ruta ?? ''}${q}`);
 }
