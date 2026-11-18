@@ -154,6 +154,16 @@ export default function Workspace(props: WorkspaceProps) {
   // una edición manual, o una nueva captura.
   const [portadaVieja, setPortadaVieja] = useState(props.project.portadaVieja);
   const [model, setModel] = useState<string>(props.project.aiModelId);
+  // Modo rápido (Haiku): preferencia del docente, guardada en este navegador.
+  // Se lee después de montar para no desalinear el render del servidor.
+  const [rapido, setRapido] = useState(false);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem('kodu:modo-rapido') === '1') setRapido(true);
+    } catch {
+      // Sin almacenamiento: arranca en modo normal.
+    }
+  }, []);
 
   /**
    * T2 ("versiones como opt-in por proyecto"): apagado por default, y ahora
@@ -756,6 +766,7 @@ export default function Workspace(props: WorkspaceProps) {
           threadId: activeThreadId,
           message,
           model,
+          rapido: rapido || undefined,
           attachmentUrls: attachmentUrls.length > 0 ? attachmentUrls : undefined,
           codeEditedByTeacher: codeEditedByTeacher.current,
           // El servidor la ignora sin las condiciones (admin × proyecto ×
@@ -1798,6 +1809,15 @@ export default function Workspace(props: WorkspaceProps) {
           void handleSend(pedido, true);
         }}
         model={model}
+        rapido={rapido}
+        onRapidoChange={(valor) => {
+          setRapido(valor);
+          try {
+            window.localStorage.setItem('kodu:modo-rapido', valor ? '1' : '0');
+          } catch {
+            // Sin almacenamiento (navegación privada): vale sólo para esta sesión.
+          }
+        }}
         motoresDisponibles={props.motoresDisponibles}
         onModelChange={(value) => {
           setModel(value);

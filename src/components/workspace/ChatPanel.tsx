@@ -3,13 +3,12 @@ import { ThinkingOrb } from 'thinking-orbs';
 import AiStatus from './AiStatus.tsx';
 import StreamedText from './StreamedText.tsx';
 import StarterDialog from './StarterDialog.tsx';
-import SelectorDeMotor from './SelectorDeMotor.tsx';
+import ModoRapido from './ModoRapido.tsx';
 import { STARTERS, type Starter } from './starters.ts';
 import { mensajeParaDeshacer } from '../../lib/client/undo.ts';
 import { mensajeParaVersiones } from '../../lib/client/versiones.ts';
 import { FeedbackTurno, PreguntaFeedback, type FaceRating, type RespuestaPregunta } from './FeedbackTurno.tsx';
 import {
-  debeMostrarSelectorDeMotor,
   type AiPhase,
   type MotorPublico,
   type VersionEnCurso,
@@ -39,6 +38,9 @@ interface ChatPanelProps {
   model: string;
   motoresDisponibles: MotorPublico[];
   onModelChange: (modelId: string) => void;
+  /** Modo rápido (Haiku) en vez de elegir motor. */
+  rapido: boolean;
+  onRapidoChange: (rapido: boolean) => void;
   threads: WorkspaceThread[];
   activeThreadId: string;
   onThreadChange: (threadId: string) => void;
@@ -303,19 +305,8 @@ export default function ChatPanel(props: ChatPanelProps) {
           </button>
         </div>
 
-        {/* Selector de motor: un desplegable con la descripción siempre visible
-            mientras está abierto, no un `title` sólo de mouse (design §8).
-            T6 (follow-up 2026-09-26): con 0 o 1 motor elegible, un
-            desplegable no le sirve a nadie — se omite entero (no sólo
-            vacío), así `space-y-*` del header no deja un hueco donde
-            hubiera estado. */}
-        {debeMostrarSelectorDeMotor(props.motoresDisponibles) && (
-          <SelectorDeMotor
-            motores={props.motoresDisponibles}
-            model={props.model}
-            onModelChange={props.onModelChange}
-          />
-        )}
+        {/* Nov 2026: el docente ya no elige motor, sólo modo rápido o normal. */}
+        <ModoRapido activo={props.rapido} onChange={props.onRapidoChange} />
       </header>
 
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">

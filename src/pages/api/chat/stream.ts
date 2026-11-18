@@ -29,9 +29,9 @@ import {
   type TokenUsage as MotorTokenUsage,
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
-import { cadenaDeMotores, motorDeGeneracion, motorParaPresetYEsfuerzo } from '../../../lib/ai/catalogo.ts';
-import { esCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
-import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado, HAIKU_LOW } from '../../../lib/ai/modos-generacion.ts';
+import { cadenaDeMotores, motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
+import { esCuentaGratuita, motorModoRapido, motorParaCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
+import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado } from '../../../lib/ai/modos-generacion.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import {
   contenidoMensajeDeVersiones,
@@ -113,6 +113,8 @@ const schema = z.object({
    * condiciones.
    */
   variants: z.union([z.literal(1), z.literal(3)]).optional(),
+  /** Modo rápido del docente: este turno va con Haiku, para cualquier cuenta. */
+  rapido: z.boolean().optional(),
 });
 
 /** Cuántos mensajes del hilo se reenvían como historial. */
@@ -623,7 +625,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return fail(parsed.error.issues[0]?.message ?? 'Datos inválidos', 422);
   }
 
-  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, variants } = parsed.data;
+  const { projectId, threadId, message, attachmentUrls, model, codeEditedByTeacher, variants, rapido } = parsed.data;
 
   const project = await findProjectForActor(projectId, user);
   if (!project) return fail('El recurso no existe o no es tuyo.', 404);
@@ -659,6 +661,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // peor, arriesgar que un cambio futuro la calcule distinto en cada lado.
   const recursoInicial = esRecursoInicial(htmlAlInicioDelTurno);
 
+  // lib/billing/cuenta-gratuita.ts: decide motor y si puede pedir versiones.
+  const cuentaGratuita = await esCuentaGratuita(user);
+
   /**
    * T9/T2 ("Varias versiones al crear un recurso", opt-in por proyecto):
    * el interruptor del admin (`versionsForAll`) × el del proyecto
@@ -669,7 +674,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
    */
   const solicitaVersiones =
     variantesEfectivas({
-      puedePedirVersiones: capacidades.puedePedirVersiones && project.versionsEnabled,
+      // Cuenta gratuita: nunca 3 versiones (triplicaría el costo de crear).
+      puedePedirVersiones: capacidades.puedePedirVersiones && project.versionsEnabled && !cuentaGratuita,
       esRecursoInicial: recursoInicial,
       variantsPedidas: variants,
     }) === 3;
@@ -701,23 +707,28 @@ export const POST: APIRoute = async ({ request, locals }) => {
    * consulta de gasto sólo se hace cuando hace falta — un proyecto con
    * motor explícito no paga esa consulta en cada turno.
    */
-  const modoEfectivoActivo = project.engineChosenByTeacher
-    ? null
-    : modoEfectivo(
-        settings.generationMode,
-        await gastoDelCicloActual(settings.billingCycleDay),
-        settings.premiumUntilUsd.toNumber(),
-      );
+  // El docente ya no elige motor: el modo de generación decide siempre.
+  const modoEfectivoActivo = modoEfectivo(
+    settings.generationMode,
+    await gastoDelCicloActual(settings.billingCycleDay),
+    settings.premiumUntilUsd.toNumber(),
+  );
 
-  // Cuenta gratuita (lib/billing/cuenta-gratuita.ts): siempre Haiku. Si el
-  // preset de Haiku no está habilitado, sigue el camino de siempre.
-  const motorGratuito = (await esCuentaGratuita(user)) ? await motorParaPresetYEsfuerzo(HAIKU_LOW) : null;
+  // El docente ya no elige motor (nov 2026): elige modo rápido (Haiku) o no.
+  // Una cuenta gratuita, sin modo rápido, crea sus primeros recursos con
+  // Sonnet y después Haiku (lib/billing/cuenta-gratuita.ts). Si esos presets
+  // no están habilitados, sigue el camino de siempre.
+  const motorForzado = rapido
+    ? await motorModoRapido()
+    : cuentaGratuita
+      ? await motorParaCuentaGratuita({ userId: user.id, project, esCreacion: recursoInicial })
+      : null;
 
-  const provider = motorGratuito ?? await motorDeGeneracion({
+  const provider = motorForzado ?? await motorDeGeneracion({
     modelIdExplicitoDelPedido: model ?? null,
     project: {
       aiModelId: project.aiModelId,
-      engineChosenByTeacher: project.engineChosenByTeacher,
+      engineChosenByTeacher: false,
       creationModelId: project.creationModelId,
     },
     esCreacion: recursoInicial,

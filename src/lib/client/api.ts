@@ -170,6 +170,8 @@ export async function* streamChat(payload: {
   message: string;
   /** El `id` de un `AiModel`. */
   model?: string;
+  /** Modo rápido del docente: el servidor usa Haiku en este turno. */
+  rapido?: boolean;
   attachmentUrls?: string[];
   /** El docente escribió o pegó código a mano desde la última respuesta. */
   codeEditedByTeacher?: boolean;
