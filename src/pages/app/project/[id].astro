@@ -14,6 +14,7 @@ import { checklistActual } from '../../../lib/ai/checklist-db.ts';
 import { pendienteChequeosPosteriores } from '../../../lib/ai/post-checks-db.ts';
 import { debeMostrarSelectorDeMotor, type CapacidadesEditor } from '../../../lib/workspace-types.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
+import { esCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
 import { pedidoParaElEditor } from '../../../lib/taller/prompt.ts';
 
 const user = Astro.locals.user!;
@@ -90,7 +91,9 @@ const capacidades = resolverCapacidades(settings);
 
 // Los motores que puede elegir un docente, ya en el orden que configuró un
 // admin (M3 los administra; acá sólo se leen).
-const motoresDisponibles = await motoresParaDocente();
+// Cuenta gratuita: siempre crea con Haiku (lib/billing/cuenta-gratuita.ts),
+// así que no se le ofrece el selector de motor.
+const motoresDisponibles = (await esCuentaGratuita(user)) ? [] : await motoresParaDocente();
 
 // El motor vigente del proyecto puede no existir más, estar apagado, o el
 // proyecto puede ser nuevo y no tener ninguno todavía: `normalizarMotor` cae
@@ -162,7 +165,7 @@ const verificadorActivo = (await motorVerificador()) !== null;
 // esto. `engineChosenByTeacher` NO entra acá (sí entra en el endpoint): es
 // un criterio por PROYECTO, no global, y ya lo filtra `pulir.ts` del lado
 // del servidor — este prop sólo dice si el modo global está prendido.
-const pulidoActivo = settings.generationMode === 'haiku-pulido';
+const pulidoActivo = settings.generationMode === 'haiku-pulido' && !(await esCuentaGratuita(user));
 
 // El consumo del recurso (design.md — "The workspace cost indicator"): se
 // calcula acá, en el frontmatter, no en el cliente — así se refresca cuando

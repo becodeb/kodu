@@ -29,8 +29,9 @@ import {
   type TokenUsage as MotorTokenUsage,
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
-import { cadenaDeMotores, motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
-import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado } from '../../../lib/ai/modos-generacion.ts';
+import { cadenaDeMotores, motorDeGeneracion, motorParaPresetYEsfuerzo } from '../../../lib/ai/catalogo.ts';
+import { esCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
+import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado, HAIKU_LOW } from '../../../lib/ai/modos-generacion.ts';
 import { resolverCapacidades } from '../../../lib/ai/capacidades.ts';
 import {
   contenidoMensajeDeVersiones,
@@ -708,7 +709,11 @@ export const POST: APIRoute = async ({ request, locals }) => {
         settings.premiumUntilUsd.toNumber(),
       );
 
-  const provider = await motorDeGeneracion({
+  // Cuenta gratuita (lib/billing/cuenta-gratuita.ts): siempre Haiku. Si el
+  // preset de Haiku no está habilitado, sigue el camino de siempre.
+  const motorGratuito = (await esCuentaGratuita(user)) ? await motorParaPresetYEsfuerzo(HAIKU_LOW) : null;
+
+  const provider = motorGratuito ?? await motorDeGeneracion({
     modelIdExplicitoDelPedido: model ?? null,
     project: {
       aiModelId: project.aiModelId,

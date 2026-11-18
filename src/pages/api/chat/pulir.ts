@@ -9,6 +9,7 @@ import { recordUsage } from '../../../lib/ai/usage.ts';
 import { recordAiTrace } from '../../../lib/ai/trace.ts';
 import { leerAppSettings } from '../../../lib/settings.ts';
 import { resolverAccesoIa, mensajeAccesoIa } from '../../../lib/orgs/acceso.ts';
+import { esCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
 import { fail, ok, readBody } from '../../../lib/http.ts';
 
 /**
@@ -62,7 +63,8 @@ export const POST: APIRoute = async ({ request, locals }) => {
   // de siempre, no un tier premium que `premiumUntilUsd` deba cortar) y sin
   // mirar `engineChosenByTeacher` — un docente que eligió su propio motor a
   // mano no activa un paso que ese modo ni prendió.
-  if (settings.generationMode !== 'haiku-pulido' || project.engineChosenByTeacher) {
+  // Cuenta gratuita: sólo Haiku, nunca el paso extra con Sonnet.
+  if (settings.generationMode !== 'haiku-pulido' || project.engineChosenByTeacher || (await esCuentaGratuita(user))) {
     return ok({ aplicado: false, motivo: 'modo_no_aplica', html: null });
   }
 

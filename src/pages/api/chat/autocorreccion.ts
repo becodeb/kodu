@@ -15,8 +15,9 @@ import {
   type TokenUsage as MotorTokenUsage,
   type CompletionHandle,
 } from '../../../lib/ai/provider.ts';
-import { motorDeGeneracion } from '../../../lib/ai/catalogo.ts';
-import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado } from '../../../lib/ai/modos-generacion.ts';
+import { motorDeGeneracion, motorParaPresetYEsfuerzo } from '../../../lib/ai/catalogo.ts';
+import { esCuentaGratuita } from '../../../lib/billing/cuenta-gratuita.ts';
+import { modoEfectivo, gastoDelCicloActual, presupuestoPremiumAgotado, HAIKU_LOW } from '../../../lib/ai/modos-generacion.ts';
 import { fingerprintHtml } from '../../../lib/ai/fingerprint.ts';
 import { construirMensajeCorreccion, type InformeAutoprueba } from '../../../lib/ai/autoprueba.ts';
 import {
@@ -200,7 +201,10 @@ export const POST: APIRoute = async ({ request, locals }) => {
     ? null
     : modoEfectivo(settings.generationMode, await gastoDelCicloActual(settings.billingCycleDay), settings.premiumUntilUsd.toNumber());
 
-  const provider = await motorDeGeneracion({
+  // Cuenta gratuita: siempre Haiku, igual que en stream.ts.
+  const motorGratuito = (await esCuentaGratuita(user)) ? await motorParaPresetYEsfuerzo(HAIKU_LOW) : null;
+
+  const provider = motorGratuito ?? await motorDeGeneracion({
     modelIdExplicitoDelPedido: null,
     project: {
       aiModelId: project.aiModelId,
